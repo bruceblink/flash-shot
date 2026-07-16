@@ -1,103 +1,94 @@
-# Delivery Plan
+# 项目开发计划
 
-Each numbered item is a bounded feature milestone. A milestone is committed only after its own
-validation passes.
+每个编号项都是有明确边界的小功能。只有完成对应验证后才提交代码；不同功能不合并到同一次提交。
 
-## Milestone 0: Foundation
+## 里程碑 0：工程基础
 
-- [x] Create `bruceblink/flash-shot` with a runnable Rust + GPUI shell.
-- [x] Record product requirements, architecture boundaries, and performance budgets.
-- [x] Add formatting, compile, lint, test, and CI gates.
-- [x] Pin current official GPUI sources without a third-party component framework.
-- [ ] Add structured tracing, panic reporting, and application directories.
-- [ ] Add a benchmark harness and machine-readable performance report.
-- [ ] Implement single-instance behavior and controlled shutdown.
+- [x] 创建 `bruceblink/flash-shot` Rust + GPUI 可运行应用壳。
+- [x] 编写产品需求、架构边界和性能预算。
+- [x] 增加格式化、编译、Clippy、测试和 CI 门禁。
+- [x] 锁定当前官方 GPUI 源码提交，不引入第三方组件框架。
+- [ ] 增加结构化日志、panic 报告和应用目录。
+- [ ] 增加性能基准工具和机器可读报告。
+- [ ] 实现单实例和可控退出。
 
-Exit criteria: the shell starts reliably, CI is green, failures are diagnosable, and performance
-measurements can be recorded before the capture implementation begins.
+退出标准：应用壳能够稳定启动，CI 全部通过，失败可诊断，并且在实现截图前已经可以记录性能基线。
 
-## Milestone 1: Windows capture spike
+## 里程碑 1：Windows 截图技术验证
 
-- Enumerate displays with physical bounds, scale, rotation, and color metadata.
-- Capture an immutable frame for each display.
-- Open one borderless overlay per display with correct physical/logical mapping.
-- Measure shortcut-to-overlay latency and screenshot texture upload behavior.
-- Prove mixed-DPI selection across negative and positive display coordinates.
+- 枚举显示器物理边界、缩放、旋转和颜色信息。
+- 获取每个显示器的不可变截图帧。
+- 为每个显示器打开无边框覆盖窗口并正确转换物理/逻辑坐标。
+- 测量快捷键到覆盖层的延迟以及截图纹理上传行为。
+- 验证跨负坐标和正坐标显示器的混合 DPI 选区。
 
-Exit criteria: a technical report demonstrates a viable GPUI rendering path and identifies every
-pixel copy. If public GPUI APIs cannot meet the target, decide between a narrow GPUI extension and
-a dedicated overlay renderer before adding product UI.
+退出标准：技术报告证明 GPUI 渲染路径可行，并列出所有像素复制。如果 GPUI 公共 API 无法达到目标，必须先决定采用小范围 GPUI 扩展还是独立覆盖层渲染器，再开发产品界面。
 
-## Milestone 2: Capture MVP
+## 里程碑 2：截图 MVP
 
-- Global shortcut, tray, and capture-session lifecycle.
-- Region selection, resize handles, keyboard adjustment, magnifier, and dimensions.
-- Window and control detection through Windows UI Automation.
-- Copy PNG, save PNG, cancel, and deterministic cleanup.
-- Repeated-capture soak test and latency metrics.
+- 全局快捷键、托盘和截图会话生命周期。
+- 区域选择、缩放控制点、键盘微调、放大镜和尺寸显示。
+- 通过 Windows UI Automation 识别窗口和控件。
+- 复制 PNG、保存 PNG、取消和确定性资源清理。
+- 连续截图压力测试和延迟指标。
 
-Exit criteria: the complete capture-to-copy workflow is useful without annotation and meets the
-agreed performance baseline.
+退出标准：无需标注即可完成有实际价值的截图到复制流程，并达到已确认的性能基线。
 
-## Milestone 3: Native annotation
+## 里程碑 3：原生标注
 
-- Versioned `AnnotationDocument` and command history.
-- Selection, rectangle, ellipse, line, arrow, and freehand.
-- Text editing with IME and mixed-language validation.
-- Blur/mosaic, highlight, watermark, and sequence numbers.
-- Layer ordering, style controls, hit testing, transform handles, undo, and redo.
-- Pixel-correct CPU/GPU composition with golden-image tests.
+- 带版本的 `AnnotationDocument` 和命令历史。
+- 选择、矩形、椭圆、直线、箭头和自由画笔。
+- 支持 IME 和中英文混排验证的文字编辑。
+- 模糊/马赛克、高亮、水印和序号。
+- 图层、样式、命中测试、变换控制点、撤销和重做。
+- 带 golden image 测试的像素正确 CPU/GPU 合成。
 
-Exit criteria: 4K editing remains responsive and exported output matches the document model.
+退出标准：4K 编辑保持流畅，导出结果严格匹配文档模型。
 
-## Milestone 4: Productivity workflows
+## 里程碑 4：效率工作流
 
-- Pinned image windows.
-- Local capture history and retention controls.
-- Open and annotate an existing image.
-- QR recognition.
-- Local OCR with lazy model loading.
-- Optional translation provider boundary.
+- 贴图窗口。
+- 本地截图历史及保留策略。
+- 打开并标注已有图片。
+- 二维码识别。
+- 延迟加载的本地 OCR。
+- 可选翻译服务边界。
 
-Exit criteria: optional models and history do not degrade startup, idle resource use, or privacy.
+退出标准：可选模型和历史记录不影响启动速度、空闲资源和隐私。
 
-## Milestone 5: Scrolling screenshots
+## 里程碑 5：滚动截图
 
-- Extract the useful image matching and composition ideas from Snow Shot without Tauri types.
-- Manual scroll capture, overlap detection, mismatch recovery, preview, and export.
-- Assisted scrolling where platform behavior is reliable.
-- Long-page memory and correctness tests.
+- 从 Snow Shot 提取有价值的图像匹配和合成思路，不迁移 Tauri 类型。
+- 实现手动滚动捕获、重叠检测、错位恢复、预览和导出。
+- 在平台行为可靠时提供辅助滚动。
+- 增加长页面内存与正确性测试。
 
-## Milestone 6: Screen recording
+## 里程碑 6：录屏
 
-- Isolated FFmpeg discovery and capability probing.
-- Display/window/region recording.
-- Microphone and supported system-audio selection.
-- Pause, resume, graceful finalize, progress, and failure recovery.
-- Job-object/process-group cleanup and orphan-process tests.
+- 隔离的 FFmpeg 发现和能力探测。
+- 显示器、窗口和区域录制。
+- 麦克风和受支持的系统声音选择。
+- 暂停、恢复、正常结束、进度和失败恢复。
+- Job Object/进程组清理和孤儿进程测试。
 
-## Milestone 7: Distribution and additional platforms
+## 里程碑 7：分发与其他平台
 
-- Signed Windows installer, portable build, updater, and release verification.
-- macOS capture/platform implementation and permission UX.
-- Linux feasibility spike for Wayland portals and X11 before committing to parity.
+- Windows 签名安装包、便携版、更新和发布验证。
+- macOS 截图与平台实现，以及权限交互。
+- 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 
-## Risk register
+## 风险清单
 
-| Risk | Early mitigation |
+| 风险 | 前置缓解措施 |
 | --- | --- |
-| GPUI external texture limitations | Milestone 1 copy/upload spike before editor development |
-| GPUI API churn | Keep domain/platform crates GPUI-free and pin reviewed releases |
-| Mixed-DPI coordinate errors | Use physical-pixel canonical coordinates and a hardware matrix |
-| Native text editing complexity | Validate GPUI IME early, before advanced annotation tools |
-| Feature-parity scope growth | Require milestone exit criteria and defer low-frequency options |
-| OCR runtime size/startup cost | Lazy-load an optional provider outside the core process path |
-| FFmpeg process/file corruption | Typed lifecycle, graceful finalize, timeout, and job cleanup |
+| GPUI 外部纹理能力不足 | 在编辑器开发前完成复制/上传技术验证 |
+| GPUI API 变化频繁 | 核心与平台模块不依赖 GPUI，并锁定经过评审的提交 |
+| 混合 DPI 坐标错误 | 以物理像素作为规范坐标并维护真实硬件矩阵 |
+| 原生文本编辑复杂 | 在高级标注工具前验证 GPUI IME |
+| 功能对等导致范围膨胀 | 使用里程碑退出标准，延后低频选项 |
+| OCR 增加体积与启动时间 | 使用核心路径之外的延迟加载可选实现 |
+| FFmpeg 残留或文件损坏 | 类型化生命周期、正常结束、超时和 Job 清理 |
 
-## Environment notes
+## 当前环境记录
 
-- The first Windows smoke launch on 2026-07-16 opened a responsive `Flash Shot` window, but GPUI
-  logged DirectX error `0x887A002D` indicating a missing or mismatched Windows SDK/graphics
-  component on that development machine. Compilation and tests pass; GPU rendering must be
-  visually verified after repairing the local DirectX/SDK environment and before Milestone 0 is
-  closed.
+- 2026-07-16 首次 Windows 启动冒烟打开了可响应的 `Flash Shot` 窗口，但 GPUI 记录了 DirectX 错误 `0x887A002D`，表示该开发机缺少或不匹配 Windows SDK/图形组件。编译和测试已经通过；修复本机 DirectX/SDK 环境并完成视觉验证之前，里程碑 0 不能关闭。

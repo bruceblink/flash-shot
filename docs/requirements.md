@@ -1,127 +1,119 @@
-# Product Requirements
+# 产品需求分析
 
-## 1. Product intent
+## 1. 产品定位
 
-Flash Shot is a native desktop capture tool optimized for the short path from intent to result:
+Flash Shot 是一款强调低延迟、高稳定性和原生体验的桌面截图与录屏工具。核心流程是：
 
-1. invoke a global shortcut;
-2. acquire the correct pixels immediately;
-3. select a window, control, display, or free region;
-4. annotate without visible input latency;
-5. copy, save, pin, recognize, or record the result reliably.
+1. 通过全局快捷键触发；
+2. 立即获取正确的屏幕像素；
+3. 自动选择窗口、控件、显示器或自由区域；
+4. 无明显输入延迟地完成标注；
+5. 可靠地复制、保存、贴图、识别或录制结果。
 
-Snow Shot is a source of validated workflows and edge cases, not a codebase or internal format
-that Flash Shot must reproduce. Flash Shot must not inherit Tauri, WebView, React, or Excalidraw
-as runtime dependencies.
+Snow Shot 是经过实际使用验证的需求来源和边界案例参考，不是 Flash Shot 必须兼容的代码库或内部数据格式。Flash Shot 的运行时不引入 Tauri、WebView、React 或 Excalidraw。
 
-## 2. Users and primary scenarios
+## 2. 目标用户与主要场景
 
-Primary users are developers, designers, support staff, educators, and other desktop power users
-who capture and communicate visual information many times per day.
+主要用户包括开发者、设计师、客服、教师以及每天频繁使用截图沟通的桌面效率用户。
 
-The highest-frequency scenarios are:
+高频场景包括：
 
-- capture a free region and copy it;
-- select a window or UI control automatically;
-- add arrows, shapes, text, blur, highlight, or sequence numbers;
-- pin a capture above other windows;
-- revisit recent captures;
-- extract text or a QR code;
-- capture a scrolling surface;
-- record a display, window, or region with optional audio.
+- 自由选择区域并立即复制；
+- 自动识别窗口或 UI 控件；
+- 添加箭头、图形、文字、模糊、高亮或序号；
+- 将截图作为轻量窗口固定在最前；
+- 查看和复用最近截图；
+- 识别文字或二维码；
+- 截取滚动页面；
+- 录制显示器、窗口或区域，并按需录制声音。
 
-## 3. Functional scope
+## 3. 功能范围
 
-### 3.1 Capture
+### 3.1 截图
 
-- Global configurable shortcuts.
-- Display, window, UI-control, and free-region selection.
-- Correct behavior with multiple displays, negative origins, and mixed DPI.
-- Magnifier, pixel color, dimensions, cursor-aware selection, and keyboard adjustment.
-- Copy to clipboard, save to file, quick save, and configurable output naming.
-- Optional cursor inclusion and capture delay.
+- 可配置的全局快捷键。
+- 显示器、窗口、UI 控件和自由区域选择。
+- 正确处理多显示器、负坐标原点和混合 DPI。
+- 放大镜、像素颜色、尺寸显示、鼠标智能选择和键盘微调。
+- 复制到剪贴板、另存为、快速保存和自定义命名规则。
+- 可选包含鼠标指针和延时截图。
 
-### 3.2 Annotation
+### 3.2 标注
 
-- Selection, rectangle, ellipse, line, arrow, freehand, and text.
-- Blur/mosaic, highlight, watermark, and sequence-number tools.
-- Stroke, fill, width, font, opacity, and layer controls.
-- Move, resize, rotate, duplicate, delete, undo, and redo.
-- An engine-neutral document model with a versioned serialization format.
-- Pixel-correct export independent of viewport scale.
+- 选择、矩形、椭圆、直线、箭头、自由画笔和文字。
+- 模糊/马赛克、高亮、水印和序号工具。
+- 描边、填充、线宽、字体、透明度和图层控制。
+- 移动、缩放、旋转、复制、删除、撤销和重做。
+- 与渲染引擎无关、支持版本升级的文档模型。
+- 导出结果以原图像素为准，不依赖当前视口缩放。
 
-### 3.3 Productivity
+### 3.3 效率功能
 
-- Pin one or more images as lightweight always-on-top windows.
-- Capture history with explicit retention and privacy controls.
-- OCR, QR recognition, and optional translation providers.
-- Open an existing local image in the annotation editor.
+- 一个或多个轻量置顶贴图窗口。
+- 带明确保留周期和隐私设置的截图历史。
+- OCR、二维码识别和可选翻译服务。
+- 打开本地图片并进入标注编辑器。
 
-### 3.4 Advanced capture
+### 3.4 高级捕获
 
-- Scrolling screenshot with manual and assisted capture modes.
-- Screen recording backed initially by an isolated FFmpeg process.
-- Display, window, and region recording with microphone and system audio where supported.
-- Pause, resume, stop, progress reporting, and recoverable process failure.
+- 支持手动和辅助模式的滚动截图。
+- 第一阶段使用隔离的 FFmpeg 外部进程实现录屏。
+- 在系统支持时录制显示器、窗口、区域、麦克风和系统声音。
+- 暂停、恢复、停止、进度反馈和可恢复的进程失败处理。
 
-### 3.5 Desktop integration
+### 3.5 桌面集成
 
-- Tray menu, single instance, optional startup, notifications, and updater.
-- Portable and installed configurations.
-- Structured logs and opt-in crash diagnostics without captured-image leakage.
+- 托盘菜单、单实例、可选开机启动、通知和更新。
+- 便携版与安装版配置。
+- 结构化日志和可选崩溃诊断，且不得泄漏截图内容。
 
-## 4. Non-functional requirements
+## 4. 非功能需求
 
-### 4.1 Performance budgets
+### 4.1 性能预算
 
-Initial Windows targets on a representative modern desktop:
+首批 Windows 目标以有代表性的现代桌面设备为基准：
 
-| Metric | Target |
+| 指标 | 目标 |
 | --- | --- |
-| Warm shortcut to usable overlay | p95 <= 100 ms |
-| Cold process start to ready | p95 <= 500 ms |
-| Idle CPU | effectively 0%, excluding explicit background work |
-| Idle working set | <= 80 MiB before optional OCR models are loaded |
-| 4K annotation interaction | p95 frame time <= 16.7 ms |
-| Simple capture copied to clipboard | p95 <= 250 ms from selection commit |
-| Repeated 100-capture resource growth | no unbounded handles, threads, textures, or memory |
+| 热启动快捷键到可交互覆盖层 | p95 不超过 100 ms |
+| 冷启动到应用就绪 | p95 不超过 500 ms |
+| 空闲 CPU | 除明确后台任务外接近 0% |
+| 空闲工作集 | 未加载可选 OCR 模型时不超过 80 MiB |
+| 4K 标注交互 | p95 帧时间不超过 16.7 ms |
+| 简单截图提交到剪贴板完成 | p95 不超过 250 ms |
+| 连续截图 100 次 | 句柄、线程、纹理和内存无无界增长 |
 
-Budgets must be measured in automated or repeatable benchmarks. They are hypotheses until the
-first platform spike records a baseline.
+以上预算必须通过自动化或可重复基准验证。在首个平台技术验证记录实际数据前，它们属于待验证目标。
 
-### 4.2 Stability
+### 4.2 稳定性
 
-- No panic or process termination for recoverable platform, I/O, model, or FFmpeg errors.
-- Capture and recording sessions use explicit state machines and deterministic cleanup.
-- Background work never blocks the GPUI foreground executor.
-- External processes belong to a lifecycle boundary and cannot remain orphaned after exit.
-- Persisted settings and documents use versioned schemas and safe migrations.
+- 可恢复的平台、I/O、模型或 FFmpeg 错误不得导致 panic 或进程退出。
+- 截图和录屏会话使用显式状态机和确定性资源清理。
+- 后台任务不得阻塞 GPUI 前台执行器。
+- 外部进程必须受生命周期边界管理，应用退出后不能残留。
+- 设置和文档使用带版本的数据结构和安全迁移。
 
-### 4.3 Privacy and security
+### 4.3 隐私与安全
 
-- Captured pixels remain local unless the user invokes an explicitly networked feature.
-- History is optional, visible, bounded, and clearable.
-- Logs never contain image data, recognized text, tokens, or private file contents.
-- Translation and update traffic clearly identifies its provider and failure behavior.
+- 除非用户明确调用联网功能，否则截图像素始终保留在本地。
+- 历史记录必须可选、可见、有容量边界且可清除。
+- 日志不得包含图片、识别文本、令牌或私有文件内容。
+- 翻译、更新等网络请求必须明确服务商及失败行为。
 
-## 5. Platform strategy
+## 5. 平台策略
 
-Windows is the first production platform. Use Windows Graphics Capture/Desktop Duplication,
-Windows UI Automation, native clipboard and window APIs behind platform traits. macOS follows
-with ScreenCaptureKit and Accessibility APIs. Linux is evaluated after the Windows workflow is
-stable because Wayland portal and compositor behavior require a separate product plan.
+Windows 是首个生产平台。通过平台接口封装 Windows Graphics Capture/Desktop Duplication、Windows UI Automation、原生剪贴板和窗口 API。
 
-## 6. Explicit non-goals for the first release
+macOS 后续使用 ScreenCaptureKit 和 Accessibility API。Linux 在 Windows 主链路稳定后再单独评估，因为 Wayland portal 与不同合成器行为需要独立的产品计划。
 
-- General-purpose collaborative whiteboarding.
-- Excalidraw document compatibility.
-- Browser or mobile versions.
-- Plugin APIs before the core capture workflow is stable.
-- Full feature parity across all operating systems on day one.
+## 6. 首版明确不做
 
-## 7. MVP acceptance
+- 通用协作白板。
+- Excalidraw 文档兼容。
+- 浏览器版或移动版。
+- 核心截图流程稳定前的插件 API。
+- 首日实现所有操作系统的完整功能对等。
 
-The first usable release must allow a Windows user to invoke a shortcut, select a correct region
-across mixed-DPI displays, annotate it with core tools, undo/redo, and copy or save a pixel-correct
-PNG. It must meet measured latency and repeated-use resource checks before advanced features are
-declared complete.
+## 7. MVP 验收标准
+
+首个可用版本必须允许 Windows 用户通过快捷键启动截图，在混合 DPI 显示器环境中正确选择区域，使用核心工具标注，执行撤销/重做，并将像素正确的 PNG 复制或保存。在高级功能被标记为完成前，主链路必须通过延迟和连续使用资源测试。
