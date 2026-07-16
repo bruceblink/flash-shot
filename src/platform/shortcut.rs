@@ -44,6 +44,7 @@ mod platform {
     };
 
     const HOTKEY_ID: i32 = 1;
+    const CAPTURE_MODIFIERS: u32 = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT;
 
     pub struct ShortcutListener {
         thread_id: u32,
@@ -52,11 +53,18 @@ mod platform {
 
     impl ShortcutListener {
         pub fn register() -> io::Result<(Self, Receiver<ShortcutEvent>)> {
+            Self::register_key(CAPTURE_MODIFIERS, VK_SNAPSHOT as u32)
+        }
+
+        pub(super) fn register_key(
+            modifiers: u32,
+            virtual_key: u32,
+        ) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
             let (event_tx, event_rx) = async_channel::bounded(1);
             let (ready_tx, ready_rx) = mpsc::sync_channel(1);
             let thread = thread::Builder::new()
                 .name("flash-shot-hotkey".to_owned())
-                .spawn(move || message_loop(event_tx, ready_tx))?;
+                .spawn(move || message_loop(event_tx, ready_tx, modifiers, virtual_key))?;
 
             match ready_rx.recv() {
                 Ok(Ok(thread_id)) => Ok((
@@ -97,19 +105,13 @@ mod platform {
     fn message_loop(
         events: async_channel::Sender<ShortcutEvent>,
         ready: SyncSender<io::Result<u32>>,
+        modifiers: u32,
+        virtual_key: u32,
     ) {
         // SAFETY: called from the listener thread itself.
         let thread_id = unsafe { GetCurrentThreadId() };
         // SAFETY: a null HWND registers a thread-level hotkey.
-        if unsafe {
-            RegisterHotKey(
-                ptr::null_mut(),
-                HOTKEY_ID,
-                MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-                VK_SNAPSHOT as u32,
-            )
-        } == 0
-        {
+        if unsafe { RegisterHotKey(ptr::null_mut(), HOTKEY_ID, modifiers, virtual_key) } == 0 {
             let _ = ready.send(Err(io::Error::last_os_error()));
             return;
         }
@@ -138,14 +140,17 @@ mod platform {
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
-    use super::GlobalShortcutService;
+    use super::platform::ShortcutListener;
+    #[cfg(windows)]
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, VK_F24};
 
     #[cfg(windows)]
     #[test]
     fn capture_hotkey_registers_and_stops_cleanly() {
-        let (service, _events) = GlobalShortcutService::register_capture().unwrap();
-        assert!(service.is_active());
-        drop(service);
+        let (listener, _events) =
+            ShortcutListener::register_key(MOD_NOREPEAT, VK_F24 as u32).unwrap();
+        assert!(listener.is_active());
+        drop(listener);
     }
 }
 
