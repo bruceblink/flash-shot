@@ -3,6 +3,7 @@
 pub mod app;
 pub mod diagnostics;
 pub mod domain;
+pub mod image;
 pub mod performance;
 pub mod platform;
 pub mod single_instance;

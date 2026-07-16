@@ -15,6 +15,7 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "819fe337999551ce8
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "819fe337999551ce8177b14c8db1127645617ae4", features = ["font-kit"] }
 log = { version = "0.4.28", features = ["std"] }
 directories = "6.0"
+png = "0.18"
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 
