@@ -1,0 +1,29 @@
+[package]
+name = "flash-shot"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "A fast, native screenshot and screen recording tool built with Rust and GPUI"
+repository = "https://github.com/bruceblink/flash-shot"
+license = "MIT"
+readme = "README.md"
+keywords = ["screenshot", "screen-recording", "desktop", "gpui"]
+categories = ["multimedia::images", "gui"]
+
+[dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "819fe337999551ce8177b14c8db1127645617ae4" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "819fe337999551ce8177b14c8db1127645617ae4", features = ["font-kit"] }
+log = { version = "0.4.28", features = ["std"] }
+tokio = { version = "1.0", features = ["full"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = { version = "0.11.8", default-features = false, features = ["auto-color", "humantime"] }
+mimalloc = "0.1.48"
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

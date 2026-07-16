@@ -1,0 +1,51 @@
+//! Flash Shot application library.
+
+pub mod app;
+pub mod domain;
+pub mod theme;
+
+use app::FlashShotApp;
+use gpui::*;
+
+actions!(flash_shot, [Quit]);
+
+fn build_menus() -> Vec<Menu> {
+    vec![Menu {
+        name: "Flash Shot".into(),
+        items: vec![MenuItem::action("Quit Flash Shot", Quit)],
+        disabled: false,
+    }]
+}
+
+/// Starts the native GPUI application.
+pub fn run() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build Tokio runtime");
+    let _guard = runtime.enter();
+
+    gpui_platform::application().run(move |cx| {
+        cx.set_menus(build_menus());
+        cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+        cx.bind_keys([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("ctrl-q", Quit, None),
+            KeyBinding::new("alt-f4", Quit, None),
+        ]);
+
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::centered(size(px(920.), px(760.)), cx)),
+            window_min_size: Some(size(px(680.), px(560.))),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Flash Shot".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        cx.open_window(options, |_, cx| cx.new(|_| FlashShotApp::new()))
+            .expect("failed to open Flash Shot window");
+        cx.activate(true);
+    });
+}
