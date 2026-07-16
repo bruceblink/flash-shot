@@ -1,0 +1,144 @@
+//! Machine-readable, bounded performance samples for release gates.
+
+use std::{
+    collections::VecDeque,
+    fs::{self, File, OpenOptions},
+    io::{self, BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+const REPORT_FILE: &str = "performance.jsonl";
+const MAX_SAMPLES: usize = 500;
+
+#[derive(Clone)]
+pub struct PerformanceRecorder {
+    report_path: Arc<PathBuf>,
+    write_lock: Arc<Mutex<()>>,
+}
+
+impl PerformanceRecorder {
+    pub fn new(directory: impl AsRef<Path>) -> io::Result<Self> {
+        fs::create_dir_all(directory.as_ref())?;
+        Ok(Self {
+            report_path: Arc::new(directory.as_ref().join(REPORT_FILE)),
+            write_lock: Arc::new(Mutex::new(())),
+        })
+    }
+
+    pub fn record_duration(&self, metric: &'static str, duration: Duration) {
+        if let Err(error) = self.append(metric, duration.as_secs_f64() * 1_000.0) {
+            log::warn!(
+                target: "flash_shot::performance",
+                "performance_sample_write_failed metric={metric} error={error}"
+            );
+        }
+    }
+
+    fn append(&self, metric: &str, value_ms: f64) -> io::Result<()> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| io::Error::other("performance recorder lock poisoned"))?;
+        let entry = serde_json::json!({
+            "schema_version": 1,
+            "timestamp_ms": unix_timestamp_ms(),
+            "metric": metric,
+            "unit": "ms",
+            "value": value_ms,
+        });
+
+        let mut samples = read_samples(&self.report_path)?;
+        samples.push_back(entry.to_string());
+        while samples.len() > MAX_SAMPLES {
+            samples.pop_front();
+        }
+        write_samples(&self.report_path, samples)
+    }
+}
+
+fn read_samples(path: &Path) -> io::Result<VecDeque<String>> {
+    let Some(file) = File::open(path).map(Some).or_else(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            Ok(None)
+        } else {
+            Err(error)
+        }
+    })?
+    else {
+        return Ok(VecDeque::new());
+    };
+
+    BufReader::new(file).lines().collect()
+}
+
+fn write_samples(path: &Path, samples: VecDeque<String>) -> io::Result<()> {
+    let temporary = path.with_extension("jsonl.tmp");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)?;
+    for sample in samples {
+        writeln!(file, "{sample}")?;
+    }
+    file.sync_all()?;
+    fs::rename(temporary, path)
+}
+
+fn unix_timestamp_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_SAMPLES, PerformanceRecorder, REPORT_FILE};
+    use std::{fs, time::Duration};
+
+    fn test_directory(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "flash-shot-performance-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    #[test]
+    fn duration_sample_is_machine_readable() {
+        let directory = test_directory("json");
+        let recorder = PerformanceRecorder::new(&directory).unwrap();
+
+        recorder.record_duration("startup_to_first_frame", Duration::from_millis(42));
+
+        let contents = fs::read_to_string(directory.join(REPORT_FILE)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["metric"], "startup_to_first_frame");
+        assert_eq!(value["unit"], "ms");
+        assert_eq!(value["value"], 42.0);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn report_has_a_fixed_sample_bound() {
+        let directory = test_directory("bound");
+        let recorder = PerformanceRecorder::new(&directory).unwrap();
+
+        for value in 0..=MAX_SAMPLES {
+            recorder
+                .append("sample", value as f64)
+                .expect("sample should be written");
+        }
+
+        let contents = fs::read_to_string(directory.join(REPORT_FILE)).unwrap();
+        assert_eq!(contents.lines().count(), MAX_SAMPLES);
+        let first: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+        assert_eq!(first["value"], 1.0);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}

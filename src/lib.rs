@@ -3,10 +3,13 @@
 pub mod app;
 pub mod diagnostics;
 pub mod domain;
+pub mod performance;
 pub mod theme;
 
 use app::FlashShotApp;
 use gpui::*;
+use performance::PerformanceRecorder;
+use std::time::Instant;
 
 actions!(flash_shot, [Quit]);
 
@@ -19,7 +22,7 @@ fn build_menus() -> Vec<Menu> {
 }
 
 /// Starts the native GPUI application.
-pub fn run() {
+pub fn run(started_at: Instant, performance: PerformanceRecorder) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -45,8 +48,14 @@ pub fn run() {
             ..Default::default()
         };
 
-        cx.open_window(options, |_, cx| cx.new(|_| FlashShotApp::new()))
-            .expect("failed to open Flash Shot window");
+        cx.open_window(options, move |window, cx| {
+            let performance = performance.clone();
+            window.on_next_frame(move |_, _| {
+                performance.record_duration("startup_to_first_frame", started_at.elapsed());
+            });
+            cx.new(|_| FlashShotApp::new())
+        })
+        .expect("failed to open Flash Shot window");
         cx.activate(true);
     });
 }
