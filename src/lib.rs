@@ -1,6 +1,7 @@
 //! Flash Shot application library.
 
 pub mod app;
+pub mod diagnostics;
 pub mod domain;
 pub mod theme;
 
