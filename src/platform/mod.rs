@@ -3,3 +3,4 @@
 pub mod capture;
 pub mod clipboard;
 pub mod display;
+pub mod shortcut;
