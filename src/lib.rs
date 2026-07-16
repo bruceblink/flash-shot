@@ -4,6 +4,7 @@ pub mod app;
 pub mod diagnostics;
 pub mod domain;
 pub mod performance;
+pub mod platform;
 pub mod single_instance;
 pub mod theme;
 
