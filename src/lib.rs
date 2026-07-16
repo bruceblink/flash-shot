@@ -4,6 +4,7 @@ pub mod app;
 pub mod diagnostics;
 pub mod domain;
 pub mod performance;
+pub mod single_instance;
 pub mod theme;
 
 use app::FlashShotApp;
@@ -22,11 +23,13 @@ fn build_menus() -> Vec<Menu> {
 }
 
 /// Starts the native GPUI application.
-pub fn run(started_at: Instant, performance: PerformanceRecorder) {
+pub fn run(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()
-        .expect("failed to build Tokio runtime");
+        .build()?;
     let _guard = runtime.enter();
 
     gpui_platform::application().run(move |cx| {
@@ -48,14 +51,18 @@ pub fn run(started_at: Instant, performance: PerformanceRecorder) {
             ..Default::default()
         };
 
-        cx.open_window(options, move |window, cx| {
+        if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             window.on_next_frame(move |_, _| {
                 performance.record_duration("startup_to_first_frame", started_at.elapsed());
             });
             cx.new(|_| FlashShotApp::new())
-        })
-        .expect("failed to open Flash Shot window");
+        }) {
+            log::error!(target: "flash_shot::lifecycle", "main_window_open_failed error={error}");
+            cx.quit();
+            return;
+        }
         cx.activate(true);
     });
+    Ok(())
 }
