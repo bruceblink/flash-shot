@@ -1,6 +1,7 @@
 //! Process-wide screenshot hotkey registration and lifecycle.
 
-use std::{io, sync::mpsc::Receiver};
+use async_channel::Receiver;
+use std::io;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShortcutEvent {
@@ -25,9 +26,10 @@ impl GlobalShortcutService {
 #[cfg(windows)]
 mod platform {
     use super::ShortcutEvent;
+    use async_channel::Receiver;
     use std::{
         io, ptr,
-        sync::mpsc::{self, Receiver, SyncSender},
+        sync::mpsc::{self, SyncSender},
         thread::{self, JoinHandle},
     };
     use windows_sys::Win32::{
@@ -50,7 +52,7 @@ mod platform {
 
     impl ShortcutListener {
         pub fn register() -> io::Result<(Self, Receiver<ShortcutEvent>)> {
-            let (event_tx, event_rx) = mpsc::sync_channel(1);
+            let (event_tx, event_rx) = async_channel::bounded(1);
             let (ready_tx, ready_rx) = mpsc::sync_channel(1);
             let thread = thread::Builder::new()
                 .name("flash-shot-hotkey".to_owned())
@@ -92,7 +94,10 @@ mod platform {
         }
     }
 
-    fn message_loop(events: SyncSender<ShortcutEvent>, ready: SyncSender<io::Result<u32>>) {
+    fn message_loop(
+        events: async_channel::Sender<ShortcutEvent>,
+        ready: SyncSender<io::Result<u32>>,
+    ) {
         // SAFETY: called from the listener thread itself.
         let thread_id = unsafe { GetCurrentThreadId() };
         // SAFETY: a null HWND registers a thread-level hotkey.
@@ -147,7 +152,8 @@ mod tests {
 #[cfg(not(windows))]
 mod platform {
     use super::ShortcutEvent;
-    use std::{io, sync::mpsc::Receiver};
+    use async_channel::Receiver;
+    use std::io;
 
     pub struct ShortcutListener;
 

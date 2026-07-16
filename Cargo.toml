@@ -11,6 +11,7 @@ keywords = ["screenshot", "screen-recording", "desktop", "gpui"]
 categories = ["multimedia::images", "gui"]
 
 [dependencies]
+async-channel = "2.5"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "819fe337999551ce8177b14c8db1127645617ae4" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "819fe337999551ce8177b14c8db1127645617ae4", features = ["font-kit"] }
 log = { version = "0.4.28", features = ["std"] }

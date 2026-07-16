@@ -55,10 +55,11 @@ pub fn run(
 
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
+            let startup_performance = performance.clone();
             window.on_next_frame(move |_, _| {
-                performance.record_duration("startup_to_first_frame", started_at.elapsed());
+                startup_performance.record_duration("startup_to_first_frame", started_at.elapsed());
             });
-            cx.new(|_| FlashShotApp::new())
+            cx.new(|cx| FlashShotApp::new(performance, cx))
         }) {
             log::error!(target: "flash_shot::lifecycle", "main_window_open_failed error={error}");
             cx.quit();
