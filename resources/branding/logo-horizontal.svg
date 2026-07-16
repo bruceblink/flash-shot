@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 320" role="img" aria-label="Flash Shot">
+  <g transform="translate(24 24) scale(.53125)">
+    <rect width="512" height="512" rx="108" fill="#12161c"/>
+    <path d="M112 212V128h84M316 128h84v84M400 300v84h-84M196 384h-84v-84"
+          fill="none" stroke="#55d6be" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M287 92 178 278h74l-27 142 109-187h-75z"
+          fill="#ffd166" stroke="#12161c" stroke-width="12" stroke-linejoin="round"/>
+  </g>
+  <text x="340" y="198" fill="#12161c" font-family="Segoe UI, Inter, sans-serif"
+        font-size="118" font-weight="700" letter-spacing="0">Flash Shot</text>
+  <text x="347" y="251" fill="#4d5967" font-family="Segoe UI, Inter, sans-serif"
+        font-size="31" font-weight="500" letter-spacing="0">CAPTURE AT THE SPEED OF THOUGHT</text>
+</svg>

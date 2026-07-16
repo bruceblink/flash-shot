@@ -1,5 +1,9 @@
 # Flash Shot
 
+<p align="center">
+  <img src="resources/branding/logo-horizontal.svg" alt="Flash Shot" width="560">
+</p>
+
 [中文](#中文) | [English](#english)
 
 ## 中文
