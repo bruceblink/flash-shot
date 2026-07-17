@@ -3,8 +3,8 @@
 use std::{sync::Arc, time::Instant};
 
 use gpui::{
-    AsyncApp, Bounds, Context, Image, ImageFormat, KeyDownEvent, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, WeakEntity,
+    AsyncApp, Bounds, Context, Image, ImageFormat, KeyDownEvent, Keystroke, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, WeakEntity,
 };
 
 use super::FlashShotApp;
@@ -62,6 +62,9 @@ impl FlashShotApp {
         started_at: Instant,
         cx: &mut Context<Self>,
     ) {
+        if self.session.state() != CaptureSessionState::Capturing {
+            return;
+        }
         match result {
             Ok((frame, png)) => {
                 if let Err(error) = self.session.frames_ready() {
@@ -92,17 +95,18 @@ impl FlashShotApp {
     }
 
     pub(super) fn reset(&mut self, cx: &mut Context<Self>) {
-        if matches!(
-            self.session.state(),
-            CaptureSessionState::Selecting
-                | CaptureSessionState::Completed
-                | CaptureSessionState::Cancelled
-                | CaptureSessionState::Failed
-        ) {
-            if self.session.state() == CaptureSessionState::Selecting {
+        match self.session.state() {
+            CaptureSessionState::Capturing | CaptureSessionState::Selecting => {
                 let _ = self.session.cancel();
+                let _ = self.session.reset();
             }
-            let _ = self.session.reset();
+            CaptureSessionState::Completed
+            | CaptureSessionState::Cancelled
+            | CaptureSessionState::Failed => {
+                let _ = self.session.reset();
+            }
+            CaptureSessionState::Idle => {}
+            CaptureSessionState::Exporting => return,
         }
         self.frame = None;
         self.preview = None;
@@ -128,36 +132,55 @@ impl FlashShotApp {
         }
     }
 
-    pub(super) fn nudge_selection(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        if event.keystroke.modifiers.control
-            || event.keystroke.modifiers.alt
-            || event.keystroke.modifiers.platform
-            || event.keystroke.modifiers.function
-        {
+    pub(super) fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let Some(command) = keyboard_command(&event.keystroke) else {
             return;
+        };
+        let handled = match command {
+            KeyboardCommand::Cancel => {
+                if matches!(
+                    self.session.state(),
+                    CaptureSessionState::Capturing
+                        | CaptureSessionState::Selecting
+                        | CaptureSessionState::Completed
+                        | CaptureSessionState::Failed
+                ) {
+                    self.reset(cx);
+                    true
+                } else {
+                    false
+                }
+            }
+            KeyboardCommand::Copy => {
+                if self.session.state() == CaptureSessionState::Selecting
+                    && self.session.selection().is_some()
+                {
+                    self.copy_selection(cx);
+                    true
+                } else {
+                    false
+                }
+            }
+            KeyboardCommand::Nudge(delta_x, delta_y) => self.nudge_selection(delta_x, delta_y, cx),
+        };
+        if handled {
+            cx.stop_propagation();
         }
-        let step = if event.keystroke.modifiers.shift {
-            10
-        } else {
-            1
-        };
-        let (delta_x, delta_y) = match event.keystroke.key.as_str() {
-            "left" => (-step, 0),
-            "right" => (step, 0),
-            "up" => (0, -step),
-            "down" => (0, step),
-            _ => return,
-        };
+    }
+
+    fn nudge_selection(&mut self, delta_x: i32, delta_y: i32, cx: &mut Context<Self>) -> bool {
         let Some(frame) = self.frame.as_ref() else {
-            return;
+            return false;
         };
         let Some(selection) = self.selection_drag.nudge(frame.bounds, delta_x, delta_y) else {
-            return;
+            return false;
         };
         if self.session.select(selection).is_ok() {
             self.status = selection_status(selection);
-            cx.stop_propagation();
             cx.notify();
+            true
+        } else {
+            false
         }
     }
 
@@ -357,9 +380,44 @@ fn selection_status(selection: PhysicalRect) -> String {
     )
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KeyboardCommand {
+    Cancel,
+    Copy,
+    Nudge(i32, i32),
+}
+
+fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
+    let modifiers = keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+        return None;
+    }
+    match keystroke.key.as_str() {
+        "escape" if !modifiers.shift => Some(KeyboardCommand::Cancel),
+        "enter" if !modifiers.shift => Some(KeyboardCommand::Copy),
+        "left" => Some(KeyboardCommand::Nudge(
+            if modifiers.shift { -10 } else { -1 },
+            0,
+        )),
+        "right" => Some(KeyboardCommand::Nudge(
+            if modifiers.shift { 10 } else { 1 },
+            0,
+        )),
+        "up" => Some(KeyboardCommand::Nudge(
+            0,
+            if modifiers.shift { -10 } else { -1 },
+        )),
+        "down" => Some(KeyboardCommand::Nudge(
+            0,
+            if modifiers.shift { 10 } else { 1 },
+        )),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::copy_frame_selection;
+    use super::{KeyboardCommand, copy_frame_selection, keyboard_command};
     use crate::{
         domain::geometry::PhysicalRect,
         platform::{
@@ -367,6 +425,7 @@ mod tests {
             clipboard::ClipboardService,
         },
     };
+    use gpui::Keystroke;
     use std::{cell::RefCell, io, sync::Arc, time::Duration};
 
     #[derive(Default)]
@@ -421,6 +480,30 @@ mod tests {
         assert_eq!(
             copied.pixels.as_ref(),
             &[4, 5, 6, 255, 7, 8, 9, 255, 13, 14, 15, 255, 16, 17, 18, 255]
+        );
+    }
+
+    #[test]
+    fn keyboard_commands_cover_confirm_cancel_and_physical_nudging() {
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("enter").unwrap()),
+            Some(KeyboardCommand::Copy)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("escape").unwrap()),
+            Some(KeyboardCommand::Cancel)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("left").unwrap()),
+            Some(KeyboardCommand::Nudge(-1, 0))
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("shift-down").unwrap()),
+            Some(KeyboardCommand::Nudge(0, 10))
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-enter").unwrap()),
+            None
         );
     }
 }

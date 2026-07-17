@@ -102,7 +102,7 @@ impl Render for FlashShotApp {
         div()
             .size_full()
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event, _, cx| this.nudge_selection(event, cx)))
+            .on_key_down(cx.listener(|this, event, _, cx| this.handle_key_down(event, cx)))
             .flex()
             .flex_col()
             .bg(colors.background)
