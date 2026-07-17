@@ -39,6 +39,31 @@ impl DisplayProvider for SystemDisplayProvider {
     }
 }
 
+pub fn virtual_desktop_bounds(displays: &[DisplayInfo]) -> io::Result<PhysicalRect> {
+    let first = displays.first().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "virtual desktop requires at least one display",
+        )
+    })?;
+    let bounds = displays
+        .iter()
+        .skip(1)
+        .fold(first.physical_bounds, |bounds, display| PhysicalRect {
+            left: bounds.left.min(display.physical_bounds.left),
+            top: bounds.top.min(display.physical_bounds.top),
+            right: bounds.right.max(display.physical_bounds.right),
+            bottom: bounds.bottom.max(display.physical_bounds.bottom),
+        });
+    if bounds.width() == 0 || bounds.height() == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "virtual desktop has invalid physical bounds",
+        ));
+    }
+    Ok(bounds)
+}
+
 #[cfg(windows)]
 mod platform {
     use super::{DisplayInfo, DisplayRotation};
@@ -184,8 +209,10 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
+    use super::{DisplayInfo, DisplayRotation, virtual_desktop_bounds};
     #[cfg(windows)]
     use super::{DisplayProvider, SystemDisplayProvider};
+    use crate::domain::geometry::PhysicalRect;
 
     #[cfg(windows)]
     #[test]
@@ -201,5 +228,58 @@ mod tests {
                 && display.dpi_y > 0
         }));
         assert!(displays.iter().any(|display| display.primary));
+    }
+
+    #[test]
+    fn virtual_desktop_includes_negative_and_staggered_displays() {
+        let display = |physical_bounds| DisplayInfo {
+            id: String::new(),
+            physical_bounds,
+            work_area: physical_bounds,
+            dpi_x: 96,
+            dpi_y: 96,
+            scale_factor: 1.0,
+            rotation: DisplayRotation::Landscape,
+            bits_per_pixel: 32,
+            primary: false,
+        };
+        let displays = [
+            display(PhysicalRect {
+                left: -2560,
+                top: -200,
+                right: 0,
+                bottom: 1240,
+            }),
+            display(PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1080,
+            }),
+            display(PhysicalRect {
+                left: 1920,
+                top: 300,
+                right: 3000,
+                bottom: 2220,
+            }),
+        ];
+
+        assert_eq!(
+            virtual_desktop_bounds(&displays).unwrap(),
+            PhysicalRect {
+                left: -2560,
+                top: -200,
+                right: 3000,
+                bottom: 2220,
+            }
+        );
+    }
+
+    #[test]
+    fn virtual_desktop_rejects_an_empty_display_set() {
+        assert_eq!(
+            virtual_desktop_bounds(&[]).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
     }
 }

@@ -35,7 +35,7 @@ impl FlashShotApp {
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
-        self.status = "Capturing primary display...".to_owned();
+        self.status = "Capturing virtual desktop...".to_owned();
         cx.notify();
 
         let started_at = Instant::now();
@@ -44,7 +44,7 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { capture_primary_display() })
+                    .spawn(async move { capture_virtual_desktop() })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
@@ -58,7 +58,7 @@ impl FlashShotApp {
 
     fn finish_capture(
         &mut self,
-        result: std::io::Result<(CaptureFrame, Vec<u8>)>,
+        result: std::io::Result<CapturedDesktop>,
         started_at: Instant,
         cx: &mut Context<Self>,
     ) {
@@ -66,7 +66,7 @@ impl FlashShotApp {
             return;
         }
         match result {
-            Ok((frame, png)) => {
+            Ok(capture) => {
                 if let Err(error) = self.session.frames_ready() {
                     self.status = error.to_string();
                     cx.notify();
@@ -75,14 +75,15 @@ impl FlashShotApp {
                 self.performance
                     .record_duration("shortcut_to_frame_ready", started_at.elapsed());
                 self.status = format!(
-                    "{} x {} physical pixels - {:.1} ms - {} CPU copy",
-                    frame.width,
-                    frame.height,
-                    frame.capture_duration.as_secs_f64() * 1_000.0,
-                    frame.cpu_copy_count
+                    "{} x {} physical pixels - {} display(s) - {:.1} ms - {} CPU copy",
+                    capture.frame.width,
+                    capture.frame.height,
+                    capture.display_count,
+                    capture.frame.capture_duration.as_secs_f64() * 1_000.0,
+                    capture.frame.cpu_copy_count
                 );
-                self.preview = Some(Arc::new(Image::from_bytes(ImageFormat::Png, png)));
-                self.frame = Some(frame);
+                self.preview = Some(Arc::new(Image::from_bytes(ImageFormat::Png, capture.png)));
+                self.frame = Some(capture.frame);
             }
             Err(error) => {
                 let message = format!("Capture failed: {error}");
@@ -401,17 +402,22 @@ impl FlashShotApp {
     }
 }
 
-fn capture_primary_display() -> std::io::Result<(CaptureFrame, Vec<u8>)> {
-    let display = SystemDisplayProvider
-        .displays()?
-        .into_iter()
-        .find(|display| display.primary)
-        .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "primary display missing")
-        })?;
-    let frame = SystemCaptureBackend.capture(display.physical_bounds)?;
+struct CapturedDesktop {
+    frame: CaptureFrame,
+    png: Vec<u8>,
+    display_count: usize,
+}
+
+fn capture_virtual_desktop() -> std::io::Result<CapturedDesktop> {
+    let displays = SystemDisplayProvider.displays()?;
+    let bounds = crate::platform::display::virtual_desktop_bounds(&displays)?;
+    let frame = SystemCaptureBackend.capture(bounds)?;
     let png = frame.encode_png()?;
-    Ok((frame, png))
+    Ok(CapturedDesktop {
+        frame,
+        png,
+        display_count: displays.len(),
+    })
 }
 
 fn copy_frame_selection(

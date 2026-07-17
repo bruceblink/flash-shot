@@ -294,25 +294,22 @@ mod tests {
     use super::{CaptureBackend, CaptureFrame, PixelColor, PixelFormat, SystemCaptureBackend};
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     #[cfg(windows)]
-    use crate::platform::display::{DisplayProvider, SystemDisplayProvider};
+    use crate::platform::display::{
+        DisplayProvider, SystemDisplayProvider, virtual_desktop_bounds,
+    };
     use std::{sync::Arc, time::Duration};
 
     #[cfg(windows)]
     #[test]
-    fn captures_an_immutable_primary_display_frame() {
-        let display = SystemDisplayProvider
-            .displays()
-            .unwrap()
-            .into_iter()
-            .find(|display| display.primary)
-            .unwrap();
+    fn captures_an_immutable_virtual_desktop_frame() {
+        let displays = SystemDisplayProvider.displays().unwrap();
+        let bounds = virtual_desktop_bounds(&displays).unwrap();
 
-        let frame = SystemCaptureBackend
-            .capture(display.physical_bounds)
-            .unwrap();
+        let frame = SystemCaptureBackend.capture(bounds).unwrap();
 
-        assert_eq!(frame.width, display.physical_bounds.width());
-        assert_eq!(frame.height, display.physical_bounds.height());
+        assert_eq!(frame.bounds, bounds);
+        assert_eq!(frame.width, bounds.width());
+        assert_eq!(frame.height, bounds.height());
         assert_eq!(frame.pixels.len(), frame.stride * frame.height as usize);
         assert_eq!(frame.cpu_copy_count, 1);
         assert!(frame.pixels.iter().any(|value| *value != 0));
