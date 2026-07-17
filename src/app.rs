@@ -10,6 +10,7 @@ use gpui::{
 
 use crate::{
     domain::{
+        geometry::PhysicalPoint,
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
         session::{CaptureSession, CaptureSessionState},
     },
@@ -28,6 +29,7 @@ pub struct FlashShotApp {
     frame: Option<CaptureFrame>,
     preview: Option<Arc<Image>>,
     selection_drag: SelectionDrag,
+    hover_pixel: Option<PhysicalPoint>,
     focus_handle: FocusHandle,
     status: String,
     performance: PerformanceRecorder,
@@ -58,6 +60,7 @@ impl FlashShotApp {
             frame: None,
             preview: None,
             selection_drag: SelectionDrag::default(),
+            hover_pixel: None,
             focus_handle: cx.focus_handle(),
             status,
             performance,
@@ -93,6 +96,7 @@ impl FlashShotApp {
         self.frame = None;
         self.preview = None;
         self.selection_drag.clear();
+        self.hover_pixel = None;
         self.status = "Capturing primary display...".to_owned();
         cx.notify();
 
@@ -165,6 +169,7 @@ impl FlashShotApp {
         self.frame = None;
         self.preview = None;
         self.selection_drag.clear();
+        self.hover_pixel = None;
         self.status = "Ready - Ctrl+Shift+Print Screen".to_owned();
         cx.notify();
     }
@@ -228,6 +233,7 @@ impl FlashShotApp {
         viewport: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) {
+        self.update_hover_pixel(event, viewport, cx);
         if !event.dragging() {
             return;
         }
@@ -250,6 +256,49 @@ impl FlashShotApp {
             }
             cx.notify();
         }
+    }
+
+    fn update_hover_pixel(
+        &mut self,
+        event: &MouseMoveEvent,
+        viewport: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let hover_pixel = self
+            .preview_transform(viewport)
+            .and_then(|transform| transform.view_to_pixel(view_point(event.position)));
+        if self.hover_pixel == hover_pixel {
+            return;
+        }
+        self.hover_pixel = hover_pixel;
+        if let Some((point, color)) = hover_pixel.and_then(|point| {
+            self.frame
+                .as_ref()?
+                .pixel_at(point)
+                .map(|color| (point, color))
+        }) {
+            self.status = if let Some(selection) = self.selection_drag.selection() {
+                format!(
+                    "{} x {} px | ({}, {}) {}",
+                    selection.width(),
+                    selection.height(),
+                    point.x,
+                    point.y,
+                    color.hex_rgb()
+                )
+            } else {
+                format!("({}, {}) {}", point.x, point.y, color.hex_rgb())
+            };
+        } else if let Some(selection) = self.selection_drag.selection() {
+            self.status = format!(
+                "{} x {} physical pixels",
+                selection.width(),
+                selection.height()
+            );
+        } else if let Some(frame) = self.frame.as_ref() {
+            self.status = format!("{} x {} physical pixels", frame.width, frame.height);
+        }
+        cx.notify();
     }
 
     fn finish_selection(
@@ -324,6 +373,72 @@ fn view_point(position: gpui::Point<Pixels>) -> ViewPoint {
     }
 }
 
+fn paint_magnifier(
+    window: &mut Window,
+    viewport: Bounds<Pixels>,
+    transform: PreviewTransform,
+    frame: &CaptureFrame,
+    hover_pixel: PhysicalPoint,
+    colors: ThemeColors,
+) {
+    const GRID_RADIUS: i32 = 4;
+    const CELL_SIZE: f32 = 10.0;
+    const GRID_SIZE: f32 = CELL_SIZE * (GRID_RADIUS as f32 * 2.0 + 1.0);
+    const PADDING: f32 = 3.0;
+    const OFFSET: f32 = 18.0;
+
+    let cursor = transform.physical_to_view(hover_pixel);
+    let viewport = view_rect(viewport);
+    let panel_size = GRID_SIZE + PADDING * 2.0;
+    let left = if cursor.x + OFFSET + panel_size <= viewport.right() {
+        cursor.x + OFFSET
+    } else {
+        cursor.x - OFFSET - panel_size
+    }
+    .clamp(
+        viewport.left,
+        (viewport.right() - panel_size).max(viewport.left),
+    );
+    let top = if cursor.y + OFFSET + panel_size <= viewport.bottom() {
+        cursor.y + OFFSET
+    } else {
+        cursor.y - OFFSET - panel_size
+    }
+    .clamp(
+        viewport.top,
+        (viewport.bottom() - panel_size).max(viewport.top),
+    );
+
+    let panel_bounds = Bounds::new(
+        point(px(left), px(top)),
+        size(px(panel_size), px(panel_size)),
+    );
+    window.paint_quad(fill(panel_bounds, colors.panel));
+    window.paint_quad(outline(panel_bounds, colors.border, BorderStyle::Solid));
+
+    for row in -GRID_RADIUS..=GRID_RADIUS {
+        for column in -GRID_RADIUS..=GRID_RADIUS {
+            let sample = PhysicalPoint {
+                x: (hover_pixel.x + column).clamp(frame.bounds.left, frame.bounds.right - 1),
+                y: (hover_pixel.y + row).clamp(frame.bounds.top, frame.bounds.bottom - 1),
+            };
+            let Some(color) = frame.pixel_at(sample) else {
+                continue;
+            };
+            let cell_left = left + PADDING + (column + GRID_RADIUS) as f32 * CELL_SIZE;
+            let cell_top = top + PADDING + (row + GRID_RADIUS) as f32 * CELL_SIZE;
+            let cell_bounds = Bounds::new(
+                point(px(cell_left), px(cell_top)),
+                size(px(CELL_SIZE), px(CELL_SIZE)),
+            );
+            window.paint_quad(fill(cell_bounds, gpui::rgba(color.rgba_u32())));
+            if row == 0 && column == 0 {
+                window.paint_quad(outline(cell_bounds, colors.accent, BorderStyle::Solid));
+            }
+        }
+    }
+}
+
 impl Render for FlashShotApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = self.colors;
@@ -331,7 +446,9 @@ impl Render for FlashShotApp {
         let is_busy = self.session.state() == CaptureSessionState::Capturing;
         let preview = self.preview.clone();
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
+        let frame = self.frame.clone();
         let selection = self.selection_drag.selection();
+        let hover_pixel = self.hover_pixel;
         let viewport_bounds = Rc::new(Cell::new(Bounds::default()));
 
         div()
@@ -420,12 +537,18 @@ impl Render for FlashShotApp {
                                         canvas(
                                             move |bounds, _, _| {
                                                 measured_bounds.set(bounds);
-                                                (frame_bounds, selection)
+                                                (
+                                                    frame.clone(),
+                                                    frame_bounds,
+                                                    selection,
+                                                    hover_pixel,
+                                                )
                                             },
-                                            move |bounds, (frame_bounds, selection), window, _| {
-                                                let Some((frame_bounds, selection)) =
-                                                    frame_bounds.zip(selection)
-                                                else {
+                                            move |bounds,
+                                                  (frame, frame_bounds, selection, hover_pixel),
+                                                  window,
+                                                  _| {
+                                                let Some(frame_bounds) = frame_bounds else {
                                                     return;
                                                 };
                                                 let Some(transform) = PreviewTransform::contain(
@@ -434,51 +557,64 @@ impl Render for FlashShotApp {
                                                 ) else {
                                                     return;
                                                 };
-                                                let start = transform.physical_to_view(
-                                                    crate::domain::geometry::PhysicalPoint {
-                                                        x: selection.left,
-                                                        y: selection.top,
-                                                    },
-                                                );
-                                                let end = transform.physical_to_view(
-                                                    crate::domain::geometry::PhysicalPoint {
-                                                        x: selection.right,
-                                                        y: selection.bottom,
-                                                    },
-                                                );
-                                                window.paint_quad(outline(
-                                                    Bounds::new(
-                                                        point(px(start.x), px(start.y)),
-                                                        size(
-                                                            px(end.x - start.x),
-                                                            px(end.y - start.y),
-                                                        ),
-                                                    ),
-                                                    colors.accent,
-                                                    BorderStyle::Solid,
-                                                ));
-                                                for handle in [
-                                                    start,
-                                                    ViewPoint {
-                                                        x: end.x,
-                                                        y: start.y,
-                                                    },
-                                                    ViewPoint {
-                                                        x: start.x,
-                                                        y: end.y,
-                                                    },
-                                                    end,
-                                                ] {
-                                                    window.paint_quad(fill(
+                                                if let Some(selection) = selection {
+                                                    let start =
+                                                        transform.physical_to_view(PhysicalPoint {
+                                                            x: selection.left,
+                                                            y: selection.top,
+                                                        });
+                                                    let end =
+                                                        transform.physical_to_view(PhysicalPoint {
+                                                            x: selection.right,
+                                                            y: selection.bottom,
+                                                        });
+                                                    window.paint_quad(outline(
                                                         Bounds::new(
-                                                            point(
-                                                                px(handle.x - 4.0),
-                                                                px(handle.y - 4.0),
+                                                            point(px(start.x), px(start.y)),
+                                                            size(
+                                                                px(end.x - start.x),
+                                                                px(end.y - start.y),
                                                             ),
-                                                            size(px(8.0), px(8.0)),
                                                         ),
                                                         colors.accent,
+                                                        BorderStyle::Solid,
                                                     ));
+                                                    for handle in [
+                                                        start,
+                                                        ViewPoint {
+                                                            x: end.x,
+                                                            y: start.y,
+                                                        },
+                                                        ViewPoint {
+                                                            x: start.x,
+                                                            y: end.y,
+                                                        },
+                                                        end,
+                                                    ] {
+                                                        window.paint_quad(fill(
+                                                            Bounds::new(
+                                                                point(
+                                                                    px(handle.x - 4.0),
+                                                                    px(handle.y - 4.0),
+                                                                ),
+                                                                size(px(8.0), px(8.0)),
+                                                            ),
+                                                            colors.accent,
+                                                        ));
+                                                    }
+                                                }
+
+                                                if let Some((frame, hover_pixel)) =
+                                                    frame.zip(hover_pixel)
+                                                {
+                                                    paint_magnifier(
+                                                        window,
+                                                        bounds,
+                                                        transform,
+                                                        &frame,
+                                                        hover_pixel,
+                                                        colors,
+                                                    );
                                                 }
                                             },
                                         )

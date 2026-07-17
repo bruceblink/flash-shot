@@ -146,6 +146,24 @@ impl PreviewTransform {
                 .then_some(handle)
         })
     }
+
+    pub fn view_to_pixel(self, point: ViewPoint) -> Option<PhysicalPoint> {
+        if !self.fitted_view.contains(point) {
+            return None;
+        }
+        let normalized_x =
+            ((point.x - self.fitted_view.left) / self.fitted_view.width).clamp(0.0, 1.0);
+        let normalized_y =
+            ((point.y - self.fitted_view.top) / self.fitted_view.height).clamp(0.0, 1.0);
+        Some(PhysicalPoint {
+            x: self.image_bounds.left
+                + ((normalized_x * self.image_bounds.width() as f32).floor() as i32)
+                    .min(self.image_bounds.width() as i32 - 1),
+            y: self.image_bounds.top
+                + ((normalized_y * self.image_bounds.height() as f32).floor() as i32)
+                    .min(self.image_bounds.height() as i32 - 1),
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -323,6 +341,25 @@ mod tests {
                 right: -100,
                 bottom: 900,
             })
+        );
+    }
+
+    #[test]
+    fn pixel_mapping_keeps_the_bottom_right_edge_inside_the_image() {
+        let transform = PreviewTransform::contain(
+            image_bounds(),
+            ViewRect {
+                left: 0.0,
+                top: 0.0,
+                width: 960.0,
+                height: 540.0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            transform.view_to_pixel(ViewPoint { x: 960.0, y: 540.0 }),
+            Some(PhysicalPoint { x: -1, y: 1079 })
         );
     }
 

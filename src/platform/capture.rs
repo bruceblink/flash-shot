@@ -2,11 +2,29 @@
 
 use std::{io, sync::Arc, time::Duration};
 
-use crate::domain::geometry::PhysicalRect;
+use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PixelFormat {
     Bgra8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PixelColor {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub alpha: u8,
+}
+
+impl PixelColor {
+    pub fn hex_rgb(self) -> String {
+        format!("#{:02X}{:02X}{:02X}", self.red, self.green, self.blue)
+    }
+
+    pub const fn rgba_u32(self) -> u32 {
+        u32::from_be_bytes([self.red, self.green, self.blue, self.alpha])
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +58,23 @@ impl CaptureFrame {
             ));
         }
         Ok(())
+    }
+
+    pub fn pixel_at(&self, point: PhysicalPoint) -> Option<PixelColor> {
+        if self.format != PixelFormat::Bgra8 {
+            return None;
+        }
+        let local = self.bounds.translate_to_local(point)?;
+        let offset = (local.y as usize)
+            .checked_mul(self.stride)?
+            .checked_add(local.x as usize * 4)?;
+        let pixel = self.pixels.get(offset..offset + 4)?;
+        Some(PixelColor {
+            red: pixel[2],
+            green: pixel[1],
+            blue: pixel[0],
+            alpha: pixel[3],
+        })
     }
 }
 
@@ -256,9 +291,11 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{CaptureBackend, SystemCaptureBackend};
+    use super::{CaptureBackend, CaptureFrame, PixelColor, PixelFormat, SystemCaptureBackend};
+    use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     #[cfg(windows)]
     use crate::platform::display::{DisplayProvider, SystemDisplayProvider};
+    use std::{sync::Arc, time::Duration};
 
     #[cfg(windows)]
     #[test]
@@ -279,5 +316,48 @@ mod tests {
         assert_eq!(frame.pixels.len(), frame.stride * frame.height as usize);
         assert_eq!(frame.cpu_copy_count, 1);
         assert!(frame.pixels.iter().any(|value| *value != 0));
+    }
+
+    #[test]
+    fn samples_bgra_pixels_by_virtual_desktop_coordinate() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: -2,
+                top: 10,
+                right: 0,
+                bottom: 11,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([0x33, 0x22, 0x11, 0xFF, 0xCC, 0xBB, 0xAA, 0x80]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        assert_eq!(
+            frame.pixel_at(PhysicalPoint { x: -1, y: 10 }),
+            Some(PixelColor {
+                red: 0xAA,
+                green: 0xBB,
+                blue: 0xCC,
+                alpha: 0x80,
+            })
+        );
+        assert_eq!(frame.pixel_at(PhysicalPoint { x: 0, y: 10 }), None);
+    }
+
+    #[test]
+    fn formats_sampled_colors_for_display_and_gpui() {
+        let color = PixelColor {
+            red: 0x12,
+            green: 0xAB,
+            blue: 0x05,
+            alpha: 0xFF,
+        };
+
+        assert_eq!(color.hex_rgb(), "#12AB05");
+        assert_eq!(color.rgba_u32(), 0x12AB05FF);
     }
 }
