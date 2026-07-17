@@ -3,9 +3,9 @@
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Instant};
 
 use gpui::{
-    AsyncApp, BorderStyle, Bounds, Context, Image, ImageFormat, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render, WeakEntity, Window, canvas, div, fill,
-    img, outline, point, prelude::*, px, size,
+    AsyncApp, BorderStyle, Bounds, Context, FocusHandle, Focusable, Image, ImageFormat,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels,
+    Render, WeakEntity, Window, canvas, div, fill, img, outline, point, prelude::*, px, size,
 };
 
 use crate::{
@@ -28,6 +28,7 @@ pub struct FlashShotApp {
     frame: Option<CaptureFrame>,
     preview: Option<Arc<Image>>,
     selection_drag: SelectionDrag,
+    focus_handle: FocusHandle,
     status: String,
     performance: PerformanceRecorder,
     _shortcut: Option<GlobalShortcutService>,
@@ -57,6 +58,7 @@ impl FlashShotApp {
             frame: None,
             preview: None,
             selection_drag: SelectionDrag::default(),
+            focus_handle: cx.focus_handle(),
             status,
             performance,
             _shortcut: shortcut,
@@ -183,6 +185,43 @@ impl FlashShotApp {
         }
     }
 
+    fn nudge_selection(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if event.keystroke.modifiers.control
+            || event.keystroke.modifiers.alt
+            || event.keystroke.modifiers.platform
+            || event.keystroke.modifiers.function
+        {
+            return;
+        }
+        let step = if event.keystroke.modifiers.shift {
+            10
+        } else {
+            1
+        };
+        let (delta_x, delta_y) = match event.keystroke.key.as_str() {
+            "left" => (-step, 0),
+            "right" => (step, 0),
+            "up" => (0, -step),
+            "down" => (0, step),
+            _ => return,
+        };
+        let Some(frame) = self.frame.as_ref() else {
+            return;
+        };
+        let Some(selection) = self.selection_drag.nudge(frame.bounds, delta_x, delta_y) else {
+            return;
+        };
+        if self.session.select(selection).is_ok() {
+            self.status = format!(
+                "Selection: {} x {} physical pixels",
+                selection.width(),
+                selection.height()
+            );
+            cx.stop_propagation();
+            cx.notify();
+        }
+    }
+
     fn update_selection(
         &mut self,
         event: &MouseMoveEvent,
@@ -250,6 +289,12 @@ impl FlashShotApp {
     }
 }
 
+impl Focusable for FlashShotApp {
+    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 fn capture_primary_display() -> std::io::Result<(CaptureFrame, Vec<u8>)> {
     let display = SystemDisplayProvider
         .displays()?
@@ -291,6 +336,8 @@ impl Render for FlashShotApp {
 
         div()
             .size_full()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event, _, cx| this.nudge_selection(event, cx)))
             .flex()
             .flex_col()
             .bg(colors.background)
@@ -355,8 +402,9 @@ impl Render for FlashShotApp {
                                     .cursor_crosshair()
                                     .on_mouse_down(
                                         MouseButton::Left,
-                                        cx.listener(move |this, event, _, _| {
-                                            this.begin_selection(event, mouse_bounds.get())
+                                        cx.listener(move |this, event, window, cx| {
+                                            this.focus_handle.focus(window, cx);
+                                            this.begin_selection(event, mouse_bounds.get());
                                         }),
                                     )
                                     .on_mouse_move(cx.listener(move |this, event, _, cx| {

@@ -213,6 +213,38 @@ impl SelectionDrag {
         self.current = Some(current);
     }
 
+    pub fn nudge(
+        &mut self,
+        image_bounds: PhysicalRect,
+        delta_x: i32,
+        delta_y: i32,
+    ) -> Option<PhysicalRect> {
+        let selection = self.selection()?;
+        let delta_x = delta_x.clamp(
+            image_bounds.left.saturating_sub(selection.left),
+            image_bounds.right.saturating_sub(selection.right),
+        );
+        let delta_y = delta_y.clamp(
+            image_bounds.top.saturating_sub(selection.top),
+            image_bounds.bottom.saturating_sub(selection.bottom),
+        );
+        let moved = PhysicalRect {
+            left: selection.left.saturating_add(delta_x),
+            top: selection.top.saturating_add(delta_y),
+            right: selection.right.saturating_add(delta_x),
+            bottom: selection.bottom.saturating_add(delta_y),
+        };
+        self.anchor = Some(PhysicalPoint {
+            x: moved.left,
+            y: moved.top,
+        });
+        self.current = Some(PhysicalPoint {
+            x: moved.right,
+            y: moved.bottom,
+        });
+        Some(moved)
+    }
+
     pub fn selection(self) -> Option<PhysicalRect> {
         Some(PhysicalRect::new(self.anchor?, self.current?))
     }
@@ -353,6 +385,49 @@ mod tests {
                 top: 600,
                 right: 700,
                 bottom: 800,
+            })
+        );
+    }
+
+    #[test]
+    fn nudge_moves_the_selection_by_physical_pixels() {
+        let mut drag = SelectionDrag::default();
+        drag.begin(PhysicalPoint { x: -1500, y: 100 });
+        drag.update(PhysicalPoint { x: -900, y: 500 });
+
+        assert_eq!(
+            drag.nudge(image_bounds(), 1, 10),
+            Some(PhysicalRect {
+                left: -1499,
+                top: 110,
+                right: -899,
+                bottom: 510,
+            })
+        );
+    }
+
+    #[test]
+    fn nudge_clamps_without_resizing_at_image_edges() {
+        let mut drag = SelectionDrag::default();
+        drag.begin(PhysicalPoint { x: -300, y: 800 });
+        drag.update(PhysicalPoint { x: 0, y: 1080 });
+
+        assert_eq!(
+            drag.nudge(image_bounds(), 10, 10),
+            Some(PhysicalRect {
+                left: -300,
+                top: 800,
+                right: 0,
+                bottom: 1080,
+            })
+        );
+        assert_eq!(
+            drag.nudge(image_bounds(), -2000, -1000),
+            Some(PhysicalRect {
+                left: -1920,
+                top: 0,
+                right: -1620,
+                bottom: 280,
             })
         );
     }
