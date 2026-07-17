@@ -1,11 +1,12 @@
 //! GPUI capture workspace state and module boundaries.
 
+mod overlay;
 mod view;
 mod workflow;
 
 use std::sync::Arc;
 
-use gpui::{AsyncApp, Context, FocusHandle, Focusable, Image, WeakEntity};
+use gpui::{AsyncApp, Context, FocusHandle, Focusable, Image, WeakEntity, WindowHandle};
 
 use crate::{
     domain::{geometry::PhysicalPoint, selection::SelectionDrag, session::CaptureSession},
@@ -30,6 +31,8 @@ pub struct FlashShotApp {
     pending_click_target: Option<InspectionTarget>,
     inspection_request: Option<PhysicalPoint>,
     inspection_in_flight: bool,
+    overlay_windows: Vec<WindowHandle<overlay::CaptureOverlay>>,
+    main_window_handle: Option<isize>,
     focus_handle: FocusHandle,
     status: String,
     performance: PerformanceRecorder,
@@ -76,6 +79,8 @@ impl FlashShotApp {
             pending_click_target: None,
             inspection_request: None,
             inspection_in_flight: false,
+            overlay_windows: Vec::new(),
+            main_window_handle: None,
             focus_handle: cx.focus_handle(),
             status,
             performance,

@@ -6,6 +6,7 @@ use gpui::{
     BorderStyle, Bounds, MouseButton, ObjectFit, Pixels, Render, Window, canvas, div, fill, img,
     outline, point, prelude::*, px, size,
 };
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::{FlashShotApp, workflow::view_rect};
 use crate::{
@@ -85,7 +86,13 @@ fn paint_magnifier(
 }
 
 impl Render for FlashShotApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        if self.main_window_handle.is_none()
+            && let Ok(handle) = window.window_handle()
+            && let RawWindowHandle::Win32(handle) = handle.as_raw()
+        {
+            self.main_window_handle = Some(handle.hwnd.get());
+        }
         let colors = self.colors;
         let is_idle = self.session.state() == CaptureSessionState::Idle;
         let is_busy = self.session.state() == CaptureSessionState::Capturing;

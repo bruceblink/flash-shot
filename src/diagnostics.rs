@@ -119,7 +119,13 @@ pub fn init() -> Result<DiagnosticsGuard, Box<dyn std::error::Error>> {
             .location()
             .map(|location| format!("{}:{}", location.file(), location.line()))
             .unwrap_or_else(|| "unknown".to_owned());
-        log::error!(target: "flash_shot::panic", "panic location={location}");
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic payload");
+        log::error!(target: "flash_shot::panic", "panic location={location} message={message}");
     }));
 
     Ok(DiagnosticsGuard {

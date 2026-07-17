@@ -3,11 +3,12 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use gpui::{
-    AsyncApp, Bounds, Context, Image, ImageFormat, KeyDownEvent, Keystroke, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, WeakEntity,
+    AppContext, AsyncApp, Bounds, Context, DisplayId, Focusable, Image, ImageFormat, KeyDownEvent,
+    Keystroke, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, WeakEntity,
+    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, point, px, size,
 };
 
-use super::FlashShotApp;
+use super::{FlashShotApp, overlay::CaptureOverlay};
 use crate::{
     domain::{
         geometry::PhysicalRect,
@@ -15,9 +16,10 @@ use crate::{
         session::CaptureSessionState,
     },
     platform::{
-        capture::{CaptureFrame, capture_virtual_desktop},
+        capture::{CaptureFrame, capture_displays, compose_virtual_desktop},
         clipboard::{ClipboardService, SystemClipboard},
         window_inspector::{InspectionTarget, SystemWindowInspector, WindowInspector},
+        window_visibility,
     },
 };
 
@@ -39,6 +41,15 @@ impl FlashShotApp {
         self.pending_click_target = None;
         self.inspection_request = None;
         self.status = "Capturing virtual desktop...".to_owned();
+        if let Some(handle) = self.main_window_handle
+            && let Err(error) = window_visibility::hide(handle)
+        {
+            let message = format!("Could not hide the main window: {error}");
+            let _ = self.session.fail(message.clone());
+            self.status = message;
+            cx.notify();
+            return;
+        }
         cx.notify();
 
         let started_at = Instant::now();
@@ -87,12 +98,15 @@ impl FlashShotApp {
                 );
                 self.preview = Some(Arc::new(Image::from_bytes(ImageFormat::Png, capture.png)));
                 self.frame = Some(capture.capture.frame);
+                let app = cx.entity();
+                cx.defer(move |cx| open_capture_overlays(app, capture.displays, cx));
             }
             Err(error) => {
                 let message = format!("Capture failed: {error}");
                 let _ = self.session.fail(message.clone());
                 self.status = message;
                 log::warn!(target: "flash_shot::capture", "capture_failed error={error}");
+                self.restore_main_window();
             }
         }
         cx.notify();
@@ -120,6 +134,83 @@ impl FlashShotApp {
         self.pending_click_target = None;
         self.inspection_request = None;
         self.status = "Ready - Ctrl+Shift+Print Screen".to_owned();
+        self.close_capture_overlays(cx);
+        self.restore_main_window();
+        cx.notify();
+    }
+
+    pub(super) fn begin_overlay_selection(
+        &mut self,
+        point: crate::domain::geometry::PhysicalPoint,
+        resize_handle: Option<crate::domain::selection::ResizeHandle>,
+    ) {
+        self.pending_click_target = self
+            .inspection_target
+            .filter(|target| target.bounds.contains(point));
+        if let Some((selection, handle)) = self.selection_drag.selection().zip(resize_handle) {
+            self.selection_drag.begin_resize(selection, handle);
+        } else {
+            self.selection_drag.begin(point);
+        }
+    }
+
+    pub(super) fn update_overlay_selection(
+        &mut self,
+        point: crate::domain::geometry::PhysicalPoint,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(frame) = self.frame.as_ref() else {
+            return;
+        };
+        self.selection_drag
+            .update(clamp_physical_point(point, frame.bounds));
+        if let Some(selection) = self.selection_drag.selection() {
+            self.status = selection_status(selection);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn update_overlay_hover(
+        &mut self,
+        point: Option<crate::domain::geometry::PhysicalPoint>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.hover_pixel == point {
+            return;
+        }
+        self.hover_pixel = point;
+        if let Some(point) = point
+            && self.selection_drag.selection().is_none()
+            && !self
+                .inspection_target
+                .is_some_and(|target| target.bounds.contains(point))
+        {
+            self.request_inspection(point, cx);
+        }
+        self.update_status_for_hover();
+        cx.notify();
+    }
+
+    pub(super) fn finish_overlay_selection(
+        &mut self,
+        point: crate::domain::geometry::PhysicalPoint,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(frame) = self.frame.as_ref() else {
+            return;
+        };
+        self.selection_drag
+            .update(clamp_physical_point(point, frame.bounds));
+        let selection = self
+            .selection_drag
+            .selection()
+            .and_then(|selection| resolve_pointer_selection(selection, self.pending_click_target));
+        self.pending_click_target = None;
+        if let Some(selection) = selection {
+            self.selection_drag.select(selection);
+            let _ = self.session.select(selection);
+            self.status = selection_status(selection);
+        }
         cx.notify();
     }
 
@@ -247,7 +338,12 @@ impl FlashShotApp {
             }
             _ => {}
         }
-        if let Some((point, color)) = hover_pixel.and_then(|point| {
+        self.update_status_for_hover();
+        cx.notify();
+    }
+
+    fn update_status_for_hover(&mut self) {
+        if let Some((point, color)) = self.hover_pixel.and_then(|point| {
             self.frame
                 .as_ref()?
                 .pixel_at(point)
@@ -270,7 +366,6 @@ impl FlashShotApp {
         } else if let Some(frame) = self.frame.as_ref() {
             self.status = format!("{} x {} physical pixels", frame.width, frame.height);
         }
-        cx.notify();
     }
 
     pub(super) fn finish_selection(
@@ -349,6 +444,7 @@ impl FlashShotApp {
                         kind: target.kind,
                     })
                 });
+                self.update_status_for_hover();
                 cx.notify();
             }
             Ok(_) => {}
@@ -451,6 +547,8 @@ impl FlashShotApp {
                     self.status = error.to_string();
                 } else {
                     self.status = format!("Selection saved to {}", path.display());
+                    self.close_capture_overlays(cx);
+                    self.restore_main_window();
                 }
             }
             SaveOutcome::Cancelled => {
@@ -464,6 +562,8 @@ impl FlashShotApp {
                 let message = format!("Save failed: {error}");
                 let _ = self.session.fail(message.clone());
                 self.status = message;
+                self.close_capture_overlays(cx);
+                self.restore_main_window();
             }
         }
         cx.notify();
@@ -476,12 +576,16 @@ impl FlashShotApp {
                     self.status = error.to_string();
                 } else {
                     self.status = "Selection copied to clipboard".to_owned();
+                    self.close_capture_overlays(cx);
+                    self.restore_main_window();
                 }
             }
             Err(error) => {
                 let message = format!("Copy failed: {error}");
                 let _ = self.session.fail(message.clone());
                 self.status = message;
+                self.close_capture_overlays(cx);
+                self.restore_main_window();
             }
         }
         cx.notify();
@@ -491,17 +595,146 @@ impl FlashShotApp {
         let frame = self.frame.as_ref()?;
         PreviewTransform::contain(frame.bounds, view_rect(viewport))
     }
+
+    fn close_capture_overlays(&mut self, cx: &mut Context<Self>) {
+        let windows = std::mem::take(&mut self.overlay_windows);
+        if !windows.is_empty() {
+            cx.defer(move |cx| close_overlay_windows(windows, cx));
+        }
+    }
+
+    fn restore_main_window(&self) {
+        if let Some(handle) = self.main_window_handle
+            && let Err(error) = window_visibility::restore(handle)
+        {
+            log::warn!(target: "flash_shot::overlay", "main_window_restore_failed error={error}");
+        }
+    }
+}
+
+fn open_capture_overlays(
+    app: gpui::Entity<FlashShotApp>,
+    displays: Vec<CapturedDisplayPreview>,
+    cx: &mut gpui::App,
+) {
+    if app.read(cx).session.state() != CaptureSessionState::Selecting {
+        return;
+    }
+    let mut windows = Vec::with_capacity(displays.len());
+    for display in displays {
+        let bounds = display_window_bounds(&display.display);
+        let display_id = DisplayId::new(display.display.platform_id);
+        let info = display.display;
+        let primary = info.primary;
+        let preview = display.preview;
+        match cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: None,
+                focus: primary,
+                show: true,
+                kind: WindowKind::PopUp,
+                is_movable: false,
+                is_resizable: false,
+                is_minimizable: false,
+                display_id: Some(display_id),
+                window_background: WindowBackgroundAppearance::Opaque,
+                window_min_size: None,
+                ..Default::default()
+            },
+            {
+                let app = app.clone();
+                move |window, cx| {
+                    let overlay = cx.new(|cx| CaptureOverlay::new(app, info, preview, cx));
+                    if primary {
+                        overlay.read(cx).focus_handle(cx).focus(window, cx);
+                    }
+                    overlay
+                }
+            },
+        ) {
+            Ok(window) => windows.push(window),
+            Err(error) => {
+                close_overlay_windows(windows, cx);
+                let message = format!("Capture overlay failed: {error}");
+                app.update(cx, |app, cx| {
+                    let _ = app.session.fail(message.clone());
+                    app.status = message;
+                    app.restore_main_window();
+                    cx.notify();
+                });
+                log::warn!(target: "flash_shot::overlay", "overlay_open_failed error={error}");
+                return;
+            }
+        }
+    }
+    app.update(cx, |app, _| app.overlay_windows = windows);
+    cx.activate(true);
+}
+
+fn close_overlay_windows(windows: Vec<gpui::WindowHandle<CaptureOverlay>>, cx: &mut gpui::App) {
+    for window in windows {
+        let _ = window.update(cx, |_, window, _| window.remove_window());
+    }
 }
 
 struct CapturedDesktopPreview {
     capture: crate::platform::capture::VirtualDesktopCapture,
     png: Vec<u8>,
+    displays: Vec<CapturedDisplayPreview>,
+}
+
+struct CapturedDisplayPreview {
+    display: crate::platform::display::DisplayInfo,
+    preview: Arc<Image>,
 }
 
 fn capture_virtual_desktop_preview() -> std::io::Result<CapturedDesktopPreview> {
-    let capture = capture_virtual_desktop()?;
-    let png = capture.frame.encode_png()?;
-    Ok(CapturedDesktopPreview { capture, png })
+    let display_captures = capture_displays()?;
+    let frame = compose_virtual_desktop(&display_captures)?;
+    let png = frame.encode_png()?;
+    let displays = display_captures
+        .into_iter()
+        .map(|capture| {
+            let png = capture.frame.encode_png()?;
+            Ok(CapturedDisplayPreview {
+                display: capture.display,
+                preview: Arc::new(Image::from_bytes(ImageFormat::Png, png)),
+            })
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    Ok(CapturedDesktopPreview {
+        capture: crate::platform::capture::VirtualDesktopCapture {
+            display_count: displays.len(),
+            frame,
+        },
+        png,
+        displays,
+    })
+}
+
+fn display_window_bounds(display: &crate::platform::display::DisplayInfo) -> Bounds<Pixels> {
+    let scale = display.scale_factor.max(1.0);
+    Bounds::new(
+        point(
+            px(display.physical_bounds.left as f32 / scale),
+            px(display.physical_bounds.top as f32 / scale),
+        ),
+        size(
+            px(display.physical_bounds.width() as f32 / scale),
+            px(display.physical_bounds.height() as f32 / scale),
+        ),
+    )
+}
+
+fn clamp_physical_point(
+    point: crate::domain::geometry::PhysicalPoint,
+    bounds: PhysicalRect,
+) -> crate::domain::geometry::PhysicalPoint {
+    crate::domain::geometry::PhysicalPoint {
+        x: point.x.clamp(bounds.left, bounds.right),
+        y: point.y.clamp(bounds.top, bounds.bottom),
+    }
 }
 
 fn copy_frame_selection(
@@ -636,7 +869,7 @@ mod tests {
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
-        domain::geometry::PhysicalRect,
+        domain::geometry::{PhysicalPoint, PhysicalRect},
         platform::{
             capture::{CaptureFrame, PixelFormat},
             clipboard::ClipboardService,
@@ -814,6 +1047,54 @@ mod tests {
                 right: -200,
                 bottom: 900,
             })
+        );
+    }
+
+    #[test]
+    fn display_window_bounds_convert_physical_pixels_with_monitor_scale() {
+        let display = crate::platform::display::DisplayInfo {
+            id: "secondary".to_owned(),
+            platform_id: 42,
+            physical_bounds: PhysicalRect {
+                left: -2560,
+                top: -200,
+                right: 0,
+                bottom: 1240,
+            },
+            work_area: PhysicalRect {
+                left: -2560,
+                top: -200,
+                right: 0,
+                bottom: 1200,
+            },
+            dpi_x: 144,
+            dpi_y: 144,
+            scale_factor: 1.5,
+            rotation: crate::platform::display::DisplayRotation::Landscape,
+            bits_per_pixel: 32,
+            primary: false,
+        };
+
+        let bounds = super::display_window_bounds(&display);
+
+        assert_eq!(f32::from(bounds.origin.x), -2560.0 / 1.5);
+        assert_eq!(f32::from(bounds.origin.y), -200.0 / 1.5);
+        assert_eq!(f32::from(bounds.size.width), 2560.0 / 1.5);
+        assert_eq!(f32::from(bounds.size.height), 1440.0 / 1.5);
+    }
+
+    #[test]
+    fn overlay_drag_clamps_to_virtual_desktop_edges() {
+        let bounds = PhysicalRect {
+            left: -1920,
+            top: -200,
+            right: 2560,
+            bottom: 1440,
+        };
+
+        assert_eq!(
+            super::clamp_physical_point(PhysicalPoint { x: -3000, y: 2000 }, bounds),
+            PhysicalPoint { x: -1920, y: 1440 }
         );
     }
 

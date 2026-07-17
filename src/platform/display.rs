@@ -16,6 +16,7 @@ pub enum DisplayRotation {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisplayInfo {
     pub id: String,
+    pub platform_id: u64,
     pub physical_bounds: PhysicalRect,
     pub work_area: PhysicalRect,
     pub dpi_x: u32,
@@ -140,6 +141,7 @@ mod platform {
 
         Ok(DisplayInfo {
             id,
+            platform_id: monitor as usize as u64,
             physical_bounds: rect(info.monitorInfo.rcMonitor),
             work_area: rect(info.monitorInfo.rcWork),
             dpi_x,
@@ -234,6 +236,7 @@ mod tests {
     fn virtual_desktop_includes_negative_and_staggered_displays() {
         let display = |physical_bounds| DisplayInfo {
             id: String::new(),
+            platform_id: 0,
             physical_bounds,
             work_area: physical_bounds,
             dpi_x: 96,

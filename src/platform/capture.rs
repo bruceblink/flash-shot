@@ -110,6 +110,57 @@ pub fn capture_displays() -> io::Result<Vec<DisplayCapture>> {
     capture_displays_with(&SystemDisplayProvider, &SystemCaptureBackend)
 }
 
+pub fn compose_virtual_desktop(captures: &[DisplayCapture]) -> io::Result<CaptureFrame> {
+    let displays: Vec<_> = captures
+        .iter()
+        .map(|capture| capture.display.clone())
+        .collect();
+    let bounds = virtual_desktop_bounds(&displays)?;
+    let width = bounds.width();
+    let height = bounds.height();
+    let stride = width as usize * 4;
+    let length = stride
+        .checked_mul(height as usize)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "frame size overflow"))?;
+    let mut pixels = vec![0_u8; length];
+    let mut capture_duration = Duration::ZERO;
+    let mut cpu_copy_count = 0_u32;
+
+    for capture in captures {
+        capture.frame.validate()?;
+        if capture.frame.bounds != capture.display.physical_bounds {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "captured frame bounds do not match the display",
+            ));
+        }
+        let destination_x = capture.frame.bounds.left.saturating_sub(bounds.left) as usize * 4;
+        let destination_y = capture.frame.bounds.top.saturating_sub(bounds.top) as usize;
+        let row_bytes = capture.frame.width as usize * 4;
+        for row in 0..capture.frame.height as usize {
+            let source_start = row * capture.frame.stride;
+            let destination_start = (destination_y + row) * stride + destination_x;
+            pixels[destination_start..destination_start + row_bytes]
+                .copy_from_slice(&capture.frame.pixels[source_start..source_start + row_bytes]);
+        }
+        capture_duration = capture_duration.max(capture.frame.capture_duration);
+        cpu_copy_count = cpu_copy_count.saturating_add(capture.frame.cpu_copy_count);
+    }
+
+    let frame = CaptureFrame {
+        bounds,
+        width,
+        height,
+        stride,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from(pixels),
+        capture_duration,
+        cpu_copy_count: cpu_copy_count.saturating_add(1),
+    };
+    frame.validate()?;
+    Ok(frame)
+}
+
 fn capture_displays_with(
     display_provider: &impl DisplayProvider,
     capture_backend: &impl CaptureBackend,
@@ -357,7 +408,7 @@ mod platform {
 mod tests {
     use super::{
         CaptureBackend, CaptureFrame, PixelColor, PixelFormat, SystemCaptureBackend,
-        capture_displays_with,
+        capture_displays_with, compose_virtual_desktop,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     use crate::platform::display::{DisplayInfo, DisplayProvider, DisplayRotation};
@@ -499,6 +550,74 @@ mod tests {
     }
 
     #[test]
+    fn composes_staggered_display_frames_in_virtual_desktop_coordinates() {
+        let top = PhysicalRect {
+            left: 0,
+            top: -1,
+            right: 2,
+            bottom: 0,
+        };
+        let bottom = PhysicalRect {
+            left: -1,
+            top: 0,
+            right: 1,
+            bottom: 1,
+        };
+        let captures = [
+            super::DisplayCapture {
+                display: display("top", top),
+                frame: solid_frame(top, [1, 2, 3, 255]),
+            },
+            super::DisplayCapture {
+                display: display("bottom", bottom),
+                frame: solid_frame(bottom, [4, 5, 6, 255]),
+            },
+        ];
+
+        let frame = compose_virtual_desktop(&captures).unwrap();
+
+        assert_eq!(
+            frame.bounds,
+            PhysicalRect {
+                left: -1,
+                top: -1,
+                right: 2,
+                bottom: 1,
+            }
+        );
+        assert_eq!(frame.width, 3);
+        assert_eq!(frame.height, 2);
+        assert_eq!(frame.cpu_copy_count, 3);
+        assert_eq!(
+            frame.pixel_at(PhysicalPoint { x: 0, y: -1 }),
+            Some(PixelColor {
+                red: 3,
+                green: 2,
+                blue: 1,
+                alpha: 255,
+            })
+        );
+        assert_eq!(
+            frame.pixel_at(PhysicalPoint { x: -1, y: 0 }),
+            Some(PixelColor {
+                red: 6,
+                green: 5,
+                blue: 4,
+                alpha: 255,
+            })
+        );
+        assert_eq!(
+            frame.pixel_at(PhysicalPoint { x: -1, y: -1 }),
+            Some(PixelColor {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: 0,
+            })
+        );
+    }
+
+    #[test]
     fn samples_bgra_pixels_by_virtual_desktop_coordinate() {
         let frame = CaptureFrame {
             bounds: PhysicalRect {
@@ -544,6 +663,7 @@ mod tests {
     fn display(id: &str, physical_bounds: PhysicalRect) -> DisplayInfo {
         DisplayInfo {
             id: id.to_owned(),
+            platform_id: 0,
             physical_bounds,
             work_area: physical_bounds,
             dpi_x: 96,
@@ -569,21 +689,25 @@ mod tests {
 
     impl CaptureBackend for SolidCaptureBackend {
         fn capture(&self, bounds: PhysicalRect) -> io::Result<CaptureFrame> {
-            let stride = bounds.width() as usize * 4;
-            let mut pixels = vec![0; stride * bounds.height() as usize];
-            for pixel in pixels.chunks_exact_mut(4) {
-                pixel.copy_from_slice(&[1, 2, 3, 255]);
-            }
-            Ok(CaptureFrame {
-                bounds,
-                width: bounds.width(),
-                height: bounds.height(),
-                stride,
-                format: PixelFormat::Bgra8,
-                pixels: Arc::from(pixels),
-                capture_duration: Duration::ZERO,
-                cpu_copy_count: 1,
-            })
+            Ok(solid_frame(bounds, [1, 2, 3, 255]))
+        }
+    }
+
+    fn solid_frame(bounds: PhysicalRect, color: [u8; 4]) -> CaptureFrame {
+        let stride = bounds.width() as usize * 4;
+        let mut pixels = vec![0; stride * bounds.height() as usize];
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel.copy_from_slice(&color);
+        }
+        CaptureFrame {
+            bounds,
+            width: bounds.width(),
+            height: bounds.height(),
+            stride,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(pixels),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
         }
     }
 
