@@ -3,7 +3,9 @@
 use std::{io, sync::Arc, time::Duration};
 
 use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
-use crate::platform::display::{DisplayProvider, SystemDisplayProvider, virtual_desktop_bounds};
+use crate::platform::display::{
+    DisplayInfo, DisplayProvider, SystemDisplayProvider, virtual_desktop_bounds,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PixelFormat {
@@ -96,6 +98,51 @@ impl CaptureBackend for SystemCaptureBackend {
 pub struct VirtualDesktopCapture {
     pub frame: CaptureFrame,
     pub display_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct DisplayCapture {
+    pub display: DisplayInfo,
+    pub frame: CaptureFrame,
+}
+
+pub fn capture_displays() -> io::Result<Vec<DisplayCapture>> {
+    capture_displays_with(&SystemDisplayProvider, &SystemCaptureBackend)
+}
+
+fn capture_displays_with(
+    display_provider: &impl DisplayProvider,
+    capture_backend: &impl CaptureBackend,
+) -> io::Result<Vec<DisplayCapture>> {
+    let mut displays = display_provider.displays()?;
+    if displays.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "display capture requires at least one display",
+        ));
+    }
+    displays.sort_by(|left, right| {
+        left.physical_bounds
+            .top
+            .cmp(&right.physical_bounds.top)
+            .then_with(|| left.physical_bounds.left.cmp(&right.physical_bounds.left))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    displays
+        .into_iter()
+        .map(|display| {
+            let frame = capture_backend.capture(display.physical_bounds)?;
+            frame.validate()?;
+            if frame.bounds != display.physical_bounds {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "captured frame bounds do not match the display",
+                ));
+            }
+            Ok(DisplayCapture { display, frame })
+        })
+        .collect()
 }
 
 pub fn capture_virtual_desktop() -> io::Result<VirtualDesktopCapture> {
@@ -308,13 +355,15 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{CaptureBackend, CaptureFrame, PixelColor, PixelFormat, SystemCaptureBackend};
-    use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
-    #[cfg(windows)]
-    use crate::platform::display::{
-        DisplayProvider, SystemDisplayProvider, virtual_desktop_bounds,
+    use super::{
+        CaptureBackend, CaptureFrame, PixelColor, PixelFormat, SystemCaptureBackend,
+        capture_displays_with,
     };
-    use std::{sync::Arc, time::Duration};
+    use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
+    use crate::platform::display::{DisplayInfo, DisplayProvider, DisplayRotation};
+    #[cfg(windows)]
+    use crate::platform::display::{SystemDisplayProvider, virtual_desktop_bounds};
+    use std::{io, sync::Arc, time::Duration};
 
     #[cfg(windows)]
     #[test]
@@ -330,6 +379,123 @@ mod tests {
         assert_eq!(frame.pixels.len(), frame.stride * frame.height as usize);
         assert_eq!(frame.cpu_copy_count, 1);
         assert!(frame.pixels.iter().any(|value| *value != 0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn captures_one_immutable_frame_for_each_display() {
+        let expected = SystemDisplayProvider.displays().unwrap();
+
+        let captures = super::capture_displays().unwrap();
+
+        assert_eq!(captures.len(), expected.len());
+        assert!(captures.iter().all(|capture| {
+            capture.frame.bounds == capture.display.physical_bounds
+                && capture.frame.width == capture.display.physical_bounds.width()
+                && capture.frame.height == capture.display.physical_bounds.height()
+                && capture.frame.pixels.len()
+                    == capture.frame.stride * capture.frame.height as usize
+                && capture.frame.cpu_copy_count == 1
+        }));
+        assert!(captures.windows(2).all(|captures| {
+            let left = &captures[0].display;
+            let right = &captures[1].display;
+            (
+                left.physical_bounds.top,
+                left.physical_bounds.left,
+                &left.id,
+            ) <= (
+                right.physical_bounds.top,
+                right.physical_bounds.left,
+                &right.id,
+            )
+        }));
+    }
+
+    #[test]
+    fn display_capture_order_is_stable_and_preserves_frame_coordinates() {
+        let provider = StubDisplayProvider {
+            displays: vec![
+                display(
+                    "right",
+                    PhysicalRect {
+                        left: 1920,
+                        top: 0,
+                        right: 3840,
+                        bottom: 1080,
+                    },
+                ),
+                display(
+                    "left",
+                    PhysicalRect {
+                        left: -1280,
+                        top: 200,
+                        right: 0,
+                        bottom: 1224,
+                    },
+                ),
+                display(
+                    "primary",
+                    PhysicalRect {
+                        left: 0,
+                        top: 0,
+                        right: 1920,
+                        bottom: 1080,
+                    },
+                ),
+            ],
+        };
+
+        let captures = capture_displays_with(&provider, &SolidCaptureBackend).unwrap();
+
+        assert_eq!(
+            captures
+                .iter()
+                .map(|capture| capture.display.id.as_str())
+                .collect::<Vec<_>>(),
+            ["primary", "right", "left"]
+        );
+        assert!(captures.iter().all(|capture| {
+            capture.frame.bounds == capture.display.physical_bounds
+                && capture.frame.pixel_at(PhysicalPoint {
+                    x: capture.display.physical_bounds.left,
+                    y: capture.display.physical_bounds.top,
+                }) == Some(PixelColor {
+                    red: 3,
+                    green: 2,
+                    blue: 1,
+                    alpha: 255,
+                })
+        }));
+    }
+
+    #[test]
+    fn display_capture_rejects_empty_and_mismatched_results() {
+        let empty = StubDisplayProvider { displays: vec![] };
+        assert_eq!(
+            capture_displays_with(&empty, &SolidCaptureBackend)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+
+        let provider = StubDisplayProvider {
+            displays: vec![display(
+                "primary",
+                PhysicalRect {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
+            )],
+        };
+        assert_eq!(
+            capture_displays_with(&provider, &MismatchedCaptureBackend)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
@@ -373,5 +539,64 @@ mod tests {
 
         assert_eq!(color.hex_rgb(), "#12AB05");
         assert_eq!(color.rgba_u32(), 0x12AB05FF);
+    }
+
+    fn display(id: &str, physical_bounds: PhysicalRect) -> DisplayInfo {
+        DisplayInfo {
+            id: id.to_owned(),
+            physical_bounds,
+            work_area: physical_bounds,
+            dpi_x: 96,
+            dpi_y: 96,
+            scale_factor: 1.0,
+            rotation: DisplayRotation::Landscape,
+            bits_per_pixel: 32,
+            primary: id == "primary",
+        }
+    }
+
+    struct StubDisplayProvider {
+        displays: Vec<DisplayInfo>,
+    }
+
+    impl DisplayProvider for StubDisplayProvider {
+        fn displays(&self) -> io::Result<Vec<DisplayInfo>> {
+            Ok(self.displays.clone())
+        }
+    }
+
+    struct SolidCaptureBackend;
+
+    impl CaptureBackend for SolidCaptureBackend {
+        fn capture(&self, bounds: PhysicalRect) -> io::Result<CaptureFrame> {
+            let stride = bounds.width() as usize * 4;
+            let mut pixels = vec![0; stride * bounds.height() as usize];
+            for pixel in pixels.chunks_exact_mut(4) {
+                pixel.copy_from_slice(&[1, 2, 3, 255]);
+            }
+            Ok(CaptureFrame {
+                bounds,
+                width: bounds.width(),
+                height: bounds.height(),
+                stride,
+                format: PixelFormat::Bgra8,
+                pixels: Arc::from(pixels),
+                capture_duration: Duration::ZERO,
+                cpu_copy_count: 1,
+            })
+        }
+    }
+
+    struct MismatchedCaptureBackend;
+
+    impl CaptureBackend for MismatchedCaptureBackend {
+        fn capture(&self, _bounds: PhysicalRect) -> io::Result<CaptureFrame> {
+            SolidCaptureBackend.capture(PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 1,
+                bottom: 1,
+            })
+        }
     }
 }
