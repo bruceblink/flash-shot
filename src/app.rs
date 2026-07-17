@@ -13,6 +13,7 @@ use crate::{
     platform::{
         capture::CaptureFrame,
         shortcut::{GlobalShortcutService, ShortcutEvent},
+        tray::{TrayEvent, TrayService},
         window_inspector::InspectionTarget,
     },
     theme::ThemeColors,
@@ -33,6 +34,7 @@ pub struct FlashShotApp {
     status: String,
     performance: PerformanceRecorder,
     _shortcut: Option<GlobalShortcutService>,
+    _tray: Option<TrayService>,
 }
 
 impl FlashShotApp {
@@ -52,6 +54,16 @@ impl FlashShotApp {
         } else {
             "Ready - global shortcut unavailable".to_owned()
         };
+        let tray = match TrayService::start() {
+            Ok((service, events)) => {
+                Self::listen_for_tray(events, cx);
+                Some(service)
+            }
+            Err(error) => {
+                log::warn!(target: "flash_shot::tray", "tray_unavailable error={error}");
+                None
+            }
+        };
 
         Self {
             colors: ThemeColors::default(),
@@ -68,6 +80,7 @@ impl FlashShotApp {
             status,
             performance,
             _shortcut: shortcut,
+            _tray: tray,
         }
     }
 
@@ -80,6 +93,29 @@ impl FlashShotApp {
                         this.update(&mut cx, |this, cx| this.start_capture(cx));
                     } else {
                         break;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn listen_for_tray(events: async_channel::Receiver<TrayEvent>, cx: &mut Context<Self>) {
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                while let Ok(event) = events.recv().await {
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    match event {
+                        TrayEvent::CaptureRequested => {
+                            this.update(&mut cx, |this, cx| this.start_capture(cx));
+                        }
+                        TrayEvent::QuitRequested => {
+                            cx.update(|cx| cx.quit());
+                            break;
+                        }
                     }
                 }
             }
