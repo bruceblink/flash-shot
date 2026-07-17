@@ -79,6 +79,12 @@ impl CaptureSession {
         Ok(())
     }
 
+    pub fn export_cancelled(&mut self) -> Result<(), TransitionError> {
+        self.require(CaptureSessionState::Exporting, "export_cancelled")?;
+        self.state = CaptureSessionState::Selecting;
+        Ok(())
+    }
+
     pub fn cancel(&mut self) -> Result<(), TransitionError> {
         if matches!(
             self.state,
@@ -226,6 +232,20 @@ mod tests {
         assert_eq!(session.selection(), None);
         session.reset().unwrap();
         assert_eq!(session.state(), CaptureSessionState::Idle);
+    }
+
+    #[test]
+    fn cancelled_export_returns_to_the_existing_selection() {
+        let mut session = CaptureSession::default();
+        session.begin().unwrap();
+        session.frames_ready().unwrap();
+        session.select(selection()).unwrap();
+        session.start_export().unwrap();
+
+        session.export_cancelled().unwrap();
+
+        assert_eq!(session.state(), CaptureSessionState::Selecting);
+        assert_eq!(session.selection(), Some(selection()));
     }
 
     #[test]

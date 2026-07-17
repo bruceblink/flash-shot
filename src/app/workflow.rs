@@ -1,6 +1,6 @@
 //! Capture, selection, and clipboard workflow orchestration.
 
-use std::{sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use gpui::{
     AsyncApp, Bounds, Context, Image, ImageFormat, KeyDownEvent, Keystroke, MouseDownEvent,
@@ -303,6 +303,80 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn save_selection(&mut self, cx: &mut Context<Self>) {
+        let selection = match self.session.start_export() {
+            Ok(selection) => selection,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
+        let Some(frame) = self.frame.clone() else {
+            let message = "capture frame is unavailable".to_owned();
+            let _ = self.session.fail(message.clone());
+            self.status = message;
+            cx.notify();
+            return;
+        };
+
+        self.status = "Choose where to save the selection...".to_owned();
+        cx.notify();
+        let prompt = cx.prompt_for_new_path(&PathBuf::default(), Some("flash-shot.png"));
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let outcome = match prompt.await {
+                    Ok(Ok(Some(path))) => {
+                        let path = png_path(path);
+                        let result = cx
+                            .background_executor()
+                            .spawn(async move {
+                                save_frame_selection(&frame, selection, path.clone()).map(|()| path)
+                            })
+                            .await;
+                        match result {
+                            Ok(path) => SaveOutcome::Saved(path),
+                            Err(error) => SaveOutcome::Failed(error.to_string()),
+                        }
+                    }
+                    Ok(Ok(None)) => SaveOutcome::Cancelled,
+                    Ok(Err(error)) => SaveOutcome::Failed(error.to_string()),
+                    Err(error) => SaveOutcome::Failed(error.to_string()),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| this.finish_save(outcome, cx));
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_save(&mut self, outcome: SaveOutcome, cx: &mut Context<Self>) {
+        match outcome {
+            SaveOutcome::Saved(path) => {
+                if let Err(error) = self.session.export_completed() {
+                    self.status = error.to_string();
+                } else {
+                    self.status = format!("Selection saved to {}", path.display());
+                }
+            }
+            SaveOutcome::Cancelled => {
+                if let Err(error) = self.session.export_cancelled() {
+                    self.status = error.to_string();
+                } else if let Some(selection) = self.session.selection() {
+                    self.status = selection_status(selection);
+                }
+            }
+            SaveOutcome::Failed(error) => {
+                let message = format!("Save failed: {error}");
+                let _ = self.session.fail(message.clone());
+                self.status = message;
+            }
+        }
+        cx.notify();
+    }
+
     fn finish_copy(&mut self, result: std::io::Result<()>, cx: &mut Context<Self>) {
         match result {
             Ok(()) => {
@@ -348,6 +422,25 @@ fn copy_frame_selection(
     clipboard.copy_image(&frame.crop(selection)?)
 }
 
+fn save_frame_selection(
+    frame: &CaptureFrame,
+    selection: PhysicalRect,
+    path: PathBuf,
+) -> std::io::Result<()> {
+    frame.crop(selection)?.save_png(path)
+}
+
+fn png_path(mut path: PathBuf) -> PathBuf {
+    let is_png = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+    if !is_png {
+        path.set_extension("png");
+    }
+    path
+}
+
 pub(super) fn view_rect(bounds: Bounds<Pixels>) -> ViewRect {
     ViewRect {
         left: f32::from(bounds.origin.x),
@@ -387,6 +480,12 @@ enum KeyboardCommand {
     Nudge(i32, i32),
 }
 
+enum SaveOutcome {
+    Saved(PathBuf),
+    Cancelled,
+    Failed(String),
+}
+
 fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
     let modifiers = keystroke.modifiers;
     if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
@@ -417,7 +516,9 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 
 #[cfg(test)]
 mod tests {
-    use super::{KeyboardCommand, copy_frame_selection, keyboard_command};
+    use super::{
+        KeyboardCommand, copy_frame_selection, keyboard_command, png_path, save_frame_selection,
+    };
     use crate::{
         domain::geometry::PhysicalRect,
         platform::{
@@ -426,7 +527,13 @@ mod tests {
         },
     };
     use gpui::Keystroke;
-    use std::{cell::RefCell, io, sync::Arc, time::Duration};
+    use std::{
+        cell::RefCell,
+        io::{self, BufReader},
+        path::PathBuf,
+        sync::Arc,
+        time::Duration,
+    };
 
     #[derive(Default)]
     struct RecordingClipboard {
@@ -504,6 +611,67 @@ mod tests {
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-enter").unwrap()),
             None
+        );
+    }
+
+    #[test]
+    fn save_writes_the_selected_region_as_png() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-workflow-save-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path = directory.join("selection.png");
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 2,
+                bottom: 1,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([1, 2, 3, 255, 4, 5, 6, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        save_frame_selection(
+            &frame,
+            PhysicalRect {
+                left: 1,
+                top: 0,
+                right: 2,
+                bottom: 1,
+            },
+            path.clone(),
+        )
+        .unwrap();
+
+        let decoder = png::Decoder::new(BufReader::new(std::fs::File::open(&path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut output = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut output).unwrap();
+        assert_eq!((info.width, info.height), (1, 1));
+        assert_eq!(&output[..info.buffer_size()], &[6, 5, 4, 255]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn save_path_always_uses_a_png_extension() {
+        assert_eq!(
+            png_path(PathBuf::from("capture")),
+            PathBuf::from("capture.png")
+        );
+        assert_eq!(
+            png_path(PathBuf::from("capture.jpg")),
+            PathBuf::from("capture.png")
+        );
+        assert_eq!(
+            png_path(PathBuf::from("capture.PNG")),
+            PathBuf::from("capture.PNG")
         );
     }
 }

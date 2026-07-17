@@ -94,7 +94,7 @@ impl Render for FlashShotApp {
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
         let frame = self.frame.clone();
         let selection = self.selection_drag.selection();
-        let can_copy =
+        let can_export =
             selection.is_some() && self.session.state() == CaptureSessionState::Selecting;
         let hover_pixel = self.hover_pixel;
         let viewport_bounds = Rc::new(Cell::new(Bounds::default()));
@@ -303,7 +303,7 @@ impl Render for FlashShotApp {
                                 .flex()
                                 .items_center()
                                 .gap_3()
-                                .when(can_copy, |actions| {
+                                .when(can_export, |actions| {
                                     actions.child(
                                         div()
                                             .id("copy-selection")
@@ -320,6 +320,26 @@ impl Render for FlashShotApp {
                                                 }),
                                             )
                                             .child("Copy"),
+                                    )
+                                })
+                                .when(can_export, |actions| {
+                                    actions.child(
+                                        div()
+                                            .id("save-selection")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .border_1()
+                                            .border_color(colors.accent)
+                                            .text_color(colors.accent)
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.save_selection(cx)
+                                                }),
+                                            )
+                                            .child("Save"),
                                     )
                                 })
                                 .when(!is_exporting, |actions| {

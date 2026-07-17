@@ -104,8 +104,41 @@ impl CaptureFrame {
         file.write_all(&encoded)?;
         file.sync_all()?;
         drop(file);
-        fs::rename(temporary, path)
+        replace_file(&temporary, path)
     }
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: both paths are valid NUL-terminated UTF-16 buffers for the duration of the call.
+    if unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(source, destination)
 }
 
 fn png_error(error: png::EncodingError) -> io::Error {
@@ -187,10 +220,13 @@ mod tests {
             std::thread::current().id()
         ));
         let path = directory.join("capture.png");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&path, b"old capture").unwrap();
 
         test_frame().save_png(&path).unwrap();
 
         assert!(fs::metadata(&path).unwrap().len() > 0);
+        assert_ne!(fs::read(&path).unwrap(), b"old capture");
         assert!(!path.with_extension("png.tmp").exists());
         fs::remove_dir_all(directory).unwrap();
     }
