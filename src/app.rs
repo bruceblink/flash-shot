@@ -17,6 +17,7 @@ use crate::{
     performance::PerformanceRecorder,
     platform::{
         capture::{CaptureBackend, CaptureFrame, SystemCaptureBackend},
+        clipboard::{ClipboardService, SystemClipboard},
         display::{DisplayProvider, SystemDisplayProvider},
         shortcut::{GlobalShortcutService, ShortcutEvent},
     },
@@ -332,6 +333,58 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        let selection = match self.session.start_export() {
+            Ok(selection) => selection,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
+        let Some(frame) = self.frame.clone() else {
+            let message = "capture frame is unavailable".to_owned();
+            let _ = self.session.fail(message.clone());
+            self.status = message;
+            cx.notify();
+            return;
+        };
+
+        self.status = "Copying selection...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { copy_frame_selection(&frame, selection, &SystemClipboard) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| this.finish_copy(result, cx));
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_copy(&mut self, result: std::io::Result<()>, cx: &mut Context<Self>) {
+        match result {
+            Ok(()) => {
+                if let Err(error) = self.session.export_completed() {
+                    self.status = error.to_string();
+                } else {
+                    self.status = "Selection copied to clipboard".to_owned();
+                }
+            }
+            Err(error) => {
+                let message = format!("Copy failed: {error}");
+                let _ = self.session.fail(message.clone());
+                self.status = message;
+            }
+        }
+        cx.notify();
+    }
+
     fn preview_transform(&self, viewport: Bounds<Pixels>) -> Option<PreviewTransform> {
         let frame = self.frame.as_ref()?;
         PreviewTransform::contain(frame.bounds, view_rect(viewport))
@@ -355,6 +408,14 @@ fn capture_primary_display() -> std::io::Result<(CaptureFrame, Vec<u8>)> {
     let frame = SystemCaptureBackend.capture(display.physical_bounds)?;
     let png = frame.encode_png()?;
     Ok((frame, png))
+}
+
+fn copy_frame_selection(
+    frame: &CaptureFrame,
+    selection: crate::domain::geometry::PhysicalRect,
+    clipboard: &impl ClipboardService,
+) -> std::io::Result<()> {
+    clipboard.copy_image(&frame.crop(selection)?)
 }
 
 fn view_rect(bounds: Bounds<Pixels>) -> ViewRect {
@@ -444,10 +505,13 @@ impl Render for FlashShotApp {
         let colors = self.colors;
         let is_idle = self.session.state() == CaptureSessionState::Idle;
         let is_busy = self.session.state() == CaptureSessionState::Capturing;
+        let is_exporting = self.session.state() == CaptureSessionState::Exporting;
         let preview = self.preview.clone();
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
         let frame = self.frame.clone();
         let selection = self.selection_drag.selection();
+        let can_copy =
+            selection.is_some() && self.session.state() == CaptureSessionState::Selecting;
         let hover_pixel = self.hover_pixel;
         let viewport_bounds = Rc::new(Cell::new(Bounds::default()));
 
@@ -652,16 +716,119 @@ impl Render for FlashShotApp {
                     .when(!is_idle, |bar| {
                         bar.child(
                             div()
-                                .id("cancel-capture")
-                                .px_3()
-                                .py_1()
-                                .cursor_pointer()
-                                .text_sm()
-                                .text_color(colors.accent)
-                                .on_click(cx.listener(|this, _, _, cx| this.reset(cx)))
-                                .child("Cancel"),
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .when(can_copy, |actions| {
+                                    actions.child(
+                                        div()
+                                            .id("copy-selection")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .bg(colors.accent)
+                                            .text_color(colors.background)
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.copy_selection(cx)
+                                                }),
+                                            )
+                                            .child("Copy"),
+                                    )
+                                })
+                                .when(!is_exporting, |actions| {
+                                    actions.child(
+                                        div()
+                                            .id("cancel-capture")
+                                            .px_3()
+                                            .py_1()
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .text_color(colors.accent)
+                                            .on_click(cx.listener(|this, _, _, cx| this.reset(cx)))
+                                            .child(
+                                                if self.session.state()
+                                                    == CaptureSessionState::Completed
+                                                {
+                                                    "Done"
+                                                } else {
+                                                    "Cancel"
+                                                },
+                                            ),
+                                    )
+                                }),
                         )
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_frame_selection;
+    use crate::{
+        domain::geometry::PhysicalRect,
+        platform::{
+            capture::{CaptureFrame, PixelFormat},
+            clipboard::ClipboardService,
+        },
+    };
+    use std::{cell::RefCell, io, sync::Arc, time::Duration};
+
+    #[derive(Default)]
+    struct RecordingClipboard {
+        copied: RefCell<Option<CaptureFrame>>,
+    }
+
+    impl ClipboardService for RecordingClipboard {
+        fn copy_image(&self, frame: &CaptureFrame) -> io::Result<()> {
+            self.copied.replace(Some(frame.clone()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn copy_uses_the_pixel_correct_selected_region() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: -2,
+                top: 10,
+                right: 1,
+                bottom: 12,
+            },
+            width: 3,
+            height: 2,
+            stride: 12,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([
+                1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255, 13, 14, 15, 255, 16, 17,
+                18, 255,
+            ]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let clipboard = RecordingClipboard::default();
+
+        copy_frame_selection(
+            &frame,
+            PhysicalRect {
+                left: -1,
+                top: 10,
+                right: 1,
+                bottom: 12,
+            },
+            &clipboard,
+        )
+        .unwrap();
+
+        let copied = clipboard.copied.borrow();
+        let copied = copied.as_ref().unwrap();
+        assert_eq!((copied.width, copied.height), (2, 2));
+        assert_eq!(
+            copied.pixels.as_ref(),
+            &[4, 5, 6, 255, 7, 8, 9, 255, 13, 14, 15, 255, 16, 17, 18, 255]
+        );
     }
 }
