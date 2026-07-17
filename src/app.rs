@@ -4,8 +4,8 @@ use std::{cell::Cell, rc::Rc, sync::Arc, time::Instant};
 
 use gpui::{
     AsyncApp, BorderStyle, Bounds, Context, Image, ImageFormat, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render, WeakEntity, Window, canvas, div, img,
-    outline, point, prelude::*, px, size,
+    MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render, WeakEntity, Window, canvas, div, fill,
+    img, outline, point, prelude::*, px, size,
 };
 
 use crate::{
@@ -171,7 +171,14 @@ impl FlashShotApp {
         let Some(transform) = self.preview_transform(viewport) else {
             return;
         };
-        if let Some(point) = transform.view_to_physical(view_point(event.position)) {
+        let view_point = view_point(event.position);
+        if let Some((selection, handle)) = self.selection_drag.selection().and_then(|selection| {
+            transform
+                .resize_handle_at(selection, view_point, 10.0)
+                .map(|handle| (selection, handle))
+        }) {
+            self.selection_drag.begin_resize(selection, handle);
+        } else if let Some(point) = transform.view_to_physical(view_point) {
             self.selection_drag.begin(point);
         }
     }
@@ -195,6 +202,13 @@ impl FlashShotApp {
         };
         if let Some(point) = transform.view_to_physical(clamped) {
             self.selection_drag.update(point);
+            if let Some(selection) = self.selection_drag.selection() {
+                self.status = format!(
+                    "Selection: {} x {} physical pixels",
+                    selection.width(),
+                    selection.height()
+                );
+            }
             cx.notify();
         }
     }
@@ -395,6 +409,29 @@ impl Render for FlashShotApp {
                                                     colors.accent,
                                                     BorderStyle::Solid,
                                                 ));
+                                                for handle in [
+                                                    start,
+                                                    ViewPoint {
+                                                        x: end.x,
+                                                        y: start.y,
+                                                    },
+                                                    ViewPoint {
+                                                        x: start.x,
+                                                        y: end.y,
+                                                    },
+                                                    end,
+                                                ] {
+                                                    window.paint_quad(fill(
+                                                        Bounds::new(
+                                                            point(
+                                                                px(handle.x - 4.0),
+                                                                px(handle.y - 4.0),
+                                                            ),
+                                                            size(px(8.0), px(8.0)),
+                                                        ),
+                                                        colors.accent,
+                                                    ));
+                                                }
                                             },
                                         )
                                         .size_full(),

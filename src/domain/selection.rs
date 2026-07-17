@@ -39,6 +39,14 @@ pub struct PreviewTransform {
     fitted_view: ViewRect,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResizeHandle {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
 impl PreviewTransform {
     pub fn contain(image_bounds: PhysicalRect, viewport: ViewRect) -> Option<Self> {
         let image_width = image_bounds.width() as f32;
@@ -94,6 +102,50 @@ impl PreviewTransform {
             y: self.fitted_view.top + normalized_y * self.fitted_view.height,
         }
     }
+
+    pub fn resize_handle_at(
+        self,
+        selection: PhysicalRect,
+        point: ViewPoint,
+        hit_radius: f32,
+    ) -> Option<ResizeHandle> {
+        let handles = [
+            (
+                ResizeHandle::TopLeft,
+                PhysicalPoint {
+                    x: selection.left,
+                    y: selection.top,
+                },
+            ),
+            (
+                ResizeHandle::TopRight,
+                PhysicalPoint {
+                    x: selection.right,
+                    y: selection.top,
+                },
+            ),
+            (
+                ResizeHandle::BottomLeft,
+                PhysicalPoint {
+                    x: selection.left,
+                    y: selection.bottom,
+                },
+            ),
+            (
+                ResizeHandle::BottomRight,
+                PhysicalPoint {
+                    x: selection.right,
+                    y: selection.bottom,
+                },
+            ),
+        ];
+
+        handles.into_iter().find_map(|(handle, physical)| {
+            let view = self.physical_to_view(physical);
+            ((view.x - point.x).abs() <= hit_radius && (view.y - point.y).abs() <= hit_radius)
+                .then_some(handle)
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -114,6 +166,53 @@ impl SelectionDrag {
         }
     }
 
+    pub fn begin_resize(&mut self, selection: PhysicalRect, handle: ResizeHandle) {
+        let (anchor, current) = match handle {
+            ResizeHandle::TopLeft => (
+                PhysicalPoint {
+                    x: selection.right,
+                    y: selection.bottom,
+                },
+                PhysicalPoint {
+                    x: selection.left,
+                    y: selection.top,
+                },
+            ),
+            ResizeHandle::TopRight => (
+                PhysicalPoint {
+                    x: selection.left,
+                    y: selection.bottom,
+                },
+                PhysicalPoint {
+                    x: selection.right,
+                    y: selection.top,
+                },
+            ),
+            ResizeHandle::BottomLeft => (
+                PhysicalPoint {
+                    x: selection.right,
+                    y: selection.top,
+                },
+                PhysicalPoint {
+                    x: selection.left,
+                    y: selection.bottom,
+                },
+            ),
+            ResizeHandle::BottomRight => (
+                PhysicalPoint {
+                    x: selection.left,
+                    y: selection.top,
+                },
+                PhysicalPoint {
+                    x: selection.right,
+                    y: selection.bottom,
+                },
+            ),
+        };
+        self.anchor = Some(anchor);
+        self.current = Some(current);
+    }
+
     pub fn selection(self) -> Option<PhysicalRect> {
         Some(PhysicalRect::new(self.anchor?, self.current?))
     }
@@ -125,7 +224,7 @@ impl SelectionDrag {
 
 #[cfg(test)]
 mod tests {
-    use super::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect};
+    use super::{PreviewTransform, ResizeHandle, SelectionDrag, ViewPoint, ViewRect};
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
 
     fn image_bounds() -> PhysicalRect {
@@ -191,6 +290,69 @@ mod tests {
                 top: 100,
                 right: -100,
                 bottom: 900,
+            })
+        );
+    }
+
+    #[test]
+    fn resize_handle_hit_testing_uses_preview_coordinates() {
+        let transform = PreviewTransform::contain(
+            image_bounds(),
+            ViewRect {
+                left: 0.0,
+                top: 0.0,
+                width: 960.0,
+                height: 540.0,
+            },
+        )
+        .unwrap();
+        let selection = PhysicalRect {
+            left: -1600,
+            top: 200,
+            right: -800,
+            bottom: 800,
+        };
+
+        let top_right = transform.physical_to_view(PhysicalPoint {
+            x: selection.right,
+            y: selection.top,
+        });
+        assert_eq!(
+            transform.resize_handle_at(
+                selection,
+                ViewPoint {
+                    x: top_right.x + 5.0,
+                    y: top_right.y - 4.0,
+                },
+                8.0,
+            ),
+            Some(ResizeHandle::TopRight)
+        );
+        assert_eq!(
+            transform.resize_handle_at(selection, ViewPoint { x: 480.0, y: 270.0 }, 8.0),
+            None
+        );
+    }
+
+    #[test]
+    fn resizing_keeps_the_opposite_corner_fixed_when_crossing_it() {
+        let selection = PhysicalRect {
+            left: 100,
+            top: 200,
+            right: 500,
+            bottom: 600,
+        };
+        let mut drag = SelectionDrag::default();
+        drag.begin_resize(selection, ResizeHandle::TopLeft);
+        drag.update(PhysicalPoint { x: 700, y: 800 });
+
+        assert_eq!(
+            drag.selection(),
+            Some(PhysicalRect {
+                left: 500,
+                top: 600,
+                right: 700,
+                bottom: 800,
             })
         );
     }
