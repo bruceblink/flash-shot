@@ -1,6 +1,7 @@
 //! Flash Shot application library.
 
 pub mod app;
+pub mod capture_stress;
 pub mod diagnostics;
 pub mod domain;
 pub mod image;

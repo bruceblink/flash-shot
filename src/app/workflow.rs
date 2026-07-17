@@ -15,9 +15,8 @@ use crate::{
         session::CaptureSessionState,
     },
     platform::{
-        capture::{CaptureBackend, CaptureFrame, SystemCaptureBackend},
+        capture::{CaptureFrame, capture_virtual_desktop},
         clipboard::{ClipboardService, SystemClipboard},
-        display::{DisplayProvider, SystemDisplayProvider},
     },
 };
 
@@ -44,7 +43,7 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { capture_virtual_desktop() })
+                    .spawn(async move { capture_virtual_desktop_preview() })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
@@ -58,7 +57,7 @@ impl FlashShotApp {
 
     fn finish_capture(
         &mut self,
-        result: std::io::Result<CapturedDesktop>,
+        result: std::io::Result<CapturedDesktopPreview>,
         started_at: Instant,
         cx: &mut Context<Self>,
     ) {
@@ -76,14 +75,14 @@ impl FlashShotApp {
                     .record_duration("shortcut_to_frame_ready", started_at.elapsed());
                 self.status = format!(
                     "{} x {} physical pixels - {} display(s) - {:.1} ms - {} CPU copy",
-                    capture.frame.width,
-                    capture.frame.height,
-                    capture.display_count,
-                    capture.frame.capture_duration.as_secs_f64() * 1_000.0,
-                    capture.frame.cpu_copy_count
+                    capture.capture.frame.width,
+                    capture.capture.frame.height,
+                    capture.capture.display_count,
+                    capture.capture.frame.capture_duration.as_secs_f64() * 1_000.0,
+                    capture.capture.frame.cpu_copy_count
                 );
                 self.preview = Some(Arc::new(Image::from_bytes(ImageFormat::Png, capture.png)));
-                self.frame = Some(capture.frame);
+                self.frame = Some(capture.capture.frame);
             }
             Err(error) => {
                 let message = format!("Capture failed: {error}");
@@ -402,22 +401,15 @@ impl FlashShotApp {
     }
 }
 
-struct CapturedDesktop {
-    frame: CaptureFrame,
+struct CapturedDesktopPreview {
+    capture: crate::platform::capture::VirtualDesktopCapture,
     png: Vec<u8>,
-    display_count: usize,
 }
 
-fn capture_virtual_desktop() -> std::io::Result<CapturedDesktop> {
-    let displays = SystemDisplayProvider.displays()?;
-    let bounds = crate::platform::display::virtual_desktop_bounds(&displays)?;
-    let frame = SystemCaptureBackend.capture(bounds)?;
-    let png = frame.encode_png()?;
-    Ok(CapturedDesktop {
-        frame,
-        png,
-        display_count: displays.len(),
-    })
+fn capture_virtual_desktop_preview() -> std::io::Result<CapturedDesktopPreview> {
+    let capture = capture_virtual_desktop()?;
+    let png = capture.frame.encode_png()?;
+    Ok(CapturedDesktopPreview { capture, png })
 }
 
 fn copy_frame_selection(

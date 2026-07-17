@@ -3,6 +3,7 @@
 use std::{io, sync::Arc, time::Duration};
 
 use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
+use crate::platform::display::{DisplayProvider, SystemDisplayProvider, virtual_desktop_bounds};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PixelFormat {
@@ -89,6 +90,22 @@ impl CaptureBackend for SystemCaptureBackend {
     fn capture(&self, bounds: PhysicalRect) -> io::Result<CaptureFrame> {
         platform::capture(bounds)
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct VirtualDesktopCapture {
+    pub frame: CaptureFrame,
+    pub display_count: usize,
+}
+
+pub fn capture_virtual_desktop() -> io::Result<VirtualDesktopCapture> {
+    let displays = SystemDisplayProvider.displays()?;
+    let bounds = virtual_desktop_bounds(&displays)?;
+    let frame = SystemCaptureBackend.capture(bounds)?;
+    Ok(VirtualDesktopCapture {
+        frame,
+        display_count: displays.len(),
+    })
 }
 
 #[cfg(windows)]

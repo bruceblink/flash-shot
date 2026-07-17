@@ -48,6 +48,18 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+连续截图资源与延迟门禁会真实捕获并编码虚拟桌面 100 次，输出机器可读 JSON；性能基线应使用 release 构建：
+
+```powershell
+cargo run --release --bin capture-stress -- --output target/capture-stress.json
+```
+
+开发时可使用较小轮数快速验证工具链：
+
+```powershell
+cargo run --bin capture-stress -- --iterations 5
+```
+
 ### 文档
 
 - [产品需求](docs/requirements.md)
@@ -94,6 +106,18 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+```
+
+The repeat-capture resource and latency gate captures and encodes the virtual desktop 100 times and emits machine-readable JSON. Use a release build for performance baselines:
+
+```powershell
+cargo run --release --bin capture-stress -- --output target/capture-stress.json
+```
+
+Use fewer iterations for a quick development smoke test:
+
+```powershell
+cargo run --bin capture-stress -- --iterations 5
 ```
 
 ### Documentation
