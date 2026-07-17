@@ -1566,6 +1566,7 @@ dependencies = [
  "png 0.18.1",
  "serde_json",
  "tokio",
+ "windows 0.61.3",
  "windows-sys 0.61.2",
  "winres",
 ]

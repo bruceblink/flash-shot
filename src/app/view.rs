@@ -94,6 +94,7 @@ impl Render for FlashShotApp {
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
         let frame = self.frame.clone();
         let selection = self.selection_drag.selection();
+        let inspection_target = self.inspection_target;
         let can_export =
             selection.is_some() && self.session.state() == CaptureSessionState::Selecting;
         let hover_pixel = self.hover_pixel;
@@ -189,11 +190,18 @@ impl Render for FlashShotApp {
                                                     frame.clone(),
                                                     frame_bounds,
                                                     selection,
+                                                    inspection_target,
                                                     hover_pixel,
                                                 )
                                             },
                                             move |bounds,
-                                                  (frame, frame_bounds, selection, hover_pixel),
+                                                  (
+                                                frame,
+                                                frame_bounds,
+                                                selection,
+                                                inspection_target,
+                                                hover_pixel,
+                                            ),
                                                   window,
                                                   _| {
                                                 let Some(frame_bounds) = frame_bounds else {
@@ -205,6 +213,31 @@ impl Render for FlashShotApp {
                                                 ) else {
                                                     return;
                                                 };
+                                                if selection.is_none()
+                                                    && let Some(target) = inspection_target
+                                                {
+                                                    let start =
+                                                        transform.physical_to_view(PhysicalPoint {
+                                                            x: target.bounds.left,
+                                                            y: target.bounds.top,
+                                                        });
+                                                    let end =
+                                                        transform.physical_to_view(PhysicalPoint {
+                                                            x: target.bounds.right,
+                                                            y: target.bounds.bottom,
+                                                        });
+                                                    window.paint_quad(outline(
+                                                        Bounds::new(
+                                                            point(px(start.x), px(start.y)),
+                                                            size(
+                                                                px(end.x - start.x),
+                                                                px(end.y - start.y),
+                                                            ),
+                                                        ),
+                                                        colors.accent,
+                                                        BorderStyle::Solid,
+                                                    ));
+                                                }
                                                 if let Some(selection) = selection {
                                                     let start =
                                                         transform.physical_to_view(PhysicalPoint {

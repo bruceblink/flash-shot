@@ -173,6 +173,17 @@ pub struct SelectionDrag {
 }
 
 impl SelectionDrag {
+    pub fn select(&mut self, selection: PhysicalRect) {
+        self.anchor = Some(PhysicalPoint {
+            x: selection.left,
+            y: selection.top,
+        });
+        self.current = Some(PhysicalPoint {
+            x: selection.right,
+            y: selection.bottom,
+        });
+    }
+
     pub fn begin(&mut self, point: PhysicalPoint) {
         self.anchor = Some(point);
         self.current = Some(point);
@@ -467,5 +478,20 @@ mod tests {
                 bottom: 280,
             })
         );
+    }
+
+    #[test]
+    fn smart_target_can_be_adopted_as_the_selection() {
+        let target = PhysicalRect {
+            left: -1200,
+            top: 100,
+            right: -200,
+            bottom: 900,
+        };
+        let mut drag = SelectionDrag::default();
+
+        drag.select(target);
+
+        assert_eq!(drag.selection(), Some(target));
     }
 }

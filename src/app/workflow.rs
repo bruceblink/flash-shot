@@ -17,6 +17,7 @@ use crate::{
     platform::{
         capture::{CaptureFrame, capture_virtual_desktop},
         clipboard::{ClipboardService, SystemClipboard},
+        window_inspector::{InspectionTarget, SystemWindowInspector, WindowInspector},
     },
 };
 
@@ -34,6 +35,9 @@ impl FlashShotApp {
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
+        self.inspection_target = None;
+        self.pending_click_target = None;
+        self.inspection_request = None;
         self.status = "Capturing virtual desktop...".to_owned();
         cx.notify();
 
@@ -112,6 +116,9 @@ impl FlashShotApp {
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
+        self.inspection_target = None;
+        self.pending_click_target = None;
+        self.inspection_request = None;
         self.status = "Ready - Ctrl+Shift+Print Screen".to_owned();
         cx.notify();
     }
@@ -121,6 +128,11 @@ impl FlashShotApp {
             return;
         };
         let point = view_point(event.position);
+        let physical_point = transform.view_to_pixel(point);
+        self.pending_click_target = physical_point.and_then(|point| {
+            self.inspection_target
+                .filter(|target| target.bounds.contains(point))
+        });
         if let Some((selection, handle)) = self.selection_drag.selection().and_then(|selection| {
             transform
                 .resize_handle_at(selection, point, 10.0)
@@ -220,6 +232,21 @@ impl FlashShotApp {
             return;
         }
         self.hover_pixel = hover_pixel;
+        match hover_pixel {
+            Some(point)
+                if self.selection_drag.selection().is_none()
+                    && !self
+                        .inspection_target
+                        .is_some_and(|target| target.bounds.contains(point)) =>
+            {
+                self.request_inspection(point, cx);
+            }
+            None => {
+                self.inspection_target = None;
+                self.inspection_request = None;
+            }
+            _ => {}
+        }
         if let Some((point, color)) = hover_pixel.and_then(|point| {
             self.frame
                 .as_ref()?
@@ -259,14 +286,79 @@ impl FlashShotApp {
         {
             self.selection_drag.update(point);
         }
-        if let Some(selection) = self.selection_drag.selection()
-            && selection.width() > 0
-            && selection.height() > 0
-        {
+        let selection = self
+            .selection_drag
+            .selection()
+            .and_then(|selection| resolve_pointer_selection(selection, self.pending_click_target));
+        self.pending_click_target = None;
+        if let Some(selection) = selection {
+            self.selection_drag.select(selection);
             let _ = self.session.select(selection);
             self.status = selection_status(selection);
         }
         cx.notify();
+    }
+
+    fn request_inspection(
+        &mut self,
+        point: crate::domain::geometry::PhysicalPoint,
+        cx: &mut Context<Self>,
+    ) {
+        self.inspection_request = Some(point);
+        if self.inspection_in_flight {
+            return;
+        }
+        self.start_inspection(cx);
+    }
+
+    fn start_inspection(&mut self, cx: &mut Context<Self>) {
+        let Some(point) = self.inspection_request.take() else {
+            return;
+        };
+        self.inspection_in_flight = true;
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { SystemWindowInspector.target_at(point) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_inspection(point, result, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_inspection(
+        &mut self,
+        point: crate::domain::geometry::PhysicalPoint,
+        result: std::io::Result<Option<InspectionTarget>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.inspection_in_flight = false;
+        match result {
+            Ok(target) if self.hover_pixel == Some(point) => {
+                self.inspection_target = target.and_then(|target| {
+                    let bounds = intersect_rect(target.bounds, self.frame.as_ref()?.bounds)?;
+                    Some(InspectionTarget {
+                        bounds,
+                        kind: target.kind,
+                    })
+                });
+                cx.notify();
+            }
+            Ok(_) => {}
+            Err(error) => {
+                log::warn!(target: "flash_shot::inspection", "window_inspection_failed error={error}");
+            }
+        }
+        if self.inspection_request.is_some() {
+            self.start_inspection(cx);
+        }
     }
 
     pub(super) fn copy_selection(&mut self, cx: &mut Context<Self>) {
@@ -471,6 +563,30 @@ fn selection_status(selection: PhysicalRect) -> String {
     )
 }
 
+fn intersect_rect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
+    let intersection = PhysicalRect {
+        left: left.left.max(right.left),
+        top: left.top.max(right.top),
+        right: left.right.min(right.right),
+        bottom: left.bottom.min(right.bottom),
+    };
+    (intersection.width() > 0 && intersection.height() > 0).then_some(intersection)
+}
+
+fn resolve_pointer_selection(
+    dragged: PhysicalRect,
+    smart_target: Option<InspectionTarget>,
+) -> Option<PhysicalRect> {
+    const CLICK_TOLERANCE: u32 = 3;
+    if dragged.width() <= CLICK_TOLERANCE && dragged.height() <= CLICK_TOLERANCE {
+        smart_target.map(|target| target.bounds)
+    } else if dragged.width() > 0 && dragged.height() > 0 {
+        Some(dragged)
+    } else {
+        None
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum KeyboardCommand {
     Cancel,
@@ -515,8 +631,10 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KeyboardCommand, copy_frame_selection, keyboard_command, png_path, save_frame_selection,
+        KeyboardCommand, copy_frame_selection, intersect_rect, keyboard_command, png_path,
+        resolve_pointer_selection, save_frame_selection,
     };
+    use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
         domain::geometry::PhysicalRect,
         platform::{
@@ -671,5 +789,64 @@ mod tests {
             png_path(PathBuf::from("capture.PNG")),
             PathBuf::from("capture.PNG")
         );
+    }
+
+    #[test]
+    fn inspected_targets_are_clipped_to_the_captured_desktop() {
+        assert_eq!(
+            intersect_rect(
+                PhysicalRect {
+                    left: -2200,
+                    top: 100,
+                    right: -200,
+                    bottom: 900,
+                },
+                PhysicalRect {
+                    left: -1920,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
+            ),
+            Some(PhysicalRect {
+                left: -1920,
+                top: 100,
+                right: -200,
+                bottom: 900,
+            })
+        );
+    }
+
+    #[test]
+    fn click_jitter_uses_smart_target_but_drag_keeps_free_selection() {
+        let target = InspectionTarget {
+            bounds: PhysicalRect {
+                left: 100,
+                top: 100,
+                right: 500,
+                bottom: 400,
+            },
+            kind: InspectionKind::Control,
+        };
+        assert_eq!(
+            resolve_pointer_selection(
+                PhysicalRect {
+                    left: 200,
+                    top: 200,
+                    right: 202,
+                    bottom: 201,
+                },
+                Some(target),
+            ),
+            Some(target.bounds)
+        );
+
+        let drag = PhysicalRect {
+            left: 200,
+            top: 200,
+            right: 240,
+            bottom: 260,
+        };
+        assert_eq!(resolve_pointer_selection(drag, Some(target)), Some(drag));
     }
 }
