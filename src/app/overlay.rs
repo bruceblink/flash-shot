@@ -79,10 +79,23 @@ impl CaptureOverlay {
                     10.0,
                 )
             });
+        let annotation_resize_handle = self.app.read(cx).selected_annotation.and_then(|id| {
+            let annotation = self
+                .app
+                .read(cx)
+                .annotation_document
+                .as_ref()?
+                .annotation(id)?;
+            self.transform(viewport)?.resize_handle_at(
+                annotation.bounds(),
+                view_point(event.position),
+                10.0,
+            )
+        });
         let app = self.app.clone();
         cx.defer(move |cx| {
             app.update(cx, |app, cx| {
-                app.begin_overlay_selection(point, resize_handle);
+                app.begin_overlay_selection(point, resize_handle, annotation_resize_handle);
                 cx.notify();
             })
         });
@@ -757,7 +770,47 @@ fn paint_annotations(
         }
         if Some(annotation.id) == selected_annotation {
             paint_outline(window, transform, annotation.bounds(), colors.success, 1);
+            paint_resize_handles(window, transform, annotation.bounds(), colors.success);
         }
+    }
+}
+
+fn paint_resize_handles(
+    window: &mut Window,
+    transform: PreviewTransform,
+    bounds: PhysicalRect,
+    color: gpui::Hsla,
+) {
+    const HANDLE_SIZE: f32 = 8.0;
+    for physical_point in [
+        PhysicalPoint {
+            x: bounds.left,
+            y: bounds.top,
+        },
+        PhysicalPoint {
+            x: bounds.right,
+            y: bounds.top,
+        },
+        PhysicalPoint {
+            x: bounds.left,
+            y: bounds.bottom,
+        },
+        PhysicalPoint {
+            x: bounds.right,
+            y: bounds.bottom,
+        },
+    ] {
+        let view_point = transform.physical_to_view(physical_point);
+        window.paint_quad(fill(
+            Bounds::new(
+                point(
+                    px(view_point.x - HANDLE_SIZE / 2.0),
+                    px(view_point.y - HANDLE_SIZE / 2.0),
+                ),
+                size(px(HANDLE_SIZE), px(HANDLE_SIZE)),
+            ),
+            color,
+        ));
     }
 }
 

@@ -226,9 +226,22 @@ impl FlashShotApp {
         &mut self,
         point: crate::domain::geometry::PhysicalPoint,
         resize_handle: Option<crate::domain::selection::ResizeHandle>,
+        annotation_resize_handle: Option<crate::domain::selection::ResizeHandle>,
     ) {
         if self.annotation_tool.is_some() {
             self.begin_annotation(point);
+            return;
+        }
+        if let (Some(document), Some(id), Some(handle)) = (
+            self.annotation_document.as_ref(),
+            self.selected_annotation,
+            annotation_resize_handle,
+        ) && self
+            .annotation_editor
+            .begin_resize(document, id, handle)
+            .is_ok()
+        {
+            self.status = "Resizing annotation...".to_owned();
             return;
         }
         if let Some(document) = self.annotation_document.as_ref()
@@ -269,11 +282,17 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
-        if self.annotation_editor.moving().is_some() {
+        if self.annotation_editor.moving().is_some() || self.annotation_editor.resizing().is_some()
+        {
             if let Some(document) = self.annotation_document.as_ref() {
                 self.annotation_editor.update(document, point);
             }
-            self.status = "Moving annotation...".to_owned();
+            self.status = if self.annotation_editor.resizing().is_some() {
+                "Resizing annotation..."
+            } else {
+                "Moving annotation..."
+            }
+            .to_owned();
             cx.notify();
             return;
         }
@@ -322,7 +341,8 @@ impl FlashShotApp {
             self.finish_annotation(cx);
             return;
         }
-        if self.annotation_editor.moving().is_some() {
+        if self.annotation_editor.moving().is_some() || self.annotation_editor.resizing().is_some()
+        {
             if let Some(document) = self.annotation_document.as_ref() {
                 self.annotation_editor
                     .update(document, clamp_physical_point(point, frame.bounds));
@@ -419,13 +439,16 @@ impl FlashShotApp {
         };
         let tool = self.annotation_tool;
         let moving = self.annotation_editor.moving().is_some();
+        let resizing = self.annotation_editor.resizing().is_some();
         match self
             .annotation_editor
             .commit(document, &mut self.annotation_history)
         {
             Ok(true) if moving => self.status = "Annotation moved".to_owned(),
+            Ok(true) if resizing => self.status = "Annotation resized".to_owned(),
             Ok(true) => self.status = annotation_added_status(tool).to_owned(),
             Ok(false) if moving => self.status = "Annotation move cancelled".to_owned(),
+            Ok(false) if resizing => self.status = "Annotation resize cancelled".to_owned(),
             Ok(false) => self.status = annotation_cancelled_status(tool).to_owned(),
             Err(error) => self.status = error.to_string(),
         }
