@@ -128,22 +128,44 @@ impl Render for FlashShotApp {
                     .child(div().text_lg().child("Flash Shot"))
                     .child(
                         div()
-                            .id("capture-action")
-                            .px_4()
-                            .py_2()
-                            .rounded_md()
-                            .bg(if is_idle {
-                                colors.accent
-                            } else {
-                                colors.border
-                            })
-                            .text_color(colors.background)
-                            .when(is_idle, |button| {
-                                button
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx)))
-                            })
-                            .child(if is_busy { "Capturing..." } else { "Capture" }),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id("open-image-action")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.accent)
+                                    .text_color(colors.accent)
+                                    .when(is_idle, |button| {
+                                        button.cursor_pointer().on_click(
+                                            cx.listener(|this, _, _, cx| this.open_image(cx)),
+                                        )
+                                    })
+                                    .child("Open PNG"),
+                            )
+                            .child(
+                                div()
+                                    .id("capture-action")
+                                    .px_4()
+                                    .py_2()
+                                    .rounded_md()
+                                    .bg(if is_idle {
+                                        colors.accent
+                                    } else {
+                                        colors.border
+                                    })
+                                    .text_color(colors.background)
+                                    .when(is_idle, |button| {
+                                        button.cursor_pointer().on_click(
+                                            cx.listener(|this, _, _, cx| this.start_capture(cx)),
+                                        )
+                                    })
+                                    .child(if is_busy { "Capturing..." } else { "Capture" }),
+                            ),
                     ),
             )
             .when(!history_entries.is_empty(), |layout| {

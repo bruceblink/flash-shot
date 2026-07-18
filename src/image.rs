@@ -2,7 +2,7 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::{self, BufReader, Write},
     path::Path,
     sync::Arc,
 };
@@ -29,6 +29,73 @@ const BLUR_RADIUS: i32 = 4;
 const TEXT_FONT_SIZE: f32 = 24.0;
 
 impl CaptureFrame {
+    /// Decodes an external PNG into the BGRA frame format used by the editor.
+    pub fn open_png(path: impl AsRef<Path>) -> io::Result<Self> {
+        let file = fs::File::open(path)?;
+        let mut decoder = png::Decoder::new(BufReader::new(file));
+        decoder.set_transformations(
+            png::Transformations::EXPAND
+                | png::Transformations::STRIP_16
+                | png::Transformations::ALPHA,
+        );
+        let mut reader = decoder.read_info().map_err(png_decode_error)?;
+        let buffer_size = reader.output_buffer_size().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "PNG output buffer size overflow",
+            )
+        })?;
+        let mut rgba = vec![0; buffer_size];
+        let info = reader.next_frame(&mut rgba).map_err(png_decode_error)?;
+        if !matches!(info.color_type, png::ColorType::Rgba)
+            || info.bit_depth != png::BitDepth::Eight
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "PNG must decode to 8-bit RGBA pixels",
+            ));
+        }
+        let width = info.width;
+        let height = info.height;
+        if width == 0 || height == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "PNG must not be empty",
+            ));
+        }
+        let stride = width as usize * 4;
+        let length = stride
+            .checked_mul(height as usize)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "PNG dimensions overflow"))?;
+        let mut bgra = Vec::with_capacity(length);
+        for pixel in rgba[..info.buffer_size()].chunks_exact(4) {
+            bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+        }
+        if bgra.len() != length {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "PNG pixel data is truncated",
+            ));
+        }
+        let frame = Self {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: width as i32,
+                bottom: height as i32,
+            },
+            width,
+            height,
+            stride,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(bgra),
+            capture_duration: std::time::Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        frame.validate()?;
+        Ok(frame)
+    }
+
     /// Composites renderer-independent annotations at original physical-pixel
     /// coordinates, producing a new immutable frame suitable for export.
     pub fn composite_annotations(&self, document: &AnnotationDocument) -> io::Result<Self> {
@@ -1183,6 +1250,55 @@ mod tests {
     }
 
     #[test]
+    fn open_png_converts_rgba_into_editor_bgra_pixels() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-open-png-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("image.png");
+        let mut encoder = png::Encoder::new(fs::File::create(&path).unwrap(), 2, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&[3, 2, 1, 255, 6, 5, 4, 128])
+            .unwrap();
+
+        let frame = CaptureFrame::open_png(&path).unwrap();
+        assert_eq!((frame.width, frame.height, frame.stride), (2, 1, 8));
+        assert_eq!(frame.pixels.as_ref(), &[1, 2, 3, 255, 4, 5, 6, 128]);
+        assert_eq!(frame.bounds.right, 2);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn open_png_expands_rgb_pixels_with_an_opaque_alpha_channel() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-open-rgb-png-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("image.png");
+        let mut encoder = png::Encoder::new(fs::File::create(&path).unwrap(), 1, 1);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&[3, 2, 1])
+            .unwrap();
+
+        let frame = CaptureFrame::open_png(&path).unwrap();
+
+        assert_eq!(frame.pixels.as_ref(), &[1, 2, 3, 255]);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn composite_renders_a_watermark_at_original_pixels() {
         let frame = CaptureFrame {
             bounds: PhysicalRect {
@@ -1370,4 +1486,8 @@ mod tests {
             (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
         })
     }
+}
+
+fn png_decode_error(error: png::DecodingError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
 }

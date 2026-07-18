@@ -9,8 +9,9 @@ use std::{
 
 use gpui::{
     AppContext, AsyncApp, Bounds, Context, DisplayId, Focusable, KeyDownEvent, Keystroke,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, RenderImage, WeakEntity,
-    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, point, px, size,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, RenderImage,
+    WeakEntity, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, point, px,
+    size,
 };
 
 use super::{
@@ -34,6 +35,124 @@ use crate::{
 };
 
 impl FlashShotApp {
+    pub(super) fn open_image(&mut self, cx: &mut Context<Self>) {
+        if self.session.state() != CaptureSessionState::Idle {
+            return;
+        }
+        if let Err(error) = self.session.begin() {
+            self.status = error.to_string();
+            cx.notify();
+            return;
+        }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.status = "Choose a PNG image to annotate...".to_owned();
+        cx.notify();
+
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open PNG image".into()),
+        });
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let outcome = match prompt.await {
+                    Ok(Ok(Some(mut paths))) => match paths.pop() {
+                        Some(path) => match cx
+                            .background_executor()
+                            .spawn(async move {
+                                CaptureFrame::open_png(&path).map(|frame| (path, frame))
+                            })
+                            .await
+                        {
+                            Ok((path, frame)) => OpenImageOutcome::Opened { path, frame },
+                            Err(error) => OpenImageOutcome::Failed(error.to_string()),
+                        },
+                        None => OpenImageOutcome::Cancelled,
+                    },
+                    Ok(Ok(None)) => OpenImageOutcome::Cancelled,
+                    Ok(Err(error)) => OpenImageOutcome::Failed(error.to_string()),
+                    Err(error) => OpenImageOutcome::Failed(error.to_string()),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_open_image(outcome, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_open_image(
+        &mut self,
+        outcome: OpenImageOutcome,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
+        match outcome {
+            OpenImageOutcome::Opened { path, frame } => {
+                let bounds = frame.bounds;
+                let result = (|| -> std::io::Result<()> {
+                    self.session.frames_ready().map_err(std::io::Error::other)?;
+                    let preview = render_image_from_capture(&frame)?;
+                    let document =
+                        AnnotationDocument::new(bounds).map_err(std::io::Error::other)?;
+                    self.session.select(bounds).map_err(std::io::Error::other)?;
+                    self.preview = Some(preview.image);
+                    self.frame = Some(frame);
+                    self.annotation_document = Some(document);
+                    self.annotation_history = Default::default();
+                    self.annotation_editor = Default::default();
+                    self.annotation_tool = None;
+                    self.text_edit = None;
+                    self.selected_annotation = None;
+                    self.next_annotation_id = 1;
+                    self.next_sequence_number = 1;
+                    self.selection_drag.select(bounds);
+                    Ok(())
+                })();
+                match result {
+                    Ok(()) => {
+                        self.status = format!("Opened {} for annotation", path.display());
+                        if let Some(handle) = self.main_window_handle
+                            && let Err(error) = window_visibility::hide(handle)
+                        {
+                            let message = format!("Could not hide the main window: {error}");
+                            let _ = self.session.fail(message.clone());
+                            self.status = message;
+                            cx.notify();
+                            return;
+                        }
+                        let app = cx.entity();
+                        cx.defer(move |cx| open_image_overlay(app, bounds, cx));
+                    }
+                    Err(error) => {
+                        let message = format!("Could not open image: {error}");
+                        let _ = self.session.fail(message.clone());
+                        self.status = message;
+                    }
+                }
+            }
+            OpenImageOutcome::Cancelled => {
+                let _ = self.session.cancel();
+                let _ = self.session.reset();
+                self.status = "Open image cancelled".to_owned();
+            }
+            OpenImageOutcome::Failed(error) => {
+                let message = format!("Could not open image: {error}");
+                let _ = self.session.fail(message.clone());
+                self.status = message;
+            }
+        }
+        cx.notify();
+    }
+
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
         if self.session.state() != CaptureSessionState::Idle {
             return;
@@ -1538,6 +1657,67 @@ fn open_capture_overlays(
     cx.activate(true);
 }
 
+fn open_image_overlay(app: gpui::Entity<FlashShotApp>, bounds: PhysicalRect, cx: &mut gpui::App) {
+    if app.read(cx).session.state() != CaptureSessionState::Selecting {
+        return;
+    }
+    let Some(preview) = app.read(cx).preview.clone() else {
+        return;
+    };
+    let display = crate::platform::display::DisplayInfo {
+        id: "opened-image".to_owned(),
+        platform_id: 0,
+        physical_bounds: bounds,
+        work_area: bounds,
+        dpi_x: 96,
+        dpi_y: 96,
+        scale_factor: 1.0,
+        rotation: crate::platform::display::DisplayRotation::Landscape,
+        bits_per_pixel: 32,
+        primary: true,
+    };
+    let window_size = pinned_size(bounds.width() as f32, bounds.height() as f32);
+    let overlay_app = app.clone();
+    match cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::centered(window_size, cx)),
+            titlebar: Some(gpui::TitlebarOptions {
+                title: Some("Flash Shot - Edit Image".into()),
+                ..Default::default()
+            }),
+            focus: true,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: true,
+            is_resizable: true,
+            is_minimizable: false,
+            window_background: WindowBackgroundAppearance::Opaque,
+            window_min_size: Some(size(px(480.0), px(360.0))),
+            ..Default::default()
+        },
+        move |window, cx| {
+            let overlay = cx.new(|cx| CaptureOverlay::new(overlay_app, display, preview, cx));
+            overlay.read(cx).focus_handle(cx).focus(window, cx);
+            overlay
+        },
+    ) {
+        Ok(window) => {
+            app.update(cx, |app, _| app.overlay_windows = vec![window]);
+            cx.activate(true);
+        }
+        Err(error) => {
+            let message = format!("Image editor window failed: {error}");
+            app.update(cx, |app, cx| {
+                let _ = app.session.fail(message.clone());
+                app.status = message;
+                app.restore_main_window();
+                cx.notify();
+            });
+            log::warn!(target: "flash_shot::image", "image_editor_open_failed error={error}");
+        }
+    }
+}
+
 fn close_overlay_windows(windows: Vec<gpui::WindowHandle<CaptureOverlay>>, cx: &mut gpui::App) {
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.remove_window());
@@ -1876,6 +2056,12 @@ enum KeyboardCommand {
 
 enum SaveOutcome {
     Saved { path: PathBuf, managed: bool },
+    Cancelled,
+    Failed(String),
+}
+
+enum OpenImageOutcome {
+    Opened { path: PathBuf, frame: CaptureFrame },
     Cancelled,
     Failed(String),
 }
