@@ -3591,9 +3591,19 @@ fn annotation_document_path(mut path: PathBuf) -> PathBuf {
 
 fn save_annotation_document(document: &AnnotationDocument, path: PathBuf) -> std::io::Result<()> {
     let json = document.to_json().map_err(std::io::Error::other)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
     let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, json)?;
-    std::fs::rename(temporary, path)
+    let mut file = std::fs::File::create(&temporary)?;
+    use std::io::Write;
+    file.write_all(json.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    crate::image::replace_file(&temporary, &path)
 }
 
 fn load_annotation_document(
@@ -4518,6 +4528,12 @@ mod tests {
             document
         );
         assert!(!path.with_extension("json.tmp").exists());
+        std::fs::write(&path, "stale annotation document").unwrap();
+        save_annotation_document(&document, path.clone()).unwrap();
+        assert_eq!(
+            AnnotationDocument::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap(),
+            document
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 
