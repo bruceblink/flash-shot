@@ -1,5 +1,6 @@
 //! Platform-independent product concepts.
 
+pub mod annotation;
 pub mod geometry;
 mod roadmap;
 pub mod selection;
