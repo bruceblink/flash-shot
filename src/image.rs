@@ -61,6 +61,13 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
     let fill = annotation.style.fill_rgba.map(rgba_bytes);
     let radius = annotation.style.stroke_width.max(1).div_ceil(2) as i32;
     match annotation.kind {
+        AnnotationKind::Watermark { origin } => draw_text_annotation(
+            pixels,
+            frame,
+            origin,
+            crate::domain::annotation::WATERMARK_CONTENT,
+            color,
+        ),
         AnnotationKind::Text {
             origin,
             ref content,
@@ -1173,5 +1180,45 @@ mod tests {
 
         let composited = frame.composite_annotations(&document).unwrap();
         assert!(composited.pixels.chunks_exact(4).any(|pixel| pixel[1] > 0));
+    }
+
+    #[test]
+    fn composite_renders_a_watermark_at_original_pixels() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 128,
+                bottom: 64,
+            },
+            width: 128,
+            height: 64,
+            stride: 512,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(vec![0; 128 * 64 * 4]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(11),
+                    kind: AnnotationKind::Watermark {
+                        origin: PhysicalPoint { x: 8, y: 8 },
+                    },
+                    style: AnnotationStyle {
+                        stroke_rgba: 0xFF0000FF,
+                        fill_rgba: None,
+                        stroke_width: 1,
+                    },
+                }),
+            )
+            .unwrap();
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        assert!(composited.pixels.chunks_exact(4).any(|pixel| pixel[2] > 0));
     }
 }

@@ -10,6 +10,7 @@ const MIN_FREEHAND_SAMPLE_DISTANCE: u32 = 2;
 pub const SEQUENCE_MARKER_RADIUS: i32 = 14;
 pub const TEXT_ANNOTATION_HEIGHT: i32 = 28;
 pub const TEXT_ANNOTATION_ADVANCE: i32 = 16;
+pub const WATERMARK_CONTENT: &str = "Flash Shot";
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnnotationId(u64);
@@ -43,6 +44,9 @@ impl Default for AnnotationStyle {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnnotationKind {
+    Watermark {
+        origin: PhysicalPoint,
+    },
     Text {
         origin: PhysicalPoint,
         content: String,
@@ -181,6 +185,9 @@ impl Annotation {
             .stroke_width
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
+            AnnotationKind::Watermark { origin } => {
+                text_bounds(origin, WATERMARK_CONTENT).contains(point)
+            }
             AnnotationKind::Text {
                 origin,
                 ref content,
@@ -223,6 +230,7 @@ impl Annotation {
 
     pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
+            AnnotationKind::Watermark { origin } => text_bounds(origin, WATERMARK_CONTENT),
             AnnotationKind::Text {
                 origin,
                 ref content,
@@ -249,6 +257,9 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Watermark { origin } => AnnotationKind::Watermark {
+                    origin: translate(origin),
+                },
                 AnnotationKind::Text {
                     origin,
                     ref content,
@@ -312,6 +323,12 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Watermark { .. } => AnnotationKind::Watermark {
+                    origin: PhysicalPoint {
+                        x: bounds.left,
+                        y: bounds.top,
+                    },
+                },
                 AnnotationKind::Text { ref content, .. } => AnnotationKind::Text {
                     origin: PhysicalPoint {
                         x: bounds.left,
@@ -351,6 +368,7 @@ impl Annotation {
 /// The drawable tools whose pointer gestures create a single annotation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnnotationTool {
+    Watermark,
     Text,
     Number,
     Blur,
@@ -427,6 +445,7 @@ impl AnnotationDraft {
 
     pub fn preview(&self) -> Option<Annotation> {
         let has_visible_geometry = match self.tool {
+            AnnotationTool::Watermark => true,
             AnnotationTool::Text => self.text.as_ref().is_some_and(|text| !text.is_empty()),
             AnnotationTool::Number => true,
             AnnotationTool::Freehand => self.points.len() >= 2,
@@ -435,6 +454,7 @@ impl AnnotationDraft {
         has_visible_geometry.then(|| Annotation {
             id: self.id,
             kind: match self.tool {
+                AnnotationTool::Watermark => AnnotationKind::Watermark { origin: self.start },
                 AnnotationTool::Text => AnnotationKind::Text {
                     origin: self.start,
                     content: self.text.clone().unwrap_or_default(),
@@ -1129,6 +1149,35 @@ mod tests {
         assert!(document.annotations().is_empty());
         assert!(history.redo(&mut document).unwrap());
         assert_eq!(document.annotation(AnnotationId::new(80)), Some(&text));
+    }
+
+    #[test]
+    fn watermark_commits_from_a_single_click_and_remains_reversible() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+        let origin = PhysicalPoint { x: -120, y: 240 };
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(81),
+                AnnotationTool::Watermark,
+                AnnotationStyle::default(),
+                origin,
+            )
+            .unwrap();
+        assert_eq!(
+            editor.preview(document.canvas_bounds()).unwrap().kind,
+            AnnotationKind::Watermark { origin }
+        );
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        let watermark = document.annotation(AnnotationId::new(81)).unwrap().clone();
+        assert!(watermark.hit_test(origin, 0));
+        assert!(history.undo(&mut document).unwrap());
+        assert!(document.annotations().is_empty());
+        assert!(history.redo(&mut document).unwrap());
+        assert_eq!(document.annotation(AnnotationId::new(81)), Some(&watermark));
     }
 
     #[test]

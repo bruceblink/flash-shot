@@ -430,6 +430,30 @@ impl Render for CaptureOverlay {
                     })
                     .child(
                         div()
+                            .id("overlay-tool-watermark")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Watermark) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Watermark) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_watermark_tool(cx));
+                                });
+                            }))
+                            .child("Watermark"),
+                    )
+                    .child(
+                        div()
                             .id("overlay-tool-text")
                             .px_3()
                             .py_2()
@@ -1039,6 +1063,14 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
+            AnnotationKind::Watermark { origin } => paint_text_annotation(
+                window,
+                transform,
+                origin,
+                crate::domain::annotation::WATERMARK_CONTENT,
+                annotation.style.stroke_rgba,
+                cx,
+            ),
             AnnotationKind::Text {
                 origin,
                 ref content,

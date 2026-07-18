@@ -378,6 +378,10 @@ impl FlashShotApp {
         self.select_annotation_tool(AnnotationTool::Rectangle, cx);
     }
 
+    pub(super) fn select_watermark_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Watermark, cx);
+    }
+
     pub(super) fn select_text_tool(&mut self, cx: &mut Context<Self>) {
         self.select_annotation_tool(AnnotationTool::Text, cx);
     }
@@ -1300,6 +1304,7 @@ impl FlashShotApp {
 fn tool_selected_status(tool: AnnotationTool) -> &'static str {
     match tool {
         AnnotationTool::Text => "Text tool selected",
+        AnnotationTool::Watermark => "Watermark tool selected",
         AnnotationTool::Number => "Number tool selected",
         AnnotationTool::Blur => "Blur tool selected",
         AnnotationTool::Mosaic => "Mosaic tool selected",
@@ -1315,6 +1320,7 @@ fn tool_selected_status(tool: AnnotationTool) -> &'static str {
 fn drawing_status(tool: AnnotationTool) -> &'static str {
     match tool {
         AnnotationTool::Text => "Editing text...",
+        AnnotationTool::Watermark => "Placing watermark...",
         AnnotationTool::Number => "Placing number...",
         AnnotationTool::Blur => "Drawing blur...",
         AnnotationTool::Mosaic => "Drawing mosaic...",
@@ -1330,6 +1336,7 @@ fn drawing_status(tool: AnnotationTool) -> &'static str {
 fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
         Some(AnnotationTool::Text) => "Text added",
+        Some(AnnotationTool::Watermark) => "Watermark added",
         Some(AnnotationTool::Number) => "Number added",
         Some(AnnotationTool::Blur) => "Blur added",
         Some(AnnotationTool::Mosaic) => "Mosaic added",
@@ -1346,6 +1353,7 @@ fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
 fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
         Some(AnnotationTool::Text) => "Text cancelled",
+        Some(AnnotationTool::Watermark) => "Watermark cancelled",
         Some(AnnotationTool::Number) => "Number cancelled",
         Some(AnnotationTool::Blur) => "Blur cancelled",
         Some(AnnotationTool::Mosaic) => "Mosaic cancelled",
@@ -2026,6 +2034,28 @@ mod tests {
         assert_eq!(
             annotation_cancelled_status(Some(AnnotationTool::Freehand)),
             "Freehand stroke cancelled"
+        );
+    }
+
+    #[test]
+    fn watermark_tool_has_specific_user_feedback() {
+        use crate::domain::annotation::AnnotationTool;
+
+        assert_eq!(
+            tool_selected_status(AnnotationTool::Watermark),
+            "Watermark tool selected"
+        );
+        assert_eq!(
+            drawing_status(AnnotationTool::Watermark),
+            "Placing watermark..."
+        );
+        assert_eq!(
+            annotation_added_status(Some(AnnotationTool::Watermark)),
+            "Watermark added"
+        );
+        assert_eq!(
+            annotation_cancelled_status(Some(AnnotationTool::Watermark)),
+            "Watermark cancelled"
         );
     }
 
