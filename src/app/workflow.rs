@@ -409,6 +409,8 @@ impl FlashShotApp {
             return;
         };
         let handled = match command {
+            KeyboardCommand::Undo => self.undo_annotation(cx),
+            KeyboardCommand::Redo => self.redo_annotation(cx),
             KeyboardCommand::Cancel => {
                 if matches!(
                     self.session.state(),
@@ -447,6 +449,46 @@ impl FlashShotApp {
         };
         if handled {
             cx.stop_propagation();
+        }
+    }
+
+    pub(super) fn undo_annotation(&mut self, cx: &mut Context<Self>) -> bool {
+        self.annotation_editor.cancel();
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        match self.annotation_history.undo(document) {
+            Ok(true) => {
+                self.status = "Annotation undone".to_owned();
+                cx.notify();
+                true
+            }
+            Ok(false) => false,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                true
+            }
+        }
+    }
+
+    pub(super) fn redo_annotation(&mut self, cx: &mut Context<Self>) -> bool {
+        self.annotation_editor.cancel();
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        match self.annotation_history.redo(document) {
+            Ok(true) => {
+                self.status = "Annotation redone".to_owned();
+                cx.notify();
+                true
+            }
+            Ok(false) => false,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                true
+            }
         }
     }
 
@@ -1240,6 +1282,8 @@ fn resolve_pointer_selection(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum KeyboardCommand {
+    Undo,
+    Redo,
     Cancel,
     Copy,
     QuickSave,
@@ -1254,6 +1298,18 @@ enum SaveOutcome {
 
 fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
     let modifiers = keystroke.modifiers;
+    if modifiers.secondary()
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+        && keystroke.key == "z"
+    {
+        return Some(if modifiers.shift {
+            KeyboardCommand::Redo
+        } else {
+            KeyboardCommand::Undo
+        });
+    }
     if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
         return None;
     }
@@ -1462,6 +1518,14 @@ mod tests {
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-enter").unwrap()),
             None
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-z").unwrap()),
+            Some(KeyboardCommand::Undo)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-shift-z").unwrap()),
+            Some(KeyboardCommand::Redo)
         );
     }
 

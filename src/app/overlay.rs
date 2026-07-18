@@ -166,6 +166,8 @@ impl Render for CaptureOverlay {
             .as_ref()
             .and_then(|document| app.annotation_editor.preview(document.canvas_bounds()));
         let selected_tool = app.annotation_tool;
+        let can_undo = app.annotation_history.undo_len() > 0;
+        let can_redo = app.annotation_history.redo_len() > 0;
         let status = app.status.clone();
         let viewport = local_viewport(window);
         let transform = self.transform(viewport);
@@ -253,6 +255,42 @@ impl Render for CaptureOverlay {
                     .top(px(18.0))
                     .flex()
                     .gap_2()
+                    .when(can_undo, |tools| {
+                        tools.child(
+                            div()
+                                .id("overlay-undo")
+                                .px_3()
+                                .py_2()
+                                .bg(colors.panel)
+                                .text_color(colors.text)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let app = this.app.clone();
+                                    cx.defer(move |cx| {
+                                        app.update(cx, |app, cx| app.undo_annotation(cx));
+                                    });
+                                }))
+                                .child("Undo"),
+                        )
+                    })
+                    .when(can_redo, |tools| {
+                        tools.child(
+                            div()
+                                .id("overlay-redo")
+                                .px_3()
+                                .py_2()
+                                .bg(colors.panel)
+                                .text_color(colors.text)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let app = this.app.clone();
+                                    cx.defer(move |cx| {
+                                        app.update(cx, |app, cx| app.redo_annotation(cx));
+                                    });
+                                }))
+                                .child("Redo"),
+                        )
+                    })
                     .child(
                         div()
                             .id("overlay-tool-selection")
