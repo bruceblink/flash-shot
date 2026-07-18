@@ -21,7 +21,10 @@ use super::{
 };
 use crate::{
     domain::{
-        annotation::{AnnotationCommand, AnnotationDocument, AnnotationId, AnnotationTool},
+        annotation::{
+            Annotation, AnnotationCommand, AnnotationDocument, AnnotationId, AnnotationKind,
+            AnnotationTool,
+        },
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, ViewPoint, ViewRect},
         session::CaptureSessionState,
@@ -1115,6 +1118,50 @@ impl FlashShotApp {
 
     pub(super) fn select_number_tool(&mut self, cx: &mut Context<Self>) {
         self.select_annotation_tool(AnnotationTool::Number, cx);
+    }
+
+    pub(super) fn adjust_selected_number(&mut self, delta: i32, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self.selected_annotation else {
+            return false;
+        };
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        let Some(existing) = document.annotation(id).cloned() else {
+            self.selected_annotation = None;
+            return false;
+        };
+        let AnnotationKind::Number { center, value } = existing.kind.clone() else {
+            return false;
+        };
+        let value = adjusted_number_value(value, delta);
+        if value
+            == match existing.kind {
+                AnnotationKind::Number { value, .. } => value,
+                _ => unreachable!(),
+            }
+        {
+            return true;
+        }
+        let replacement = Annotation {
+            kind: AnnotationKind::Number { center, value },
+            ..existing
+        };
+        match self
+            .annotation_history
+            .apply(document, AnnotationCommand::Replace(replacement))
+        {
+            Ok(()) => {
+                self.status = format!("Number marker: {value}");
+                cx.notify();
+                true
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                true
+            }
+        }
     }
 
     pub(super) fn select_ellipse_tool(&mut self, cx: &mut Context<Self>) {
@@ -3606,15 +3653,21 @@ fn annotation_position(annotations: &[AnnotationId], selected: AnnotationId) -> 
         .map_or(0, |index| index + 1)
 }
 
+fn adjusted_number_value(value: u32, delta: i32) -> u32 {
+    i64::from(value)
+        .saturating_add(i64::from(delta))
+        .clamp(1, i64::from(u32::MAX)) as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        KeyboardCommand, annotation_added_status, annotation_cancelled_status, annotation_position,
-        copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha,
-        fill_color, format_recording_progress, intersect_rect, is_current_operation,
-        keyboard_command, next_annotation_selection, next_capture_delay, next_quick_save_path,
-        next_quick_save_path_with_prefix, next_recording_audio_selection,
-        next_recording_display_selection, pinned_size, png_path,
+        KeyboardCommand, adjusted_number_value, annotation_added_status,
+        annotation_cancelled_status, annotation_position, copy_annotated_frame_selection,
+        delayed_capture_status, drawing_status, fill_alpha, fill_color, format_recording_progress,
+        intersect_rect, is_current_operation, keyboard_command, next_annotation_selection,
+        next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix,
+        next_recording_audio_selection, next_recording_display_selection, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
         recording_display_selection_label, recording_target_label, resolve_pointer_selection,
         sanitize_save_prefix, save_annotated_frame_selection, smart_target_status, style_for_tool,
@@ -3868,6 +3921,13 @@ mod tests {
         );
         assert_eq!(annotation_position(&annotations, AnnotationId::new(2)), 2);
         assert_eq!(next_annotation_selection(&[], None, false), None);
+    }
+
+    #[test]
+    fn number_marker_adjustment_clamps_to_the_supported_range() {
+        assert_eq!(adjusted_number_value(7, 2), 9);
+        assert_eq!(adjusted_number_value(1, -1), 1);
+        assert_eq!(adjusted_number_value(u32::MAX, 1), u32::MAX);
     }
 
     #[test]

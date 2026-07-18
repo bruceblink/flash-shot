@@ -196,6 +196,15 @@ impl Render for CaptureOverlay {
         let text_edit = app.text_edit().cloned();
         let selected_annotation = app.selected_annotation;
         let can_delete = selected_annotation.is_some();
+        let selected_number = selected_annotation.and_then(|id| {
+            app.annotation_document
+                .as_ref()?
+                .annotation(id)
+                .and_then(|annotation| match annotation.kind {
+                    AnnotationKind::Number { value, .. } => Some(value),
+                    _ => None,
+                })
+        });
         let selected_tool = app.annotation_tool;
         let annotation_color = app.annotation_style.stroke_rgba;
         let annotation_width = app.annotation_style.stroke_width;
@@ -390,6 +399,52 @@ impl Render for CaptureOverlay {
                                 }))
                                 .child("Delete"),
                         )
+                    })
+                    .when_some(selected_number, |tools, value| {
+                        tools
+                            .child(
+                                div()
+                                    .id("overlay-number-decrement")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(colors.panel)
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.adjust_selected_number(-1, cx);
+                                            });
+                                        });
+                                    }))
+                                    .child("-"),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_2()
+                                    .text_color(colors.text)
+                                    .child(value.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .id("overlay-number-increment")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(colors.panel)
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.adjust_selected_number(1, cx);
+                                            });
+                                        });
+                                    }))
+                                    .child("+"),
+                            )
                     })
                     .when(can_delete, |tools| {
                         tools.child(
