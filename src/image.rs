@@ -1221,4 +1221,153 @@ mod tests {
         let composited = frame.composite_annotations(&document).unwrap();
         assert!(composited.pixels.chunks_exact(4).any(|pixel| pixel[2] > 0));
     }
+
+    #[test]
+    fn composite_matches_the_multi_tool_golden_pixel_fingerprint() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 48,
+                bottom: 36,
+            },
+            width: 48,
+            height: 36,
+            stride: 192,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(
+                (0..36)
+                    .flat_map(|y| {
+                        (0..48).flat_map(move |x| {
+                            [
+                                (x * 3 + y) as u8,
+                                (x + y * 5) as u8,
+                                (x * 7 + y * 2) as u8,
+                                255,
+                            ]
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        let annotations = [
+            Annotation {
+                id: AnnotationId::new(20),
+                kind: AnnotationKind::Rectangle {
+                    bounds: PhysicalRect {
+                        left: 2,
+                        top: 2,
+                        right: 22,
+                        bottom: 18,
+                    },
+                },
+                style: AnnotationStyle {
+                    stroke_rgba: 0xFF3B30CC,
+                    fill_rgba: Some(0xFF3B3044),
+                    stroke_width: 2,
+                },
+            },
+            Annotation {
+                id: AnnotationId::new(21),
+                kind: AnnotationKind::Ellipse {
+                    bounds: PhysicalRect {
+                        left: 18,
+                        top: 5,
+                        right: 40,
+                        bottom: 25,
+                    },
+                },
+                style: AnnotationStyle {
+                    stroke_rgba: 0x007AFFFF,
+                    fill_rgba: Some(0x007AFF55),
+                    stroke_width: 2,
+                },
+            },
+            Annotation {
+                id: AnnotationId::new(22),
+                kind: AnnotationKind::Arrow {
+                    start: PhysicalPoint { x: 3, y: 31 },
+                    end: PhysicalPoint { x: 43, y: 27 },
+                },
+                style: AnnotationStyle {
+                    stroke_rgba: 0x34C759FF,
+                    fill_rgba: None,
+                    stroke_width: 2,
+                },
+            },
+            Annotation {
+                id: AnnotationId::new(23),
+                kind: AnnotationKind::Freehand {
+                    points: vec![
+                        PhysicalPoint { x: 4, y: 22 },
+                        PhysicalPoint { x: 11, y: 27 },
+                        PhysicalPoint { x: 17, y: 22 },
+                    ],
+                },
+                style: AnnotationStyle {
+                    stroke_rgba: 0xAF52DEFF,
+                    fill_rgba: None,
+                    stroke_width: 2,
+                },
+            },
+            Annotation {
+                id: AnnotationId::new(24),
+                kind: AnnotationKind::Highlight {
+                    bounds: PhysicalRect {
+                        left: 26,
+                        top: 2,
+                        right: 46,
+                        bottom: 8,
+                    },
+                },
+                style: AnnotationStyle {
+                    stroke_rgba: 0xFFCC0066,
+                    fill_rgba: None,
+                    stroke_width: 1,
+                },
+            },
+            Annotation {
+                id: AnnotationId::new(25),
+                kind: AnnotationKind::Mosaic {
+                    bounds: PhysicalRect {
+                        left: 28,
+                        top: 26,
+                        right: 47,
+                        bottom: 35,
+                    },
+                },
+                style: AnnotationStyle::default(),
+            },
+            Annotation {
+                id: AnnotationId::new(26),
+                kind: AnnotationKind::Blur {
+                    bounds: PhysicalRect {
+                        left: 1,
+                        top: 29,
+                        right: 17,
+                        bottom: 35,
+                    },
+                },
+                style: AnnotationStyle::default(),
+            },
+        ];
+        for annotation in annotations {
+            history
+                .apply(&mut document, AnnotationCommand::Insert(annotation))
+                .unwrap();
+        }
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        assert_eq!(fnv1a64(&composited.pixels), 15_232_202_040_409_263_755);
+    }
+
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        })
+    }
 }
