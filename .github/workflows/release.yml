@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v<major>.<minor>.<patch> tag to package
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify release tag
+        shell: pwsh
+        run: .\scripts\verify-release-tag.ps1 -Tag "${{ inputs.tag || github.ref_name }}"
+      - name: Validate source
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          cargo check --workspace --all-targets
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+      - name: Build release assets
+        shell: pwsh
+        run: |
+          .\scripts\package-portable.ps1
+          .\scripts\package-installer.ps1
+          .\scripts\release-manifest.ps1 -AssetDirectory dist
+          .\scripts\release-manifest.ps1 -AssetDirectory dist -VerifyOnly
+      - name: Create draft GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/*.exe
+            dist/*.exe.sha256
+            dist/release-manifest.json

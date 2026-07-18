@@ -66,6 +66,17 @@ $env:FLASH_SHOT_UPDATE_ENDPOINT = "https://releases.example.com/flash-shot/relea
 
 The application makes no update network request until the user clicks the button. It accepts only schema-version-1 Windows manifests with nonempty, version-matched ZIP or EXE assets and valid SHA-256 metadata. The result tells the user whether a newer release exists and directs them to their configured release channel; downloading and installation remain manual.
 
+## GitHub release workflow
+
+The repository packages a Windows release when a `v<major>.<minor>.<patch>` tag is pushed, or when the `Release` workflow is manually run for an existing tag. The tag must exactly match the Cargo package version; for example, `Cargo.toml` version `0.1.0` requires tag `v0.1.0`:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow runs the Rust gates, builds the unsigned portable ZIP and Inno Setup executable, generates and re-verifies `release-manifest.json`, then creates a **draft** GitHub Release with the ZIP, installer, their SHA-256 sidecars, and manifest. Publishing the draft is a deliberate operator action after clean-profile smoke testing. Releases are unsigned unless the packaging process has been separately extended with an available code-signing certificate; an unsigned release must remain identified as such.
+
 ## Release checks
 
-Before publishing a portable package or installer, run the repository validation gates, generate and verify the release manifest, and manually smoke-test it on a clean Windows profile. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
+Before publishing a draft, download the uploaded artifacts, re-check their SHA-256 sidecars, and manually smoke-test the portable ZIP and installer on a clean Windows profile. Check screenshot capture, annotation, save/copy, and the FFmpeg recording path when a compatible FFmpeg build is available. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
