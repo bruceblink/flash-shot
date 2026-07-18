@@ -16,6 +16,7 @@ use std::{
 
 use crate::domain::geometry::PhysicalRect;
 use crate::platform::process_group::ProcessGroup;
+use crate::platform::process_pause::set_paused;
 
 const FFMPEG_PATH_ENV: &str = "FLASH_SHOT_FFMPEG";
 const VERSION_ARGUMENTS: &[&str] = &["-hide_banner", "-version"];
@@ -249,6 +250,8 @@ pub struct RecordingExit {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecordingEvent {
     Started,
+    Paused,
+    Resumed,
     Progress(RecordingProgress),
     Finished { output: PathBuf },
     Failed { message: String },
@@ -256,19 +259,33 @@ pub enum RecordingEvent {
 
 /// Handle for an isolated recording worker. Dropping it requests a normal FFmpeg stop.
 pub struct RecordingControl {
-    stop: async_channel::Sender<()>,
+    commands: async_channel::Sender<RecordingCommand>,
     events: async_channel::Receiver<RecordingEvent>,
 }
 
 impl RecordingControl {
     pub fn request_stop(&self) -> io::Result<()> {
-        self.stop.try_send(()).or_else(|error| match error {
-            async_channel::TrySendError::Full(()) => Ok(()),
-            async_channel::TrySendError::Closed(()) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "recording worker is no longer running",
-            )),
+        self.send_command(RecordingCommand::Stop)
+    }
+
+    pub fn set_paused(&self, paused: bool) -> io::Result<()> {
+        self.send_command(if paused {
+            RecordingCommand::Pause
+        } else {
+            RecordingCommand::Resume
         })
+    }
+
+    fn send_command(&self, command: RecordingCommand) -> io::Result<()> {
+        self.commands
+            .try_send(command)
+            .or_else(|error| match error {
+                async_channel::TrySendError::Full(_) => Ok(()),
+                async_channel::TrySendError::Closed(_) => Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "recording worker is no longer running",
+                )),
+            })
     }
 
     pub fn events(&self) -> async_channel::Receiver<RecordingEvent> {
@@ -278,7 +295,7 @@ impl RecordingControl {
 
 impl Drop for RecordingControl {
     fn drop(&mut self) {
-        let _ = self.stop.try_send(());
+        let _ = self.commands.try_send(RecordingCommand::Stop);
     }
 }
 
@@ -288,11 +305,11 @@ pub fn start_recording(
     request: RecordingRequest,
 ) -> io::Result<RecordingControl> {
     let command = build_recording_command(&capabilities, &request)?;
-    let (stop_tx, stop_rx) = async_channel::bounded(1);
+    let (command_tx, command_rx) = async_channel::bounded(1);
     let (event_tx, event_rx) = async_channel::bounded(32);
     std::thread::Builder::new()
         .name("flash-shot-recording".to_owned())
-        .spawn(move || recording_worker(command, request.output, stop_rx, event_tx))
+        .spawn(move || recording_worker(command, request.output, command_rx, event_tx))
         .map_err(|error| {
             io::Error::new(
                 error.kind(),
@@ -300,7 +317,7 @@ pub fn start_recording(
             )
         })?;
     Ok(RecordingControl {
-        stop: stop_tx,
+        commands: command_tx,
         events: event_rx,
     })
 }
@@ -308,7 +325,7 @@ pub fn start_recording(
 fn recording_worker(
     command: FfmpegCommand,
     output: PathBuf,
-    stop: async_channel::Receiver<()>,
+    commands: async_channel::Receiver<RecordingCommand>,
     events: async_channel::Sender<RecordingEvent>,
 ) {
     let mut process = match RecordingProcess::start(command) {
@@ -324,8 +341,14 @@ fn recording_worker(
         return;
     }
     let mut last_progress = RecordingProgress::default();
+    let mut paused = false;
     loop {
-        if stop.try_recv().is_ok() || stop.is_closed() {
+        let command = match commands.try_recv() {
+            Ok(command) => Some(command),
+            Err(async_channel::TryRecvError::Empty) => None,
+            Err(async_channel::TryRecvError::Closed) => Some(RecordingCommand::Stop),
+        };
+        if matches!(command, Some(RecordingCommand::Stop)) {
             match process.stop_gracefully(GRACEFUL_STOP_TIMEOUT) {
                 Ok(exit) if exit.success => {
                     let _ = events.try_send(RecordingEvent::Finished { output });
@@ -340,6 +363,34 @@ fn recording_worker(
                 }
             }
             return;
+        }
+        if matches!(command, Some(RecordingCommand::Pause)) && !paused {
+            match process.set_paused(true) {
+                Ok(()) => {
+                    paused = true;
+                    let _ = events.try_send(RecordingEvent::Paused);
+                }
+                Err(error) => {
+                    let _ = events.try_send(RecordingEvent::Failed {
+                        message: error.to_string(),
+                    });
+                    return;
+                }
+            }
+        }
+        if matches!(command, Some(RecordingCommand::Resume)) && paused {
+            match process.set_paused(false) {
+                Ok(()) => {
+                    paused = false;
+                    let _ = events.try_send(RecordingEvent::Resumed);
+                }
+                Err(error) => {
+                    let _ = events.try_send(RecordingEvent::Failed {
+                        message: error.to_string(),
+                    });
+                    return;
+                }
+            }
         }
         match process.try_wait_for_exit() {
             Ok(Some(exit)) if exit.success => {
@@ -370,6 +421,13 @@ fn recording_worker(
         }
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordingCommand {
+    Stop,
+    Pause,
+    Resume,
 }
 
 /// The latest machine-readable progress information emitted by FFmpeg's `-progress` pipe.
@@ -489,6 +547,15 @@ impl RecordingProcess {
             .lock()
             .map(|progress| *progress)
             .map_err(|_| io::Error::other("FFmpeg progress state lock poisoned"))
+    }
+
+    /// Suspends or resumes all FFmpeg threads through the platform process boundary.
+    pub fn set_paused(&self, paused: bool) -> io::Result<()> {
+        let child = self
+            .child
+            .as_ref()
+            .ok_or_else(|| io::Error::other("recording process has already been reaped"))?;
+        set_paused(child.id(), paused)
     }
 
     /// Waits for natural completion and returns the bounded FFmpeg diagnostic output.
@@ -1356,6 +1423,24 @@ mod tests {
                 finished: true,
             }
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_can_pause_and_resume_its_ffmpeg_threads() {
+        let command = FfmpegCommand {
+            executable: PathBuf::from("cmd.exe"),
+            arguments: ["/C", "ping -n 3 127.0.0.1 > nul"]
+                .map(OsString::from)
+                .into(),
+        };
+        let mut process = RecordingProcess::start(command).unwrap();
+
+        process.set_paused(true).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(process.try_wait_for_exit().unwrap().is_none());
+        process.set_paused(false).unwrap();
+        assert!(process.wait_for_exit().unwrap().success);
     }
 
     #[cfg(windows)]

@@ -80,6 +80,24 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn toggle_recording_pause(&mut self, cx: &mut Context<Self>) {
+        let Some(control) = self.recording_control.as_ref() else {
+            return;
+        };
+        let paused = !self.recording_paused;
+        match control.set_paused(paused) {
+            Ok(()) => {
+                self.status = if paused {
+                    "Pausing screen recording...".to_owned()
+                } else {
+                    "Resuming screen recording...".to_owned()
+                }
+            }
+            Err(error) => self.status = format!("Could not change recording pause state: {error}"),
+        }
+        cx.notify();
+    }
+
     fn recording_started(
         &mut self,
         result: std::io::Result<crate::recording::RecordingControl>,
@@ -90,6 +108,7 @@ impl FlashShotApp {
                 let events = control.events();
                 self.recording_control = Some(control);
                 self.recording_progress = Default::default();
+                self.recording_paused = false;
                 self.status = "Starting primary display recording...".to_owned();
                 cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                     let mut cx = cx.clone();
@@ -113,6 +132,14 @@ impl FlashShotApp {
     fn handle_recording_event(&mut self, event: RecordingEvent, cx: &mut Context<Self>) {
         match event {
             RecordingEvent::Started => self.status = "Recording primary display...".to_owned(),
+            RecordingEvent::Paused => {
+                self.recording_paused = true;
+                self.status = "Screen recording paused".to_owned();
+            }
+            RecordingEvent::Resumed => {
+                self.recording_paused = false;
+                self.status = "Recording primary display...".to_owned();
+            }
             RecordingEvent::Progress(progress) => {
                 self.recording_progress = progress;
                 self.status = format_recording_progress(progress);
@@ -120,11 +147,13 @@ impl FlashShotApp {
             RecordingEvent::Finished { output } => {
                 self.recording_control = None;
                 self.recording_progress = Default::default();
+                self.recording_paused = false;
                 self.status = format!("Screen recording saved to {}", output.display());
             }
             RecordingEvent::Failed { message } => {
                 self.recording_control = None;
                 self.recording_progress = Default::default();
+                self.recording_paused = false;
                 self.status = format!("Screen recording failed: {message}");
             }
         }
@@ -451,6 +480,7 @@ impl FlashShotApp {
         self.manual_scroll_capture_in_flight = false;
         self.recording_control = None;
         self.recording_start_in_flight = false;
+        self.recording_paused = false;
         // GPUI has already removed native windows before invoking on_app_quit.
         // Keeping the handles untouched avoids issuing late operations on closed HWNDs.
         log::info!(target: "flash_shot::lifecycle", "capture_workflow_shutdown");
