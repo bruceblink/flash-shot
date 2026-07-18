@@ -14,18 +14,20 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 
 ### 当前状态
 
-里程碑 0 正在进行。工程骨架参考了 `synchub-desktop` 与 `hiposter` 中经过验证的精简入口、模块组织、Tokio 后台运行时和原生资源打包方式。界面直接使用原生 GPUI，不依赖 `gpui-component`。
+当前主线已完成 Windows 原生截图、标注、滚动截图和基于 FFmpeg 的录屏工作流。工程骨架参考了 `synchub-desktop` 与 `hiposter` 中经过验证的精简入口、模块组织、Tokio 后台运行时和原生资源打包方式。界面直接使用原生 GPUI，不依赖 `gpui-component`。
 
 当前基线将 `gpui` 和官方 `gpui_platform` 启动模块锁定到同一个经过验证的 Zed 提交，不使用 crates.io 上较旧的 GPUI 版本，也不引入第三方组件库。
 
-仓库目前包含：
+当前已包含：
 
-- 可运行的 GPUI 原生应用壳；
-- 与 UI 框架无关的路线图领域模型及测试；
-- 产品需求、架构设计和分阶段开发计划；
-- 本地与 CI 质量门禁。
+- Windows 虚拟桌面截图、混合 DPI 选区、窗口/控件识别、放大镜和键盘微调；
+- 延时截图、可选系统光标合成、复制、保存、贴图和截图历史；
+- 原生矩形、椭圆、直线、箭头、画笔、文字、模糊、马赛克、高亮、水印和序号标注；
+- 手动与辅助滚动截图、二维码识别、可选本地 OCR 与 HTTPS 翻译；
+- 显示器、窗口和区域录制，以及音频选择、暂停/恢复、进度与 Job Object 清理；
+- 可重复性能/资源压力工具、结构化诊断和本地质量门禁。
 
-目前尚未实现屏幕捕获。
+录屏后端和测试已完成；生成 MP4 仍需要在安装了支持 `ddagrab` 或 `gdigrab` 的 FFmpeg 环境中做手工验收。
 
 ### 运行
 
@@ -86,18 +88,20 @@ The project is Windows-first. Startup time, capture latency, mixed-DPI correctne
 
 ### Status
 
-Milestone 0 is in progress. The engineering shell borrows the thin entry point, module layout, Tokio background runtime, and native resource packaging patterns proven in `synchub-desktop` and `hiposter`. The UI uses GPUI directly without `gpui-component`.
+The current mainline implements native Windows capture, annotation, scrolling capture, and an FFmpeg-based recording workflow. The engineering shell borrows the thin entry point, module layout, Tokio background runtime, and native resource packaging patterns proven in `synchub-desktop` and `hiposter`. The UI uses GPUI directly without `gpui-component`.
 
 The baseline pins `gpui` and the official `gpui_platform` launcher to the same reviewed Zed commit. It uses neither the older crates.io GPUI release nor a third-party component suite.
 
-The repository currently contains:
+The repository currently includes:
 
-- a runnable native GPUI application shell;
-- framework-independent roadmap domain types with tests;
-- product requirements, architecture decisions, and a staged delivery plan;
-- local and CI quality gates.
+- virtual-desktop capture, mixed-DPI selection, window/control inspection, magnification, and keyboard nudging on Windows;
+- delayed capture, optional system-cursor compositing, copy/save, pinning, and screenshot history;
+- native rectangle, ellipse, line, arrow, pen, text, blur, mosaic, highlight, watermark, and sequence annotations;
+- manual and assisted scrolling capture, QR recognition, optional local OCR, and HTTPS translation;
+- display, window, and region recording with audio selection, pause/resume, progress, and Job Object cleanup;
+- repeatable performance/resource stress tooling, structured diagnostics, and local quality gates.
 
-Screen capture is not implemented yet.
+The recording backend and its automated tests are complete. Producing an MP4 still needs manual acceptance with an FFmpeg build that supports `ddagrab` or `gdigrab`.
 
 ### Run
 
