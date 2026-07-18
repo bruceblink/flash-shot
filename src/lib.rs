@@ -14,6 +14,7 @@ pub mod scroll;
 pub mod single_instance;
 pub mod theme;
 pub mod translation;
+pub mod update;
 
 use app::FlashShotApp;
 use gpui::*;

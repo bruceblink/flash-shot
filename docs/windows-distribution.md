@@ -54,7 +54,17 @@ The generated `release-manifest.json` records the Cargo version, Windows platfor
 .\scripts\release-manifest.ps1 -AssetDirectory dist -VerifyOnly
 ```
 
-The tool rejects missing sidecars, malformed checksums, version-mismatched filenames, changed assets, and changed manifests. It is deliberately only a release-verification input: the application does not fetch or install updates automatically.
+The tool rejects missing sidecars, malformed checksums, version-mismatched filenames, changed assets, and changed manifests.
+
+## Manual update check
+
+Flash Shot never downloads or installs updates. To enable the optional `Check Updates` button, configure an HTTPS endpoint that serves the generated `release-manifest.json`:
+
+```powershell
+$env:FLASH_SHOT_UPDATE_ENDPOINT = "https://releases.example.com/flash-shot/release-manifest.json"
+```
+
+The application makes no update network request until the user clicks the button. It accepts only schema-version-1 Windows manifests with nonempty, version-matched ZIP or EXE assets and valid SHA-256 metadata. The result tells the user whether a newer release exists and directs them to their configured release channel; downloading and installation remain manual.
 
 ## Release checks
 

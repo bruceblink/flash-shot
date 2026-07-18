@@ -41,9 +41,72 @@ use crate::{
         AudioSource, RecordingAudioConfig, RecordingEvent, RecordingProgress, RecordingRequest,
         RecordingTarget, discover, discover_audio_sources, start_recording,
     },
+    update::{UpdateAvailability, UpdateConfig},
 };
 
 impl FlashShotApp {
+    pub(super) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if self.update_check_in_flight {
+            return;
+        }
+        let config = match UpdateConfig::from_environment() {
+            Ok(Some(config)) => config,
+            Ok(None) => {
+                self.status =
+                    "Update checks are disabled: set FLASH_SHOT_UPDATE_ENDPOINT".to_owned();
+                cx.notify();
+                return;
+            }
+            Err(error) => {
+                self.status = format!("Update checks are unavailable: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        self.update_check_in_flight = true;
+        self.status = "Checking for updates...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { crate::update::check(&config, env!("CARGO_PKG_VERSION")) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| this.finish_update_check(result, cx));
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_update_check(
+        &mut self,
+        result: std::io::Result<UpdateAvailability>,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_check_in_flight = false;
+        self.status = match result {
+            Ok(UpdateAvailability::Available { version }) => {
+                format!(
+                    "Update available: {version} (download from your configured release channel)"
+                )
+            }
+            Ok(UpdateAvailability::Current { version }) => {
+                format!("Flash Shot {version} is up to date")
+            }
+            Ok(UpdateAvailability::NewerLocal { version }) => {
+                format!("Installed version is newer than release manifest {version}")
+            }
+            Err(error) => {
+                log::warn!(target: "flash_shot::update", "update_check_failed error={error}");
+                format!("Could not check for updates: {error}")
+            }
+        };
+        cx.notify();
+    }
+
     pub(super) fn toggle_display_recording(&mut self, cx: &mut Context<Self>) {
         if let Some(control) = self.recording_control.as_ref() {
             match control.request_stop() {

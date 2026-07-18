@@ -107,6 +107,7 @@ impl Render for FlashShotApp {
         let recording_display =
             super::workflow::recording_display_selection_label(&self.recording_display);
         let recording_display_discovery = self.recording_display_discovery_in_flight;
+        let update_check_in_flight = self.update_check_in_flight;
         let preview = self.preview.clone();
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
         let frame = self.frame.clone();
@@ -142,6 +143,28 @@ impl Render for FlashShotApp {
                             .flex()
                             .items_center()
                             .gap_2()
+                            .child(
+                                div()
+                                    .id("check-for-updates")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.muted)
+                                    .when(!update_check_in_flight, |button| {
+                                        button.cursor_pointer().on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                this.check_for_updates(cx)
+                                            }),
+                                        )
+                                    })
+                                    .child(if update_check_in_flight {
+                                        "Checking..."
+                                    } else {
+                                        "Check Updates"
+                                    }),
+                            )
                             .child(
                                 div()
                                     .id("recording-display")
