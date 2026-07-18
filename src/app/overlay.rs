@@ -1045,7 +1045,7 @@ fn paint_selection_mask(
         x: selection.right,
         y: selection.bottom,
     });
-    let selection = Bounds::new(
+    let selection_bounds = Bounds::new(
         point(px(start.x), px(start.y)),
         size(px(end.x - start.x), px(end.y - start.y)),
     );
@@ -1053,39 +1053,51 @@ fn paint_selection_mask(
     window.paint_quad(fill(
         Bounds::new(
             viewport.origin,
-            size(viewport.size.width, selection.origin.y - viewport.origin.y),
-        ),
-        shade,
-    ));
-    window.paint_quad(fill(
-        Bounds::new(
-            point(viewport.origin.x, selection.bottom()),
-            size(viewport.size.width, viewport.bottom() - selection.bottom()),
-        ),
-        shade,
-    ));
-    window.paint_quad(fill(
-        Bounds::new(
-            point(viewport.origin.x, selection.origin.y),
             size(
-                selection.origin.x - viewport.origin.x,
-                selection.size.height,
+                viewport.size.width,
+                selection_bounds.origin.y - viewport.origin.y,
             ),
         ),
         shade,
     ));
     window.paint_quad(fill(
         Bounds::new(
-            point(selection.right(), selection.origin.y),
-            size(viewport.right() - selection.right(), selection.size.height),
+            point(viewport.origin.x, selection_bounds.bottom()),
+            size(
+                viewport.size.width,
+                viewport.bottom() - selection_bounds.bottom(),
+            ),
+        ),
+        shade,
+    ));
+    window.paint_quad(fill(
+        Bounds::new(
+            point(viewport.origin.x, selection_bounds.origin.y),
+            size(
+                selection_bounds.origin.x - viewport.origin.x,
+                selection_bounds.size.height,
+            ),
+        ),
+        shade,
+    ));
+    window.paint_quad(fill(
+        Bounds::new(
+            point(selection_bounds.right(), selection_bounds.origin.y),
+            size(
+                viewport.right() - selection_bounds.right(),
+                selection_bounds.size.height,
+            ),
         ),
         shade,
     ));
     window.paint_quad(gpui::outline(
-        selection,
+        selection_bounds,
         colors.accent,
         gpui::BorderStyle::Solid,
     ));
+    // These are the same corners used by PreviewTransform::resize_handle_at,
+    // so the visible affordance matches the physical-pixel hit targets.
+    paint_resize_handles(window, transform, selection, colors.accent);
 }
 
 fn paint_magnifier(
@@ -1471,24 +1483,7 @@ fn paint_resize_handles(
     color: gpui::Hsla,
 ) {
     const HANDLE_SIZE: f32 = 8.0;
-    for physical_point in [
-        PhysicalPoint {
-            x: bounds.left,
-            y: bounds.top,
-        },
-        PhysicalPoint {
-            x: bounds.right,
-            y: bounds.top,
-        },
-        PhysicalPoint {
-            x: bounds.left,
-            y: bounds.bottom,
-        },
-        PhysicalPoint {
-            x: bounds.right,
-            y: bounds.bottom,
-        },
-    ] {
+    for physical_point in resize_handle_points(bounds) {
         let view_point = transform.physical_to_view(physical_point);
         window.paint_quad(fill(
             Bounds::new(
@@ -1501,6 +1496,27 @@ fn paint_resize_handles(
             color,
         ));
     }
+}
+
+fn resize_handle_points(bounds: PhysicalRect) -> [PhysicalPoint; 4] {
+    [
+        PhysicalPoint {
+            x: bounds.left,
+            y: bounds.top,
+        },
+        PhysicalPoint {
+            x: bounds.right,
+            y: bounds.top,
+        },
+        PhysicalPoint {
+            x: bounds.left,
+            y: bounds.bottom,
+        },
+        PhysicalPoint {
+            x: bounds.right,
+            y: bounds.bottom,
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -1730,7 +1746,7 @@ fn visible_selection(
 mod tests {
     use super::{
         MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, arrow_head_points, intersect, magnifier_origin,
-        outline_shape_bounds, visible_selection,
+        outline_shape_bounds, resize_handle_points, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -1924,5 +1940,25 @@ mod tests {
 
         assert!(drag.is_dragging());
         assert_eq!(visible_selection(drag, Some(committed)), Some(committed));
+    }
+
+    #[test]
+    fn selection_resize_handles_cover_all_four_corners() {
+        let selection = PhysicalRect {
+            left: -400,
+            top: 50,
+            right: 800,
+            bottom: 600,
+        };
+
+        assert_eq!(
+            resize_handle_points(selection),
+            [
+                PhysicalPoint { x: -400, y: 50 },
+                PhysicalPoint { x: 800, y: 50 },
+                PhysicalPoint { x: -400, y: 600 },
+                PhysicalPoint { x: 800, y: 600 },
+            ]
+        );
     }
 }
