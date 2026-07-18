@@ -65,6 +65,22 @@ target\release\flash-shot.exe
 
 这是一条 Release 冒烟样本，不是 p95 基线：当前 113.85 ms 的覆盖层首帧也高于产品 100 ms 的 p95 目标。后续应在多次热启动和真实混合 DPI 硬件上收集分布，并重点分析 GPUI 的首次窗口/纹理呈现开销。
 
+## 连续捕获资源基线
+
+2026-07-18 在同一台单显示器 Windows 机器上执行了 100 次 Release
+虚拟桌面捕获与 PNG 编码压力测试：
+
+```powershell
+cargo build --release --bin capture-stress
+target\release\capture-stress.exe --iterations 100 --output target\capture-stress-report.json
+```
+
+报告通过了资源门禁：句柄增长 `0`（上限 `8`）、线程增长 `0`（上限
+`2`）、工作集增长 `14,757,888` 字节，低于 `64 MiB` 上限。端到端的
+捕获与 PNG 编码延迟为 p50 `269.07 ms`、p95 `314.50 ms`。该结果验证了
+连续导出不会导致资源无界增长；它包含 PNG 编码，不能替代快捷键到可交互
+覆盖层的 100 ms p95 指标。
+
 ## 验证命令
 
 ```powershell
