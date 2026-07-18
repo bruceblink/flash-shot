@@ -16,7 +16,7 @@ use gpui::{
 use super::{FlashShotApp, overlay::CaptureOverlay, render_image::render_image_from_capture};
 use crate::{
     domain::{
-        annotation::{AnnotationDocument, AnnotationId, AnnotationStyle, AnnotationTool},
+        annotation::{AnnotationDocument, AnnotationId, AnnotationTool},
         geometry::PhysicalRect,
         selection::{PreviewTransform, ViewPoint, ViewRect},
         session::CaptureSessionState,
@@ -365,6 +365,12 @@ impl FlashShotApp {
         self.select_annotation_tool(AnnotationTool::Freehand, cx);
     }
 
+    pub(super) fn select_annotation_color(&mut self, color: u32, cx: &mut Context<Self>) {
+        self.annotation_style.stroke_rgba = color;
+        self.status = "Annotation color selected".to_owned();
+        cx.notify();
+    }
+
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.annotation_tool = None;
@@ -390,7 +396,7 @@ impl FlashShotApp {
         let id = AnnotationId::new(self.next_annotation_id);
         if self
             .annotation_editor
-            .begin(document, id, tool, AnnotationStyle::default(), point)
+            .begin(document, id, tool, self.annotation_style, point)
             .is_ok()
         {
             self.next_annotation_id = self.next_annotation_id.saturating_add(1);

@@ -23,6 +23,7 @@ use crate::{
 // Keep the action row above a scaled Windows taskbar when the borderless overlay
 // extends over the full display rather than the working area.
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
+const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 
 pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
@@ -167,6 +168,7 @@ impl Render for CaptureOverlay {
             .and_then(|document| app.annotation_editor.preview(document.canvas_bounds()));
         let selected_annotation = app.selected_annotation;
         let selected_tool = app.annotation_tool;
+        let annotation_color = app.annotation_style.stroke_rgba;
         let can_undo = app.annotation_history.undo_len() > 0;
         let can_redo = app.annotation_history.redo_len() > 0;
         let status = app.status.clone();
@@ -453,6 +455,36 @@ impl Render for CaptureOverlay {
                 div()
                     .absolute()
                     .left(px(18.0))
+                    .top(px(58.0))
+                    .flex()
+                    .gap_2()
+                    .children(ANNOTATION_COLORS.into_iter().map(|color| {
+                        div()
+                            .id(format!("overlay-color-{color:08x}"))
+                            .w(px(22.0))
+                            .h(px(22.0))
+                            .bg(rgba(color))
+                            .border_2()
+                            .border_color(if color == annotation_color {
+                                colors.text
+                            } else {
+                                colors.panel
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| {
+                                        app.select_annotation_color(color, cx)
+                                    });
+                                });
+                            }))
+                    })),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(18.0))
                     .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
                     .px_3()
                     .py_2()
@@ -624,21 +656,18 @@ fn paint_annotations(
         .filter(|annotation| Some(annotation.id) != preview.map(|preview| preview.id))
         .chain(preview)
     {
+        let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
-            AnnotationKind::Rectangle { bounds } => {
-                paint_outline(window, transform, bounds, colors.accent)
-            }
+            AnnotationKind::Rectangle { bounds } => paint_outline(window, transform, bounds, color),
             AnnotationKind::Ellipse { bounds } => {
-                paint_ellipse_outline(window, transform, bounds, colors.accent)
+                paint_ellipse_outline(window, transform, bounds, color)
             }
-            AnnotationKind::Line { start, end } => {
-                paint_line(window, transform, start, end, colors.accent)
-            }
+            AnnotationKind::Line { start, end } => paint_line(window, transform, start, end, color),
             AnnotationKind::Arrow { start, end } => {
-                paint_arrow(window, transform, start, end, colors.accent)
+                paint_arrow(window, transform, start, end, color)
             }
             AnnotationKind::Freehand { ref points } => {
-                paint_freehand(window, transform, points, colors.accent)
+                paint_freehand(window, transform, points, color)
             }
         }
         if Some(annotation.id) == selected_annotation {
