@@ -1533,6 +1533,7 @@ impl FlashShotApp {
             KeyboardCommand::Duplicate => self.duplicate_selected_annotation(cx),
             KeyboardCommand::BringForward => self.bring_selected_annotation_forward(cx),
             KeyboardCommand::SendBackward => self.send_selected_annotation_backward(cx),
+            KeyboardCommand::RotateClockwise => self.rotate_selected_annotation_clockwise(cx),
             KeyboardCommand::SelectNextAnnotation => self.select_adjacent_annotation(false, cx),
             KeyboardCommand::SelectPreviousAnnotation => self.select_adjacent_annotation(true, cx),
             KeyboardCommand::Delete => self.delete_selected_annotation(cx),
@@ -3596,6 +3597,7 @@ enum KeyboardCommand {
     Duplicate,
     BringForward,
     SendBackward,
+    RotateClockwise,
     SelectNextAnnotation,
     SelectPreviousAnnotation,
     Delete,
@@ -3657,6 +3659,15 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
         && keystroke.key == "["
     {
         return Some(KeyboardCommand::SendBackward);
+    }
+    if modifiers.secondary()
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+        && keystroke.key == "r"
+    {
+        return Some(KeyboardCommand::RotateClockwise);
     }
     if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
         return None;
@@ -3935,6 +3946,10 @@ mod tests {
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-shift-[").unwrap()),
             Some(KeyboardCommand::SendBackward)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-shift-r").unwrap()),
+            Some(KeyboardCommand::RotateClockwise)
         );
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-z").unwrap()),
