@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, Context, Entity, FocusHandle, Focusable, Image, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render, Subscription, Window,
+    Bounds, Context, Entity, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render, RenderImage, Subscription, Window,
     canvas, div, fill, img, point, prelude::*, px, rgba, size,
 };
 
@@ -22,7 +22,7 @@ use crate::{
 pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
     display: DisplayInfo,
-    preview: Arc<Image>,
+    preview: Arc<RenderImage>,
     focus_handle: FocusHandle,
     _app_observation: Subscription,
 }
@@ -31,7 +31,7 @@ impl CaptureOverlay {
     pub(super) fn new(
         app: Entity<FlashShotApp>,
         display: DisplayInfo,
-        preview: Arc<Image>,
+        preview: Arc<RenderImage>,
         cx: &mut Context<Self>,
     ) -> Self {
         let observation = cx.observe(&app, |_, _, cx| cx.notify());

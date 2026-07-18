@@ -3,12 +3,12 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use gpui::{
-    AppContext, AsyncApp, Bounds, Context, DisplayId, Focusable, Image, ImageFormat, KeyDownEvent,
-    Keystroke, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, WeakEntity,
+    AppContext, AsyncApp, Bounds, Context, DisplayId, Focusable, KeyDownEvent, Keystroke,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, RenderImage, WeakEntity,
     WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, point, px, size,
 };
 
-use super::{FlashShotApp, overlay::CaptureOverlay};
+use super::{FlashShotApp, overlay::CaptureOverlay, render_image::render_image_from_capture};
 use crate::{
     domain::{
         geometry::PhysicalRect,
@@ -107,16 +107,17 @@ impl FlashShotApp {
                     display_count: capture.capture.display_count,
                     frame_width: capture.capture.frame.width,
                     frame_height: capture.capture.frame.height,
-                    cpu_copy_count: capture.capture.frame.cpu_copy_count,
+                    capture_cpu_copy_count: capture.capture.frame.cpu_copy_count,
+                    render_upload_copy_count: (capture.displays.len() + 1) as u32,
                     overlay_image_count: capture.displays.len(),
-                    overlay_image_bytes: capture
+                    overlay_upload_bytes: capture
                         .displays
                         .iter()
-                        .map(|display| display.preview.bytes.len())
+                        .map(|display| display.upload_bytes)
                         .sum(),
-                    workspace_image_bytes: capture.png.len(),
+                    workspace_upload_bytes: capture.workspace_preview.upload_bytes,
                 };
-                self.preview = Some(Arc::new(Image::from_bytes(ImageFormat::Png, capture.png)));
+                self.preview = Some(capture.workspace_preview.image);
                 self.frame = Some(capture.capture.frame);
                 let app = cx.entity();
                 cx.defer(move |cx| open_capture_overlays(app, capture.displays, pipeline, cx));
@@ -708,7 +709,7 @@ fn close_overlay_windows(windows: Vec<gpui::WindowHandle<CaptureOverlay>>, cx: &
 
 struct CapturedDesktopPreview {
     capture: crate::platform::capture::VirtualDesktopCapture,
-    png: Vec<u8>,
+    workspace_preview: super::render_image::CaptureRenderImage,
     displays: Vec<CapturedDisplayPreview>,
 }
 
@@ -720,10 +721,11 @@ struct CapturePipelineMeasurement {
     display_count: usize,
     frame_width: u32,
     frame_height: u32,
-    cpu_copy_count: u32,
+    capture_cpu_copy_count: u32,
+    render_upload_copy_count: u32,
     overlay_image_count: usize,
-    overlay_image_bytes: usize,
-    workspace_image_bytes: usize,
+    overlay_upload_bytes: usize,
+    workspace_upload_bytes: usize,
 }
 
 impl CapturePipelineMeasurement {
@@ -735,30 +737,33 @@ impl CapturePipelineMeasurement {
             display_count: self.display_count,
             frame_width: self.frame_width,
             frame_height: self.frame_height,
-            cpu_copy_count: self.cpu_copy_count,
+            capture_cpu_copy_count: self.capture_cpu_copy_count,
+            render_upload_copy_count: self.render_upload_copy_count,
             overlay_image_count: self.overlay_image_count,
-            overlay_image_bytes: self.overlay_image_bytes,
-            workspace_image_bytes: self.workspace_image_bytes,
+            overlay_upload_bytes: self.overlay_upload_bytes,
+            workspace_upload_bytes: self.workspace_upload_bytes,
         }
     }
 }
 
 struct CapturedDisplayPreview {
     display: crate::platform::display::DisplayInfo,
-    preview: Arc<Image>,
+    preview: Arc<RenderImage>,
+    upload_bytes: usize,
 }
 
 fn capture_virtual_desktop_preview() -> std::io::Result<CapturedDesktopPreview> {
     let display_captures = capture_displays()?;
     let frame = compose_virtual_desktop(&display_captures)?;
-    let png = frame.encode_png()?;
+    let workspace_preview = render_image_from_capture(&frame)?;
     let displays = display_captures
         .into_iter()
         .map(|capture| {
-            let png = capture.frame.encode_png()?;
+            let preview = render_image_from_capture(&capture.frame)?;
             Ok(CapturedDisplayPreview {
                 display: capture.display,
-                preview: Arc::new(Image::from_bytes(ImageFormat::Png, png)),
+                preview: preview.image,
+                upload_bytes: preview.upload_bytes,
             })
         })
         .collect::<std::io::Result<Vec<_>>>()?;
@@ -767,7 +772,7 @@ fn capture_virtual_desktop_preview() -> std::io::Result<CapturedDesktopPreview> 
             display_count: displays.len(),
             frame,
         },
-        png,
+        workspace_preview,
         displays,
     })
 }

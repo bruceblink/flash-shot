@@ -1561,6 +1561,7 @@ dependencies = [
  "directories",
  "gpui",
  "gpui_platform",
+ "image",
  "log",
  "mimalloc",
  "png 0.18.1",

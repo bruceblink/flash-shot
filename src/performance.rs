@@ -20,10 +20,11 @@ pub struct CapturePipelineSample {
     pub display_count: usize,
     pub frame_width: u32,
     pub frame_height: u32,
-    pub cpu_copy_count: u32,
+    pub capture_cpu_copy_count: u32,
+    pub render_upload_copy_count: u32,
     pub overlay_image_count: usize,
-    pub overlay_image_bytes: usize,
-    pub workspace_image_bytes: usize,
+    pub overlay_upload_bytes: usize,
+    pub workspace_upload_bytes: usize,
 }
 
 #[derive(Clone)]
@@ -72,13 +73,17 @@ impl PerformanceRecorder {
                 "width": sample.frame_width,
                 "height": sample.frame_height,
                 "display_count": sample.display_count,
-                "cpu_copy_count": sample.cpu_copy_count,
+                "cpu_copy_count": sample
+                    .capture_cpu_copy_count
+                    .saturating_add(sample.render_upload_copy_count),
+                "capture_cpu_copy_count": sample.capture_cpu_copy_count,
+                "render_upload_copy_count": sample.render_upload_copy_count,
             },
             "preview_images": {
                 "overlay_count": sample.overlay_image_count,
-                "overlay_encoded_bytes": sample.overlay_image_bytes,
-                "workspace_encoded_bytes": sample.workspace_image_bytes,
-                "upload_strategy": "one_cached_image_per_display",
+                "overlay_upload_bytes": sample.overlay_upload_bytes,
+                "workspace_upload_bytes": sample.workspace_upload_bytes,
+                "upload_strategy": "one_bgra_upload_per_display",
             },
         });
         if let Err(error) = self.append(entry) {
@@ -205,10 +210,11 @@ mod tests {
             display_count: 2,
             frame_width: 4480,
             frame_height: 1440,
-            cpu_copy_count: 3,
+            capture_cpu_copy_count: 3,
+            render_upload_copy_count: 3,
             overlay_image_count: 2,
-            overlay_image_bytes: 123_456,
-            workspace_image_bytes: 98_765,
+            overlay_upload_bytes: 123_456,
+            workspace_upload_bytes: 98_765,
         });
 
         let contents = fs::read_to_string(directory.join(REPORT_FILE)).unwrap();
@@ -218,11 +224,13 @@ mod tests {
         assert_eq!(value["latency_ms"]["shortcut_to_overlay_frame"], 27.0);
         assert_eq!(value["latency_ms"]["platform_capture"], 11.0);
         assert_eq!(value["frame"]["display_count"], 2);
-        assert_eq!(value["frame"]["cpu_copy_count"], 3);
+        assert_eq!(value["frame"]["cpu_copy_count"], 6);
+        assert_eq!(value["frame"]["capture_cpu_copy_count"], 3);
+        assert_eq!(value["frame"]["render_upload_copy_count"], 3);
         assert_eq!(value["preview_images"]["overlay_count"], 2);
         assert_eq!(
             value["preview_images"]["upload_strategy"],
-            "one_cached_image_per_display"
+            "one_bgra_upload_per_display"
         );
         fs::remove_dir_all(directory).unwrap();
     }
