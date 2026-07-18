@@ -9,6 +9,7 @@ pub mod image;
 pub mod ocr;
 pub mod performance;
 pub mod platform;
+pub mod scroll;
 pub mod single_instance;
 pub mod theme;
 pub mod translation;
