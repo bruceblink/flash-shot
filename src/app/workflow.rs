@@ -37,8 +37,8 @@ use crate::{
         window_visibility,
     },
     recording::{
-        RecordingEvent, RecordingProgress, RecordingRequest, RecordingTarget, discover,
-        start_recording,
+        RecordingAudioConfig, RecordingEvent, RecordingProgress, RecordingRequest, RecordingTarget,
+        discover, start_recording,
     },
 };
 
@@ -2552,6 +2552,7 @@ fn start_recording_target(
     target: Option<RecordingTarget>,
 ) -> std::io::Result<crate::recording::RecordingControl> {
     let capabilities = discover()?;
+    let audio = RecordingAudioConfig::from_environment()?.source().cloned();
     let target = match target {
         Some(target) => target,
         None => RecordingTarget::Display {
@@ -2570,7 +2571,7 @@ fn start_recording_target(
         capabilities,
         RecordingRequest {
             target,
-            audio: None,
+            audio,
             frame_rate: 30,
             output,
         },

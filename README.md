@@ -39,6 +39,17 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 cargo run
 ```
 
+录屏依赖用户本机或随应用分发的 FFmpeg。默认视频保存到 `Videos\Flash Shot`（不可用时回退到当前目录）。可通过以下环境变量显式指定可执行文件和一个可选音频源：
+
+```powershell
+$env:FLASH_SHOT_FFMPEG = "C:\\tools\\ffmpeg.exe"
+$env:FLASH_SHOT_RECORDING_MICROPHONE = "Microphone (USB Audio Device)"
+# 或者，仅在 FFmpeg 探测到 WASAPI 时：
+$env:FLASH_SHOT_RECORDING_SYSTEM_AUDIO = "default"
+```
+
+`FLASH_SHOT_RECORDING_MICROPHONE` 与 `FLASH_SHOT_RECORDING_SYSTEM_AUDIO` 不能同时设置；未设置时录制无音频。
+
 ### 验证
 
 ```powershell

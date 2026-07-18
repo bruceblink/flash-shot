@@ -19,6 +19,8 @@ use crate::platform::process_group::ProcessGroup;
 use crate::platform::process_pause::set_paused;
 
 const FFMPEG_PATH_ENV: &str = "FLASH_SHOT_FFMPEG";
+const MICROPHONE_DEVICE_ENV: &str = "FLASH_SHOT_RECORDING_MICROPHONE";
+const SYSTEM_AUDIO_DEVICE_ENV: &str = "FLASH_SHOT_RECORDING_SYSTEM_AUDIO";
 const VERSION_ARGUMENTS: &[&str] = &["-hide_banner", "-version"];
 const FORMAT_ARGUMENTS: &[&str] = &["-hide_banner", "-formats"];
 const DEVICE_ARGUMENTS: &[&str] = &["-hide_banner", "-devices"];
@@ -93,6 +95,27 @@ pub enum AudioSource {
     Microphone { device: String },
     /// A WASAPI loopback or output device name as reported by FFmpeg.
     SystemAudio { device: String },
+}
+
+/// Explicit local audio selection loaded without probing or opening a device.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecordingAudioConfig {
+    source: Option<AudioSource>,
+}
+
+impl RecordingAudioConfig {
+    /// Reads one optional audio source. Configuring both inputs is rejected instead of mixing
+    /// unrelated capture backends without an explicit product decision.
+    pub fn from_environment() -> io::Result<Self> {
+        let microphone = non_empty_environment(MICROPHONE_DEVICE_ENV);
+        let system_audio = non_empty_environment(SYSTEM_AUDIO_DEVICE_ENV);
+        let source = audio_source_from_config(microphone, system_audio)?;
+        Ok(Self { source })
+    }
+
+    pub fn source(&self) -> Option<&AudioSource> {
+        self.source.as_ref()
+    }
 }
 
 /// A validated first-pass MP4 recording request.
@@ -959,6 +982,25 @@ fn executable_from(configured: Option<OsString>) -> OsString {
         .unwrap_or_else(|| OsString::from("ffmpeg"))
 }
 
+fn non_empty_environment(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|value| !value.trim().is_empty())
+}
+
+fn audio_source_from_config(
+    microphone: Option<String>,
+    system_audio: Option<String>,
+) -> io::Result<Option<AudioSource>> {
+    match (microphone, system_audio) {
+        (Some(_), Some(_)) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "configure either a recording microphone or system audio device, not both",
+        )),
+        (Some(device), None) => Ok(Some(AudioSource::Microphone { device })),
+        (None, Some(device)) => Ok(Some(AudioSource::SystemAudio { device })),
+        (None, None) => Ok(None),
+    }
+}
+
 fn run_probe(executable: &OsStr, arguments: &[&str]) -> io::Result<Output> {
     let output = Command::new(executable)
         .args(arguments)
@@ -1036,10 +1078,11 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 mod tests {
     use super::{
         AudioSource, DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, FfmpegCommand,
-        GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingProcess, RecordingProgress,
-        RecordingRequest, RecordingSession, RecordingState, RecordingTarget, VERSION_ARGUMENTS,
-        build_recording_command, diagnostic_suffix, executable_from, first_diagnostic_line,
-        graceful_stop_input, parse_input_formats, parse_version, read_bounded_diagnostics,
+        GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingAudioConfig, RecordingProcess,
+        RecordingProgress, RecordingRequest, RecordingSession, RecordingState, RecordingTarget,
+        VERSION_ARGUMENTS, audio_source_from_config, build_recording_command, diagnostic_suffix,
+        executable_from, first_diagnostic_line, graceful_stop_input, parse_input_formats,
+        parse_version, read_bounded_diagnostics,
     };
     use crate::domain::geometry::PhysicalRect;
     use std::{ffi::OsString, io::Cursor, path::PathBuf, time::Duration};
@@ -1294,6 +1337,29 @@ mod tests {
             ..region_request()
         };
         assert!(build_recording_command(&capabilities(), &request).is_err());
+    }
+
+    #[test]
+    fn audio_configuration_is_opt_in_and_accepts_one_explicit_source() {
+        assert_eq!(
+            audio_source_from_config(None, None).unwrap(),
+            RecordingAudioConfig { source: None }.source().cloned()
+        );
+        assert_eq!(
+            audio_source_from_config(Some("USB Mic".to_owned()), None).unwrap(),
+            Some(AudioSource::Microphone {
+                device: "USB Mic".to_owned(),
+            })
+        );
+        assert_eq!(
+            audio_source_from_config(None, Some("default".to_owned())).unwrap(),
+            Some(AudioSource::SystemAudio {
+                device: "default".to_owned(),
+            })
+        );
+        assert!(
+            audio_source_from_config(Some("mic".to_owned()), Some("default".to_owned())).is_err()
+        );
     }
 
     #[test]
