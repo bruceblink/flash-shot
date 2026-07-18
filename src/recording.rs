@@ -9,6 +9,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio},
+    sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -291,6 +292,8 @@ impl ProgressParser {
 
     fn consume_line(&mut self, line: &str) -> Option<RecordingProgress> {
         let (key, value) = line.split_once('=')?;
+        let key = key.trim();
+        let value = value.trim();
         match key {
             "out_time_us" => self.progress.output_time_us = value.parse().ok(),
             "frame" => self.progress.frame = value.parse().ok(),
@@ -309,6 +312,8 @@ impl ProgressParser {
 pub struct RecordingProcess {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
+    progress: Arc<Mutex<RecordingProgress>>,
+    stdout_reader: Option<JoinHandle<io::Result<RecordingProgress>>>,
     stderr_reader: Option<JoinHandle<io::Result<Vec<u8>>>>,
 }
 
@@ -318,7 +323,7 @@ impl RecordingProcess {
         let mut child = command
             .into_command()
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| {
@@ -327,15 +332,31 @@ impl RecordingProcess {
         let stdin = child.stdin.take().ok_or_else(|| {
             io::Error::other("FFmpeg control input pipe was not available after startup")
         })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            io::Error::other("FFmpeg progress output pipe was not available after startup")
+        })?;
         let stderr = child.stderr.take().ok_or_else(|| {
             io::Error::other("FFmpeg diagnostic pipe was not available after startup")
         })?;
+        let progress = Arc::new(Mutex::new(RecordingProgress::default()));
+        let progress_target = Arc::clone(&progress);
+        let stdout_reader = thread::spawn(move || read_progress(stdout, progress_target));
         let stderr_reader = thread::spawn(move || read_bounded_diagnostics(stderr));
         Ok(Self {
             child: Some(child),
             stdin: Some(stdin),
+            progress,
+            stdout_reader: Some(stdout_reader),
             stderr_reader: Some(stderr_reader),
         })
+    }
+
+    /// Returns the latest parsed FFmpeg `-progress` snapshot without blocking on process output.
+    pub fn progress(&self) -> io::Result<RecordingProgress> {
+        self.progress
+            .lock()
+            .map(|progress| *progress)
+            .map_err(|_| io::Error::other("FFmpeg progress state lock poisoned"))
     }
 
     /// Waits for natural completion and returns the bounded FFmpeg diagnostic output.
@@ -370,6 +391,7 @@ impl RecordingProcess {
                 let mut child = self.child.take().expect("checked above");
                 let _ = child.kill();
                 let _ = child.wait();
+                self.join_progress()?;
                 let diagnostic = self.join_diagnostics()?;
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
@@ -385,6 +407,7 @@ impl RecordingProcess {
     }
 
     fn complete(&mut self, status: ExitStatus) -> io::Result<RecordingExit> {
+        self.join_progress()?;
         let diagnostic = self.join_diagnostics()?;
         let exit = RecordingExit {
             success: status.success(),
@@ -398,6 +421,21 @@ impl RecordingProcess {
                 diagnostic_suffix(&exit.diagnostic),
             )))
         }
+    }
+
+    fn join_progress(&mut self) -> io::Result<()> {
+        let Some(reader) = self.stdout_reader.take() else {
+            return Ok(());
+        };
+        let progress = reader
+            .join()
+            .map_err(|_| io::Error::other("FFmpeg progress reader panicked"))??;
+        let mut current = self
+            .progress
+            .lock()
+            .map_err(|_| io::Error::other("FFmpeg progress state lock poisoned"))?;
+        *current = progress;
+        Ok(())
     }
 
     fn join_diagnostics(&mut self) -> io::Result<String> {
@@ -421,7 +459,41 @@ impl Drop for RecordingProcess {
         if let Some(reader) = self.stderr_reader.take() {
             let _ = reader.join();
         }
+        if let Some(reader) = self.stdout_reader.take() {
+            let _ = reader.join();
+        }
     }
+}
+
+fn read_progress(
+    mut stdout: impl Read,
+    progress: Arc<Mutex<RecordingProgress>>,
+) -> io::Result<RecordingProgress> {
+    let mut parser = ProgressParser::default();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let read = stdout.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        if let Some(snapshot) = parser.push(&buffer[..read]) {
+            update_progress(&progress, snapshot)?;
+        }
+    }
+    if let Some(snapshot) = parser.finish() {
+        update_progress(&progress, snapshot)?;
+    }
+    Ok(parser.progress())
+}
+
+fn update_progress(
+    target: &Mutex<RecordingProgress>,
+    progress: RecordingProgress,
+) -> io::Result<()> {
+    *target
+        .lock()
+        .map_err(|_| io::Error::other("FFmpeg progress state lock poisoned"))? = progress;
+    Ok(())
 }
 
 fn write_graceful_stop(mut stdin: ChildStdin) -> io::Result<()> {
@@ -458,7 +530,13 @@ pub fn build_recording_command(
     request: &RecordingRequest,
 ) -> io::Result<FfmpegCommand> {
     validate_request(request)?;
-    let mut arguments = vec![OsString::from("-hide_banner"), OsString::from("-y")];
+    let mut arguments = vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-y"),
+        OsString::from("-nostats"),
+        OsString::from("-progress"),
+        OsString::from("pipe:1"),
+    ];
     match &request.target {
         RecordingTarget::Display { bounds } | RecordingTarget::Region { bounds } => {
             let input = desktop_input(capabilities, *bounds, request.frame_rate)?;
@@ -740,8 +818,8 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 mod tests {
     use super::{
         AudioSource, DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, FfmpegCommand,
-        GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingProcess, RecordingRequest,
-        RecordingSession, RecordingState, RecordingTarget, VERSION_ARGUMENTS,
+        GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingProcess, RecordingProgress,
+        RecordingRequest, RecordingSession, RecordingState, RecordingTarget, VERSION_ARGUMENTS,
         build_recording_command, diagnostic_suffix, executable_from, first_diagnostic_line,
         graceful_stop_input, parse_input_formats, parse_version, read_bounded_diagnostics,
     };
@@ -837,6 +915,9 @@ mod tests {
             [
                 "-hide_banner",
                 "-y",
+                "-nostats",
+                "-progress",
+                "pipe:1",
                 "-f",
                 "ddagrab",
                 "-framerate",
@@ -1101,6 +1182,31 @@ mod tests {
         let error = process.wait_for_exit().unwrap_err();
 
         assert!(error.to_string().contains("encoder failed"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_parses_progress_while_reaping_stdout() {
+        let command = FfmpegCommand {
+            executable: PathBuf::from("cmd.exe"),
+            arguments: [
+                "/C",
+                "echo frame=5 & echo out_time_us=125000 & echo progress=end",
+            ]
+            .map(OsString::from)
+            .into(),
+        };
+        let mut process = RecordingProcess::start(command).unwrap();
+        process.wait_for_exit().unwrap();
+
+        assert_eq!(
+            process.progress().unwrap(),
+            RecordingProgress {
+                frame: Some(5),
+                output_time_us: Some(125_000),
+                finished: true,
+            }
+        );
     }
 
     fn capabilities() -> FfmpegCapabilities {
