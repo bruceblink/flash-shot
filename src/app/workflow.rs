@@ -371,6 +371,15 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn select_annotation_width(&mut self, width: u32, cx: &mut Context<Self>) {
+        self.annotation_style.stroke_width = width.max(1);
+        self.status = format!(
+            "Annotation width: {} px",
+            self.annotation_style.stroke_width
+        );
+        cx.notify();
+    }
+
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.annotation_tool = None;

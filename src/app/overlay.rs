@@ -24,6 +24,7 @@ use crate::{
 // extends over the full display rather than the working area.
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
+const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
 
 pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
@@ -169,6 +170,7 @@ impl Render for CaptureOverlay {
         let selected_annotation = app.selected_annotation;
         let selected_tool = app.annotation_tool;
         let annotation_color = app.annotation_style.stroke_rgba;
+        let annotation_width = app.annotation_style.stroke_width;
         let can_undo = app.annotation_history.undo_len() > 0;
         let can_redo = app.annotation_history.redo_len() > 0;
         let status = app.status.clone();
@@ -485,6 +487,42 @@ impl Render for CaptureOverlay {
                 div()
                     .absolute()
                     .left(px(18.0))
+                    .top(px(88.0))
+                    .flex()
+                    .gap_2()
+                    .children(ANNOTATION_WIDTHS.into_iter().map(|width| {
+                        div()
+                            .id(format!("overlay-width-{width}"))
+                            .w(px(22.0))
+                            .h(px(22.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(colors.panel)
+                            .border_2()
+                            .border_color(if width == annotation_width {
+                                colors.text
+                            } else {
+                                colors.border
+                            })
+                            .text_color(colors.text)
+                            .text_xs()
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| {
+                                        app.select_annotation_width(width, cx)
+                                    });
+                                });
+                            }))
+                            .child(width.to_string())
+                    })),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(18.0))
                     .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
                     .px_3()
                     .py_2()
@@ -584,7 +622,7 @@ fn paint_selection_mask(
     let Some(selection) = selection else {
         window.paint_quad(fill(viewport, rgba(0x00000066)));
         if let Some(target) = target {
-            paint_outline(window, transform, target, colors.accent);
+            paint_outline(window, transform, target, colors.accent, 1);
         }
         return;
     };
@@ -658,20 +696,46 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
-            AnnotationKind::Rectangle { bounds } => paint_outline(window, transform, bounds, color),
-            AnnotationKind::Ellipse { bounds } => {
-                paint_ellipse_outline(window, transform, bounds, color)
-            }
-            AnnotationKind::Line { start, end } => paint_line(window, transform, start, end, color),
-            AnnotationKind::Arrow { start, end } => {
-                paint_arrow(window, transform, start, end, color)
-            }
-            AnnotationKind::Freehand { ref points } => {
-                paint_freehand(window, transform, points, color)
-            }
+            AnnotationKind::Rectangle { bounds } => paint_outline(
+                window,
+                transform,
+                bounds,
+                color,
+                annotation.style.stroke_width,
+            ),
+            AnnotationKind::Ellipse { bounds } => paint_ellipse_outline(
+                window,
+                transform,
+                bounds,
+                color,
+                annotation.style.stroke_width,
+            ),
+            AnnotationKind::Line { start, end } => paint_line(
+                window,
+                transform,
+                start,
+                end,
+                color,
+                annotation.style.stroke_width,
+            ),
+            AnnotationKind::Arrow { start, end } => paint_arrow(
+                window,
+                transform,
+                start,
+                end,
+                color,
+                annotation.style.stroke_width,
+            ),
+            AnnotationKind::Freehand { ref points } => paint_freehand(
+                window,
+                transform,
+                points,
+                color,
+                annotation.style.stroke_width,
+            ),
         }
         if Some(annotation.id) == selected_annotation {
-            paint_outline(window, transform, annotation.bounds(), colors.success);
+            paint_outline(window, transform, annotation.bounds(), colors.success, 1);
         }
     }
 }
@@ -689,6 +753,7 @@ fn paint_outline(
     transform: PreviewTransform,
     rect: PhysicalRect,
     color: gpui::Hsla,
+    stroke_width: u32,
 ) {
     let start = transform.physical_to_view(PhysicalPoint {
         x: rect.left,
@@ -698,14 +763,15 @@ fn paint_outline(
         x: rect.right,
         y: rect.bottom,
     });
-    window.paint_quad(gpui::outline(
-        Bounds::new(
-            point(px(start.x), px(start.y)),
-            size(px(end.x - start.x), px(end.y - start.y)),
-        ),
-        color,
-        gpui::BorderStyle::Solid,
-    ));
+    let mut path = gpui::PathBuilder::stroke(px(stroke_width.max(1) as f32));
+    path.move_to(point(px(start.x), px(start.y)));
+    path.line_to(point(px(end.x), px(start.y)));
+    path.line_to(point(px(end.x), px(end.y)));
+    path.line_to(point(px(start.x), px(end.y)));
+    path.close();
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
 }
 
 fn paint_line(
@@ -714,10 +780,11 @@ fn paint_line(
     start: PhysicalPoint,
     end: PhysicalPoint,
     color: gpui::Hsla,
+    stroke_width: u32,
 ) {
     let start = transform.physical_to_view(start);
     let end = transform.physical_to_view(end);
-    let mut path = gpui::PathBuilder::stroke(px(1.0));
+    let mut path = gpui::PathBuilder::stroke(px(stroke_width.max(1) as f32));
     path.move_to(point(px(start.x), px(start.y)));
     path.line_to(point(px(end.x), px(end.y)));
     if let Ok(path) = path.build() {
@@ -731,11 +798,13 @@ fn paint_arrow(
     start: PhysicalPoint,
     end: PhysicalPoint,
     color: gpui::Hsla,
+    stroke_width: u32,
 ) {
-    paint_line(window, transform, start, end, color);
-    let (left, right) = arrow_head_points(start, end, 12.0, 0.55);
+    paint_line(window, transform, start, end, color, stroke_width);
+    let arrow_head_size = stroke_width.div_ceil(2).max(3) as f32 * 4.0;
+    let (left, right) = arrow_head_points(start, end, arrow_head_size, 0.55);
     for point in [left, right].into_iter().flatten() {
-        paint_line(window, transform, end, point, color);
+        paint_line(window, transform, end, point, color, stroke_width);
     }
 }
 
@@ -744,9 +813,17 @@ fn paint_freehand(
     transform: PreviewTransform,
     points: &[PhysicalPoint],
     color: gpui::Hsla,
+    stroke_width: u32,
 ) {
     for segment in points.windows(2) {
-        paint_line(window, transform, segment[0], segment[1], color);
+        paint_line(
+            window,
+            transform,
+            segment[0],
+            segment[1],
+            color,
+            stroke_width,
+        );
     }
 }
 
@@ -776,6 +853,7 @@ fn paint_ellipse_outline(
     transform: PreviewTransform,
     rect: PhysicalRect,
     color: gpui::Hsla,
+    stroke_width: u32,
 ) {
     let start = transform.physical_to_view(PhysicalPoint {
         x: rect.left,
@@ -792,7 +870,7 @@ fn paint_ellipse_outline(
     if radius_x == 0.0 || radius_y == 0.0 {
         return;
     }
-    let mut path = gpui::PathBuilder::stroke(px(1.0));
+    let mut path = gpui::PathBuilder::stroke(px(stroke_width.max(1) as f32));
     const SEGMENTS: u32 = 32;
     for index in 0..=SEGMENTS {
         let angle = std::f32::consts::TAU * index as f32 / SEGMENTS as f32;
