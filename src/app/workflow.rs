@@ -1444,6 +1444,7 @@ impl FlashShotApp {
         let handled = match command {
             KeyboardCommand::Undo => self.undo_annotation(cx),
             KeyboardCommand::Redo => self.redo_annotation(cx),
+            KeyboardCommand::Duplicate => self.duplicate_selected_annotation(cx),
             KeyboardCommand::Delete => self.delete_selected_annotation(cx),
             KeyboardCommand::Cancel => {
                 if matches!(
@@ -1541,6 +1542,44 @@ impl FlashShotApp {
             Ok(()) => {
                 self.selected_annotation = None;
                 self.status = "Annotation deleted".to_owned();
+                cx.notify();
+                true
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                true
+            }
+        }
+    }
+
+    pub(super) fn duplicate_selected_annotation(&mut self, cx: &mut Context<Self>) -> bool {
+        const DUPLICATE_OFFSET_PIXELS: i32 = 12;
+
+        let Some(id) = self.selected_annotation else {
+            return false;
+        };
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        let Some(existing) = document.annotation(id) else {
+            self.selected_annotation = None;
+            return false;
+        };
+        let duplicate_id = AnnotationId::new(self.next_annotation_id);
+        let duplicate = existing.duplicated(
+            duplicate_id,
+            document.canvas_bounds(),
+            DUPLICATE_OFFSET_PIXELS,
+        );
+        match self
+            .annotation_history
+            .apply(document, AnnotationCommand::Insert(duplicate))
+        {
+            Ok(()) => {
+                self.next_annotation_id = self.next_annotation_id.saturating_add(1);
+                self.selected_annotation = Some(duplicate_id);
+                self.status = "Annotation duplicated".to_owned();
                 cx.notify();
                 true
             }
@@ -3295,6 +3334,7 @@ fn resolve_pointer_selection(
 enum KeyboardCommand {
     Undo,
     Redo,
+    Duplicate,
     Delete,
     Cancel,
     Copy,
@@ -3327,6 +3367,14 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
         } else {
             KeyboardCommand::Undo
         });
+    }
+    if modifiers.secondary()
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+        && keystroke.key == "d"
+    {
+        return Some(KeyboardCommand::Duplicate);
     }
     if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
         return None;
@@ -3548,6 +3596,10 @@ mod tests {
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-enter").unwrap()),
             None
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-d").unwrap()),
+            Some(KeyboardCommand::Duplicate)
         );
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-z").unwrap()),

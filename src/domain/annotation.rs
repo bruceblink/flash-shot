@@ -302,6 +302,23 @@ impl Annotation {
         }
     }
 
+    /// Makes a distinct annotation offset inside the image canvas so a copied
+    /// annotation remains immediately visible and selectable.
+    pub fn duplicated(&self, id: AnnotationId, canvas_bounds: PhysicalRect, offset: i32) -> Self {
+        let bounds = self.bounds();
+        let delta_x = offset.clamp(
+            canvas_bounds.left.saturating_sub(bounds.left),
+            canvas_bounds.right.saturating_sub(bounds.right),
+        );
+        let delta_y = offset.clamp(
+            canvas_bounds.top.saturating_sub(bounds.top),
+            canvas_bounds.bottom.saturating_sub(bounds.bottom),
+        );
+        let mut duplicate = self.translated(delta_x, delta_y);
+        duplicate.id = id;
+        duplicate
+    }
+
     fn resized(&self, bounds: PhysicalRect) -> Self {
         let source = self.bounds();
         let scale_point = |point: PhysicalPoint| PhysicalPoint {
@@ -1395,6 +1412,65 @@ mod tests {
             ),
             Err(AnnotationError::MissingId(AnnotationId::new(99)))
         );
+    }
+
+    #[test]
+    fn duplicate_offsets_a_copy_and_preserves_the_original() {
+        let original = rectangle(
+            42,
+            PhysicalRect {
+                left: 10,
+                top: 20,
+                right: 120,
+                bottom: 130,
+            },
+        );
+        let canvas = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 640,
+            bottom: 480,
+        };
+
+        let duplicate = original.duplicated(AnnotationId::new(43), canvas, 12);
+
+        assert_eq!(duplicate.id, AnnotationId::new(43));
+        assert_eq!(original.id, AnnotationId::new(42));
+        assert_eq!(
+            duplicate.bounds(),
+            PhysicalRect {
+                left: 22,
+                top: 32,
+                right: 132,
+                bottom: 142,
+            }
+        );
+    }
+
+    #[test]
+    fn duplicate_clamps_the_offset_at_the_canvas_edge() {
+        let annotation = Annotation {
+            id: AnnotationId::new(42),
+            kind: AnnotationKind::Rectangle {
+                bounds: PhysicalRect {
+                    left: 500,
+                    top: 300,
+                    right: 640,
+                    bottom: 480,
+                },
+            },
+            style: AnnotationStyle::default(),
+        };
+        let canvas = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 640,
+            bottom: 480,
+        };
+
+        let duplicate = annotation.duplicated(AnnotationId::new(43), canvas, 12);
+
+        assert_eq!(duplicate.bounds(), annotation.bounds());
     }
 
     #[test]
