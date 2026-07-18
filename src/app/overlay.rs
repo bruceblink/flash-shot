@@ -1083,9 +1083,9 @@ fn visible_selection(
     drag: SelectionDrag,
     committed_selection: Option<PhysicalRect>,
 ) -> Option<PhysicalRect> {
-    drag.is_dragging()
-        .then(|| drag.selection())
-        .flatten()
+    // The local drag retains the editing bounds after mouse-up. Prefer it so
+    // switching to an annotation tool cannot make the selection frame vanish.
+    drag.selection()
         .filter(|selection| selection.width() > 0 && selection.height() > 0)
         .or(committed_selection)
 }
@@ -1193,7 +1193,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_selection_stays_visible_after_the_drag_finishes() {
+    fn retained_selection_stays_visible_after_the_drag_finishes() {
         let committed = PhysicalRect {
             left: 10,
             top: 20,
@@ -1205,6 +1205,27 @@ mod tests {
 
         assert!(!drag.is_dragging());
         assert_eq!(visible_selection(drag, Some(committed)), Some(committed));
+    }
+
+    #[test]
+    fn retained_selection_stays_visible_while_an_annotation_is_active() {
+        let committed = PhysicalRect {
+            left: 10,
+            top: 20,
+            right: 110,
+            bottom: 120,
+        };
+        let retained = PhysicalRect {
+            left: 200,
+            top: 300,
+            right: 400,
+            bottom: 500,
+        };
+        let mut drag = SelectionDrag::default();
+        drag.select(retained);
+
+        assert!(!drag.is_dragging());
+        assert_eq!(visible_selection(drag, Some(committed)), Some(retained));
     }
 
     #[test]
