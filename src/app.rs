@@ -65,6 +65,7 @@ pub struct FlashShotApp {
     capture_delay_seconds: u8,
     delayed_capture_generation: Option<u64>,
     include_cursor: bool,
+    recognition_result: Option<RecognitionResult>,
     operation_generation: u64,
     overlay_windows: Vec<WindowHandle<overlay::CaptureOverlay>>,
     scroll_window: Option<WindowHandle<scroll_control::ManualScrollControl>>,
@@ -84,6 +85,12 @@ pub(super) struct TextEdit {
     pub(super) content: String,
     pub(super) selected_range: Range<usize>,
     pub(super) marked_range: Option<Range<usize>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RecognitionResult {
+    pub(super) title: String,
+    pub(super) text: String,
 }
 
 impl TextEdit {
@@ -163,6 +170,7 @@ impl FlashShotApp {
             capture_delay_seconds: 0,
             delayed_capture_generation: None,
             include_cursor: false,
+            recognition_result: None,
             operation_generation: 0,
             overlay_windows: Vec::new(),
             scroll_window: None,

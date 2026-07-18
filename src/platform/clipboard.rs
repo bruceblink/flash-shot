@@ -6,6 +6,7 @@ use crate::platform::capture::CaptureFrame;
 
 pub trait ClipboardService {
     fn copy_image(&self, frame: &CaptureFrame) -> io::Result<()>;
+    fn copy_text(&self, text: &str) -> io::Result<()>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -14,6 +15,10 @@ pub struct SystemClipboard;
 impl ClipboardService for SystemClipboard {
     fn copy_image(&self, frame: &CaptureFrame) -> io::Result<()> {
         platform::copy_image(frame)
+    }
+
+    fn copy_text(&self, text: &str) -> io::Result<()> {
+        platform::copy_text(text)
     }
 }
 
@@ -64,7 +69,7 @@ mod platform {
                 SetClipboardData,
             },
             Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock},
-            Ole::CF_DIB,
+            Ole::{CF_DIB, CF_UNICODETEXT},
         },
     };
 
@@ -90,6 +95,22 @@ mod platform {
         set_data(CF_DIB as u32, &dib)?;
         drop(clipboard);
         Ok(())
+    }
+
+    pub fn copy_text(text: &str) -> io::Result<()> {
+        let _clipboard = ClipboardGuard::open()?;
+        // SAFETY: clipboard is open on this thread.
+        if unsafe { EmptyClipboard() } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        set_data(CF_UNICODETEXT as u32, &utf16_bytes(text))
+    }
+
+    pub(super) fn utf16_bytes(text: &str) -> Vec<u8> {
+        text.encode_utf16()
+            .chain(Some(0))
+            .flat_map(u16::to_le_bytes)
+            .collect()
     }
 
     fn set_data(format: u32, bytes: &[u8]) -> io::Result<()> {
@@ -181,11 +202,20 @@ mod platform {
             "image clipboard is currently Windows-only",
         ))
     }
+
+    pub fn copy_text(_text: &str) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "text clipboard is currently Windows-only",
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::encode_dib;
+    #[cfg(windows)]
+    use super::platform::utf16_bytes;
     use crate::{
         domain::geometry::PhysicalRect,
         platform::capture::{CaptureFrame, PixelFormat},
@@ -217,5 +247,14 @@ mod tests {
         assert_eq!(&dib[8..12], &2_i32.to_le_bytes());
         assert_eq!(&dib[40..44], &[4, 5, 6, 255]);
         assert_eq!(&dib[44..48], &[1, 2, 3, 255]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn text_clipboard_encoding_is_nul_terminated_utf16() {
+        assert_eq!(
+            utf16_bytes("Hi 世界"),
+            vec![72, 0, 105, 0, 32, 0, 22, 78, 76, 117, 0, 0]
+        );
     }
 }

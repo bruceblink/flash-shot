@@ -15,7 +15,7 @@ use gpui::{
 };
 
 use super::{
-    FlashShotApp, overlay::CaptureOverlay, pinned::PinnedImage,
+    FlashShotApp, RecognitionResult, overlay::CaptureOverlay, pinned::PinnedImage,
     render_image::render_image_from_capture, scroll_control::ManualScrollControl,
 };
 use crate::{
@@ -413,6 +413,22 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn copy_recognition_result(&mut self, cx: &mut Context<Self>) {
+        let Some(result) = self.recognition_result.as_ref() else {
+            return;
+        };
+        self.status = match SystemClipboard.copy_text(&result.text) {
+            Ok(()) => format!("{} copied to clipboard", result.title),
+            Err(error) => format!("Could not copy {}: {error}", result.title),
+        };
+        cx.notify();
+    }
+
+    pub(super) fn clear_recognition_result(&mut self, cx: &mut Context<Self>) {
+        self.recognition_result = None;
+        cx.notify();
+    }
+
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
         if self.session.state() != CaptureSessionState::Idle
             || self.delayed_capture_generation.is_some()
@@ -491,6 +507,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.recognition_result = None;
         self.status = "Capturing virtual desktop...".to_owned();
         if let Some(handle) = self.main_window_handle
             && let Err(error) = window_visibility::hide(handle)
@@ -640,6 +657,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.recognition_result = None;
         self.status = "Ready - Ctrl+Shift+Print Screen".to_owned();
         self.close_capture_overlays(cx);
         self.close_manual_scroll_window(cx);
@@ -668,6 +686,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.recognition_result = None;
         self.recording_control = None;
         self.recording_start_in_flight = false;
         self.recording_paused = false;
@@ -1887,8 +1906,19 @@ impl FlashShotApp {
         }
         self.status = match result {
             Ok(codes) if codes.is_empty() => "No QR code found in the selection".to_owned(),
-            Ok(codes) if codes.len() == 1 => format!("QR: {}", codes[0]),
-            Ok(codes) => format!("Found {} QR codes: {}", codes.len(), codes.join(" | ")),
+            Ok(codes) => {
+                let code_count = codes.len();
+                self.recognition_result = Some(RecognitionResult {
+                    title: if code_count == 1 {
+                        "QR code"
+                    } else {
+                        "QR codes"
+                    }
+                    .to_owned(),
+                    text: codes.join("\n"),
+                });
+                format!("Found {code_count} QR code(s)")
+            }
             Err(error) => {
                 log::warn!(target: "flash_shot::qr", "qr_recognition_failed error={error}");
                 format!("QR recognition failed: {error}")
@@ -1942,7 +1972,13 @@ impl FlashShotApp {
         }
         self.status = match result {
             Ok(text) if text.is_empty() => "No text found in the selection".to_owned(),
-            Ok(text) => format!("OCR: {text}"),
+            Ok(text) => {
+                self.recognition_result = Some(RecognitionResult {
+                    title: "Recognized text".to_owned(),
+                    text,
+                });
+                "Text recognized locally".to_owned()
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT."
                     .to_owned()
@@ -2016,7 +2052,13 @@ impl FlashShotApp {
         }
         self.status = match result {
             Ok(text) if text.is_empty() => "No text found in the selection".to_owned(),
-            Ok(text) => format!("Translation: {text}"),
+            Ok(text) => {
+                self.recognition_result = Some(RecognitionResult {
+                    title: "Translation".to_owned(),
+                    text,
+                });
+                "Translation completed".to_owned()
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT."
                     .to_owned()
@@ -2991,6 +3033,10 @@ mod tests {
     impl ClipboardService for RecordingClipboard {
         fn copy_image(&self, frame: &CaptureFrame) -> io::Result<()> {
             self.copied.replace(Some(frame.clone()));
+            Ok(())
+        }
+
+        fn copy_text(&self, _text: &str) -> io::Result<()> {
             Ok(())
         }
     }

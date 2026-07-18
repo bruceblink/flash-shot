@@ -110,6 +110,7 @@ impl Render for FlashShotApp {
             selection.is_some() && self.session.state() == CaptureSessionState::Selecting;
         let hover_pixel = self.hover_pixel;
         let history_entries: Vec<_> = self.history.entries().iter().take(5).cloned().collect();
+        let recognition_result = self.recognition_result.clone();
         let viewport_bounds = Rc::new(Cell::new(Bounds::default()));
 
         div()
@@ -333,6 +334,51 @@ impl Render for FlashShotApp {
                                         )
                                 })),
                         ),
+                )
+            })
+            .when_some(recognition_result, |layout, result| {
+                layout.child(
+                    div()
+                        .mx_5()
+                        .mb_3()
+                        .p_3()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .border_1()
+                        .border_color(colors.accent)
+                        .bg(colors.panel)
+                        .child(
+                            div().flex().items_center().justify_between().children([
+                                div().text_sm().text_color(colors.text).child(result.title),
+                                div()
+                                    .flex()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .id("copy-recognition-result")
+                                            .text_sm()
+                                            .text_color(colors.accent)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.copy_recognition_result(cx)
+                                            }))
+                                            .child("Copy"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("clear-recognition-result")
+                                            .text_sm()
+                                            .text_color(colors.muted)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.clear_recognition_result(cx)
+                                            }))
+                                            .child("Close"),
+                                    ),
+                            ]),
+                        )
+                        .child(div().text_sm().text_color(colors.muted).child(result.text)),
                 )
             })
             .child(
