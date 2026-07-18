@@ -343,6 +343,45 @@ impl Render for CaptureOverlay {
                                 .child("Delete"),
                         )
                     })
+                    .when(can_delete, |tools| {
+                        tools
+                            .child(
+                                div()
+                                    .id("overlay-bring-to-front")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(colors.panel)
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.bring_selected_annotation_to_front(cx);
+                                            });
+                                        });
+                                    }))
+                                    .child("Front"),
+                            )
+                            .child(
+                                div()
+                                    .id("overlay-send-to-back")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(colors.panel)
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.send_selected_annotation_to_back(cx);
+                                            });
+                                        });
+                                    }))
+                                    .child("Back"),
+                            )
+                    })
                     .child(
                         div()
                             .id("overlay-tool-selection")

@@ -139,6 +139,18 @@ impl AnnotationDocument {
             .ok_or(AnnotationError::MissingId(annotation.id))?;
         Ok(std::mem::replace(existing, annotation))
     }
+
+    fn reorder(&mut self, id: AnnotationId, index: usize) -> Result<usize, AnnotationError> {
+        let current_index = self
+            .annotations
+            .iter()
+            .position(|annotation| annotation.id == id)
+            .ok_or(AnnotationError::MissingId(id))?;
+        let annotation = self.annotations.remove(current_index);
+        self.annotations
+            .insert(index.min(self.annotations.len()), annotation);
+        Ok(current_index)
+    }
 }
 
 impl Annotation {
@@ -763,6 +775,7 @@ pub enum AnnotationCommand {
     Insert(Annotation),
     Delete(AnnotationId),
     Replace(Annotation),
+    Reorder { id: AnnotationId, index: usize },
 }
 
 impl AnnotationCommand {
@@ -775,6 +788,10 @@ impl AnnotationCommand {
             }
             Self::Delete(id) => Ok(Self::Insert(document.remove(id)?)),
             Self::Replace(annotation) => Ok(Self::Replace(document.replace(annotation)?)),
+            Self::Reorder { id, index } => Ok(Self::Reorder {
+                id,
+                index: document.reorder(id, index)?,
+            }),
         }
     }
 }
@@ -883,6 +900,67 @@ mod tests {
         assert_eq!(document.version(), ANNOTATION_DOCUMENT_VERSION);
         assert_eq!(document.canvas_bounds(), canvas());
         assert!(document.annotations().is_empty());
+    }
+
+    #[test]
+    fn reordering_annotations_is_undoable_and_redoable() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let first = rectangle(
+            1,
+            PhysicalRect {
+                left: -800,
+                top: 100,
+                right: -600,
+                bottom: 300,
+            },
+        );
+        let second = rectangle(
+            2,
+            PhysicalRect {
+                left: -500,
+                top: 100,
+                right: -300,
+                bottom: 300,
+            },
+        );
+        let third = rectangle(
+            3,
+            PhysicalRect {
+                left: -200,
+                top: 100,
+                right: 0,
+                bottom: 300,
+            },
+        );
+
+        for annotation in [first.clone(), second.clone(), third.clone()] {
+            history
+                .apply(&mut document, AnnotationCommand::Insert(annotation))
+                .unwrap();
+        }
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Reorder {
+                    id: first.id,
+                    index: 2,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            document.annotations(),
+            &[second.clone(), third.clone(), first.clone()]
+        );
+
+        assert!(history.undo(&mut document).unwrap());
+        assert_eq!(
+            document.annotations(),
+            &[first.clone(), second.clone(), third.clone()]
+        );
+
+        assert!(history.redo(&mut document).unwrap());
+        assert_eq!(document.annotations(), &[second, third, first]);
     }
 
     #[test]

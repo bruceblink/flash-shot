@@ -645,6 +645,44 @@ impl FlashShotApp {
         }
     }
 
+    pub(super) fn bring_selected_annotation_to_front(&mut self, cx: &mut Context<Self>) -> bool {
+        self.reorder_selected_annotation(usize::MAX, "Annotation brought to front", cx)
+    }
+
+    pub(super) fn send_selected_annotation_to_back(&mut self, cx: &mut Context<Self>) -> bool {
+        self.reorder_selected_annotation(0, "Annotation sent to back", cx)
+    }
+
+    fn reorder_selected_annotation(
+        &mut self,
+        index: usize,
+        status: &'static str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(id) = self.selected_annotation else {
+            return false;
+        };
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        let target = index.min(document.annotations().len().saturating_sub(1));
+        match self
+            .annotation_history
+            .apply(document, AnnotationCommand::Reorder { id, index: target })
+        {
+            Ok(()) => {
+                self.status = status.to_owned();
+                cx.notify();
+                true
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                true
+            }
+        }
+    }
+
     fn nudge_selection(&mut self, delta_x: i32, delta_y: i32, cx: &mut Context<Self>) -> bool {
         let Some(frame) = self.frame.as_ref() else {
             return false;
