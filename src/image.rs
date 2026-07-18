@@ -121,6 +121,35 @@ impl CaptureFrame {
             cpu_copy_count: self.cpu_copy_count.saturating_add(1),
         })
     }
+
+    /// Finds QR payloads in this frame without writing pixel data to disk.
+    pub fn decode_qr_codes(&self) -> io::Result<Vec<String>> {
+        self.validate()?;
+        if self.format != PixelFormat::Bgra8 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "unsupported pixel format",
+            ));
+        }
+        let width = usize::try_from(self.width)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "QR width overflow"))?;
+        let height = usize::try_from(self.height)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "QR height overflow"))?;
+        let mut image = rqrr::PreparedImage::prepare_from_greyscale(width, height, |x, y| {
+            let pixel = &self.pixels[y * self.stride + x * 4..][..4];
+            (u16::from(pixel[2]) * 77 + u16::from(pixel[1]) * 150 + u16::from(pixel[0]) * 29)
+                .div_ceil(256) as u8
+        });
+        let mut codes = Vec::new();
+        for grid in image.detect_grids() {
+            if let Ok((_, content)) = grid.decode()
+                && !codes.contains(&content)
+            {
+                codes.push(content);
+            }
+        }
+        Ok(codes)
+    }
 }
 
 fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotation) {
@@ -1296,6 +1325,71 @@ mod tests {
 
         assert_eq!(frame.pixels.as_ref(), &[1, 2, 3, 255]);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn qr_decoder_returns_no_payload_for_an_ordinary_frame() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 2,
+                bottom: 2,
+            },
+            width: 2,
+            height: 2,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([255; 16]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        assert!(frame.decode_qr_codes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn qr_decoder_reads_a_generated_code_from_bgra_pixels() {
+        const SCALE: usize = 8;
+        const QUIET_ZONE: usize = 4;
+        let content = "https://flash-shot.local/qr";
+        let code = qrcode::QrCode::new(content.as_bytes()).unwrap();
+        let code_width = code.width();
+        let width = (code_width + QUIET_ZONE * 2) * SCALE;
+        let colors = code.to_colors();
+        let mut pixels = vec![255; width * width * 4];
+        for y in 0..code_width {
+            for x in 0..code_width {
+                if colors[y * code_width + x] != qrcode::Color::Dark {
+                    continue;
+                }
+                for pixel_y in 0..SCALE {
+                    for pixel_x in 0..SCALE {
+                        let x = (x + QUIET_ZONE) * SCALE + pixel_x;
+                        let y = (y + QUIET_ZONE) * SCALE + pixel_y;
+                        let offset = (y * width + x) * 4;
+                        pixels[offset..offset + 3].fill(0);
+                    }
+                }
+            }
+        }
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: width as i32,
+                bottom: width as i32,
+            },
+            width: width as u32,
+            height: width as u32,
+            stride: width * 4,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(pixels),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        assert_eq!(frame.decode_qr_codes().unwrap(), vec![content]);
     }
 
     #[test]

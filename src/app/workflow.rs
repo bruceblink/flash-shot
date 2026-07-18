@@ -1305,6 +1305,63 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn recognize_qr_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.session.selection() else {
+            self.status = "Select an area before recognizing a QR code".to_owned();
+            cx.notify();
+            return;
+        };
+        let Some((frame, document)) = self.export_source() else {
+            cx.notify();
+            return;
+        };
+
+        self.status = "Recognizing QR code locally...".to_owned();
+        let generation = self.operation_generation;
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        frame
+                            .composite_annotations(&document)?
+                            .crop(selection)?
+                            .decode_qr_codes()
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_qr_recognition(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_qr_recognition(
+        &mut self,
+        result: std::io::Result<Vec<String>>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
+        self.status = match result {
+            Ok(codes) if codes.is_empty() => "No QR code found in the selection".to_owned(),
+            Ok(codes) if codes.len() == 1 => format!("QR: {}", codes[0]),
+            Ok(codes) => format!("Found {} QR codes: {}", codes.len(), codes.join(" | ")),
+            Err(error) => {
+                log::warn!(target: "flash_shot::qr", "qr_recognition_failed error={error}");
+                format!("QR recognition failed: {error}")
+            }
+        };
+        cx.notify();
+    }
+
     pub(super) fn save_selection(&mut self, cx: &mut Context<Self>) {
         let selection = match self.session.start_export() {
             Ok(selection) => selection,
