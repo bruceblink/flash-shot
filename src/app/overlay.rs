@@ -20,7 +20,9 @@ use crate::{
     theme::ThemeColors,
 };
 
-const OVERLAY_BOTTOM_SAFE_INSET: f32 = 56.0;
+// Keep the action row above a scaled Windows taskbar when the borderless overlay
+// extends over the full display rather than the working area.
+const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
 
 pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
