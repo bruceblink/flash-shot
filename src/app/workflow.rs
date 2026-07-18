@@ -2718,6 +2718,66 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn open_annotation_document(&mut self, cx: &mut Context<Self>) {
+        let Some(frame) = self.frame.as_ref() else {
+            self.status = "Capture frame is unavailable".to_owned();
+            cx.notify();
+            return;
+        };
+        let bounds = frame.bounds;
+        self.status = "Choose annotations to open...".to_owned();
+        cx.notify();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open annotation document".into()),
+        });
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = match prompt.await {
+                    Ok(Ok(Some(mut paths))) => match paths.pop() {
+                        Some(path) => {
+                            cx.background_executor()
+                                .spawn(async move {
+                                    load_annotation_document(&path, bounds)
+                                        .map(|document| (path, document))
+                                })
+                                .await
+                        }
+                        None => return,
+                    },
+                    Ok(Ok(None)) => return,
+                    Ok(Err(error)) => Err(std::io::Error::other(error)),
+                    Err(error) => Err(std::io::Error::other(error.to_string())),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| match result {
+                        Ok((path, document)) => {
+                            let (next_id, next_sequence) = next_annotation_counters(&document);
+                            this.annotation_document = Some(document);
+                            this.annotation_history = Default::default();
+                            this.annotation_editor = Default::default();
+                            this.annotation_tool = None;
+                            this.text_edit = None;
+                            this.selected_annotation = None;
+                            this.next_annotation_id = next_id;
+                            this.next_sequence_number = next_sequence;
+                            this.status = format!("Loaded annotations from {}", path.display());
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            this.status = format!("Could not open annotations: {error}");
+                            cx.notify();
+                        }
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn export_source(&mut self) -> Option<(CaptureFrame, AnnotationDocument)> {
         match (self.frame.clone(), self.annotation_document.clone()) {
             (Some(frame), Some(document)) => Some((frame, document)),
@@ -3536,6 +3596,42 @@ fn save_annotation_document(document: &AnnotationDocument, path: PathBuf) -> std
     std::fs::rename(temporary, path)
 }
 
+fn load_annotation_document(
+    path: &Path,
+    expected_canvas: PhysicalRect,
+) -> std::io::Result<AnnotationDocument> {
+    let json = std::fs::read_to_string(path)?;
+    let document = AnnotationDocument::from_json(&json).map_err(std::io::Error::other)?;
+    if document.canvas_bounds() != expected_canvas {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "annotation document canvas does not match the current screenshot",
+        ));
+    }
+    Ok(document)
+}
+
+fn next_annotation_counters(document: &AnnotationDocument) -> (u64, u32) {
+    let next_id = document
+        .annotations()
+        .iter()
+        .map(|annotation| annotation.id.value())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    let next_sequence = document
+        .annotations()
+        .iter()
+        .filter_map(|annotation| match annotation.kind {
+            AnnotationKind::Number { value, .. } => Some(value),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    (next_id, next_sequence)
+}
+
 pub(super) fn view_rect(bounds: Bounds<Pixels>) -> ViewRect {
     ViewRect {
         left: f32::from(bounds.origin.x),
@@ -3806,7 +3902,8 @@ mod tests {
         annotation_cancelled_status, annotation_document_path, annotation_position,
         copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha,
         fill_color, format_recording_progress, intersect_rect, is_current_operation,
-        keyboard_command, next_annotation_selection, next_capture_delay, next_quick_save_path,
+        keyboard_command, load_annotation_document, next_annotation_counters,
+        next_annotation_selection, next_capture_delay, next_quick_save_path,
         next_quick_save_path_with_prefix, next_recording_audio_selection,
         next_recording_display_selection, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
@@ -4422,6 +4519,69 @@ mod tests {
         );
         assert!(!path.with_extension("json.tmp").exists());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn annotation_document_load_requires_the_current_frame_canvas() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-annotation-load-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("capture.annotations.json");
+        let document = AnnotationDocument::new(PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 10,
+            bottom: 10,
+        })
+        .unwrap();
+        save_annotation_document(&document, path.clone()).unwrap();
+
+        assert_eq!(
+            load_annotation_document(&path, document.canvas_bounds()).unwrap(),
+            document
+        );
+        assert!(
+            load_annotation_document(
+                &path,
+                PhysicalRect {
+                    left: 0,
+                    top: 0,
+                    right: 11,
+                    bottom: 10,
+                }
+            )
+            .is_err()
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn loaded_annotation_counters_continue_existing_ids_and_sequence_numbers() {
+        let mut document = AnnotationDocument::new(PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 20,
+            bottom: 20,
+        })
+        .unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(8),
+                    kind: AnnotationKind::Number {
+                        center: PhysicalPoint { x: 10, y: 10 },
+                        value: 3,
+                    },
+                    style: AnnotationStyle::default(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(next_annotation_counters(&document), (9, 4));
     }
 
     #[test]
