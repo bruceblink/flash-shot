@@ -28,6 +28,7 @@ use crate::{
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
+const ANNOTATION_OPACITIES: [u8; 4] = [255, 192, 128, 64];
 const MAGNIFIER_RADIUS: i32 = 4;
 const MAGNIFIER_CELL_SIZE: f32 = 12.0;
 const MAGNIFIER_GAP: f32 = 18.0;
@@ -198,6 +199,7 @@ impl Render for CaptureOverlay {
         let selected_tool = app.annotation_tool;
         let annotation_color = app.annotation_style.stroke_rgba;
         let annotation_width = app.annotation_style.stroke_width;
+        let annotation_opacity = (app.annotation_style.stroke_rgba & 0xFF) as u8;
         let fill_enabled = app.annotation_style.fill_rgba.is_some();
         let can_undo = app.annotation_history.undo_len() > 0;
         let can_redo = app.annotation_history.redo_len() > 0;
@@ -808,6 +810,42 @@ impl Render for CaptureOverlay {
                                 });
                             }))
                             .child(width.to_string())
+                    })),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(18.0))
+                    .top(px(148.0))
+                    .flex()
+                    .gap_2()
+                    .children(ANNOTATION_OPACITIES.into_iter().map(|opacity| {
+                        div()
+                            .id(format!("overlay-opacity-{opacity}"))
+                            .w(px(28.0))
+                            .h(px(22.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(rgba((annotation_color & 0xFFFFFF00) | u32::from(opacity)))
+                            .border_2()
+                            .border_color(if opacity == annotation_opacity {
+                                colors.text
+                            } else {
+                                colors.border
+                            })
+                            .text_color(colors.text)
+                            .text_xs()
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| {
+                                        app.select_annotation_opacity(opacity, cx)
+                                    });
+                                });
+                            }))
+                            .child((u16::from(opacity) * 100 / 255).to_string())
                     })),
             )
             .child(

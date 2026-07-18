@@ -419,7 +419,8 @@ impl FlashShotApp {
     }
 
     pub(super) fn select_annotation_color(&mut self, color: u32, cx: &mut Context<Self>) {
-        self.annotation_style.stroke_rgba = color;
+        let opacity = self.annotation_style.stroke_rgba as u8;
+        self.annotation_style.stroke_rgba = with_alpha(color, opacity);
         if self.selected_annotation.is_some() {
             self.annotation_style.fill_rgba =
                 self.annotation_style.fill_rgba.map(|_| fill_color(color));
@@ -436,6 +437,16 @@ impl FlashShotApp {
             "Annotation width: {} px",
             self.annotation_style.stroke_width
         );
+        cx.notify();
+    }
+
+    pub(super) fn select_annotation_opacity(&mut self, opacity: u8, cx: &mut Context<Self>) {
+        self.annotation_style.stroke_rgba = with_alpha(self.annotation_style.stroke_rgba, opacity);
+        if let Some(fill) = self.annotation_style.fill_rgba {
+            self.annotation_style.fill_rgba = Some(with_alpha(fill, fill_alpha(opacity)));
+        }
+        self.replace_selected_annotation_style(cx);
+        self.status = format!("Annotation opacity: {}%", u16::from(opacity) * 100 / 255);
         cx.notify();
     }
 
@@ -1713,7 +1724,15 @@ fn selection_status(selection: PhysicalRect) -> String {
 }
 
 fn fill_color(stroke_rgba: u32) -> u32 {
-    (stroke_rgba & 0xFFFFFF00) | 0x66
+    with_alpha(stroke_rgba, fill_alpha(stroke_rgba as u8))
+}
+
+fn with_alpha(color: u32, alpha: u8) -> u32 {
+    (color & 0xFFFFFF00) | u32::from(alpha)
+}
+
+fn fill_alpha(stroke_alpha: u8) -> u8 {
+    (u16::from(stroke_alpha) * 0x66 / 255) as u8
 }
 
 fn style_for_tool(
@@ -1818,10 +1837,10 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 mod tests {
     use super::{
         KeyboardCommand, annotation_added_status, annotation_cancelled_status,
-        copy_annotated_frame_selection, drawing_status, fill_color, intersect_rect,
+        copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color, intersect_rect,
         is_current_operation, keyboard_command, next_quick_save_path, png_path,
         quick_save_annotated_frame_selection_in, resolve_pointer_selection,
-        save_annotated_frame_selection, style_for_tool, tool_selected_status,
+        save_annotated_frame_selection, style_for_tool, tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -2133,6 +2152,14 @@ mod tests {
     #[test]
     fn fill_color_preserves_rgb_and_uses_transparent_alpha() {
         assert_eq!(fill_color(0xFF3B30FF), 0xFF3B3066);
+        assert_eq!(fill_color(0xFF3B3080), 0xFF3B3033);
+    }
+
+    #[test]
+    fn opacity_preserves_rgb_and_scales_the_shape_fill() {
+        assert_eq!(with_alpha(0xFF3B30FF, 128), 0xFF3B3080);
+        assert_eq!(fill_alpha(255), 0x66);
+        assert_eq!(fill_alpha(128), 0x33);
     }
 
     #[test]
