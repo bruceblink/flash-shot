@@ -12,7 +12,10 @@ use gpui::{
 };
 
 use crate::{
-    domain::{geometry::PhysicalPoint, selection::SelectionDrag, session::CaptureSession},
+    domain::{
+        annotation::AnnotationDocument, geometry::PhysicalPoint, selection::SelectionDrag,
+        session::CaptureSession,
+    },
     performance::PerformanceRecorder,
     platform::{
         capture::CaptureFrame,
@@ -27,6 +30,7 @@ pub struct FlashShotApp {
     colors: ThemeColors,
     session: CaptureSession,
     frame: Option<CaptureFrame>,
+    annotation_document: Option<AnnotationDocument>,
     preview: Option<Arc<RenderImage>>,
     selection_drag: SelectionDrag,
     hover_pixel: Option<PhysicalPoint>,
@@ -81,6 +85,7 @@ impl FlashShotApp {
             colors: ThemeColors::default(),
             session: CaptureSession::default(),
             frame: None,
+            annotation_document: None,
             preview: None,
             selection_drag: SelectionDrag::default(),
             hover_pixel: None,

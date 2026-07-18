@@ -16,6 +16,7 @@ use gpui::{
 use super::{FlashShotApp, overlay::CaptureOverlay, render_image::render_image_from_capture};
 use crate::{
     domain::{
+        annotation::AnnotationDocument,
         geometry::PhysicalRect,
         selection::{PreviewTransform, ViewPoint, ViewRect},
         session::CaptureSessionState,
@@ -42,6 +43,7 @@ impl FlashShotApp {
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let generation = self.operation_generation;
         self.frame = None;
+        self.annotation_document = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -128,7 +130,20 @@ impl FlashShotApp {
                         .sum(),
                     workspace_upload_bytes: capture.workspace_preview.upload_bytes,
                 };
+                let annotation_document =
+                    match AnnotationDocument::new(capture.capture.frame.bounds) {
+                        Ok(document) => document,
+                        Err(error) => {
+                            let message = format!("Could not create annotation document: {error}");
+                            let _ = self.session.fail(message.clone());
+                            self.status = message;
+                            self.restore_main_window();
+                            cx.notify();
+                            return;
+                        }
+                    };
                 self.preview = Some(capture.workspace_preview.image);
+                self.annotation_document = Some(annotation_document);
                 self.frame = Some(capture.capture.frame);
                 let app = cx.entity();
                 cx.defer(move |cx| open_capture_overlays(app, capture.displays, pipeline, cx));
@@ -161,6 +176,7 @@ impl FlashShotApp {
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
         self.frame = None;
+        self.annotation_document = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -179,6 +195,7 @@ impl FlashShotApp {
             let _ = self.session.cancel();
         }
         self.frame = None;
+        self.annotation_document = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -527,10 +544,7 @@ impl FlashShotApp {
                 return;
             }
         };
-        let Some(frame) = self.frame.clone() else {
-            let message = "capture frame is unavailable".to_owned();
-            let _ = self.session.fail(message.clone());
-            self.status = message;
+        let Some((frame, document)) = self.export_source() else {
             cx.notify();
             return;
         };
@@ -543,7 +557,14 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { copy_frame_selection(&frame, selection, &SystemClipboard) })
+                    .spawn(async move {
+                        copy_annotated_frame_selection(
+                            &frame,
+                            &document,
+                            selection,
+                            &SystemClipboard,
+                        )
+                    })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| this.finish_copy(result, generation, cx));
@@ -562,10 +583,7 @@ impl FlashShotApp {
                 return;
             }
         };
-        let Some(frame) = self.frame.clone() else {
-            let message = "capture frame is unavailable".to_owned();
-            let _ = self.session.fail(message.clone());
-            self.status = message;
+        let Some((frame, document)) = self.export_source() else {
             cx.notify();
             return;
         };
@@ -583,7 +601,13 @@ impl FlashShotApp {
                         let result = cx
                             .background_executor()
                             .spawn(async move {
-                                save_frame_selection(&frame, selection, path.clone()).map(|()| path)
+                                save_annotated_frame_selection(
+                                    &frame,
+                                    &document,
+                                    selection,
+                                    path.clone(),
+                                )
+                                .map(|()| path)
                             })
                             .await;
                         match result {
@@ -614,10 +638,7 @@ impl FlashShotApp {
                 return;
             }
         };
-        let Some(frame) = self.frame.clone() else {
-            let message = "capture frame is unavailable".to_owned();
-            let _ = self.session.fail(message.clone());
-            self.status = message;
+        let Some((frame, document)) = self.export_source() else {
             cx.notify();
             return;
         };
@@ -630,7 +651,9 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { quick_save_frame_selection(&frame, selection) })
+                    .spawn(async move {
+                        quick_save_annotated_frame_selection(&frame, &document, selection)
+                    })
                     .await;
                 let outcome = match result {
                     Ok(path) => SaveOutcome::Saved(path),
@@ -644,6 +667,18 @@ impl FlashShotApp {
             }
         })
         .detach();
+    }
+
+    fn export_source(&mut self) -> Option<(CaptureFrame, AnnotationDocument)> {
+        match (self.frame.clone(), self.annotation_document.clone()) {
+            (Some(frame), Some(document)) => Some((frame, document)),
+            _ => {
+                let message = "capture frame or annotation document is unavailable".to_owned();
+                let _ = self.session.fail(message.clone());
+                self.status = message;
+                None
+            }
+        }
     }
 
     fn finish_save(&mut self, outcome: SaveOutcome, generation: u64, cx: &mut Context<Self>) {
@@ -901,38 +936,51 @@ fn clamp_physical_point(
     }
 }
 
-fn copy_frame_selection(
+fn copy_annotated_frame_selection(
     frame: &CaptureFrame,
+    document: &AnnotationDocument,
     selection: PhysicalRect,
     clipboard: &impl ClipboardService,
 ) -> std::io::Result<()> {
-    clipboard.copy_image(&frame.crop(selection)?)
+    clipboard.copy_image(&frame.composite_annotations(document)?.crop(selection)?)
 }
 
-fn save_frame_selection(
+fn save_annotated_frame_selection(
     frame: &CaptureFrame,
+    document: &AnnotationDocument,
     selection: PhysicalRect,
     path: PathBuf,
 ) -> std::io::Result<()> {
-    frame.crop(selection)?.save_png(path)
+    frame
+        .composite_annotations(document)?
+        .crop(selection)?
+        .save_png(path)
 }
 
-fn quick_save_frame_selection(
+fn quick_save_annotated_frame_selection(
     frame: &CaptureFrame,
+    document: &AnnotationDocument,
     selection: PhysicalRect,
 ) -> std::io::Result<PathBuf> {
     let directory = quick_save_directory()?;
-    quick_save_frame_selection_in(frame, selection, &directory, unix_timestamp_ms())
+    quick_save_annotated_frame_selection_in(
+        frame,
+        document,
+        selection,
+        &directory,
+        unix_timestamp_ms(),
+    )
 }
 
-fn quick_save_frame_selection_in(
+fn quick_save_annotated_frame_selection_in(
     frame: &CaptureFrame,
+    document: &AnnotationDocument,
     selection: PhysicalRect,
     directory: &Path,
     timestamp_ms: u128,
 ) -> std::io::Result<PathBuf> {
     let path = next_quick_save_path(directory, timestamp_ms, Path::exists);
-    save_frame_selection(frame, selection, path.clone())?;
+    save_annotated_frame_selection(frame, document, selection, path.clone())?;
     Ok(path)
 }
 
@@ -1093,13 +1141,19 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KeyboardCommand, copy_frame_selection, intersect_rect, is_current_operation,
-        keyboard_command, next_quick_save_path, png_path, quick_save_frame_selection_in,
-        resolve_pointer_selection, save_frame_selection,
+        KeyboardCommand, copy_annotated_frame_selection, intersect_rect, is_current_operation,
+        keyboard_command, next_quick_save_path, png_path, quick_save_annotated_frame_selection_in,
+        resolve_pointer_selection, save_annotated_frame_selection,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
-        domain::geometry::{PhysicalPoint, PhysicalRect},
+        domain::{
+            annotation::{
+                Annotation, AnnotationCommand, AnnotationDocument, AnnotationId, AnnotationKind,
+                AnnotationStyle, CommandHistory,
+            },
+            geometry::{PhysicalPoint, PhysicalRect},
+        },
         platform::{
             capture::{CaptureFrame, PixelFormat},
             clipboard::ClipboardService,
@@ -1147,9 +1201,11 @@ mod tests {
             cpu_copy_count: 1,
         };
         let clipboard = RecordingClipboard::default();
+        let document = AnnotationDocument::new(frame.bounds).unwrap();
 
-        copy_frame_selection(
+        copy_annotated_frame_selection(
             &frame,
+            &document,
             PhysicalRect {
                 left: -1,
                 top: 10,
@@ -1166,6 +1222,74 @@ mod tests {
         assert_eq!(
             copied.pixels.as_ref(),
             &[4, 5, 6, 255, 7, 8, 9, 255, 13, 14, 15, 255, 16, 17, 18, 255]
+        );
+    }
+
+    #[test]
+    fn annotated_copy_composites_before_cropping_the_selection() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: -2,
+                top: 10,
+                right: 2,
+                bottom: 11,
+            },
+            width: 4,
+            height: 1,
+            stride: 16,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([10, 10, 10, 255].repeat(4)),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(1),
+                    kind: AnnotationKind::Line {
+                        start: PhysicalPoint { x: -1, y: 10 },
+                        end: PhysicalPoint { x: 0, y: 10 },
+                    },
+                    style: AnnotationStyle {
+                        stroke_rgba: 0xFF0000FF,
+                        fill_rgba: None,
+                        stroke_width: 1,
+                    },
+                }),
+            )
+            .unwrap();
+        let clipboard = RecordingClipboard::default();
+
+        copy_annotated_frame_selection(
+            &frame,
+            &document,
+            PhysicalRect {
+                left: -1,
+                top: 10,
+                right: 1,
+                bottom: 11,
+            },
+            &clipboard,
+        )
+        .unwrap();
+
+        let copied = clipboard.copied.borrow();
+        let copied = copied.as_ref().unwrap();
+        assert_eq!((copied.width, copied.height), (2, 1));
+        assert_eq!(
+            copied.pixel_at(PhysicalPoint { x: -1, y: 10 }).unwrap().red,
+            255
+        );
+        assert_eq!(
+            copied.pixel_at(PhysicalPoint { x: 0, y: 10 }).unwrap().red,
+            255
+        );
+        assert_eq!(
+            frame.pixel_at(PhysicalPoint { x: -2, y: 10 }).unwrap().red,
+            10
         );
     }
 
@@ -1221,8 +1345,10 @@ mod tests {
             cpu_copy_count: 1,
         };
 
-        save_frame_selection(
+        let document = AnnotationDocument::new(frame.bounds).unwrap();
+        save_annotated_frame_selection(
             &frame,
+            &document,
             PhysicalRect {
                 left: 1,
                 top: 0,
@@ -1239,6 +1365,78 @@ mod tests {
         let info = reader.next_frame(&mut output).unwrap();
         assert_eq!((info.width, info.height), (1, 1));
         assert_eq!(&output[..info.buffer_size()], &[6, 5, 4, 255]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn annotated_save_and_quick_save_encode_the_composited_selection() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-annotated-save-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path = directory.join("selection.png");
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 3,
+                bottom: 1,
+            },
+            width: 3,
+            height: 1,
+            stride: 12,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([0, 0, 0, 255].repeat(3)),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(2),
+                    kind: AnnotationKind::Line {
+                        start: PhysicalPoint { x: 1, y: 0 },
+                        end: PhysicalPoint { x: 2, y: 0 },
+                    },
+                    style: AnnotationStyle {
+                        stroke_rgba: 0x00FF00FF,
+                        fill_rgba: None,
+                        stroke_width: 1,
+                    },
+                }),
+            )
+            .unwrap();
+        let selection = PhysicalRect {
+            left: 1,
+            top: 0,
+            right: 3,
+            bottom: 1,
+        };
+
+        save_annotated_frame_selection(&frame, &document, selection, path.clone()).unwrap();
+        let decoder = png::Decoder::new(BufReader::new(std::fs::File::open(&path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut output = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut output).unwrap();
+        assert_eq!((info.width, info.height), (2, 1));
+        assert_eq!(
+            &output[..info.buffer_size()],
+            &[0, 255, 0, 255, 0, 255, 0, 255]
+        );
+
+        let quick = quick_save_annotated_frame_selection_in(
+            &frame,
+            &document,
+            selection,
+            &directory,
+            1_725_000_000_123,
+        )
+        .unwrap();
+        assert_eq!(quick, directory.join("FlashShot-1725000000123.png"));
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1296,8 +1494,10 @@ mod tests {
             cpu_copy_count: 1,
         };
 
-        let path = quick_save_frame_selection_in(
+        let document = AnnotationDocument::new(frame.bounds).unwrap();
+        let path = quick_save_annotated_frame_selection_in(
             &frame,
+            &document,
             PhysicalRect {
                 left: 1,
                 top: 0,
