@@ -32,12 +32,105 @@ use crate::{
             compose_virtual_desktop,
         },
         clipboard::{ClipboardService, SystemClipboard},
+        display::{DisplayProvider, SystemDisplayProvider},
         window_inspector::{InspectionTarget, SystemWindowInspector, WindowInspector},
         window_visibility,
+    },
+    recording::{
+        RecordingEvent, RecordingProgress, RecordingRequest, RecordingTarget, discover,
+        start_recording,
     },
 };
 
 impl FlashShotApp {
+    pub(super) fn toggle_primary_display_recording(&mut self, cx: &mut Context<Self>) {
+        if let Some(control) = self.recording_control.as_ref() {
+            match control.request_stop() {
+                Ok(()) => self.status = "Stopping screen recording...".to_owned(),
+                Err(error) => self.status = format!("Could not stop screen recording: {error}"),
+            }
+            cx.notify();
+            return;
+        }
+        if self.recording_start_in_flight {
+            self.status = "Screen recording startup is already in progress...".to_owned();
+            cx.notify();
+            return;
+        }
+        if self.session.state() != CaptureSessionState::Idle {
+            self.status = "Finish or cancel the current screenshot before recording".to_owned();
+            cx.notify();
+            return;
+        }
+        self.recording_start_in_flight = true;
+        self.status = "Discovering FFmpeg and preparing primary display recording...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { start_primary_display_recording() })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| this.recording_started(result, cx));
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn recording_started(
+        &mut self,
+        result: std::io::Result<crate::recording::RecordingControl>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(control) => {
+                let events = control.events();
+                self.recording_control = Some(control);
+                self.recording_progress = Default::default();
+                self.status = "Starting primary display recording...".to_owned();
+                cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                    let mut cx = cx.clone();
+                    async move {
+                        while let Ok(event) = events.recv().await {
+                            let Some(this) = this.upgrade() else {
+                                break;
+                            };
+                            this.update(&mut cx, |this, cx| this.handle_recording_event(event, cx));
+                        }
+                    }
+                })
+                .detach();
+            }
+            Err(error) => self.status = format!("Could not start screen recording: {error}"),
+        }
+        self.recording_start_in_flight = false;
+        cx.notify();
+    }
+
+    fn handle_recording_event(&mut self, event: RecordingEvent, cx: &mut Context<Self>) {
+        match event {
+            RecordingEvent::Started => self.status = "Recording primary display...".to_owned(),
+            RecordingEvent::Progress(progress) => {
+                self.recording_progress = progress;
+                self.status = format_recording_progress(progress);
+            }
+            RecordingEvent::Finished { output } => {
+                self.recording_control = None;
+                self.recording_progress = Default::default();
+                self.status = format!("Screen recording saved to {}", output.display());
+            }
+            RecordingEvent::Failed { message } => {
+                self.recording_control = None;
+                self.recording_progress = Default::default();
+                self.status = format!("Screen recording failed: {message}");
+            }
+        }
+        cx.notify();
+    }
+
     pub(super) fn open_image(&mut self, cx: &mut Context<Self>) {
         if self.session.state() != CaptureSessionState::Idle {
             return;
@@ -356,6 +449,8 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.recording_control = None;
+        self.recording_start_in_flight = false;
         // GPUI has already removed native windows before invoking on_app_quit.
         // Keeping the handles untouched avoids issuing late operations on closed HWNDs.
         log::info!(target: "flash_shot::lifecycle", "capture_workflow_shutdown");
@@ -2345,6 +2440,50 @@ fn quick_save_directory() -> std::io::Result<PathBuf> {
     crate::history::managed_history_directory()
 }
 
+fn start_primary_display_recording() -> std::io::Result<crate::recording::RecordingControl> {
+    let capabilities = discover()?;
+    let display = SystemDisplayProvider
+        .displays()?
+        .into_iter()
+        .find(|display| display.primary)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "primary display not found")
+        })?;
+    let output = recording_output_path()?;
+    start_recording(
+        capabilities,
+        RecordingRequest {
+            target: RecordingTarget::Display {
+                bounds: display.physical_bounds,
+            },
+            audio: None,
+            frame_rate: 30,
+            output,
+        },
+    )
+}
+
+fn recording_output_path() -> std::io::Result<PathBuf> {
+    let root = directories::UserDirs::new()
+        .and_then(|directories| directories.video_dir().map(Path::to_owned))
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "recording directory unavailable",
+            )
+        })?;
+    let directory = root.join("Flash Shot");
+    std::fs::create_dir_all(&directory)?;
+    Ok(directory.join(format!("FlashShot-{}.mp4", unix_timestamp_ms())))
+}
+
+fn format_recording_progress(progress: RecordingProgress) -> String {
+    let seconds = progress.output_time_us.unwrap_or_default() / 1_000_000;
+    let frames = progress.frame.unwrap_or_default();
+    format!("Recording primary display: {seconds}s, {frames} frames")
+}
+
 fn next_quick_save_path(
     directory: &Path,
     timestamp_ms: u128,
@@ -2549,10 +2688,11 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 mod tests {
     use super::{
         KeyboardCommand, annotation_added_status, annotation_cancelled_status,
-        copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color, intersect_rect,
-        is_current_operation, keyboard_command, next_quick_save_path, pinned_size, png_path,
-        quick_save_annotated_frame_selection_in, resolve_pointer_selection,
-        save_annotated_frame_selection, style_for_tool, tool_selected_status, with_alpha,
+        copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color,
+        format_recording_progress, intersect_rect, is_current_operation, keyboard_command,
+        next_quick_save_path, pinned_size, png_path, quick_save_annotated_frame_selection_in,
+        resolve_pointer_selection, save_annotated_frame_selection, style_for_tool,
+        tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -3033,6 +3173,18 @@ mod tests {
                 .is_some_and(|name| name == "FlashShot-1725000000123.png")
         });
         assert_eq!(second, directory.join("FlashShot-1725000000123-2.png"));
+    }
+
+    #[test]
+    fn recording_status_uses_ffmpeg_progress_without_exposing_process_output() {
+        assert_eq!(
+            format_recording_progress(crate::recording::RecordingProgress {
+                output_time_us: Some(3_900_000),
+                frame: Some(117),
+                finished: false,
+            }),
+            "Recording primary display: 3s, 117 frames"
+        );
     }
 
     #[test]

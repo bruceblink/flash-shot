@@ -245,6 +245,133 @@ pub struct RecordingExit {
     pub diagnostic: String,
 }
 
+/// Events emitted by a live recording worker for a UI or other caller to observe.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RecordingEvent {
+    Started,
+    Progress(RecordingProgress),
+    Finished { output: PathBuf },
+    Failed { message: String },
+}
+
+/// Handle for an isolated recording worker. Dropping it requests a normal FFmpeg stop.
+pub struct RecordingControl {
+    stop: async_channel::Sender<()>,
+    events: async_channel::Receiver<RecordingEvent>,
+}
+
+impl RecordingControl {
+    pub fn request_stop(&self) -> io::Result<()> {
+        self.stop.try_send(()).or_else(|error| match error {
+            async_channel::TrySendError::Full(()) => Ok(()),
+            async_channel::TrySendError::Closed(()) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "recording worker is no longer running",
+            )),
+        })
+    }
+
+    pub fn events(&self) -> async_channel::Receiver<RecordingEvent> {
+        self.events.clone()
+    }
+}
+
+impl Drop for RecordingControl {
+    fn drop(&mut self) {
+        let _ = self.stop.try_send(());
+    }
+}
+
+/// Launches the FFmpeg process on a dedicated worker and returns non-blocking lifecycle events.
+pub fn start_recording(
+    capabilities: FfmpegCapabilities,
+    request: RecordingRequest,
+) -> io::Result<RecordingControl> {
+    let command = build_recording_command(&capabilities, &request)?;
+    let (stop_tx, stop_rx) = async_channel::bounded(1);
+    let (event_tx, event_rx) = async_channel::bounded(32);
+    std::thread::Builder::new()
+        .name("flash-shot-recording".to_owned())
+        .spawn(move || recording_worker(command, request.output, stop_rx, event_tx))
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("could not start recording worker: {error}"),
+            )
+        })?;
+    Ok(RecordingControl {
+        stop: stop_tx,
+        events: event_rx,
+    })
+}
+
+fn recording_worker(
+    command: FfmpegCommand,
+    output: PathBuf,
+    stop: async_channel::Receiver<()>,
+    events: async_channel::Sender<RecordingEvent>,
+) {
+    let mut process = match RecordingProcess::start(command) {
+        Ok(process) => process,
+        Err(error) => {
+            let _ = events.try_send(RecordingEvent::Failed {
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
+    if events.try_send(RecordingEvent::Started).is_err() {
+        return;
+    }
+    let mut last_progress = RecordingProgress::default();
+    loop {
+        if stop.try_recv().is_ok() || stop.is_closed() {
+            match process.stop_gracefully(GRACEFUL_STOP_TIMEOUT) {
+                Ok(exit) if exit.success => {
+                    let _ = events.try_send(RecordingEvent::Finished { output });
+                }
+                Ok(_) => {
+                    unreachable!("successful recording exits are represented by RecordingExit")
+                }
+                Err(error) => {
+                    let _ = events.try_send(RecordingEvent::Failed {
+                        message: error.to_string(),
+                    });
+                }
+            }
+            return;
+        }
+        match process.try_wait_for_exit() {
+            Ok(Some(exit)) if exit.success => {
+                let _ = events.try_send(RecordingEvent::Finished { output });
+                return;
+            }
+            Ok(Some(_)) => unreachable!("non-zero recording exits return an error"),
+            Err(error) => {
+                let _ = events.try_send(RecordingEvent::Failed {
+                    message: error.to_string(),
+                });
+                return;
+            }
+            Ok(None) => {}
+        }
+        match process.progress() {
+            Ok(progress) if progress != last_progress => {
+                last_progress = progress;
+                let _ = events.try_send(RecordingEvent::Progress(progress));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let _ = events.try_send(RecordingEvent::Failed {
+                    message: error.to_string(),
+                });
+                return;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// The latest machine-readable progress information emitted by FFmpeg's `-progress` pipe.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RecordingProgress {
@@ -373,6 +500,21 @@ impl RecordingProcess {
             .wait()?;
         self.stdin.take();
         self.complete(status)
+    }
+
+    /// Non-blockingly observes a naturally exited recording process.
+    pub fn try_wait_for_exit(&mut self) -> io::Result<Option<RecordingExit>> {
+        let Some(child) = self.child.as_mut() else {
+            return Err(io::Error::other(
+                "recording process has already been reaped",
+            ));
+        };
+        let Some(status) = child.try_wait()? else {
+            return Ok(None);
+        };
+        self.child.take();
+        self.stdin.take();
+        self.complete(status).map(Some)
     }
 
     /// Requests a container-safe FFmpeg stop, then kills only after the timeout expires.

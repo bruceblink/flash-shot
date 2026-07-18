@@ -97,6 +97,8 @@ impl Render for FlashShotApp {
         let is_idle = self.session.state() == CaptureSessionState::Idle;
         let is_busy = self.session.state() == CaptureSessionState::Capturing;
         let is_exporting = self.session.state() == CaptureSessionState::Exporting;
+        let recording_active = self.recording_control.is_some();
+        let recording_starting = self.recording_start_in_flight;
         let preview = self.preview.clone();
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
         let frame = self.frame.clone();
@@ -131,6 +133,34 @@ impl Render for FlashShotApp {
                             .flex()
                             .items_center()
                             .gap_2()
+                            .child(
+                                div()
+                                    .id("record-primary-display")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(if recording_active {
+                                        colors.accent
+                                    } else {
+                                        colors.border
+                                    })
+                                    .text_color(colors.accent)
+                                    .when(!recording_starting, |button| {
+                                        button.cursor_pointer().on_click(cx.listener(
+                                            |this, _, _, cx| {
+                                                this.toggle_primary_display_recording(cx)
+                                            },
+                                        ))
+                                    })
+                                    .child(if recording_starting {
+                                        "Preparing..."
+                                    } else if recording_active {
+                                        "Stop Recording"
+                                    } else {
+                                        "Record Display"
+                                    }),
+                            )
                             .child(
                                 div()
                                     .id("open-image-action")
