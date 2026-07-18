@@ -196,6 +196,9 @@ impl Render for CaptureOverlay {
         let text_edit = app.text_edit().cloned();
         let selected_annotation = app.selected_annotation;
         let can_delete = selected_annotation.is_some();
+        let can_rotate = selected_annotation
+            .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
+            .is_some_and(Annotation::supports_clockwise_rotation);
         let selected_number = selected_annotation.and_then(|id| {
             app.annotation_document
                 .as_ref()?
@@ -465,6 +468,26 @@ impl Render for CaptureOverlay {
                                     });
                                 }))
                                 .child("Duplicate"),
+                        )
+                    })
+                    .when(can_rotate, |tools| {
+                        tools.child(
+                            div()
+                                .id("overlay-rotate-clockwise")
+                                .px_3()
+                                .py_2()
+                                .bg(colors.panel)
+                                .text_color(colors.text)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let app = this.app.clone();
+                                    cx.defer(move |cx| {
+                                        app.update(cx, |app, cx| {
+                                            app.rotate_selected_annotation_clockwise(cx);
+                                        });
+                                    });
+                                }))
+                                .child("Rotate 90"),
                         )
                     })
                     .when(can_delete, |tools| {

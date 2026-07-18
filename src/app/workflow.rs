@@ -1694,6 +1694,39 @@ impl FlashShotApp {
         }
     }
 
+    pub(super) fn rotate_selected_annotation_clockwise(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self.selected_annotation else {
+            return false;
+        };
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        let Some(existing) = document.annotation(id).cloned() else {
+            self.selected_annotation = None;
+            return false;
+        };
+        let Some(rotated) = existing.rotated_clockwise_within(document.canvas_bounds()) else {
+            self.status = "Rotation is not supported for text or number annotations".to_owned();
+            cx.notify();
+            return true;
+        };
+        match self
+            .annotation_history
+            .apply(document, AnnotationCommand::Replace(rotated))
+        {
+            Ok(()) => {
+                self.status = "Annotation rotated clockwise".to_owned();
+                cx.notify();
+                true
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                true
+            }
+        }
+    }
+
     pub(super) fn bring_selected_annotation_to_front(&mut self, cx: &mut Context<Self>) -> bool {
         self.reorder_selected_annotation(usize::MAX, "Annotation brought to front", cx)
     }

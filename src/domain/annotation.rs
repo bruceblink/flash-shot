@@ -178,6 +178,15 @@ impl AnnotationDocument {
 }
 
 impl Annotation {
+    pub const fn supports_clockwise_rotation(&self) -> bool {
+        !matches!(
+            self.kind,
+            AnnotationKind::Watermark { .. }
+                | AnnotationKind::Text { .. }
+                | AnnotationKind::Number { .. }
+        )
+    }
+
     /// Maps the shared style's thickness presets to readable physical-pixel
     /// text sizes while preserving the existing 24px default at width 4.
     pub const fn text_font_size(&self) -> u32 {
@@ -336,6 +345,76 @@ impl Annotation {
         let mut duplicate = self.translated_within(canvas_bounds, offset, offset);
         duplicate.id = id;
         duplicate
+    }
+
+    /// Rotates drawable geometry a quarter turn clockwise around its bounds
+    /// center, then translates it back inside the canvas when necessary.
+    /// Text is deliberately excluded until the renderers support rotated glyphs.
+    pub fn rotated_clockwise_within(&self, canvas_bounds: PhysicalRect) -> Option<Self> {
+        if !self.supports_clockwise_rotation() {
+            return None;
+        }
+        let source = self.bounds();
+        let rotate = |point| rotate_clockwise(point, source);
+        let rotate_rect = |bounds: PhysicalRect| {
+            bounds_for_points(&[
+                rotate(PhysicalPoint {
+                    x: bounds.left,
+                    y: bounds.top,
+                }),
+                rotate(PhysicalPoint {
+                    x: bounds.right,
+                    y: bounds.top,
+                }),
+                rotate(PhysicalPoint {
+                    x: bounds.left,
+                    y: bounds.bottom,
+                }),
+                rotate(PhysicalPoint {
+                    x: bounds.right,
+                    y: bounds.bottom,
+                }),
+            ])
+        };
+        let kind = match self.kind {
+            AnnotationKind::Watermark { .. }
+            | AnnotationKind::Text { .. }
+            | AnnotationKind::Number { .. } => unreachable!(),
+            AnnotationKind::Blur { bounds } => AnnotationKind::Blur {
+                bounds: rotate_rect(bounds),
+            },
+            AnnotationKind::Mosaic { bounds } => AnnotationKind::Mosaic {
+                bounds: rotate_rect(bounds),
+            },
+            AnnotationKind::Highlight { bounds } => AnnotationKind::Highlight {
+                bounds: rotate_rect(bounds),
+            },
+            AnnotationKind::Rectangle { bounds } => AnnotationKind::Rectangle {
+                bounds: rotate_rect(bounds),
+            },
+            AnnotationKind::Ellipse { bounds } => AnnotationKind::Ellipse {
+                bounds: rotate_rect(bounds),
+            },
+            AnnotationKind::Line { start, end } => AnnotationKind::Line {
+                start: rotate(start),
+                end: rotate(end),
+            },
+            AnnotationKind::Arrow { start, end } => AnnotationKind::Arrow {
+                start: rotate(start),
+                end: rotate(end),
+            },
+            AnnotationKind::Freehand { ref points } => AnnotationKind::Freehand {
+                points: points.iter().copied().map(rotate).collect(),
+            },
+        };
+        Some(
+            Self {
+                id: self.id,
+                kind,
+                style: self.style,
+            }
+            .translated_within(canvas_bounds, 0, 0),
+        )
     }
 
     fn resized(&self, bounds: PhysicalRect) -> Self {
@@ -864,6 +943,22 @@ fn translate_rect(bounds: PhysicalRect, delta_x: i32, delta_y: i32) -> PhysicalR
         right: bounds.right.saturating_add(delta_x),
         bottom: bounds.bottom.saturating_add(delta_y),
     }
+}
+
+fn rotate_clockwise(point: PhysicalPoint, bounds: PhysicalRect) -> PhysicalPoint {
+    let center_x2 = i64::from(bounds.left) + i64::from(bounds.right);
+    let center_y2 = i64::from(bounds.top) + i64::from(bounds.bottom);
+    let x2 = i64::from(point.x) * 2;
+    let y2 = i64::from(point.y) * 2;
+    PhysicalPoint {
+        x: round_divide_by_two(center_x2 + y2 - center_y2),
+        y: round_divide_by_two(center_y2 - x2 + center_x2),
+    }
+}
+
+fn round_divide_by_two(value: i64) -> i32 {
+    let rounded = if value >= 0 { value + 1 } else { value - 1 };
+    (rounded / 2).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 fn clamp_to_canvas(bounds: PhysicalRect, point: PhysicalPoint) -> PhysicalPoint {
@@ -1516,6 +1611,78 @@ mod tests {
         let duplicate = annotation.duplicated(AnnotationId::new(43), canvas, 12);
 
         assert_eq!(duplicate.bounds(), annotation.bounds());
+    }
+
+    #[test]
+    fn clockwise_rotation_preserves_line_length_and_is_reversible() {
+        let canvas = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 640,
+            bottom: 480,
+        };
+        let original = Annotation {
+            id: AnnotationId::new(42),
+            kind: AnnotationKind::Line {
+                start: PhysicalPoint { x: 100, y: 120 },
+                end: PhysicalPoint { x: 200, y: 120 },
+            },
+            style: AnnotationStyle::default(),
+        };
+
+        let rotated = original.rotated_clockwise_within(canvas).unwrap();
+        assert_eq!(
+            rotated.kind,
+            AnnotationKind::Line {
+                start: PhysicalPoint { x: 150, y: 170 },
+                end: PhysicalPoint { x: 150, y: 70 },
+            }
+        );
+
+        let mut document = AnnotationDocument::new(canvas).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(&mut document, AnnotationCommand::Insert(original.clone()))
+            .unwrap();
+        history
+            .apply(&mut document, AnnotationCommand::Replace(rotated.clone()))
+            .unwrap();
+        assert!(history.undo(&mut document).unwrap());
+        assert_eq!(document.annotation(original.id), Some(&original));
+        assert!(history.redo(&mut document).unwrap());
+        assert_eq!(document.annotation(original.id), Some(&rotated));
+    }
+
+    #[test]
+    fn clockwise_rotation_swaps_rect_dimensions_and_rejects_text() {
+        let canvas = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 640,
+            bottom: 480,
+        };
+        let rectangle = rectangle(
+            42,
+            PhysicalRect {
+                left: 100,
+                top: 100,
+                right: 160,
+                bottom: 200,
+            },
+        );
+        let rotated = rectangle.rotated_clockwise_within(canvas).unwrap();
+        assert_eq!(rotated.bounds().width(), 100);
+        assert_eq!(rotated.bounds().height(), 60);
+
+        let text = Annotation {
+            id: AnnotationId::new(43),
+            kind: AnnotationKind::Text {
+                origin: PhysicalPoint { x: 20, y: 20 },
+                content: "Hello".to_owned(),
+            },
+            style: AnnotationStyle::default(),
+        };
+        assert_eq!(text.rotated_clockwise_within(canvas), None);
     }
 
     #[test]
