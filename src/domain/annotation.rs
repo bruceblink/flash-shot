@@ -163,6 +163,147 @@ impl Annotation {
     }
 }
 
+/// The drawable tools whose pointer gestures create a single annotation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnnotationTool {
+    Rectangle,
+    Ellipse,
+    Line,
+    Arrow,
+}
+
+/// In-progress pointer gesture. A draft is intentionally absent from the
+/// document until it is committed, keeping pointer movement out of undo history.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnnotationDraft {
+    id: AnnotationId,
+    tool: AnnotationTool,
+    style: AnnotationStyle,
+    start: PhysicalPoint,
+    current: PhysicalPoint,
+}
+
+impl AnnotationDraft {
+    pub fn begin(
+        id: AnnotationId,
+        tool: AnnotationTool,
+        style: AnnotationStyle,
+        start: PhysicalPoint,
+    ) -> Self {
+        Self {
+            id,
+            tool,
+            style,
+            start,
+            current: start,
+        }
+    }
+
+    pub const fn start(&self) -> PhysicalPoint {
+        self.start
+    }
+
+    pub const fn current(&self) -> PhysicalPoint {
+        self.current
+    }
+
+    pub fn update(&mut self, point: PhysicalPoint) {
+        self.current = point;
+    }
+
+    pub fn preview(&self) -> Option<Annotation> {
+        (self.start != self.current).then(|| Annotation {
+            id: self.id,
+            kind: match self.tool {
+                AnnotationTool::Rectangle => AnnotationKind::Rectangle {
+                    bounds: PhysicalRect::new(self.start, self.current),
+                },
+                AnnotationTool::Ellipse => AnnotationKind::Ellipse {
+                    bounds: PhysicalRect::new(self.start, self.current),
+                },
+                AnnotationTool::Line => AnnotationKind::Line {
+                    start: self.start,
+                    end: self.current,
+                },
+                AnnotationTool::Arrow => AnnotationKind::Arrow {
+                    start: self.start,
+                    end: self.current,
+                },
+            },
+            style: self.style,
+        })
+    }
+}
+
+/// Domain controller for creating annotations through pointer gestures.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AnnotationEditor {
+    draft: Option<AnnotationDraft>,
+}
+
+impl AnnotationEditor {
+    pub fn draft(&self) -> Option<&AnnotationDraft> {
+        self.draft.as_ref()
+    }
+
+    pub fn begin(
+        &mut self,
+        document: &AnnotationDocument,
+        id: AnnotationId,
+        tool: AnnotationTool,
+        style: AnnotationStyle,
+        start: PhysicalPoint,
+    ) -> Result<(), AnnotationError> {
+        if self.draft.is_some() {
+            return Err(AnnotationError::DraftInProgress);
+        }
+        if document.annotation(id).is_some() {
+            return Err(AnnotationError::DuplicateId(id));
+        }
+        self.draft = Some(AnnotationDraft::begin(
+            id,
+            tool,
+            style,
+            clamp_to_canvas(document.canvas_bounds(), start),
+        ));
+        Ok(())
+    }
+
+    pub fn update(&mut self, document: &AnnotationDocument, point: PhysicalPoint) -> bool {
+        let Some(draft) = &mut self.draft else {
+            return false;
+        };
+        draft.update(clamp_to_canvas(document.canvas_bounds(), point));
+        true
+    }
+
+    pub fn cancel(&mut self) -> bool {
+        self.draft.take().is_some()
+    }
+
+    pub fn commit(
+        &mut self,
+        document: &mut AnnotationDocument,
+        history: &mut CommandHistory,
+    ) -> Result<bool, AnnotationError> {
+        let Some(draft) = self.draft.take() else {
+            return Ok(false);
+        };
+        let Some(annotation) = draft.preview() else {
+            return Ok(false);
+        };
+        history.apply(document, AnnotationCommand::Insert(annotation))?;
+        Ok(true)
+    }
+}
+
+fn clamp_to_canvas(bounds: PhysicalRect, point: PhysicalPoint) -> PhysicalPoint {
+    PhysicalPoint {
+        x: point.x.clamp(bounds.left, bounds.right),
+        y: point.y.clamp(bounds.top, bounds.bottom),
+    }
+}
+
 fn rect_edge_distance(point: PhysicalPoint, bounds: PhysicalRect) -> u32 {
     let horizontal = if point.x < bounds.left {
         bounds.left.saturating_sub(point.x)
@@ -331,6 +472,7 @@ pub enum AnnotationError {
     InvalidCanvasBounds,
     DuplicateId(AnnotationId),
     MissingId(AnnotationId),
+    DraftInProgress,
 }
 
 impl fmt::Display for AnnotationError {
@@ -341,6 +483,9 @@ impl fmt::Display for AnnotationError {
                 write!(formatter, "annotation id {} already exists", id.value())
             }
             Self::MissingId(id) => write!(formatter, "annotation id {} does not exist", id.value()),
+            Self::DraftInProgress => {
+                formatter.write_str("an annotation gesture is already in progress")
+            }
         }
     }
 }
@@ -351,7 +496,8 @@ impl std::error::Error for AnnotationError {}
 mod tests {
     use super::{
         ANNOTATION_DOCUMENT_VERSION, Annotation, AnnotationCommand, AnnotationDocument,
-        AnnotationError, AnnotationId, AnnotationKind, AnnotationStyle, CommandHistory,
+        AnnotationEditor, AnnotationError, AnnotationId, AnnotationKind, AnnotationStyle,
+        AnnotationTool, CommandHistory,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
 
@@ -595,5 +741,122 @@ mod tests {
         assert!(!line.hit_test(PhysicalPoint { x: 10, y: 20 }, 0));
         assert!(dot.hit_test(PhysicalPoint { x: 23, y: 20 }, 0));
         assert!(!dot.hit_test(PhysicalPoint { x: 30, y: 20 }, 0));
+    }
+
+    #[test]
+    fn pointer_gesture_keeps_draft_out_of_document_until_commit() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(100),
+                AnnotationTool::Rectangle,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: -100, y: 100 },
+            )
+            .unwrap();
+        assert!(editor.update(&document, PhysicalPoint { x: 200, y: 400 }));
+        assert!(document.annotations().is_empty());
+        assert_eq!(history.undo_len(), 0);
+        assert_eq!(
+            editor.draft().unwrap().preview().unwrap().kind,
+            AnnotationKind::Rectangle {
+                bounds: PhysicalRect {
+                    left: -100,
+                    top: 100,
+                    right: 200,
+                    bottom: 400,
+                },
+            }
+        );
+
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        assert!(editor.draft().is_none());
+        assert_eq!(document.annotations().len(), 1);
+        assert_eq!(history.undo_len(), 1);
+        assert!(history.undo(&mut document).unwrap());
+        assert!(document.annotations().is_empty());
+    }
+
+    #[test]
+    fn cancelled_or_zero_sized_gestures_do_not_create_history_entries() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(101),
+                AnnotationTool::Ellipse,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: 10, y: 10 },
+            )
+            .unwrap();
+        assert!(editor.cancel());
+        assert!(!editor.commit(&mut document, &mut history).unwrap());
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(102),
+                AnnotationTool::Line,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: 20, y: 20 },
+            )
+            .unwrap();
+        assert!(!editor.commit(&mut document, &mut history).unwrap());
+        assert!(document.annotations().is_empty());
+        assert_eq!(history.undo_len(), 0);
+    }
+
+    #[test]
+    fn editor_clamps_gestures_to_canvas_and_rejects_concurrent_or_duplicate_ids() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+        let id = AnnotationId::new(103);
+
+        editor
+            .begin(
+                &document,
+                id,
+                AnnotationTool::Arrow,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: -9000, y: -9000 },
+            )
+            .unwrap();
+        assert_eq!(
+            editor.begin(
+                &document,
+                AnnotationId::new(104),
+                AnnotationTool::Arrow,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: 0, y: 0 },
+            ),
+            Err(AnnotationError::DraftInProgress)
+        );
+        editor.update(&document, PhysicalPoint { x: 9000, y: 9000 });
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        assert_eq!(
+            document.annotation(id).unwrap().kind,
+            AnnotationKind::Arrow {
+                start: PhysicalPoint { x: -1920, y: 0 },
+                end: PhysicalPoint { x: 1920, y: 1080 },
+            }
+        );
+        assert_eq!(
+            editor.begin(
+                &document,
+                id,
+                AnnotationTool::Arrow,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: 0, y: 0 },
+            ),
+            Err(AnnotationError::DuplicateId(id))
+        );
     }
 }
