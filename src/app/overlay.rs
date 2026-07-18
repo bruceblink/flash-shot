@@ -3,9 +3,10 @@
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, Context, Entity, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render, RenderImage, Subscription, Window,
-    canvas, div, fill, img, point, prelude::*, px, rgba, size,
+    Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render,
+    RenderImage, Subscription, TextAlign, TextRun, Window, canvas, div, fill, img, point,
+    prelude::*, px, rgba, size,
 };
 
 use super::FlashShotApp;
@@ -154,7 +155,13 @@ impl CaptureOverlay {
     ) {
         let app = self.app.clone();
         let event = event.clone();
-        cx.defer(move |cx| app.update(cx, |app, cx| app.handle_key_down(&event, cx)));
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| {
+                if !app.handle_text_edit_key(&event.keystroke, cx) {
+                    app.handle_key_down(&event, cx);
+                }
+            })
+        });
     }
 }
 
@@ -182,6 +189,7 @@ impl Render for CaptureOverlay {
             .annotation_document
             .as_ref()
             .and_then(|document| app.annotation_editor.preview(document.canvas_bounds()));
+        let text_edit = app.text_edit().cloned();
         let selected_annotation = app.selected_annotation;
         let can_delete = selected_annotation.is_some();
         let selected_tool = app.annotation_tool;
@@ -200,6 +208,13 @@ impl Render for CaptureOverlay {
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
             .flatten();
         let can_export = selection.is_some();
+        if text_edit.is_some() {
+            window.handle_input(
+                &self.focus_handle,
+                ElementInputHandler::new(viewport, self.app.clone()),
+                cx,
+            );
+        }
 
         div()
             .size_full()
@@ -259,21 +274,32 @@ impl Render for CaptureOverlay {
                             annotations,
                             annotation_preview,
                             selected_annotation,
+                            text_edit,
                         )
                     },
-                    move |bounds,
-                          (_, transform, annotations, preview, selected_annotation),
+                    move |_bounds,
+                          (_, transform, annotations, preview, selected_annotation, text_edit),
                           window,
-                          _| {
+                          cx| {
                         paint_annotations(
                             window,
-                            bounds,
                             transform,
                             &annotations,
                             preview.as_ref(),
                             selected_annotation,
                             colors,
-                        )
+                            cx,
+                        );
+                        if let Some(edit) = text_edit {
+                            paint_text_annotation(
+                                window,
+                                transform.unwrap_or_else(|| unreachable!()),
+                                edit.origin,
+                                &edit.content,
+                                0xFFFFFFFF,
+                                cx,
+                            );
+                        }
                     },
                 )
                 .absolute()
@@ -384,6 +410,30 @@ impl Render for CaptureOverlay {
                                     .child("Back"),
                             )
                     })
+                    .child(
+                        div()
+                            .id("overlay-tool-text")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Text) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Text) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_text_tool(cx))
+                                });
+                            }))
+                            .child("Text"),
+                    )
                     .child(
                         div()
                             .id("overlay-tool-number")
@@ -878,12 +928,12 @@ fn paint_selection_mask(
 
 fn paint_annotations(
     window: &mut Window,
-    _viewport: Bounds<Pixels>,
     transform: Option<PreviewTransform>,
     annotations: &[Annotation],
     preview: Option<&Annotation>,
     selected_annotation: Option<AnnotationId>,
     colors: ThemeColors,
+    cx: &mut gpui::App,
 ) {
     let Some(transform) = transform else {
         return;
@@ -895,6 +945,17 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
+            AnnotationKind::Text {
+                origin,
+                ref content,
+            } => paint_text_annotation(
+                window,
+                transform,
+                origin,
+                content,
+                annotation.style.stroke_rgba,
+                cx,
+            ),
             AnnotationKind::Number { center, value } => paint_number_marker(
                 window,
                 transform,
@@ -967,6 +1028,51 @@ fn paint_annotations(
             paint_resize_handles(window, transform, annotation.bounds(), colors.success);
         }
     }
+}
+
+fn paint_text_annotation(
+    window: &mut Window,
+    transform: PreviewTransform,
+    origin: PhysicalPoint,
+    content: &str,
+    color: u32,
+    cx: &mut gpui::App,
+) {
+    let view_origin = transform.physical_to_view(origin);
+    let glyph_width = (transform
+        .physical_to_view(PhysicalPoint {
+            x: origin
+                .x
+                .saturating_add(crate::domain::annotation::TEXT_ANNOTATION_ADVANCE),
+            y: origin.y,
+        })
+        .x
+        - view_origin.x)
+        .abs()
+        .max(8.0);
+    if content.is_empty() {
+        return;
+    }
+    let style = window.text_style();
+    let run = TextRun {
+        len: content.len(),
+        font: style.font(),
+        color: rgba(color).into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let line = window
+        .text_system()
+        .shape_line(content.into(), px(glyph_width), &[run], None);
+    let _ = line.paint(
+        point(px(view_origin.x), px(view_origin.y)),
+        px(glyph_width * 1.25),
+        TextAlign::Left,
+        None,
+        window,
+        cx,
+    );
 }
 
 fn paint_number_marker(

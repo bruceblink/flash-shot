@@ -7,6 +7,15 @@ use std::{
     sync::Arc,
 };
 
+use font_kit::{
+    canvas::{Canvas, Format, RasterizationOptions},
+    family_name::FamilyName,
+    hinting::HintingOptions,
+    properties::Properties,
+    source::SystemSource,
+};
+use pathfinder_geometry::transform2d::Transform2F;
+
 use crate::{
     domain::{
         annotation::{Annotation, AnnotationDocument, AnnotationKind, SEQUENCE_MARKER_RADIUS},
@@ -17,6 +26,7 @@ use crate::{
 
 const MOSAIC_BLOCK_SIZE: u32 = 10;
 const BLUR_RADIUS: i32 = 4;
+const TEXT_FONT_SIZE: f32 = 24.0;
 
 impl CaptureFrame {
     /// Composites renderer-independent annotations at original physical-pixel
@@ -51,6 +61,10 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
     let fill = annotation.style.fill_rgba.map(rgba_bytes);
     let radius = annotation.style.stroke_width.max(1).div_ceil(2) as i32;
     match annotation.kind {
+        AnnotationKind::Text {
+            origin,
+            ref content,
+        } => draw_text_annotation(pixels, frame, origin, content, color),
         AnnotationKind::Number { center, value } => {
             draw_number_marker(pixels, frame, center, value, color)
         }
@@ -76,6 +90,75 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
                 draw_line(pixels, frame, segment[0], segment[1], color, radius);
             }
         }
+    }
+}
+
+fn draw_text_annotation(
+    pixels: &mut [u8],
+    frame: &CaptureFrame,
+    origin: PhysicalPoint,
+    content: &str,
+    color: [u8; 4],
+) {
+    let Ok(handle) =
+        SystemSource::new().select_best_match(&[FamilyName::SansSerif], &Properties::new())
+    else {
+        return;
+    };
+    let Ok(font) = handle.load() else {
+        return;
+    };
+    let mut pen_x = origin.x as f32;
+    for character in content.chars() {
+        let Some(glyph) = font.glyph_for_char(character) else {
+            pen_x += crate::domain::annotation::TEXT_ANNOTATION_ADVANCE as f32;
+            continue;
+        };
+        let Ok(bounds) = font.raster_bounds(
+            glyph,
+            TEXT_FONT_SIZE,
+            Transform2F::default(),
+            HintingOptions::None,
+            RasterizationOptions::GrayscaleAa,
+        ) else {
+            continue;
+        };
+        let mut canvas = Canvas::new(bounds.size(), Format::A8);
+        if font
+            .rasterize_glyph(
+                &mut canvas,
+                glyph,
+                TEXT_FONT_SIZE,
+                Transform2F::from_translation(-bounds.origin().to_f32()),
+                HintingOptions::None,
+                RasterizationOptions::GrayscaleAa,
+            )
+            .is_ok()
+        {
+            for y in 0..canvas.size.y() {
+                for x in 0..canvas.size.x() {
+                    let alpha = canvas.pixels[y as usize * canvas.stride + x as usize];
+                    if alpha == 0 {
+                        continue;
+                    }
+                    let mut glyph_color = color;
+                    glyph_color[3] = (u16::from(color[3]) * u16::from(alpha) / 255) as u8;
+                    blend_pixel(
+                        pixels,
+                        frame,
+                        PhysicalPoint {
+                            x: pen_x.round() as i32 + bounds.origin_x() + x,
+                            y: origin.y + bounds.origin_y() + y,
+                        },
+                        glyph_color,
+                    );
+                }
+            }
+        }
+        pen_x += font
+            .advance(glyph)
+            .map(|advance| advance.x() * TEXT_FONT_SIZE / font.metrics().units_per_em as f32)
+            .unwrap_or(crate::domain::annotation::TEXT_ANNOTATION_ADVANCE as f32);
     }
 }
 
@@ -1049,5 +1132,46 @@ mod tests {
             composited.pixel_at(PhysicalPoint { x: 32, y: 17 }),
             frame.pixel_at(PhysicalPoint { x: 32, y: 17 })
         );
+    }
+
+    #[test]
+    fn composite_renders_text_with_system_font_at_original_pixels() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 96,
+                bottom: 64,
+            },
+            width: 96,
+            height: 64,
+            stride: 384,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(vec![0; 96 * 64 * 4]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(10),
+                    kind: AnnotationKind::Text {
+                        origin: PhysicalPoint { x: 8, y: 8 },
+                        content: "Text".to_owned(),
+                    },
+                    style: AnnotationStyle {
+                        stroke_rgba: 0x00FF00FF,
+                        fill_rgba: None,
+                        stroke_width: 1,
+                    },
+                }),
+            )
+            .unwrap();
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        assert!(composited.pixels.chunks_exact(4).any(|pixel| pixel[1] > 0));
     }
 }

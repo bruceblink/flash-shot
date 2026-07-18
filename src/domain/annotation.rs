@@ -8,6 +8,8 @@ use super::selection::ResizeHandle;
 pub const ANNOTATION_DOCUMENT_VERSION: u32 = 1;
 const MIN_FREEHAND_SAMPLE_DISTANCE: u32 = 2;
 pub const SEQUENCE_MARKER_RADIUS: i32 = 14;
+pub const TEXT_ANNOTATION_HEIGHT: i32 = 28;
+pub const TEXT_ANNOTATION_ADVANCE: i32 = 16;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnnotationId(u64);
@@ -41,6 +43,10 @@ impl Default for AnnotationStyle {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnnotationKind {
+    Text {
+        origin: PhysicalPoint,
+        content: String,
+    },
     Number {
         center: PhysicalPoint,
         value: u32,
@@ -175,6 +181,11 @@ impl Annotation {
             .stroke_width
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
+            AnnotationKind::Text {
+                origin,
+                ref content,
+                ..
+            } => text_bounds(origin, content).contains(point),
             AnnotationKind::Number { center, .. } => {
                 let radius = SEQUENCE_MARKER_RADIUS;
                 PhysicalRect {
@@ -212,6 +223,11 @@ impl Annotation {
 
     pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
+            AnnotationKind::Text {
+                origin,
+                ref content,
+                ..
+            } => text_bounds(origin, content),
             AnnotationKind::Number { center, .. } => marker_bounds(center),
             AnnotationKind::Blur { bounds }
             | AnnotationKind::Mosaic { bounds }
@@ -233,6 +249,13 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Text {
+                    origin,
+                    ref content,
+                } => AnnotationKind::Text {
+                    origin: translate(origin),
+                    content: content.clone(),
+                },
                 AnnotationKind::Number { center, value } => AnnotationKind::Number {
                     center: translate(center),
                     value,
@@ -289,6 +312,13 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Text { ref content, .. } => AnnotationKind::Text {
+                    origin: PhysicalPoint {
+                        x: bounds.left,
+                        y: bounds.top,
+                    },
+                    content: content.clone(),
+                },
                 AnnotationKind::Number { value, .. } => AnnotationKind::Number {
                     center: PhysicalPoint {
                         x: (bounds.left + bounds.right) / 2,
@@ -321,6 +351,7 @@ impl Annotation {
 /// The drawable tools whose pointer gestures create a single annotation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnnotationTool {
+    Text,
     Number,
     Blur,
     Mosaic,
@@ -343,6 +374,7 @@ pub struct AnnotationDraft {
     current: PhysicalPoint,
     points: Vec<PhysicalPoint>,
     sequence_number: Option<u32>,
+    text: Option<String>,
 }
 
 impl AnnotationDraft {
@@ -360,6 +392,7 @@ impl AnnotationDraft {
             current: start,
             points: vec![start],
             sequence_number: None,
+            text: None,
         }
     }
 
@@ -387,8 +420,14 @@ impl AnnotationDraft {
         self
     }
 
+    fn with_text(mut self, text: String) -> Self {
+        self.text = Some(text);
+        self
+    }
+
     pub fn preview(&self) -> Option<Annotation> {
         let has_visible_geometry = match self.tool {
+            AnnotationTool::Text => self.text.as_ref().is_some_and(|text| !text.is_empty()),
             AnnotationTool::Number => true,
             AnnotationTool::Freehand => self.points.len() >= 2,
             _ => self.start != self.current,
@@ -396,6 +435,10 @@ impl AnnotationDraft {
         has_visible_geometry.then(|| Annotation {
             id: self.id,
             kind: match self.tool {
+                AnnotationTool::Text => AnnotationKind::Text {
+                    origin: self.start,
+                    content: self.text.clone().unwrap_or_default(),
+                },
                 AnnotationTool::Number => AnnotationKind::Number {
                     center: self.start,
                     value: self.sequence_number.unwrap_or(1),
@@ -619,6 +662,32 @@ impl AnnotationEditor {
         Ok(())
     }
 
+    pub fn begin_text(
+        &mut self,
+        document: &AnnotationDocument,
+        id: AnnotationId,
+        style: AnnotationStyle,
+        origin: PhysicalPoint,
+        text: String,
+    ) -> Result<(), AnnotationError> {
+        if self.has_active_gesture() {
+            return Err(AnnotationError::DraftInProgress);
+        }
+        if document.annotation(id).is_some() {
+            return Err(AnnotationError::DuplicateId(id));
+        }
+        self.draft = Some(
+            AnnotationDraft::begin(
+                id,
+                AnnotationTool::Text,
+                style,
+                clamp_to_canvas(document.canvas_bounds(), origin),
+            )
+            .with_text(text),
+        );
+        Ok(())
+    }
+
     pub fn begin_move(
         &mut self,
         document: &AnnotationDocument,
@@ -777,6 +846,18 @@ fn marker_bounds(center: PhysicalPoint) -> PhysicalRect {
         top: center.y.saturating_sub(SEQUENCE_MARKER_RADIUS),
         right: center.x.saturating_add(SEQUENCE_MARKER_RADIUS),
         bottom: center.y.saturating_add(SEQUENCE_MARKER_RADIUS),
+    }
+}
+
+fn text_bounds(origin: PhysicalPoint, content: &str) -> PhysicalRect {
+    let glyphs = content.chars().count().max(1) as i32;
+    PhysicalRect {
+        left: origin.x,
+        top: origin.y,
+        right: origin
+            .x
+            .saturating_add(glyphs.saturating_mul(TEXT_ANNOTATION_ADVANCE)),
+        bottom: origin.y.saturating_add(TEXT_ANNOTATION_HEIGHT),
     }
 }
 
@@ -1013,6 +1094,41 @@ mod tests {
         assert_eq!(document.version(), ANNOTATION_DOCUMENT_VERSION);
         assert_eq!(document.canvas_bounds(), canvas());
         assert!(document.annotations().is_empty());
+    }
+
+    #[test]
+    fn text_draft_commits_unicode_content_and_is_reversible() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+        let origin = PhysicalPoint { x: -120, y: 240 };
+
+        editor
+            .begin_text(
+                &document,
+                AnnotationId::new(80),
+                AnnotationStyle::default(),
+                origin,
+                "Hello, 中文".to_owned(),
+            )
+            .unwrap();
+        assert_eq!(
+            editor.preview(document.canvas_bounds()).unwrap().kind,
+            AnnotationKind::Text {
+                origin,
+                content: "Hello, 中文".to_owned(),
+            }
+        );
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        let text = document.annotation(AnnotationId::new(80)).unwrap().clone();
+        assert!(text.hit_test(origin, 0));
+        assert!(text.hit_test(PhysicalPoint { x: 7, y: 250 }, 0));
+        assert!(!text.hit_test(PhysicalPoint { x: 500, y: 250 }, 0));
+
+        assert!(history.undo(&mut document).unwrap());
+        assert!(document.annotations().is_empty());
+        assert!(history.redo(&mut document).unwrap());
+        assert_eq!(document.annotation(AnnotationId::new(80)), Some(&text));
     }
 
     #[test]

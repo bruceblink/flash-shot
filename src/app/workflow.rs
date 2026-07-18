@@ -2,6 +2,7 @@
 
 use std::{
     fs,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -151,6 +152,7 @@ impl FlashShotApp {
                 self.annotation_history = Default::default();
                 self.annotation_editor = Default::default();
                 self.annotation_tool = None;
+                self.text_edit = None;
                 self.next_annotation_id = 1;
                 self.next_sequence_number = 1;
                 self.frame = Some(capture.capture.frame);
@@ -189,6 +191,7 @@ impl FlashShotApp {
         self.annotation_history = Default::default();
         self.annotation_editor = Default::default();
         self.annotation_tool = None;
+        self.text_edit = None;
         self.selected_annotation = None;
         self.preview = None;
         self.selection_drag.clear();
@@ -212,6 +215,7 @@ impl FlashShotApp {
         self.annotation_history = Default::default();
         self.annotation_editor = Default::default();
         self.annotation_tool = None;
+        self.text_edit = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -335,6 +339,9 @@ impl FlashShotApp {
         let Some(frame) = self.frame.as_ref() else {
             return;
         };
+        if self.annotation_tool == Some(AnnotationTool::Text) && self.text_edit.is_some() {
+            return;
+        }
         if self.annotation_tool.is_some() {
             let point = clamp_physical_point(point, frame.bounds);
             if let Some(document) = self.annotation_document.as_ref() {
@@ -369,6 +376,10 @@ impl FlashShotApp {
 
     pub(super) fn select_rectangle_tool(&mut self, cx: &mut Context<Self>) {
         self.select_annotation_tool(AnnotationTool::Rectangle, cx);
+    }
+
+    pub(super) fn select_text_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Text, cx);
     }
 
     pub(super) fn select_highlight_tool(&mut self, cx: &mut Context<Self>) {
@@ -473,6 +484,7 @@ impl FlashShotApp {
 
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
+        self.text_edit = None;
         self.annotation_tool = None;
         self.selected_annotation = None;
         self.status = "Selection tool selected".to_owned();
@@ -481,6 +493,7 @@ impl FlashShotApp {
 
     fn select_annotation_tool(&mut self, tool: AnnotationTool, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
+        self.text_edit = None;
         self.annotation_tool = Some(tool);
         self.selected_annotation = None;
         self.status = tool_selected_status(tool).to_owned();
@@ -494,6 +507,12 @@ impl FlashShotApp {
             return;
         };
         let id = AnnotationId::new(self.next_annotation_id);
+        if tool == AnnotationTool::Text {
+            self.annotation_editor.cancel();
+            self.text_edit = Some(super::TextEdit::new(point));
+            self.status = "Type text, then press Enter".to_owned();
+            return;
+        }
         let started = if tool == AnnotationTool::Number {
             self.annotation_editor.begin_number(
                 document,
@@ -561,6 +580,132 @@ impl FlashShotApp {
             self.next_sequence_number = self.next_sequence_number.saturating_add(1);
         }
         cx.notify();
+    }
+
+    pub(super) fn commit_text_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(edit) = self.text_edit.take() else {
+            return false;
+        };
+        let Some(document) = self.annotation_document.as_ref() else {
+            return false;
+        };
+        let id = AnnotationId::new(self.next_annotation_id);
+        let started = self.annotation_editor.begin_text(
+            document,
+            id,
+            self.annotation_style,
+            edit.origin,
+            edit.content,
+        );
+        if let Err(error) = started {
+            self.status = error.to_string();
+            cx.notify();
+            return true;
+        }
+        self.next_annotation_id = self.next_annotation_id.saturating_add(1);
+        self.finish_annotation(cx);
+        true
+    }
+
+    pub(super) fn cancel_text_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.text_edit.take().is_none() {
+            return false;
+        }
+        self.status = "Text cancelled".to_owned();
+        cx.notify();
+        true
+    }
+
+    pub(super) fn text_edit(&self) -> Option<&super::TextEdit> {
+        self.text_edit.as_ref()
+    }
+
+    pub(super) fn replace_text_edit(
+        &mut self,
+        replacement_range_utf16: Option<Range<usize>>,
+        text: &str,
+        marked_range_utf16: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(edit) = self.text_edit.as_mut() else {
+            return false;
+        };
+        let range = replacement_range_utf16
+            .as_ref()
+            .map(|range| range_from_utf16(&edit.content, range))
+            .or(edit.marked_range.clone())
+            .unwrap_or(edit.selected_range.clone());
+        edit.content.replace_range(range.clone(), text);
+        let cursor = range.start + text.len();
+        edit.selected_range = marked_range_utf16
+            .as_ref()
+            .map(|range| range_from_utf16(text, range))
+            .map(|selection| range.start + selection.start..range.start + selection.end)
+            .unwrap_or(cursor..cursor);
+        edit.marked_range = marked_range_utf16.map(|_| range.start..cursor);
+        self.status = "Editing text...".to_owned();
+        cx.notify();
+        true
+    }
+
+    pub(super) fn unmark_text_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(edit) = self.text_edit.as_mut() else {
+            return false;
+        };
+        edit.marked_range = None;
+        cx.notify();
+        true
+    }
+
+    pub(super) fn handle_text_edit_key(
+        &mut self,
+        keystroke: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.text_edit.is_none() || keystroke.modifiers.shift || keystroke.modifiers.control {
+            return false;
+        }
+        match keystroke.key.as_str() {
+            "enter" => self.commit_text_edit(cx),
+            "escape" => self.cancel_text_edit(cx),
+            "backspace" => self.delete_text_edit(true, cx),
+            "delete" => self.delete_text_edit(false, cx),
+            "left" => self.move_text_cursor(false, cx),
+            "right" => self.move_text_cursor(true, cx),
+            _ => false,
+        }
+    }
+
+    fn delete_text_edit(&mut self, backwards: bool, cx: &mut Context<Self>) -> bool {
+        let Some(edit) = self.text_edit.as_ref() else {
+            return false;
+        };
+        let range = if edit.selected_range.is_empty() {
+            let cursor = edit.selected_range.end;
+            if backwards {
+                previous_char_boundary(&edit.content, cursor)..cursor
+            } else {
+                cursor..next_char_boundary(&edit.content, cursor)
+            }
+        } else {
+            edit.selected_range.clone()
+        };
+        self.replace_text_edit(Some(range_to_utf16(&edit.content, &range)), "", None, cx)
+    }
+
+    fn move_text_cursor(&mut self, forward: bool, cx: &mut Context<Self>) -> bool {
+        let Some(edit) = self.text_edit.as_mut() else {
+            return false;
+        };
+        let cursor = if forward {
+            next_char_boundary(&edit.content, edit.selected_range.end)
+        } else {
+            previous_char_boundary(&edit.content, edit.selected_range.start)
+        };
+        edit.selected_range = cursor..cursor;
+        edit.marked_range = None;
+        cx.notify();
+        true
     }
 
     pub(super) fn begin_selection(&mut self, event: &MouseDownEvent, viewport: Bounds<Pixels>) {
@@ -1154,6 +1299,7 @@ impl FlashShotApp {
 
 fn tool_selected_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Text => "Text tool selected",
         AnnotationTool::Number => "Number tool selected",
         AnnotationTool::Blur => "Blur tool selected",
         AnnotationTool::Mosaic => "Mosaic tool selected",
@@ -1168,6 +1314,7 @@ fn tool_selected_status(tool: AnnotationTool) -> &'static str {
 
 fn drawing_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Text => "Editing text...",
         AnnotationTool::Number => "Placing number...",
         AnnotationTool::Blur => "Drawing blur...",
         AnnotationTool::Mosaic => "Drawing mosaic...",
@@ -1182,6 +1329,7 @@ fn drawing_status(tool: AnnotationTool) -> &'static str {
 
 fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Text) => "Text added",
         Some(AnnotationTool::Number) => "Number added",
         Some(AnnotationTool::Blur) => "Blur added",
         Some(AnnotationTool::Mosaic) => "Mosaic added",
@@ -1197,6 +1345,7 @@ fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
 
 fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Text) => "Text cancelled",
         Some(AnnotationTool::Number) => "Number cancelled",
         Some(AnnotationTool::Blur) => "Blur cancelled",
         Some(AnnotationTool::Mosaic) => "Mosaic cancelled",
@@ -1380,6 +1529,44 @@ fn clamp_physical_point(
         x: point.x.clamp(bounds.left, bounds.right),
         y: point.y.clamp(bounds.top, bounds.bottom),
     }
+}
+
+fn utf16_offset(text: &str, byte_offset: usize) -> usize {
+    text[..byte_offset].chars().map(char::len_utf16).sum()
+}
+
+fn byte_offset(text: &str, utf16_offset: usize) -> usize {
+    let mut bytes = 0;
+    let mut units = 0;
+    for character in text.chars() {
+        if units >= utf16_offset {
+            break;
+        }
+        units += character.len_utf16();
+        bytes += character.len_utf8();
+    }
+    bytes
+}
+
+fn range_to_utf16(text: &str, range: &Range<usize>) -> Range<usize> {
+    utf16_offset(text, range.start)..utf16_offset(text, range.end)
+}
+
+fn range_from_utf16(text: &str, range: &Range<usize>) -> Range<usize> {
+    byte_offset(text, range.start)..byte_offset(text, range.end)
+}
+
+fn previous_char_boundary(text: &str, offset: usize) -> usize {
+    text.char_indices()
+        .rev()
+        .find_map(|(index, _)| (index < offset).then_some(index))
+        .unwrap_or(0)
+}
+
+fn next_char_boundary(text: &str, offset: usize) -> usize {
+    text.char_indices()
+        .find_map(|(index, _)| (index > offset).then_some(index))
+        .unwrap_or(text.len())
 }
 
 fn copy_annotated_frame_selection(

@@ -1564,6 +1564,7 @@ dependencies = [
  "image",
  "log",
  "mimalloc",
+ "pathfinder_geometry",
  "png 0.18.1",
  "raw-window-handle",
  "serde_json",
@@ -1571,6 +1572,7 @@ dependencies = [
  "windows 0.61.3",
  "windows-sys 0.61.2",
  "winres",
+ "zed-font-kit",
 ]
 
 [[package]]
