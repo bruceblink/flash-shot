@@ -400,6 +400,21 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn toggle_annotation_fill(&mut self, cx: &mut Context<Self>) {
+        self.annotation_style.fill_rgba = self
+            .annotation_style
+            .fill_rgba
+            .is_none()
+            .then(|| fill_color(self.annotation_style.stroke_rgba));
+        self.status = if self.annotation_style.fill_rgba.is_some() {
+            "Shape fill enabled"
+        } else {
+            "Shape fill disabled"
+        }
+        .to_owned();
+        cx.notify();
+    }
+
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.annotation_tool = None;
@@ -1355,6 +1370,10 @@ fn selection_status(selection: PhysicalRect) -> String {
     )
 }
 
+fn fill_color(stroke_rgba: u32) -> u32 {
+    (stroke_rgba & 0xFFFFFF00) | 0x66
+}
+
 fn intersect_rect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
     let intersection = PhysicalRect {
         left: left.left.max(right.left),
@@ -1442,9 +1461,10 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 mod tests {
     use super::{
         KeyboardCommand, annotation_added_status, annotation_cancelled_status,
-        copy_annotated_frame_selection, drawing_status, intersect_rect, is_current_operation,
-        keyboard_command, next_quick_save_path, png_path, quick_save_annotated_frame_selection_in,
-        resolve_pointer_selection, save_annotated_frame_selection, tool_selected_status,
+        copy_annotated_frame_selection, drawing_status, fill_color, intersect_rect,
+        is_current_operation, keyboard_command, next_quick_save_path, png_path,
+        quick_save_annotated_frame_selection_in, resolve_pointer_selection,
+        save_annotated_frame_selection, tool_selected_status,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -1658,6 +1678,11 @@ mod tests {
             annotation_cancelled_status(Some(AnnotationTool::Freehand)),
             "Freehand stroke cancelled"
         );
+    }
+
+    #[test]
+    fn fill_color_preserves_rgb_and_uses_transparent_alpha() {
+        assert_eq!(fill_color(0xFF3B30FF), 0xFF3B3066);
     }
 
     #[test]

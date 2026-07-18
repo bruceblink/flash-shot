@@ -185,6 +185,7 @@ impl Render for CaptureOverlay {
         let selected_tool = app.annotation_tool;
         let annotation_color = app.annotation_style.stroke_rgba;
         let annotation_width = app.annotation_style.stroke_width;
+        let fill_enabled = app.annotation_style.fill_rgba.is_some();
         let can_undo = app.annotation_history.undo_len() > 0;
         let can_redo = app.annotation_history.redo_len() > 0;
         let status = app.status.clone();
@@ -521,6 +522,33 @@ impl Render for CaptureOverlay {
                 div()
                     .absolute()
                     .left(px(18.0))
+                    .top(px(118.0))
+                    .px_3()
+                    .py_2()
+                    .id("overlay-fill")
+                    .bg(if fill_enabled {
+                        colors.accent
+                    } else {
+                        colors.panel
+                    })
+                    .text_color(if fill_enabled {
+                        colors.background
+                    } else {
+                        colors.text
+                    })
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let app = this.app.clone();
+                        cx.defer(move |cx| {
+                            app.update(cx, |app, cx| app.toggle_annotation_fill(cx));
+                        });
+                    }))
+                    .child("Fill"),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(18.0))
                     .top(px(88.0))
                     .flex()
                     .gap_2()
@@ -730,19 +758,25 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
-            AnnotationKind::Rectangle { bounds } => paint_outline(
-                window,
-                transform,
-                bounds,
-                color,
-                annotation.style.stroke_width,
-            ),
+            AnnotationKind::Rectangle { bounds } => {
+                if let Some(fill_color) = annotation.style.fill_rgba {
+                    paint_rect_fill(window, transform, bounds, rgba(fill_color));
+                }
+                paint_outline(
+                    window,
+                    transform,
+                    bounds,
+                    color,
+                    annotation.style.stroke_width,
+                )
+            }
             AnnotationKind::Ellipse { bounds } => paint_ellipse_outline(
                 window,
                 transform,
                 bounds,
                 color,
                 annotation.style.stroke_width,
+                annotation.style.fill_rgba.map(rgba),
             ),
             AnnotationKind::Line { start, end } => paint_line(
                 window,
@@ -773,6 +807,29 @@ fn paint_annotations(
             paint_resize_handles(window, transform, annotation.bounds(), colors.success);
         }
     }
+}
+
+fn paint_rect_fill(
+    window: &mut Window,
+    transform: PreviewTransform,
+    bounds: PhysicalRect,
+    color: gpui::Rgba,
+) {
+    let start = transform.physical_to_view(PhysicalPoint {
+        x: bounds.left,
+        y: bounds.top,
+    });
+    let end = transform.physical_to_view(PhysicalPoint {
+        x: bounds.right,
+        y: bounds.bottom,
+    });
+    window.paint_quad(fill(
+        Bounds::new(
+            point(px(start.x), px(start.y)),
+            size(px(end.x - start.x), px(end.y - start.y)),
+        ),
+        color,
+    ));
 }
 
 fn paint_resize_handles(
@@ -928,6 +985,7 @@ fn paint_ellipse_outline(
     rect: PhysicalRect,
     color: gpui::Hsla,
     stroke_width: u32,
+    fill_color: Option<gpui::Rgba>,
 ) {
     let start = transform.physical_to_view(PhysicalPoint {
         x: rect.left,
@@ -943,6 +1001,25 @@ fn paint_ellipse_outline(
     let radius_y = (end.y - start.y).abs() / 2.0;
     if radius_x == 0.0 || radius_y == 0.0 {
         return;
+    }
+    if let Some(fill_color) = fill_color {
+        let mut path = gpui::PathBuilder::fill();
+        for index in 0..=SEGMENTS {
+            let angle = std::f32::consts::TAU * index as f32 / SEGMENTS as f32;
+            let point = point(
+                px(center_x + radius_x * angle.cos()),
+                px(center_y + radius_y * angle.sin()),
+            );
+            if index == 0 {
+                path.move_to(point);
+            } else {
+                path.line_to(point);
+            }
+        }
+        path.close();
+        if let Ok(path) = path.build() {
+            window.paint_path(path, fill_color);
+        }
     }
     let mut path = gpui::PathBuilder::stroke(px(stroke_width.max(1) as f32));
     const SEGMENTS: u32 = 32;
