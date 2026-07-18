@@ -7,9 +7,11 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Output},
 };
+
+use crate::domain::geometry::PhysicalRect;
 
 const FFMPEG_PATH_ENV: &str = "FLASH_SHOT_FFMPEG";
 const VERSION_ARGUMENTS: &[&str] = &["-hide_banner", "-version"];
@@ -61,6 +63,160 @@ impl FfmpegCapabilities {
 
     pub fn supports_input(&self, name: &str) -> bool {
         self.input_formats.iter().any(|input| input == name)
+    }
+}
+
+/// A physical-pixel video source selected before an FFmpeg process is started.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RecordingTarget {
+    /// A complete display represented by its physical desktop bounds.
+    Display { bounds: PhysicalRect },
+    /// A top-level Windows window addressed by its visible title.
+    Window { title: String },
+    /// A user-selected physical-pixel rectangle in virtual desktop coordinates.
+    Region { bounds: PhysicalRect },
+}
+
+/// A validated first-pass MP4 recording request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecordingRequest {
+    pub target: RecordingTarget,
+    pub frame_rate: u16,
+    pub output: PathBuf,
+}
+
+/// An argument-vector command ready to launch without a shell.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FfmpegCommand {
+    executable: PathBuf,
+    arguments: Vec<OsString>,
+}
+
+impl FfmpegCommand {
+    pub fn executable(&self) -> &Path {
+        &self.executable
+    }
+
+    pub fn arguments(&self) -> &[OsString] {
+        &self.arguments
+    }
+
+    pub fn into_command(self) -> Command {
+        let mut command = Command::new(self.executable);
+        command.args(self.arguments);
+        command
+    }
+}
+
+/// Builds a shell-free FFmpeg command for a display, window, or region recording.
+///
+/// This only validates intent and arguments. Process lifecycle, audio selection, progress, and
+/// cleanup stay in the upcoming recording-session boundary.
+pub fn build_recording_command(
+    capabilities: &FfmpegCapabilities,
+    request: &RecordingRequest,
+) -> io::Result<FfmpegCommand> {
+    validate_request(request)?;
+    let mut arguments = vec![OsString::from("-hide_banner"), OsString::from("-y")];
+    match &request.target {
+        RecordingTarget::Display { bounds } | RecordingTarget::Region { bounds } => {
+            let input = desktop_input(capabilities, *bounds, request.frame_rate)?;
+            arguments.extend(input);
+        }
+        RecordingTarget::Window { title } => {
+            if !capabilities.supports_window_capture() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "FFmpeg does not support Windows window capture (gdigrab unavailable)",
+                ));
+            }
+            arguments.extend([
+                OsString::from("-f"),
+                OsString::from("gdigrab"),
+                OsString::from("-framerate"),
+                OsString::from(request.frame_rate.to_string()),
+                OsString::from("-i"),
+                OsString::from(format!("title={title}")),
+            ]);
+        }
+    }
+    arguments.extend([
+        OsString::from("-c:v"),
+        OsString::from("libx264"),
+        OsString::from("-pix_fmt"),
+        OsString::from("yuv420p"),
+        OsString::from("-movflags"),
+        OsString::from("+faststart"),
+        request.output.as_os_str().to_owned(),
+    ]);
+    Ok(FfmpegCommand {
+        executable: capabilities.executable.clone(),
+        arguments,
+    })
+}
+
+fn desktop_input(
+    capabilities: &FfmpegCapabilities,
+    bounds: PhysicalRect,
+    frame_rate: u16,
+) -> io::Result<Vec<OsString>> {
+    let input = if capabilities.supports_input("ddagrab") {
+        "ddagrab"
+    } else if capabilities.supports_input("gdigrab") {
+        "gdigrab"
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "FFmpeg does not support Windows display capture (ddagrab or gdigrab unavailable)",
+        ));
+    };
+    Ok(vec![
+        OsString::from("-f"),
+        OsString::from(input),
+        OsString::from("-framerate"),
+        OsString::from(frame_rate.to_string()),
+        OsString::from("-offset_x"),
+        OsString::from(bounds.left.to_string()),
+        OsString::from("-offset_y"),
+        OsString::from(bounds.top.to_string()),
+        OsString::from("-video_size"),
+        OsString::from(format!("{}x{}", bounds.width(), bounds.height())),
+        OsString::from("-i"),
+        OsString::from("desktop"),
+    ])
+}
+
+fn validate_request(request: &RecordingRequest) -> io::Result<()> {
+    if !(1..=240).contains(&request.frame_rate) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording frame rate must be between 1 and 240",
+        ));
+    }
+    if request
+        .output
+        .extension()
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("mp4"))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording output must use an .mp4 extension",
+        ));
+    }
+    match &request.target {
+        RecordingTarget::Display { bounds } | RecordingTarget::Region { bounds }
+            if bounds.width() == 0 || bounds.height() == 0 =>
+        {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "recording bounds must have a positive width and height",
+            ))
+        }
+        RecordingTarget::Window { title } if title.trim().is_empty() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording window title must not be empty",
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -174,9 +330,11 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, VERSION_ARGUMENTS, executable_from,
-        first_diagnostic_line, parse_input_formats, parse_version,
+        DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, RecordingRequest, RecordingTarget,
+        VERSION_ARGUMENTS, build_recording_command, executable_from, first_diagnostic_line,
+        parse_input_formats, parse_version,
     };
+    use crate::domain::geometry::PhysicalRect;
     use std::{ffi::OsString, path::PathBuf};
 
     const FORMATS: &str = "\
@@ -240,5 +398,120 @@ mod tests {
         assert!(capabilities.supports_microphone_capture());
         assert!(capabilities.supports_system_audio_capture());
         assert!(!capabilities.supports_input("avfoundation"));
+    }
+
+    #[test]
+    fn command_uses_desktop_duplication_for_a_negative_coordinate_display() {
+        let command = build_recording_command(
+            &capabilities(),
+            &RecordingRequest {
+                target: RecordingTarget::Display {
+                    bounds: PhysicalRect {
+                        left: -1920,
+                        top: 40,
+                        right: 0,
+                        bottom: 1120,
+                    },
+                },
+                frame_rate: 60,
+                output: PathBuf::from("recording.mp4"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(command.executable(), PathBuf::from("ffmpeg"));
+        assert_eq!(
+            command.arguments(),
+            [
+                "-hide_banner",
+                "-y",
+                "-f",
+                "ddagrab",
+                "-framerate",
+                "60",
+                "-offset_x",
+                "-1920",
+                "-offset_y",
+                "40",
+                "-video_size",
+                "1920x1080",
+                "-i",
+                "desktop",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                "recording.mp4",
+            ]
+            .map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn window_recording_uses_gdigrab_title_input_without_a_shell() {
+        let command = build_recording_command(
+            &capabilities(),
+            &RecordingRequest {
+                target: RecordingTarget::Window {
+                    title: "Editor & terminal".to_owned(),
+                },
+                frame_rate: 30,
+                output: PathBuf::from("window.mp4"),
+            },
+        )
+        .unwrap();
+
+        assert!(command.arguments().windows(2).any(|pair| pair
+            == [
+                OsString::from("-i"),
+                OsString::from("title=Editor & terminal")
+            ]));
+    }
+
+    #[test]
+    fn recording_requests_reject_invalid_rates_extensions_and_targets() {
+        let capabilities = capabilities();
+        let invalid = |target, frame_rate, output| RecordingRequest {
+            target,
+            frame_rate,
+            output: PathBuf::from(output),
+        };
+
+        assert!(
+            build_recording_command(
+                &capabilities,
+                &invalid(
+                    RecordingTarget::Region {
+                        bounds: PhysicalRect::default(),
+                    },
+                    60,
+                    "recording.mp4",
+                ),
+            )
+            .is_err()
+        );
+        assert!(
+            build_recording_command(
+                &capabilities,
+                &invalid(
+                    RecordingTarget::Window {
+                        title: " ".to_owned(),
+                    },
+                    0,
+                    "recording.webm",
+                ),
+            )
+            .is_err()
+        );
+    }
+
+    fn capabilities() -> FfmpegCapabilities {
+        FfmpegCapabilities {
+            executable: PathBuf::from("ffmpeg"),
+            version: "7.1".to_owned(),
+            input_formats: parse_input_formats(FORMATS),
+        }
     }
 }
