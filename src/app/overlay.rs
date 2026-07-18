@@ -159,7 +159,7 @@ impl Render for CaptureOverlay {
             .annotation_document
             .as_ref()
             .and_then(|document| app.annotation_editor.preview(document.canvas_bounds()));
-        let rectangle_tool_selected = app.annotation_tool == Some(AnnotationTool::Rectangle);
+        let selected_tool = app.annotation_tool;
         let status = app.status.clone();
         let viewport = local_viewport(window);
         let transform = self.transform(viewport);
@@ -224,7 +224,7 @@ impl Render for CaptureOverlay {
                 canvas(
                     move |bounds, _, _| (bounds, transform, annotations, annotation_preview),
                     move |bounds, (_, transform, annotations, preview), window, _| {
-                        paint_annotation_rectangles(
+                        paint_annotations(
                             window,
                             bounds,
                             transform,
@@ -252,12 +252,12 @@ impl Render for CaptureOverlay {
                             .id("overlay-tool-selection")
                             .px_3()
                             .py_2()
-                            .bg(if rectangle_tool_selected {
+                            .bg(if selected_tool.is_some() {
                                 colors.panel
                             } else {
                                 colors.accent
                             })
-                            .text_color(if rectangle_tool_selected {
+                            .text_color(if selected_tool.is_some() {
                                 colors.text
                             } else {
                                 colors.background
@@ -276,12 +276,12 @@ impl Render for CaptureOverlay {
                             .id("overlay-tool-rectangle")
                             .px_3()
                             .py_2()
-                            .bg(if rectangle_tool_selected {
+                            .bg(if selected_tool == Some(AnnotationTool::Rectangle) {
                                 colors.accent
                             } else {
                                 colors.panel
                             })
-                            .text_color(if rectangle_tool_selected {
+                            .text_color(if selected_tool == Some(AnnotationTool::Rectangle) {
                                 colors.background
                             } else {
                                 colors.text
@@ -294,6 +294,30 @@ impl Render for CaptureOverlay {
                                 });
                             }))
                             .child("Rectangle"),
+                    )
+                    .child(
+                        div()
+                            .id("overlay-tool-ellipse")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Ellipse) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Ellipse) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_ellipse_tool(cx));
+                                });
+                            }))
+                            .child("Ellipse"),
                     ),
             )
             .child(
@@ -454,7 +478,7 @@ fn paint_selection_mask(
     ));
 }
 
-fn paint_annotation_rectangles(
+fn paint_annotations(
     window: &mut Window,
     _viewport: Bounds<Pixels>,
     transform: Option<PreviewTransform>,
@@ -466,15 +490,24 @@ fn paint_annotation_rectangles(
         return;
     };
     for annotation in annotations.iter().chain(preview) {
-        if let Some(bounds) = rectangle_bounds(annotation) {
-            paint_outline(window, transform, bounds, colors.accent);
+        if outline_shape_bounds(annotation).is_none() {
+            continue;
+        }
+        match annotation.kind {
+            AnnotationKind::Rectangle { bounds } => {
+                paint_outline(window, transform, bounds, colors.accent)
+            }
+            AnnotationKind::Ellipse { bounds } => {
+                paint_ellipse_outline(window, transform, bounds, colors.accent)
+            }
+            _ => {}
         }
     }
 }
 
-fn rectangle_bounds(annotation: &Annotation) -> Option<PhysicalRect> {
+fn outline_shape_bounds(annotation: &Annotation) -> Option<PhysicalRect> {
     match annotation.kind {
-        AnnotationKind::Rectangle { bounds } => Some(bounds),
+        AnnotationKind::Rectangle { bounds } | AnnotationKind::Ellipse { bounds } => Some(bounds),
         _ => None,
     }
 }
@@ -501,6 +534,47 @@ fn paint_outline(
         color,
         gpui::BorderStyle::Solid,
     ));
+}
+
+fn paint_ellipse_outline(
+    window: &mut Window,
+    transform: PreviewTransform,
+    rect: PhysicalRect,
+    color: gpui::Hsla,
+) {
+    let start = transform.physical_to_view(PhysicalPoint {
+        x: rect.left,
+        y: rect.top,
+    });
+    let end = transform.physical_to_view(PhysicalPoint {
+        x: rect.right,
+        y: rect.bottom,
+    });
+    let center_x = (start.x + end.x) / 2.0;
+    let center_y = (start.y + end.y) / 2.0;
+    let radius_x = (end.x - start.x).abs() / 2.0;
+    let radius_y = (end.y - start.y).abs() / 2.0;
+    if radius_x == 0.0 || radius_y == 0.0 {
+        return;
+    }
+    let mut path = gpui::PathBuilder::stroke(px(1.0));
+    const SEGMENTS: u32 = 32;
+    for index in 0..=SEGMENTS {
+        let angle = std::f32::consts::TAU * index as f32 / SEGMENTS as f32;
+        let point = point(
+            px(center_x + radius_x * angle.cos()),
+            px(center_y + radius_y * angle.sin()),
+        );
+        if index == 0 {
+            path.move_to(point);
+        } else {
+            path.line_to(point);
+        }
+    }
+    path.close();
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
 }
 
 fn view_rect(bounds: Bounds<Pixels>) -> ViewRect {
@@ -543,7 +617,7 @@ fn intersect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
 
 #[cfg(test)]
 mod tests {
-    use super::{intersect, rectangle_bounds};
+    use super::{intersect, outline_shape_bounds};
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
         geometry::{PhysicalPoint, PhysicalRect},
@@ -576,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn rectangle_renderer_only_selects_the_interactive_rectangle_tool_geometry() {
+    fn outline_renderer_selects_rectangle_and_ellipse_but_not_line_geometry() {
         let rectangle = Annotation {
             id: AnnotationId::new(1),
             kind: AnnotationKind::Rectangle {
@@ -589,8 +663,20 @@ mod tests {
             },
             style: AnnotationStyle::default(),
         };
-        let line = Annotation {
+        let ellipse = Annotation {
             id: AnnotationId::new(2),
+            kind: AnnotationKind::Ellipse {
+                bounds: PhysicalRect {
+                    left: 20,
+                    top: 30,
+                    right: 40,
+                    bottom: 50,
+                },
+            },
+            style: AnnotationStyle::default(),
+        };
+        let line = Annotation {
+            id: AnnotationId::new(3),
             kind: AnnotationKind::Line {
                 start: PhysicalPoint { x: 10, y: 20 },
                 end: PhysicalPoint { x: 30, y: 40 },
@@ -599,7 +685,7 @@ mod tests {
         };
 
         assert_eq!(
-            rectangle_bounds(&rectangle),
+            outline_shape_bounds(&rectangle),
             Some(PhysicalRect {
                 left: 10,
                 top: 20,
@@ -607,6 +693,15 @@ mod tests {
                 bottom: 40,
             })
         );
-        assert_eq!(rectangle_bounds(&line), None);
+        assert_eq!(
+            outline_shape_bounds(&ellipse),
+            Some(PhysicalRect {
+                left: 20,
+                top: 30,
+                right: 40,
+                bottom: 50,
+            })
+        );
+        assert_eq!(outline_shape_bounds(&line), None);
     }
 }

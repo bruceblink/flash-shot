@@ -247,12 +247,12 @@ impl FlashShotApp {
         let Some(frame) = self.frame.as_ref() else {
             return;
         };
-        if self.annotation_tool.is_some() {
+        if let Some(tool) = self.annotation_tool {
             let point = clamp_physical_point(point, frame.bounds);
             if let Some(document) = self.annotation_document.as_ref() {
                 self.annotation_editor.update(document, point);
             }
-            self.status = "Drawing rectangle...".to_owned();
+            self.status = drawing_status(tool).to_owned();
             cx.notify();
             return;
         }
@@ -317,16 +317,24 @@ impl FlashShotApp {
     }
 
     pub(super) fn select_rectangle_tool(&mut self, cx: &mut Context<Self>) {
-        self.annotation_editor.cancel();
-        self.annotation_tool = Some(AnnotationTool::Rectangle);
-        self.status = "Rectangle tool selected".to_owned();
-        cx.notify();
+        self.select_annotation_tool(AnnotationTool::Rectangle, cx);
+    }
+
+    pub(super) fn select_ellipse_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Ellipse, cx);
     }
 
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.annotation_tool = None;
         self.status = "Selection tool selected".to_owned();
+        cx.notify();
+    }
+
+    fn select_annotation_tool(&mut self, tool: AnnotationTool, cx: &mut Context<Self>) {
+        self.annotation_editor.cancel();
+        self.annotation_tool = Some(tool);
+        self.status = tool_selected_status(tool).to_owned();
         cx.notify();
     }
 
@@ -343,7 +351,7 @@ impl FlashShotApp {
             .is_ok()
         {
             self.next_annotation_id = self.next_annotation_id.saturating_add(1);
-            self.status = "Drawing rectangle...".to_owned();
+            self.status = drawing_status(tool).to_owned();
         }
     }
 
@@ -351,12 +359,13 @@ impl FlashShotApp {
         let Some(document) = self.annotation_document.as_mut() else {
             return;
         };
+        let tool = self.annotation_tool;
         match self
             .annotation_editor
             .commit(document, &mut self.annotation_history)
         {
-            Ok(true) => self.status = "Rectangle added".to_owned(),
-            Ok(false) => self.status = "Rectangle cancelled".to_owned(),
+            Ok(true) => self.status = annotation_added_status(tool).to_owned(),
+            Ok(false) => self.status = annotation_cancelled_status(tool).to_owned(),
             Err(error) => self.status = error.to_string(),
         }
         cx.notify();
@@ -841,6 +850,40 @@ impl FlashShotApp {
         {
             log::warn!(target: "flash_shot::overlay", "main_window_restore_failed error={error}");
         }
+    }
+}
+
+fn tool_selected_status(tool: AnnotationTool) -> &'static str {
+    match tool {
+        AnnotationTool::Rectangle => "Rectangle tool selected",
+        AnnotationTool::Ellipse => "Ellipse tool selected",
+        AnnotationTool::Line | AnnotationTool::Arrow | AnnotationTool::Freehand => "Tool selected",
+    }
+}
+
+fn drawing_status(tool: AnnotationTool) -> &'static str {
+    match tool {
+        AnnotationTool::Rectangle => "Drawing rectangle...",
+        AnnotationTool::Ellipse => "Drawing ellipse...",
+        AnnotationTool::Line | AnnotationTool::Arrow | AnnotationTool::Freehand => {
+            "Drawing annotation..."
+        }
+    }
+}
+
+fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
+    match tool {
+        Some(AnnotationTool::Rectangle) => "Rectangle added",
+        Some(AnnotationTool::Ellipse) => "Ellipse added",
+        _ => "Annotation added",
+    }
+}
+
+fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
+    match tool {
+        Some(AnnotationTool::Rectangle) => "Rectangle cancelled",
+        Some(AnnotationTool::Ellipse) => "Ellipse cancelled",
+        _ => "Annotation cancelled",
     }
 }
 
