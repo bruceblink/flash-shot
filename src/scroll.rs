@@ -32,6 +32,108 @@ pub struct StitchedCapture {
     pub overlaps: Vec<u32>,
 }
 
+/// Explicit lifecycle for user-driven manual scroll capture.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ManualScrollState {
+    #[default]
+    Idle,
+    Collecting,
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+/// Collects compatible viewport frames until the user finishes a manual scroll session.
+#[derive(Clone, Debug, Default)]
+pub struct ManualScrollCapture {
+    state: ManualScrollState,
+    frames: Vec<CaptureFrame>,
+    failure: Option<String>,
+}
+
+impl ManualScrollCapture {
+    pub const fn state(&self) -> ManualScrollState {
+        self.state
+    }
+
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn failure(&self) -> Option<&str> {
+        self.failure.as_deref()
+    }
+
+    pub fn begin(&mut self, first: CaptureFrame) -> io::Result<()> {
+        self.require(ManualScrollState::Idle, "begin")?;
+        first.validate()?;
+        self.frames = vec![first];
+        self.failure = None;
+        self.state = ManualScrollState::Collecting;
+        Ok(())
+    }
+
+    /// Adds a frame only when it has a reliable overlap with the latest viewport frame.
+    pub fn append(&mut self, frame: CaptureFrame, options: OverlapOptions) -> io::Result<u32> {
+        self.require(ManualScrollState::Collecting, "append")?;
+        let previous = self
+            .frames
+            .last()
+            .expect("collecting sessions have a first frame");
+        let overlap = match detect_vertical_overlap(previous, &frame, options) {
+            Ok(overlap) => overlap,
+            Err(error) => {
+                self.state = ManualScrollState::Failed;
+                self.failure = Some(error.to_string());
+                return Err(error);
+            }
+        };
+        self.frames.push(frame);
+        Ok(overlap)
+    }
+
+    pub fn finish(&mut self, options: OverlapOptions) -> io::Result<StitchedCapture> {
+        self.require(ManualScrollState::Collecting, "finish")?;
+        match stitch_vertical(&self.frames, options) {
+            Ok(stitched) => {
+                self.state = ManualScrollState::Completed;
+                Ok(stitched)
+            }
+            Err(error) => {
+                self.state = ManualScrollState::Failed;
+                self.failure = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    pub fn cancel(&mut self) -> io::Result<()> {
+        self.require(ManualScrollState::Collecting, "cancel")?;
+        self.frames.clear();
+        self.state = ManualScrollState::Cancelled;
+        Ok(())
+    }
+
+    pub fn reset(&mut self) -> io::Result<()> {
+        if !matches!(
+            self.state,
+            ManualScrollState::Completed | ManualScrollState::Cancelled | ManualScrollState::Failed
+        ) {
+            return Err(invalid_transition(self.state, "reset"));
+        }
+        *self = Self::default();
+        Ok(())
+    }
+
+    fn require(&self, expected: ManualScrollState, operation: &'static str) -> io::Result<()> {
+        if self.state == expected {
+            Ok(())
+        } else {
+            Err(invalid_transition(self.state, operation))
+        }
+    }
+}
+
 /// Finds the largest suffix/prefix overlap between two vertically adjacent frames.
 pub fn detect_vertical_overlap(
     upper: &CaptureFrame,
@@ -182,9 +284,19 @@ fn frame_rows(frame: &CaptureFrame, start_row: u32) -> io::Result<Vec<u8>> {
     Ok(output)
 }
 
+fn invalid_transition(state: ManualScrollState, operation: &'static str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("cannot {operation} while manual scroll capture is {state:?}"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{OverlapOptions, detect_vertical_overlap, stitch_vertical};
+    use super::{
+        ManualScrollCapture, ManualScrollState, OverlapOptions, detect_vertical_overlap,
+        stitch_vertical,
+    };
     use crate::{
         domain::geometry::PhysicalRect,
         platform::capture::{CaptureFrame, PixelFormat},
@@ -271,5 +383,45 @@ mod tests {
         let error = detect_vertical_overlap(&frame(0..10), &lower, options()).unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn manual_capture_tracks_append_finish_and_reset_lifecycle() {
+        let mut capture = ManualScrollCapture::default();
+
+        capture.begin(frame(0..10)).unwrap();
+        assert_eq!(capture.state(), ManualScrollState::Collecting);
+        assert_eq!(capture.append(frame(6..16), options()).unwrap(), 4);
+        let stitched = capture.finish(options()).unwrap();
+
+        assert_eq!(stitched.frame.height, 16);
+        assert_eq!(capture.state(), ManualScrollState::Completed);
+        assert_eq!(capture.frame_count(), 2);
+        capture.reset().unwrap();
+        assert_eq!(capture.state(), ManualScrollState::Idle);
+        assert_eq!(capture.frame_count(), 0);
+    }
+
+    #[test]
+    fn manual_capture_records_overlap_failures_and_can_reset() {
+        let mut capture = ManualScrollCapture::default();
+        capture.begin(frame(0..10)).unwrap();
+
+        assert!(capture.append(frame(20..30), options()).is_err());
+        assert_eq!(capture.state(), ManualScrollState::Failed);
+        assert!(capture.failure().is_some());
+        capture.reset().unwrap();
+        assert_eq!(capture.state(), ManualScrollState::Idle);
+    }
+
+    #[test]
+    fn manual_capture_cancellation_discards_collected_frames() {
+        let mut capture = ManualScrollCapture::default();
+        capture.begin(frame(0..10)).unwrap();
+
+        capture.cancel().unwrap();
+        assert_eq!(capture.state(), ManualScrollState::Cancelled);
+        assert_eq!(capture.frame_count(), 0);
+        assert!(capture.finish(options()).is_err());
     }
 }
