@@ -3,6 +3,7 @@
 use std::fmt;
 
 use super::geometry::{PhysicalPoint, PhysicalRect};
+use super::selection::ResizeHandle;
 
 pub const ANNOTATION_DOCUMENT_VERSION: u32 = 1;
 
@@ -197,6 +198,42 @@ impl Annotation {
             style: self.style,
         }
     }
+
+    fn resized(&self, bounds: PhysicalRect) -> Self {
+        let source = self.bounds();
+        let scale_point = |point: PhysicalPoint| PhysicalPoint {
+            x: scale_coordinate(
+                point.x,
+                source.left,
+                source.right,
+                bounds.left,
+                bounds.right,
+            ),
+            y: scale_coordinate(
+                point.y,
+                source.top,
+                source.bottom,
+                bounds.top,
+                bounds.bottom,
+            ),
+        };
+        Self {
+            id: self.id,
+            kind: match self.kind {
+                AnnotationKind::Rectangle { .. } => AnnotationKind::Rectangle { bounds },
+                AnnotationKind::Ellipse { .. } => AnnotationKind::Ellipse { bounds },
+                AnnotationKind::Line { start, end } => AnnotationKind::Line {
+                    start: scale_point(start),
+                    end: scale_point(end),
+                },
+                AnnotationKind::Arrow { start, end } => AnnotationKind::Arrow {
+                    start: scale_point(start),
+                    end: scale_point(end),
+                },
+            },
+            style: self.style,
+        }
+    }
 }
 
 /// The drawable tools whose pointer gestures create a single annotation.
@@ -305,11 +342,79 @@ impl AnnotationMove {
     }
 }
 
+/// In-progress resize of an existing annotation from one of its bounding-box
+/// corners. The opposite corner is fixed for the duration of the gesture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnnotationResize {
+    original: Annotation,
+    anchor: PhysicalPoint,
+    current: PhysicalPoint,
+}
+
+impl AnnotationResize {
+    fn begin(annotation: Annotation, handle: ResizeHandle) -> Self {
+        let bounds = annotation.bounds();
+        let (anchor, current) = match handle {
+            ResizeHandle::TopLeft => (
+                PhysicalPoint {
+                    x: bounds.right,
+                    y: bounds.bottom,
+                },
+                PhysicalPoint {
+                    x: bounds.left,
+                    y: bounds.top,
+                },
+            ),
+            ResizeHandle::TopRight => (
+                PhysicalPoint {
+                    x: bounds.left,
+                    y: bounds.bottom,
+                },
+                PhysicalPoint {
+                    x: bounds.right,
+                    y: bounds.top,
+                },
+            ),
+            ResizeHandle::BottomLeft => (
+                PhysicalPoint {
+                    x: bounds.right,
+                    y: bounds.top,
+                },
+                PhysicalPoint {
+                    x: bounds.left,
+                    y: bounds.bottom,
+                },
+            ),
+            ResizeHandle::BottomRight => (
+                PhysicalPoint {
+                    x: bounds.left,
+                    y: bounds.top,
+                },
+                PhysicalPoint {
+                    x: bounds.right,
+                    y: bounds.bottom,
+                },
+            ),
+        };
+        Self {
+            original: annotation,
+            anchor,
+            current,
+        }
+    }
+
+    pub fn preview(&self, canvas_bounds: PhysicalRect) -> Annotation {
+        let point = clamp_to_canvas(canvas_bounds, self.current);
+        self.original.resized(PhysicalRect::new(self.anchor, point))
+    }
+}
+
 /// Domain controller for creating annotations through pointer gestures.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AnnotationEditor {
     draft: Option<AnnotationDraft>,
     moving: Option<AnnotationMove>,
+    resizing: Option<AnnotationResize>,
 }
 
 impl AnnotationEditor {
@@ -321,6 +426,10 @@ impl AnnotationEditor {
         self.moving.as_ref()
     }
 
+    pub fn resizing(&self) -> Option<&AnnotationResize> {
+        self.resizing.as_ref()
+    }
+
     pub fn preview(&self, canvas_bounds: PhysicalRect) -> Option<Annotation> {
         self.draft
             .as_ref()
@@ -329,6 +438,11 @@ impl AnnotationEditor {
                 self.moving
                     .as_ref()
                     .map(|moving| moving.preview(canvas_bounds))
+            })
+            .or_else(|| {
+                self.resizing
+                    .as_ref()
+                    .map(|resizing| resizing.preview(canvas_bounds))
             })
     }
 
@@ -340,7 +454,7 @@ impl AnnotationEditor {
         style: AnnotationStyle,
         start: PhysicalPoint,
     ) -> Result<(), AnnotationError> {
-        if self.draft.is_some() || self.moving.is_some() {
+        if self.has_active_gesture() {
             return Err(AnnotationError::DraftInProgress);
         }
         if document.annotation(id).is_some() {
@@ -361,7 +475,7 @@ impl AnnotationEditor {
         id: AnnotationId,
         anchor: PhysicalPoint,
     ) -> Result<(), AnnotationError> {
-        if self.draft.is_some() || self.moving.is_some() {
+        if self.has_active_gesture() {
             return Err(AnnotationError::DraftInProgress);
         }
         let annotation = document
@@ -375,6 +489,23 @@ impl AnnotationEditor {
         Ok(())
     }
 
+    pub fn begin_resize(
+        &mut self,
+        document: &AnnotationDocument,
+        id: AnnotationId,
+        handle: ResizeHandle,
+    ) -> Result<(), AnnotationError> {
+        if self.has_active_gesture() {
+            return Err(AnnotationError::DraftInProgress);
+        }
+        let annotation = document
+            .annotation(id)
+            .cloned()
+            .ok_or(AnnotationError::MissingId(id))?;
+        self.resizing = Some(AnnotationResize::begin(annotation, handle));
+        Ok(())
+    }
+
     pub fn update(&mut self, document: &AnnotationDocument, point: PhysicalPoint) -> bool {
         let point = clamp_to_canvas(document.canvas_bounds(), point);
         if let Some(draft) = &mut self.draft {
@@ -385,11 +516,17 @@ impl AnnotationEditor {
             moving.current = point;
             return true;
         }
+        if let Some(resizing) = &mut self.resizing {
+            resizing.current = point;
+            return true;
+        }
         false
     }
 
     pub fn cancel(&mut self) -> bool {
-        self.draft.take().is_some() || self.moving.take().is_some()
+        self.draft.take().is_some()
+            || self.moving.take().is_some()
+            || self.resizing.take().is_some()
     }
 
     pub fn commit(
@@ -404,16 +541,45 @@ impl AnnotationEditor {
             history.apply(document, AnnotationCommand::Insert(annotation))?;
             return Ok(true);
         }
-        let Some(moving) = self.moving.take() else {
+        if let Some(moving) = self.moving.take() {
+            let preview = moving.preview(document.canvas_bounds());
+            if preview == moving.original {
+                return Ok(false);
+            }
+            history.apply(document, AnnotationCommand::Replace(preview))?;
+            return Ok(true);
+        }
+        let Some(resizing) = self.resizing.take() else {
             return Ok(false);
         };
-        let preview = moving.preview(document.canvas_bounds());
-        if preview == moving.original {
+        let preview = resizing.preview(document.canvas_bounds());
+        if preview == resizing.original {
             return Ok(false);
         }
         history.apply(document, AnnotationCommand::Replace(preview))?;
         Ok(true)
     }
+
+    fn has_active_gesture(&self) -> bool {
+        self.draft.is_some() || self.moving.is_some() || self.resizing.is_some()
+    }
+}
+
+fn scale_coordinate(
+    value: i32,
+    source_start: i32,
+    source_end: i32,
+    target_start: i32,
+    target_end: i32,
+) -> i32 {
+    let source_span = i64::from(source_end) - i64::from(source_start);
+    if source_span == 0 {
+        return target_start;
+    }
+    let target_span = i64::from(target_end) - i64::from(target_start);
+    let offset = i64::from(value) - i64::from(source_start);
+    let scaled = i64::from(target_start) + offset * target_span / source_span;
+    scaled.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 fn translate_rect(bounds: PhysicalRect, delta_x: i32, delta_y: i32) -> PhysicalRect {
@@ -628,6 +794,7 @@ mod tests {
         AnnotationTool, CommandHistory,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
+    use crate::domain::selection::ResizeHandle;
 
     fn canvas() -> PhysicalRect {
         PhysicalRect {
@@ -1077,5 +1244,116 @@ mod tests {
             ),
             Err(AnnotationError::MissingId(AnnotationId::new(999)))
         );
+    }
+
+    #[test]
+    fn resizing_shape_previews_with_opposite_corner_fixed_then_commits_once() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let original = rectangle(
+            301,
+            PhysicalRect {
+                left: -500,
+                top: 100,
+                right: -100,
+                bottom: 500,
+            },
+        );
+        history
+            .apply(&mut document, AnnotationCommand::Insert(original.clone()))
+            .unwrap();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin_resize(&document, original.id, ResizeHandle::TopLeft)
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: -700, y: -100 });
+        assert_eq!(document.annotation(original.id), Some(&original));
+        assert_eq!(history.undo_len(), 1);
+        assert_eq!(
+            editor.preview(document.canvas_bounds()).unwrap().kind,
+            AnnotationKind::Rectangle {
+                bounds: PhysicalRect {
+                    left: -700,
+                    top: 0,
+                    right: -100,
+                    bottom: 500,
+                },
+            }
+        );
+
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        assert_eq!(history.undo_len(), 2);
+        assert!(history.undo(&mut document).unwrap());
+        assert_eq!(document.annotation(original.id), Some(&original));
+    }
+
+    #[test]
+    fn resizing_line_scales_endpoints_and_clamps_to_canvas() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let original = Annotation {
+            id: AnnotationId::new(302),
+            kind: AnnotationKind::Line {
+                start: PhysicalPoint { x: 100, y: 100 },
+                end: PhysicalPoint { x: 500, y: 300 },
+            },
+            style: AnnotationStyle::default(),
+        };
+        history
+            .apply(&mut document, AnnotationCommand::Insert(original.clone()))
+            .unwrap();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin_resize(&document, original.id, ResizeHandle::BottomRight)
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: 9000, y: 9000 });
+        assert_eq!(
+            editor.preview(document.canvas_bounds()).unwrap().kind,
+            AnnotationKind::Line {
+                start: PhysicalPoint { x: 100, y: 100 },
+                end: PhysicalPoint { x: 1920, y: 1080 },
+            }
+        );
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        assert_eq!(history.undo_len(), 2);
+    }
+
+    #[test]
+    fn resize_cancel_noop_and_competing_gesture_leave_history_unchanged() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let original = rectangle(
+            303,
+            PhysicalRect {
+                left: 100,
+                top: 100,
+                right: 300,
+                bottom: 300,
+            },
+        );
+        history
+            .apply(&mut document, AnnotationCommand::Insert(original.clone()))
+            .unwrap();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin_resize(&document, original.id, ResizeHandle::BottomRight)
+            .unwrap();
+        assert_eq!(
+            editor.begin_move(&document, original.id, PhysicalPoint { x: 200, y: 200 }),
+            Err(AnnotationError::DraftInProgress)
+        );
+        assert!(!editor.commit(&mut document, &mut history).unwrap());
+        assert_eq!(history.undo_len(), 1);
+
+        editor
+            .begin_resize(&document, original.id, ResizeHandle::BottomRight)
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: 600, y: 600 });
+        assert!(editor.cancel());
+        assert_eq!(document.annotation(original.id), Some(&original));
+        assert_eq!(history.undo_len(), 1);
     }
 }
