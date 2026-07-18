@@ -40,6 +40,22 @@ To require an Authenticode signature for both the installed executable and setup
 
 `-RequireSignature` fails instead of silently publishing an unsigned artifact. The installer does not bundle FFmpeg.
 
+## Release manifest
+
+After building the ZIP and/or setup executable, generate a machine-readable manifest from the assets and their verified SHA-256 sidecars:
+
+```powershell
+.\scripts\release-manifest.ps1 -AssetDirectory dist
+```
+
+The generated `release-manifest.json` records the Cargo version, Windows platform, asset names, lengths, and SHA-256 values. Before uploading assets, re-verify the unchanged directory:
+
+```powershell
+.\scripts\release-manifest.ps1 -AssetDirectory dist -VerifyOnly
+```
+
+The tool rejects missing sidecars, malformed checksums, version-mismatched filenames, changed assets, and changed manifests. It is deliberately only a release-verification input: the application does not fetch or install updates automatically.
+
 ## Release checks
 
-Before publishing a portable package or installer, run the repository validation gates, verify the checksum, and manually smoke-test it on a clean Windows profile. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
+Before publishing a portable package or installer, run the repository validation gates, generate and verify the release manifest, and manually smoke-test it on a clean Windows profile. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
