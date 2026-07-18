@@ -152,6 +152,7 @@ impl FlashShotApp {
                 self.annotation_editor = Default::default();
                 self.annotation_tool = None;
                 self.next_annotation_id = 1;
+                self.next_sequence_number = 1;
                 self.frame = Some(capture.capture.frame);
                 let app = cx.entity();
                 cx.defer(move |cx| open_capture_overlays(app, capture.displays, pipeline, cx));
@@ -382,6 +383,10 @@ impl FlashShotApp {
         self.select_annotation_tool(AnnotationTool::Blur, cx);
     }
 
+    pub(super) fn select_number_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Number, cx);
+    }
+
     pub(super) fn select_ellipse_tool(&mut self, cx: &mut Context<Self>) {
         self.select_annotation_tool(AnnotationTool::Ellipse, cx);
     }
@@ -489,17 +494,24 @@ impl FlashShotApp {
             return;
         };
         let id = AnnotationId::new(self.next_annotation_id);
-        if self
-            .annotation_editor
-            .begin(
+        let started = if tool == AnnotationTool::Number {
+            self.annotation_editor.begin_number(
+                document,
+                id,
+                style_for_tool(tool, self.annotation_style),
+                point,
+                self.next_sequence_number,
+            )
+        } else {
+            self.annotation_editor.begin(
                 document,
                 id,
                 tool,
                 style_for_tool(tool, self.annotation_style),
                 point,
             )
-            .is_ok()
-        {
+        };
+        if started.is_ok() {
             self.next_annotation_id = self.next_annotation_id.saturating_add(1);
             self.status = drawing_status(tool).to_owned();
         }
@@ -512,17 +524,41 @@ impl FlashShotApp {
         let tool = self.annotation_tool;
         let moving = self.annotation_editor.moving().is_some();
         let resizing = self.annotation_editor.resizing().is_some();
-        match self
+        let committed = match self
             .annotation_editor
             .commit(document, &mut self.annotation_history)
         {
-            Ok(true) if moving => self.status = "Annotation moved".to_owned(),
-            Ok(true) if resizing => self.status = "Annotation resized".to_owned(),
-            Ok(true) => self.status = annotation_added_status(tool).to_owned(),
-            Ok(false) if moving => self.status = "Annotation move cancelled".to_owned(),
-            Ok(false) if resizing => self.status = "Annotation resize cancelled".to_owned(),
-            Ok(false) => self.status = annotation_cancelled_status(tool).to_owned(),
-            Err(error) => self.status = error.to_string(),
+            Ok(true) if moving => {
+                self.status = "Annotation moved".to_owned();
+                false
+            }
+            Ok(true) if resizing => {
+                self.status = "Annotation resized".to_owned();
+                false
+            }
+            Ok(true) => {
+                self.status = annotation_added_status(tool).to_owned();
+                tool == Some(AnnotationTool::Number)
+            }
+            Ok(false) if moving => {
+                self.status = "Annotation move cancelled".to_owned();
+                false
+            }
+            Ok(false) if resizing => {
+                self.status = "Annotation resize cancelled".to_owned();
+                false
+            }
+            Ok(false) => {
+                self.status = annotation_cancelled_status(tool).to_owned();
+                false
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                false
+            }
+        };
+        if committed {
+            self.next_sequence_number = self.next_sequence_number.saturating_add(1);
         }
         cx.notify();
     }
@@ -1118,6 +1154,7 @@ impl FlashShotApp {
 
 fn tool_selected_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Number => "Number tool selected",
         AnnotationTool::Blur => "Blur tool selected",
         AnnotationTool::Mosaic => "Mosaic tool selected",
         AnnotationTool::Highlight => "Highlight tool selected",
@@ -1131,6 +1168,7 @@ fn tool_selected_status(tool: AnnotationTool) -> &'static str {
 
 fn drawing_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Number => "Placing number...",
         AnnotationTool::Blur => "Drawing blur...",
         AnnotationTool::Mosaic => "Drawing mosaic...",
         AnnotationTool::Highlight => "Drawing highlight...",
@@ -1144,6 +1182,7 @@ fn drawing_status(tool: AnnotationTool) -> &'static str {
 
 fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Number) => "Number added",
         Some(AnnotationTool::Blur) => "Blur added",
         Some(AnnotationTool::Mosaic) => "Mosaic added",
         Some(AnnotationTool::Highlight) => "Highlight added",
@@ -1158,6 +1197,7 @@ fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
 
 fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Number) => "Number cancelled",
         Some(AnnotationTool::Blur) => "Blur cancelled",
         Some(AnnotationTool::Mosaic) => "Mosaic cancelled",
         Some(AnnotationTool::Highlight) => "Highlight cancelled",

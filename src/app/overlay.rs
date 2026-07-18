@@ -11,7 +11,9 @@ use gpui::{
 use super::FlashShotApp;
 use crate::{
     domain::{
-        annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationTool},
+        annotation::{
+            Annotation, AnnotationId, AnnotationKind, AnnotationTool, SEQUENCE_MARKER_RADIUS,
+        },
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     },
@@ -382,6 +384,30 @@ impl Render for CaptureOverlay {
                                     .child("Back"),
                             )
                     })
+                    .child(
+                        div()
+                            .id("overlay-tool-number")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Number) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Number) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_number_tool(cx))
+                                });
+                            }))
+                            .child("Number"),
+                    )
                     .child(
                         div()
                             .id("overlay-tool-blur")
@@ -869,6 +895,13 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
+            AnnotationKind::Number { center, value } => paint_number_marker(
+                window,
+                transform,
+                center,
+                value,
+                annotation.style.stroke_rgba,
+            ),
             AnnotationKind::Blur { bounds } => {
                 paint_rect_fill(window, transform, bounds, rgba(0xCBD5E188));
                 paint_outline(window, transform, bounds, colors.muted, 1);
@@ -932,6 +965,94 @@ fn paint_annotations(
         if Some(annotation.id) == selected_annotation {
             paint_outline(window, transform, annotation.bounds(), colors.success, 1);
             paint_resize_handles(window, transform, annotation.bounds(), colors.success);
+        }
+    }
+}
+
+fn paint_number_marker(
+    window: &mut Window,
+    transform: PreviewTransform,
+    center: PhysicalPoint,
+    value: u32,
+    color: u32,
+) {
+    let view_center = transform.physical_to_view(center);
+    let radius = (transform
+        .physical_to_view(PhysicalPoint {
+            x: center.x.saturating_add(SEQUENCE_MARKER_RADIUS),
+            y: center.y,
+        })
+        .x
+        - view_center.x)
+        .abs();
+    if radius <= 0.0 {
+        return;
+    }
+    let mut path = gpui::PathBuilder::fill();
+    const SEGMENTS: u32 = 32;
+    for index in 0..=SEGMENTS {
+        let angle = std::f32::consts::TAU * index as f32 / SEGMENTS as f32;
+        let point = point(
+            px(view_center.x + radius * angle.cos()),
+            px(view_center.y + radius * angle.sin()),
+        );
+        if index == 0 {
+            path.move_to(point);
+        } else {
+            path.line_to(point);
+        }
+    }
+    path.close();
+    if let Ok(path) = path.build() {
+        window.paint_path(path, rgba(color));
+    }
+    paint_number_label(
+        window,
+        view_center,
+        value,
+        (radius / SEQUENCE_MARKER_RADIUS as f32).max(0.5),
+    );
+}
+
+fn paint_number_label(window: &mut Window, center: ViewPoint, value: u32, scale: f32) {
+    const DIGITS: [[u8; 5]; 10] = [
+        [0b111, 0b101, 0b101, 0b101, 0b111],
+        [0b010, 0b110, 0b010, 0b010, 0b111],
+        [0b111, 0b001, 0b111, 0b100, 0b111],
+        [0b111, 0b001, 0b111, 0b001, 0b111],
+        [0b101, 0b101, 0b111, 0b001, 0b001],
+        [0b111, 0b100, 0b111, 0b001, 0b111],
+        [0b111, 0b100, 0b111, 0b101, 0b111],
+        [0b111, 0b001, 0b010, 0b010, 0b010],
+        [0b111, 0b101, 0b111, 0b101, 0b111],
+        [0b111, 0b101, 0b111, 0b001, 0b111],
+    ];
+    let digits = value.to_string();
+    let width = digits.len() as f32 * 4.0 - 1.0;
+    let left = center.x - width * scale / 2.0;
+    let top = center.y - 2.5 * scale;
+    for (digit_index, digit) in digits.bytes().enumerate() {
+        let Some(rows) = digit
+            .checked_sub(b'0')
+            .and_then(|index| DIGITS.get(index as usize))
+        else {
+            continue;
+        };
+        for (row, bits) in rows.iter().enumerate() {
+            for column in 0..3 {
+                if bits & (1 << (2 - column)) != 0 {
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(
+                                px(left + (digit_index as f32 * 4.0 + column as f32) * scale),
+                                px(top + row as f32 * scale),
+                            ),
+                            size(px(scale.max(1.0)), px(scale.max(1.0))),
+                        ),
+                        rgba(0xFFFFFFFF),
+                    ));
+                }
+            }
         }
     }
 }

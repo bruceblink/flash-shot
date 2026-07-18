@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     domain::{
-        annotation::{Annotation, AnnotationDocument, AnnotationKind},
+        annotation::{Annotation, AnnotationDocument, AnnotationKind, SEQUENCE_MARKER_RADIUS},
         geometry::{PhysicalPoint, PhysicalRect},
     },
     platform::capture::{CaptureFrame, PixelFormat},
@@ -51,6 +51,9 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
     let fill = annotation.style.fill_rgba.map(rgba_bytes);
     let radius = annotation.style.stroke_width.max(1).div_ceil(2) as i32;
     match annotation.kind {
+        AnnotationKind::Number { center, value } => {
+            draw_number_marker(pixels, frame, center, value, color)
+        }
         AnnotationKind::Blur { bounds } => blur_rect(pixels, frame, bounds),
         AnnotationKind::Mosaic { bounds } => mosaic_rect(pixels, frame, bounds),
         AnnotationKind::Highlight { bounds } => fill_rect(pixels, frame, bounds, color),
@@ -71,6 +74,73 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
         AnnotationKind::Freehand { ref points } => {
             for segment in points.windows(2) {
                 draw_line(pixels, frame, segment[0], segment[1], color, radius);
+            }
+        }
+    }
+}
+
+fn draw_number_marker(
+    pixels: &mut [u8],
+    frame: &CaptureFrame,
+    center: PhysicalPoint,
+    value: u32,
+    color: [u8; 4],
+) {
+    let radius = SEQUENCE_MARKER_RADIUS;
+    draw_disc(pixels, frame, center, radius, color);
+    let digits = value.to_string();
+    let width = digits.len() as i32 * 4 - 1;
+    let start_x = center.x - width / 2;
+    for (index, digit) in digits.bytes().enumerate() {
+        draw_bitmap_digit(
+            pixels,
+            frame,
+            start_x + index as i32 * 4,
+            center.y - 2,
+            digit,
+            [255, 255, 255, 255],
+        );
+    }
+}
+
+fn draw_bitmap_digit(
+    pixels: &mut [u8],
+    frame: &CaptureFrame,
+    left: i32,
+    top: i32,
+    digit: u8,
+    color: [u8; 4],
+) {
+    const DIGITS: [[u8; 5]; 10] = [
+        [0b111, 0b101, 0b101, 0b101, 0b111],
+        [0b010, 0b110, 0b010, 0b010, 0b111],
+        [0b111, 0b001, 0b111, 0b100, 0b111],
+        [0b111, 0b001, 0b111, 0b001, 0b111],
+        [0b101, 0b101, 0b111, 0b001, 0b001],
+        [0b111, 0b100, 0b111, 0b001, 0b111],
+        [0b111, 0b100, 0b111, 0b101, 0b111],
+        [0b111, 0b001, 0b010, 0b010, 0b010],
+        [0b111, 0b101, 0b111, 0b101, 0b111],
+        [0b111, 0b101, 0b111, 0b001, 0b111],
+    ];
+    let Some(rows) = digit
+        .checked_sub(b'0')
+        .and_then(|index| DIGITS.get(index as usize))
+    else {
+        return;
+    };
+    for (row, bits) in rows.iter().enumerate() {
+        for column in 0..3 {
+            if bits & (1 << (2 - column)) != 0 {
+                blend_pixel(
+                    pixels,
+                    frame,
+                    PhysicalPoint {
+                        x: left + column,
+                        y: top + row as i32,
+                    },
+                    color,
+                );
             }
         }
     }
@@ -924,6 +994,60 @@ mod tests {
                 .unwrap()
                 .alpha,
             0
+        );
+    }
+
+    #[test]
+    fn composite_renders_sequence_markers_in_original_image_pixels() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 64,
+                bottom: 64,
+            },
+            width: 64,
+            height: 64,
+            stride: 256,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(vec![0; 64 * 64 * 4]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(9),
+                    kind: AnnotationKind::Number {
+                        center: PhysicalPoint { x: 32, y: 32 },
+                        value: 12,
+                    },
+                    style: AnnotationStyle {
+                        stroke_rgba: 0xFF0000FF,
+                        fill_rgba: None,
+                        stroke_width: 1,
+                    },
+                }),
+            )
+            .unwrap();
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        let edge = composited.pixel_at(PhysicalPoint { x: 32, y: 18 }).unwrap();
+        let digit = composited.pixel_at(PhysicalPoint { x: 30, y: 30 }).unwrap();
+        assert_eq!(
+            (edge.red, edge.green, edge.blue, edge.alpha),
+            (255, 0, 0, 255)
+        );
+        assert_eq!(
+            (digit.red, digit.green, digit.blue, digit.alpha),
+            (255, 255, 255, 255)
+        );
+        assert_eq!(
+            composited.pixel_at(PhysicalPoint { x: 32, y: 17 }),
+            frame.pixel_at(PhysicalPoint { x: 32, y: 17 })
         );
     }
 }

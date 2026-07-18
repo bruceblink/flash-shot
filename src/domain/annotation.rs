@@ -7,6 +7,7 @@ use super::selection::ResizeHandle;
 
 pub const ANNOTATION_DOCUMENT_VERSION: u32 = 1;
 const MIN_FREEHAND_SAMPLE_DISTANCE: u32 = 2;
+pub const SEQUENCE_MARKER_RADIUS: i32 = 14;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnnotationId(u64);
@@ -40,6 +41,10 @@ impl Default for AnnotationStyle {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnnotationKind {
+    Number {
+        center: PhysicalPoint,
+        value: u32,
+    },
     Blur {
         bounds: PhysicalRect,
     },
@@ -170,6 +175,16 @@ impl Annotation {
             .stroke_width
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
+            AnnotationKind::Number { center, .. } => {
+                let radius = SEQUENCE_MARKER_RADIUS;
+                PhysicalRect {
+                    left: center.x.saturating_sub(radius),
+                    top: center.y.saturating_sub(radius),
+                    right: center.x.saturating_add(radius),
+                    bottom: center.y.saturating_add(radius),
+                }
+                .contains(point)
+            }
             AnnotationKind::Blur { bounds } => bounds.contains(point),
             AnnotationKind::Mosaic { bounds } => bounds.contains(point),
             AnnotationKind::Highlight { bounds } => bounds.contains(point),
@@ -197,6 +212,7 @@ impl Annotation {
 
     pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
+            AnnotationKind::Number { center, .. } => marker_bounds(center),
             AnnotationKind::Blur { bounds }
             | AnnotationKind::Mosaic { bounds }
             | AnnotationKind::Highlight { bounds }
@@ -217,6 +233,10 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Number { center, value } => AnnotationKind::Number {
+                    center: translate(center),
+                    value,
+                },
                 AnnotationKind::Blur { bounds } => AnnotationKind::Blur {
                     bounds: translate_rect(bounds, delta_x, delta_y),
                 },
@@ -269,6 +289,13 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Number { value, .. } => AnnotationKind::Number {
+                    center: PhysicalPoint {
+                        x: (bounds.left + bounds.right) / 2,
+                        y: (bounds.top + bounds.bottom) / 2,
+                    },
+                    value,
+                },
                 AnnotationKind::Blur { .. } => AnnotationKind::Blur { bounds },
                 AnnotationKind::Mosaic { .. } => AnnotationKind::Mosaic { bounds },
                 AnnotationKind::Highlight { .. } => AnnotationKind::Highlight { bounds },
@@ -294,6 +321,7 @@ impl Annotation {
 /// The drawable tools whose pointer gestures create a single annotation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnnotationTool {
+    Number,
     Blur,
     Mosaic,
     Highlight,
@@ -314,6 +342,7 @@ pub struct AnnotationDraft {
     start: PhysicalPoint,
     current: PhysicalPoint,
     points: Vec<PhysicalPoint>,
+    sequence_number: Option<u32>,
 }
 
 impl AnnotationDraft {
@@ -330,6 +359,7 @@ impl AnnotationDraft {
             start,
             current: start,
             points: vec![start],
+            sequence_number: None,
         }
     }
 
@@ -342,26 +372,34 @@ impl AnnotationDraft {
     }
 
     pub fn update(&mut self, point: PhysicalPoint) {
-        if self.tool == AnnotationTool::Freehand {
-            if let Some(last_sample) = self.points.last().copied() {
-                if squared_distance(last_sample, point)
-                    >= u64::from(MIN_FREEHAND_SAMPLE_DISTANCE).pow(2)
-                {
-                    self.points.push(point);
-                }
-            }
+        if self.tool == AnnotationTool::Freehand
+            && let Some(last_sample) = self.points.last().copied()
+            && squared_distance(last_sample, point)
+                >= u64::from(MIN_FREEHAND_SAMPLE_DISTANCE).pow(2)
+        {
+            self.points.push(point);
         }
         self.current = point;
     }
 
+    fn with_sequence_number(mut self, value: u32) -> Self {
+        self.sequence_number = Some(value);
+        self
+    }
+
     pub fn preview(&self) -> Option<Annotation> {
         let has_visible_geometry = match self.tool {
+            AnnotationTool::Number => true,
             AnnotationTool::Freehand => self.points.len() >= 2,
             _ => self.start != self.current,
         };
         has_visible_geometry.then(|| Annotation {
             id: self.id,
             kind: match self.tool {
+                AnnotationTool::Number => AnnotationKind::Number {
+                    center: self.start,
+                    value: self.sequence_number.unwrap_or(1),
+                },
                 AnnotationTool::Blur => AnnotationKind::Blur {
                     bounds: PhysicalRect::new(self.start, self.current),
                 },
@@ -555,6 +593,32 @@ impl AnnotationEditor {
         Ok(())
     }
 
+    pub fn begin_number(
+        &mut self,
+        document: &AnnotationDocument,
+        id: AnnotationId,
+        style: AnnotationStyle,
+        center: PhysicalPoint,
+        value: u32,
+    ) -> Result<(), AnnotationError> {
+        if self.has_active_gesture() {
+            return Err(AnnotationError::DraftInProgress);
+        }
+        if document.annotation(id).is_some() {
+            return Err(AnnotationError::DuplicateId(id));
+        }
+        self.draft = Some(
+            AnnotationDraft::begin(
+                id,
+                AnnotationTool::Number,
+                style,
+                clamp_to_canvas(document.canvas_bounds(), center),
+            )
+            .with_sequence_number(value),
+        );
+        Ok(())
+    }
+
     pub fn begin_move(
         &mut self,
         document: &AnnotationDocument,
@@ -704,6 +768,15 @@ fn bounds_for_points(points: &[PhysicalPoint]) -> PhysicalRect {
         top,
         right,
         bottom,
+    }
+}
+
+fn marker_bounds(center: PhysicalPoint) -> PhysicalRect {
+    PhysicalRect {
+        left: center.x.saturating_sub(SEQUENCE_MARKER_RADIUS),
+        top: center.y.saturating_sub(SEQUENCE_MARKER_RADIUS),
+        right: center.x.saturating_add(SEQUENCE_MARKER_RADIUS),
+        bottom: center.y.saturating_add(SEQUENCE_MARKER_RADIUS),
     }
 }
 
@@ -940,6 +1013,73 @@ mod tests {
         assert_eq!(document.version(), ANNOTATION_DOCUMENT_VERSION);
         assert_eq!(document.canvas_bounds(), canvas());
         assert!(document.annotations().is_empty());
+    }
+
+    #[test]
+    fn number_marker_commits_from_a_single_click_and_is_reversible() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+        let center = PhysicalPoint { x: -120, y: 240 };
+
+        editor
+            .begin_number(
+                &document,
+                AnnotationId::new(90),
+                AnnotationStyle::default(),
+                center,
+                12,
+            )
+            .unwrap();
+        assert_eq!(
+            editor.preview(document.canvas_bounds()).unwrap().kind,
+            AnnotationKind::Number { center, value: 12 }
+        );
+
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        let marker = document.annotation(AnnotationId::new(90)).unwrap().clone();
+        assert_eq!(marker.kind, AnnotationKind::Number { center, value: 12 });
+        assert!(marker.hit_test(center, 0));
+        assert!(!marker.hit_test(PhysicalPoint { x: -200, y: 240 }, 0));
+
+        assert!(history.undo(&mut document).unwrap());
+        assert!(document.annotations().is_empty());
+        assert!(history.redo(&mut document).unwrap());
+        assert_eq!(document.annotation(AnnotationId::new(90)), Some(&marker));
+    }
+
+    #[test]
+    fn number_marker_moves_and_resizes_by_its_fixed_bounds() {
+        let marker = Annotation {
+            id: AnnotationId::new(91),
+            kind: AnnotationKind::Number {
+                center: PhysicalPoint { x: 100, y: 100 },
+                value: 7,
+            },
+            style: AnnotationStyle::default(),
+        };
+
+        assert_eq!(
+            marker.translated(10, -20).kind,
+            AnnotationKind::Number {
+                center: PhysicalPoint { x: 110, y: 80 },
+                value: 7,
+            }
+        );
+        assert_eq!(
+            marker
+                .resized(PhysicalRect {
+                    left: 200,
+                    top: 300,
+                    right: 260,
+                    bottom: 360,
+                })
+                .kind,
+            AnnotationKind::Number {
+                center: PhysicalPoint { x: 230, y: 330 },
+                value: 7,
+            }
+        );
     }
 
     #[test]
