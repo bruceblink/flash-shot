@@ -88,7 +88,9 @@ impl CaptureSession {
     pub fn cancel(&mut self) -> Result<(), TransitionError> {
         if matches!(
             self.state,
-            CaptureSessionState::Capturing | CaptureSessionState::Selecting
+            CaptureSessionState::Capturing
+                | CaptureSessionState::Selecting
+                | CaptureSessionState::Exporting
         ) {
             self.state = CaptureSessionState::Cancelled;
             self.selection = None;
@@ -246,6 +248,22 @@ mod tests {
 
         assert_eq!(session.state(), CaptureSessionState::Selecting);
         assert_eq!(session.selection(), Some(selection()));
+    }
+
+    #[test]
+    fn cancellation_can_abort_an_in_flight_export() {
+        let mut session = CaptureSession::default();
+        session.begin().unwrap();
+        session.frames_ready().unwrap();
+        session.select(selection()).unwrap();
+        session.start_export().unwrap();
+
+        session.cancel().unwrap();
+
+        assert_eq!(session.state(), CaptureSessionState::Cancelled);
+        assert_eq!(session.selection(), None);
+        session.reset().unwrap();
+        assert_eq!(session.state(), CaptureSessionState::Idle);
     }
 
     #[test]

@@ -34,6 +34,8 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
         self.frame = None;
         self.preview = None;
         self.selection_drag.clear();
@@ -63,7 +65,7 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_capture(result, started_at, cx)
+                        this.finish_capture(result, started_at, generation, cx)
                     });
                 }
             }
@@ -75,8 +77,12 @@ impl FlashShotApp {
         &mut self,
         result: std::io::Result<CapturedDesktopPreview>,
         started_at: Instant,
+        generation: u64,
         cx: &mut Context<Self>,
     ) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
         if self.session.state() != CaptureSessionState::Capturing {
             return;
         }
@@ -135,7 +141,9 @@ impl FlashShotApp {
 
     pub(super) fn reset(&mut self, cx: &mut Context<Self>) {
         match self.session.state() {
-            CaptureSessionState::Capturing | CaptureSessionState::Selecting => {
+            CaptureSessionState::Capturing
+            | CaptureSessionState::Selecting
+            | CaptureSessionState::Exporting => {
                 let _ = self.session.cancel();
                 let _ = self.session.reset();
             }
@@ -145,8 +153,8 @@ impl FlashShotApp {
                 let _ = self.session.reset();
             }
             CaptureSessionState::Idle => {}
-            CaptureSessionState::Exporting => return,
         }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
         self.frame = None;
         self.preview = None;
         self.selection_drag.clear();
@@ -158,6 +166,23 @@ impl FlashShotApp {
         self.close_capture_overlays(cx);
         self.restore_main_window();
         cx.notify();
+    }
+
+    pub(super) fn shutdown(&mut self, _cx: &mut Context<Self>) {
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        if self.session.state() != CaptureSessionState::Idle {
+            let _ = self.session.cancel();
+        }
+        self.frame = None;
+        self.preview = None;
+        self.selection_drag.clear();
+        self.hover_pixel = None;
+        self.inspection_target = None;
+        self.pending_click_target = None;
+        self.inspection_request = None;
+        // GPUI has already removed native windows before invoking on_app_quit.
+        // Keeping the handles untouched avoids issuing late operations on closed HWNDs.
+        log::info!(target: "flash_shot::lifecycle", "capture_workflow_shutdown");
     }
 
     pub(super) fn begin_overlay_selection(
@@ -496,6 +521,7 @@ impl FlashShotApp {
         };
 
         self.status = "Copying selection...".to_owned();
+        let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -505,7 +531,7 @@ impl FlashShotApp {
                     .spawn(async move { copy_frame_selection(&frame, selection, &SystemClipboard) })
                     .await;
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| this.finish_copy(result, cx));
+                    this.update(&mut cx, |this, cx| this.finish_copy(result, generation, cx));
                 }
             }
         })
@@ -530,6 +556,7 @@ impl FlashShotApp {
         };
 
         self.status = "Choose where to save the selection...".to_owned();
+        let generation = self.operation_generation;
         cx.notify();
         let prompt = cx.prompt_for_new_path(&PathBuf::default(), Some("flash-shot.png"));
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -554,14 +581,19 @@ impl FlashShotApp {
                     Err(error) => SaveOutcome::Failed(error.to_string()),
                 };
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| this.finish_save(outcome, cx));
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_save(outcome, generation, cx)
+                    });
                 }
             }
         })
         .detach();
     }
 
-    fn finish_save(&mut self, outcome: SaveOutcome, cx: &mut Context<Self>) {
+    fn finish_save(&mut self, outcome: SaveOutcome, generation: u64, cx: &mut Context<Self>) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
         match outcome {
             SaveOutcome::Saved(path) => {
                 if let Err(error) = self.session.export_completed() {
@@ -590,7 +622,15 @@ impl FlashShotApp {
         cx.notify();
     }
 
-    fn finish_copy(&mut self, result: std::io::Result<()>, cx: &mut Context<Self>) {
+    fn finish_copy(
+        &mut self,
+        result: std::io::Result<()>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
         match result {
             Ok(()) => {
                 if let Err(error) = self.session.export_completed() {
@@ -631,6 +671,10 @@ impl FlashShotApp {
             log::warn!(target: "flash_shot::overlay", "main_window_restore_failed error={error}");
         }
     }
+}
+
+fn is_current_operation(current: u64, completed: u64) -> bool {
+    current == completed
 }
 
 fn open_capture_overlays(
@@ -928,8 +972,8 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KeyboardCommand, copy_frame_selection, intersect_rect, keyboard_command, png_path,
-        resolve_pointer_selection, save_frame_selection,
+        KeyboardCommand, copy_frame_selection, intersect_rect, is_current_operation,
+        keyboard_command, png_path, resolve_pointer_selection, save_frame_selection,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -1193,5 +1237,11 @@ mod tests {
             bottom: 260,
         };
         assert_eq!(resolve_pointer_selection(drag, Some(target)), Some(drag));
+    }
+
+    #[test]
+    fn stale_background_completion_is_ignored_after_a_new_operation_starts() {
+        assert!(is_current_operation(4, 4));
+        assert!(!is_current_operation(5, 4));
     }
 }

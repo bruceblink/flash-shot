@@ -7,7 +7,9 @@ mod workflow;
 
 use std::sync::Arc;
 
-use gpui::{AsyncApp, Context, FocusHandle, Focusable, RenderImage, WeakEntity, WindowHandle};
+use gpui::{
+    AsyncApp, Context, FocusHandle, Focusable, RenderImage, Subscription, WeakEntity, WindowHandle,
+};
 
 use crate::{
     domain::{geometry::PhysicalPoint, selection::SelectionDrag, session::CaptureSession},
@@ -32,17 +34,23 @@ pub struct FlashShotApp {
     pending_click_target: Option<InspectionTarget>,
     inspection_request: Option<PhysicalPoint>,
     inspection_in_flight: bool,
+    operation_generation: u64,
     overlay_windows: Vec<WindowHandle<overlay::CaptureOverlay>>,
     main_window_handle: Option<isize>,
     focus_handle: FocusHandle,
     status: String,
     performance: PerformanceRecorder,
+    _shutdown: Subscription,
     _shortcut: Option<GlobalShortcutService>,
     _tray: Option<TrayService>,
 }
 
 impl FlashShotApp {
     pub fn new(performance: PerformanceRecorder, cx: &mut Context<Self>) -> Self {
+        let shutdown = cx.on_app_quit(|this, cx| {
+            this.shutdown(cx);
+            async {}
+        });
         let shortcut = match GlobalShortcutService::register_capture() {
             Ok((service, events)) => {
                 Self::listen_for_shortcut(events, cx);
@@ -80,11 +88,13 @@ impl FlashShotApp {
             pending_click_target: None,
             inspection_request: None,
             inspection_in_flight: false,
+            operation_generation: 0,
             overlay_windows: Vec::new(),
             main_window_handle: None,
             focus_handle: cx.focus_handle(),
             status,
             performance,
+            _shutdown: shutdown,
             _shortcut: shortcut,
             _tray: tray,
         }
