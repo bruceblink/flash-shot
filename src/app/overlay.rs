@@ -1047,6 +1047,24 @@ impl Render for CaptureOverlay {
                             )
                             .child(
                                 div()
+                                    .id("overlay-save-annotations")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(rgba(0x111827E6))
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.save_annotation_document(cx)
+                                            })
+                                        });
+                                    }))
+                                    .child("Save annotations"),
+                            )
+                            .child(
+                                div()
                                     .id("overlay-quick-save")
                                     .px_3()
                                     .py_2()

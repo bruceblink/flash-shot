@@ -2678,6 +2678,46 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn save_annotation_document(&mut self, cx: &mut Context<Self>) {
+        let Some(document) = self.annotation_document.clone() else {
+            self.status = "Annotation document is unavailable".to_owned();
+            cx.notify();
+            return;
+        };
+        self.status = "Choose where to save annotations...".to_owned();
+        cx.notify();
+        let prompt =
+            cx.prompt_for_new_path(&PathBuf::default(), Some("flash-shot.annotations.json"));
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = match prompt.await {
+                    Ok(Ok(Some(path))) => {
+                        let path = annotation_document_path(path);
+                        cx.background_executor()
+                            .spawn(async move {
+                                save_annotation_document(&document, path.clone()).map(|()| path)
+                            })
+                            .await
+                    }
+                    Ok(Ok(None)) => return,
+                    Ok(Err(error)) => Err(std::io::Error::other(error)),
+                    Err(error) => Err(std::io::Error::other(error.to_string())),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.status = match result {
+                            Ok(path) => format!("Annotations saved to {}", path.display()),
+                            Err(error) => format!("Could not save annotations: {error}"),
+                        };
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn export_source(&mut self) -> Option<(CaptureFrame, AnnotationDocument)> {
         match (self.frame.clone(), self.annotation_document.clone()) {
             (Some(frame), Some(document)) => Some((frame, document)),
@@ -3478,6 +3518,24 @@ fn png_path(mut path: PathBuf) -> PathBuf {
     path
 }
 
+fn annotation_document_path(mut path: PathBuf) -> PathBuf {
+    let is_json = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"));
+    if !is_json {
+        path.set_extension("annotations.json");
+    }
+    path
+}
+
+fn save_annotation_document(document: &AnnotationDocument, path: PathBuf) -> std::io::Result<()> {
+    let json = document.to_json().map_err(std::io::Error::other)?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, json)?;
+    std::fs::rename(temporary, path)
+}
+
 pub(super) fn view_rect(bounds: Bounds<Pixels>) -> ViewRect {
     ViewRect {
         left: f32::from(bounds.origin.x),
@@ -3745,15 +3803,16 @@ fn adjusted_number_value(value: u32, delta: i32) -> u32 {
 mod tests {
     use super::{
         KeyboardCommand, adjusted_number_value, annotation_added_status,
-        annotation_cancelled_status, annotation_position, copy_annotated_frame_selection,
-        delayed_capture_status, drawing_status, fill_alpha, fill_color, format_recording_progress,
-        intersect_rect, is_current_operation, keyboard_command, next_annotation_selection,
-        next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix,
-        next_recording_audio_selection, next_recording_display_selection, pinned_size, png_path,
+        annotation_cancelled_status, annotation_document_path, annotation_position,
+        copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha,
+        fill_color, format_recording_progress, intersect_rect, is_current_operation,
+        keyboard_command, next_annotation_selection, next_capture_delay, next_quick_save_path,
+        next_quick_save_path_with_prefix, next_recording_audio_selection,
+        next_recording_display_selection, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
         recording_display_selection_label, recording_target_label, resolve_pointer_selection,
-        sanitize_save_prefix, save_annotated_frame_selection, smart_target_status, style_for_tool,
-        tool_selected_status, with_alpha,
+        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
+        smart_target_status, style_for_tool, tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -4325,6 +4384,44 @@ mod tests {
             png_path(PathBuf::from("capture.PNG")),
             PathBuf::from("capture.PNG")
         );
+    }
+
+    #[test]
+    fn annotation_document_path_uses_a_json_extension() {
+        assert_eq!(
+            annotation_document_path(PathBuf::from("capture")),
+            PathBuf::from("capture.annotations.json")
+        );
+        assert_eq!(
+            annotation_document_path(PathBuf::from("capture.JSON")),
+            PathBuf::from("capture.JSON")
+        );
+    }
+
+    #[test]
+    fn annotation_document_save_writes_valid_versioned_json() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-annotation-document-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("capture.annotations.json");
+        let document = AnnotationDocument::new(PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 10,
+            bottom: 10,
+        })
+        .unwrap();
+
+        save_annotation_document(&document, path.clone()).unwrap();
+        assert_eq!(
+            AnnotationDocument::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap(),
+            document
+        );
+        assert!(!path.with_extension("json.tmp").exists());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
