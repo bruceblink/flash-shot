@@ -300,6 +300,22 @@ impl Render for FlashShotApp {
                             )
                             .child(
                                 div()
+                                    .id("open-project-action")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.accent)
+                                    .text_color(colors.accent)
+                                    .when(is_idle, |button| {
+                                        button.cursor_pointer().on_click(cx.listener(
+                                            |this, _, _, cx| this.open_editable_project(cx),
+                                        ))
+                                    })
+                                    .child("Open Project"),
+                            )
+                            .child(
+                                div()
                                     .id("capture-cursor")
                                     .px_3()
                                     .py_2()

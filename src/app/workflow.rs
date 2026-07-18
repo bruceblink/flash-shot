@@ -524,6 +524,59 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn open_editable_project(&mut self, cx: &mut Context<Self>) {
+        if self.session.state() != CaptureSessionState::Idle {
+            return;
+        }
+        if let Err(error) = self.session.begin() {
+            self.status = error.to_string();
+            cx.notify();
+            return;
+        }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.status = "Choose an editable annotation project...".to_owned();
+        cx.notify();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open annotation project".into()),
+        });
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let outcome = match prompt.await {
+                    Ok(Ok(Some(mut paths))) => match paths.pop() {
+                        Some(path) => match cx
+                            .background_executor()
+                            .spawn(async move { open_annotation_project(&path) })
+                            .await
+                        {
+                            Ok((path, frame, document)) => OpenImageOutcome::Opened {
+                                path,
+                                frame,
+                                document: Some(document),
+                                document_warning: None,
+                            },
+                            Err(error) => OpenImageOutcome::Failed(error.to_string()),
+                        },
+                        None => OpenImageOutcome::Cancelled,
+                    },
+                    Ok(Ok(None)) => OpenImageOutcome::Cancelled,
+                    Ok(Err(error)) => OpenImageOutcome::Failed(error.to_string()),
+                    Err(error) => OpenImageOutcome::Failed(error.to_string()),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_open_image(outcome, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub(super) fn open_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         if self.session.state() != CaptureSessionState::Idle {
             return;
@@ -3736,6 +3789,34 @@ fn open_image_project(
     }
 }
 
+fn open_annotation_project(
+    path: &Path,
+) -> std::io::Result<(PathBuf, CaptureFrame, AnnotationDocument)> {
+    let image_path = project_image_path(path)?;
+    let frame = CaptureFrame::open_png(&image_path)?;
+    let document = load_annotation_document(path, frame.bounds)?;
+    Ok((image_path, frame, document))
+}
+
+fn project_image_path(sidecar_path: &Path) -> std::io::Result<PathBuf> {
+    let filename = sidecar_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "annotation project has no file name",
+            )
+        })?;
+    let stem = filename.strip_suffix(".annotations.json").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "annotation project file must end with .annotations.json",
+        )
+    })?;
+    Ok(sidecar_path.with_file_name(format!("{stem}.png")))
+}
+
 fn next_annotation_counters(document: &AnnotationDocument) -> (u64, u32) {
     let next_id = document
         .annotations()
@@ -4035,12 +4116,12 @@ mod tests {
         is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
         next_annotation_selection, next_capture_delay, next_quick_save_path,
         next_quick_save_path_with_prefix, next_recording_audio_selection,
-        next_recording_display_selection, open_image_project, pinned_size, png_path,
-        quick_save_annotated_frame_selection_in, recording_audio_selection_label,
-        recording_display_selection_label, recording_target_label, resolve_pointer_selection,
-        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
-        save_editable_project, smart_target_status, style_for_tool, tool_selected_status,
-        with_alpha,
+        next_recording_display_selection, open_annotation_project, open_image_project, pinned_size,
+        png_path, project_image_path, quick_save_annotated_frame_selection_in,
+        recording_audio_selection_label, recording_display_selection_label, recording_target_label,
+        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
+        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+        tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -4752,6 +4833,45 @@ mod tests {
         let (_, _, loaded, warning) = open_image_project(&image_path).unwrap();
         assert_eq!(loaded, None);
         assert!(warning.unwrap().contains("could not load"));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn opening_annotation_project_requires_the_matching_png_and_sidecar_name() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-open-annotation-project-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let image_path = directory.join("capture.png");
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 2,
+                bottom: 1,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([0, 0, 0, 255, 0, 0, 0, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let document = AnnotationDocument::new(frame.bounds).unwrap();
+        save_editable_project(&frame, &document, image_path.clone()).unwrap();
+        let sidecar = annotation_sidecar_path(&image_path);
+
+        assert_eq!(project_image_path(&sidecar).unwrap(), image_path);
+        assert!(project_image_path(&directory.join("capture.json")).is_err());
+        let (opened_path, opened_frame, opened_document) =
+            open_annotation_project(&sidecar).unwrap();
+        assert_eq!(opened_path, image_path);
+        assert_eq!(opened_frame.bounds, document.canvas_bounds());
+        assert_eq!(opened_document, document);
+
         std::fs::remove_dir_all(directory).unwrap();
     }
 
