@@ -370,6 +370,10 @@ impl FlashShotApp {
         self.select_annotation_tool(AnnotationTool::Rectangle, cx);
     }
 
+    pub(super) fn select_highlight_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Highlight, cx);
+    }
+
     pub(super) fn select_ellipse_tool(&mut self, cx: &mut Context<Self>) {
         self.select_annotation_tool(AnnotationTool::Ellipse, cx);
     }
@@ -479,7 +483,13 @@ impl FlashShotApp {
         let id = AnnotationId::new(self.next_annotation_id);
         if self
             .annotation_editor
-            .begin(document, id, tool, self.annotation_style, point)
+            .begin(
+                document,
+                id,
+                tool,
+                style_for_tool(tool, self.annotation_style),
+                point,
+            )
             .is_ok()
         {
             self.next_annotation_id = self.next_annotation_id.saturating_add(1);
@@ -1100,6 +1110,7 @@ impl FlashShotApp {
 
 fn tool_selected_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Highlight => "Highlight tool selected",
         AnnotationTool::Rectangle => "Rectangle tool selected",
         AnnotationTool::Ellipse => "Ellipse tool selected",
         AnnotationTool::Line => "Line tool selected",
@@ -1110,6 +1121,7 @@ fn tool_selected_status(tool: AnnotationTool) -> &'static str {
 
 fn drawing_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Highlight => "Drawing highlight...",
         AnnotationTool::Rectangle => "Drawing rectangle...",
         AnnotationTool::Ellipse => "Drawing ellipse...",
         AnnotationTool::Line => "Drawing line...",
@@ -1120,6 +1132,7 @@ fn drawing_status(tool: AnnotationTool) -> &'static str {
 
 fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Highlight) => "Highlight added",
         Some(AnnotationTool::Rectangle) => "Rectangle added",
         Some(AnnotationTool::Ellipse) => "Ellipse added",
         Some(AnnotationTool::Line) => "Line added",
@@ -1131,6 +1144,7 @@ fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
 
 fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Highlight) => "Highlight cancelled",
         Some(AnnotationTool::Rectangle) => "Rectangle cancelled",
         Some(AnnotationTool::Ellipse) => "Ellipse cancelled",
         Some(AnnotationTool::Line) => "Line cancelled",
@@ -1451,6 +1465,21 @@ fn fill_color(stroke_rgba: u32) -> u32 {
     (stroke_rgba & 0xFFFFFF00) | 0x66
 }
 
+fn style_for_tool(
+    tool: AnnotationTool,
+    style: crate::domain::annotation::AnnotationStyle,
+) -> crate::domain::annotation::AnnotationStyle {
+    if tool == AnnotationTool::Highlight {
+        crate::domain::annotation::AnnotationStyle {
+            stroke_rgba: fill_color(style.stroke_rgba),
+            fill_rgba: None,
+            stroke_width: 1,
+        }
+    } else {
+        style
+    }
+}
+
 fn intersect_rect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
     let intersection = PhysicalRect {
         left: left.left.max(right.left),
@@ -1541,7 +1570,7 @@ mod tests {
         copy_annotated_frame_selection, drawing_status, fill_color, intersect_rect,
         is_current_operation, keyboard_command, next_quick_save_path, png_path,
         quick_save_annotated_frame_selection_in, resolve_pointer_selection,
-        save_annotated_frame_selection, tool_selected_status,
+        save_annotated_frame_selection, style_for_tool, tool_selected_status,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -1754,6 +1783,39 @@ mod tests {
         assert_eq!(
             annotation_cancelled_status(Some(AnnotationTool::Freehand)),
             "Freehand stroke cancelled"
+        );
+    }
+
+    #[test]
+    fn highlight_tool_has_specific_user_feedback_and_translucent_style() {
+        use crate::domain::annotation::{AnnotationStyle, AnnotationTool};
+
+        assert_eq!(
+            tool_selected_status(AnnotationTool::Highlight),
+            "Highlight tool selected"
+        );
+        assert_eq!(
+            drawing_status(AnnotationTool::Highlight),
+            "Drawing highlight..."
+        );
+        assert_eq!(
+            annotation_added_status(Some(AnnotationTool::Highlight)),
+            "Highlight added"
+        );
+        assert_eq!(
+            style_for_tool(
+                AnnotationTool::Highlight,
+                AnnotationStyle {
+                    stroke_rgba: 0xFFCC00FF,
+                    fill_rgba: Some(0xFFFFFFFF),
+                    stroke_width: 10,
+                },
+            ),
+            AnnotationStyle {
+                stroke_rgba: 0xFFCC0066,
+                fill_rgba: None,
+                stroke_width: 1,
+            }
         );
     }
 

@@ -40,6 +40,9 @@ impl Default for AnnotationStyle {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnnotationKind {
+    Highlight {
+        bounds: PhysicalRect,
+    },
     Rectangle {
         bounds: PhysicalRect,
     },
@@ -161,6 +164,7 @@ impl Annotation {
             .stroke_width
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
+            AnnotationKind::Highlight { bounds } => bounds.contains(point),
             AnnotationKind::Rectangle { bounds } => {
                 if bounds.width() == 0 || bounds.height() == 0 {
                     return false;
@@ -185,7 +189,9 @@ impl Annotation {
 
     pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
-            AnnotationKind::Rectangle { bounds } | AnnotationKind::Ellipse { bounds } => bounds,
+            AnnotationKind::Highlight { bounds }
+            | AnnotationKind::Rectangle { bounds }
+            | AnnotationKind::Ellipse { bounds } => bounds,
             AnnotationKind::Line { start, end } | AnnotationKind::Arrow { start, end } => {
                 PhysicalRect::new(start, end)
             }
@@ -201,6 +207,9 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Highlight { bounds } => AnnotationKind::Highlight {
+                    bounds: translate_rect(bounds, delta_x, delta_y),
+                },
                 AnnotationKind::Rectangle { bounds } => AnnotationKind::Rectangle {
                     bounds: translate_rect(bounds, delta_x, delta_y),
                 },
@@ -244,6 +253,7 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Highlight { .. } => AnnotationKind::Highlight { bounds },
                 AnnotationKind::Rectangle { .. } => AnnotationKind::Rectangle { bounds },
                 AnnotationKind::Ellipse { .. } => AnnotationKind::Ellipse { bounds },
                 AnnotationKind::Line { start, end } => AnnotationKind::Line {
@@ -266,6 +276,7 @@ impl Annotation {
 /// The drawable tools whose pointer gestures create a single annotation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnnotationTool {
+    Highlight,
     Rectangle,
     Ellipse,
     Line,
@@ -331,6 +342,9 @@ impl AnnotationDraft {
         has_visible_geometry.then(|| Annotation {
             id: self.id,
             kind: match self.tool {
+                AnnotationTool::Highlight => AnnotationKind::Highlight {
+                    bounds: PhysicalRect::new(self.start, self.current),
+                },
                 AnnotationTool::Rectangle => AnnotationKind::Rectangle {
                     bounds: PhysicalRect::new(self.start, self.current),
                 },
@@ -1148,6 +1162,44 @@ mod tests {
         assert!(!outline.hit_test(PhysicalPoint { x: 200, y: 200 }, 0));
         assert!(filled.hit_test(PhysicalPoint { x: 200, y: 200 }, 0));
         assert!(!filled.hit_test(PhysicalPoint { x: 100, y: 100 }, 0));
+    }
+
+    #[test]
+    fn highlight_gesture_uses_a_filled_rect_with_direct_interior_hit_testing() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(90),
+                AnnotationTool::Highlight,
+                AnnotationStyle {
+                    stroke_rgba: 0xFFCC0066,
+                    fill_rgba: None,
+                    stroke_width: 1,
+                },
+                PhysicalPoint { x: -100, y: 100 },
+            )
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: 100, y: 200 });
+
+        assert_eq!(
+            editor.draft().unwrap().preview().unwrap().kind,
+            AnnotationKind::Highlight {
+                bounds: PhysicalRect {
+                    left: -100,
+                    top: 100,
+                    right: 100,
+                    bottom: 200,
+                },
+            }
+        );
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        let highlight = &document.annotations()[0];
+        assert!(highlight.hit_test(PhysicalPoint { x: 0, y: 150 }, 0));
+        assert!(!highlight.hit_test(PhysicalPoint { x: 100, y: 150 }, 0));
     }
 
     #[test]

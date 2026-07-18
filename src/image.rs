@@ -48,6 +48,7 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
     let fill = annotation.style.fill_rgba.map(rgba_bytes);
     let radius = annotation.style.stroke_width.max(1).div_ceil(2) as i32;
     match annotation.kind {
+        AnnotationKind::Highlight { bounds } => fill_rect(pixels, frame, bounds, color),
         AnnotationKind::Rectangle { bounds } => {
             if let Some(fill) = fill {
                 fill_rect(pixels, frame, bounds, fill);
@@ -581,6 +582,62 @@ mod tests {
         assert_eq!(interior.alpha, 255);
         let edge = composited.pixel_at(PhysicalPoint { x: 6, y: 4 }).unwrap();
         assert_eq!(edge.blue, 255);
+    }
+
+    #[test]
+    fn composite_blends_highlight_as_a_filled_physical_pixel_rect() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 4,
+                bottom: 4,
+            },
+            width: 4,
+            height: 4,
+            stride: 16,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([20, 20, 20, 255].repeat(16)),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(6),
+                    kind: AnnotationKind::Highlight {
+                        bounds: PhysicalRect {
+                            left: 1,
+                            top: 1,
+                            right: 3,
+                            bottom: 3,
+                        },
+                    },
+                    style: AnnotationStyle {
+                        stroke_rgba: 0xFFCC0080,
+                        fill_rgba: None,
+                        stroke_width: 1,
+                    },
+                }),
+            )
+            .unwrap();
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        let highlighted = composited.pixel_at(PhysicalPoint { x: 1, y: 1 }).unwrap();
+        assert_eq!(
+            (highlighted.red, highlighted.green, highlighted.blue),
+            (137, 112, 9)
+        );
+        assert_eq!(
+            composited
+                .pixel_at(PhysicalPoint { x: 3, y: 3 })
+                .unwrap()
+                .red,
+            20
+        );
     }
 
     #[test]

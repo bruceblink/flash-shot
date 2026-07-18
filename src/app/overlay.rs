@@ -384,6 +384,30 @@ impl Render for CaptureOverlay {
                     })
                     .child(
                         div()
+                            .id("overlay-tool-highlight")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Highlight) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Highlight) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_highlight_tool(cx));
+                                });
+                            }))
+                            .child("Highlight"),
+                    )
+                    .child(
+                        div()
                             .id("overlay-tool-selection")
                             .px_3()
                             .py_2()
@@ -797,6 +821,14 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
+            AnnotationKind::Highlight { bounds } => {
+                paint_rect_fill(
+                    window,
+                    transform,
+                    bounds,
+                    rgba(annotation.style.stroke_rgba),
+                );
+            }
             AnnotationKind::Rectangle { bounds } => {
                 if let Some(fill_color) = annotation.style.fill_rgba {
                     paint_rect_fill(window, transform, bounds, rgba(fill_color));
@@ -913,7 +945,9 @@ fn paint_resize_handles(
 #[cfg(test)]
 fn outline_shape_bounds(annotation: &Annotation) -> Option<PhysicalRect> {
     match annotation.kind {
-        AnnotationKind::Rectangle { bounds } | AnnotationKind::Ellipse { bounds } => Some(bounds),
+        AnnotationKind::Highlight { bounds }
+        | AnnotationKind::Rectangle { bounds }
+        | AnnotationKind::Ellipse { bounds } => Some(bounds),
         _ => None,
     }
 }
