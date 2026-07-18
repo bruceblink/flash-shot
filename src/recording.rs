@@ -305,7 +305,9 @@ pub fn start_recording(
     request: RecordingRequest,
 ) -> io::Result<RecordingControl> {
     let command = build_recording_command(&capabilities, &request)?;
-    let (command_tx, command_rx) = async_channel::bounded(1);
+    // Commands must be lossless: a Stop issued immediately after Pause still has to reach the
+    // worker even when it has not consumed the preceding command yet.
+    let (command_tx, command_rx) = async_channel::unbounded();
     let (event_tx, event_rx) = async_channel::bounded(32);
     std::thread::Builder::new()
         .name("flash-shot-recording".to_owned())
