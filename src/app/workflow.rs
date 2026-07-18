@@ -16,7 +16,7 @@ use gpui::{
 use super::{FlashShotApp, overlay::CaptureOverlay, render_image::render_image_from_capture};
 use crate::{
     domain::{
-        annotation::{AnnotationDocument, AnnotationId, AnnotationTool},
+        annotation::{AnnotationCommand, AnnotationDocument, AnnotationId, AnnotationTool},
         geometry::PhysicalRect,
         selection::{PreviewTransform, ViewPoint, ViewRect},
         session::CaptureSessionState,
@@ -460,6 +460,7 @@ impl FlashShotApp {
         let handled = match command {
             KeyboardCommand::Undo => self.undo_annotation(cx),
             KeyboardCommand::Redo => self.redo_annotation(cx),
+            KeyboardCommand::Delete => self.delete_selected_annotation(cx),
             KeyboardCommand::Cancel => {
                 if matches!(
                     self.session.state(),
@@ -533,6 +534,32 @@ impl FlashShotApp {
                 true
             }
             Ok(false) => false,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                true
+            }
+        }
+    }
+
+    pub(super) fn delete_selected_annotation(&mut self, cx: &mut Context<Self>) -> bool {
+        self.annotation_editor.cancel();
+        let Some(id) = self.selected_annotation else {
+            return false;
+        };
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        match self
+            .annotation_history
+            .apply(document, AnnotationCommand::Delete(id))
+        {
+            Ok(()) => {
+                self.selected_annotation = None;
+                self.status = "Annotation deleted".to_owned();
+                cx.notify();
+                true
+            }
             Err(error) => {
                 self.status = error.to_string();
                 cx.notify();
@@ -1333,6 +1360,7 @@ fn resolve_pointer_selection(
 enum KeyboardCommand {
     Undo,
     Redo,
+    Delete,
     Cancel,
     Copy,
     QuickSave,
@@ -1363,6 +1391,7 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
         return None;
     }
     match keystroke.key.as_str() {
+        "delete" | "backspace" if !modifiers.shift => Some(KeyboardCommand::Delete),
         "escape" if !modifiers.shift => Some(KeyboardCommand::Cancel),
         "enter" if !modifiers.shift => Some(KeyboardCommand::Copy),
         "enter" if modifiers.shift => Some(KeyboardCommand::QuickSave),
@@ -1575,6 +1604,14 @@ mod tests {
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-shift-z").unwrap()),
             Some(KeyboardCommand::Redo)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("delete").unwrap()),
+            Some(KeyboardCommand::Delete)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("backspace").unwrap()),
+            Some(KeyboardCommand::Delete)
         );
     }
 

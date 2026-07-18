@@ -168,6 +168,7 @@ impl Render for CaptureOverlay {
             .as_ref()
             .and_then(|document| app.annotation_editor.preview(document.canvas_bounds()));
         let selected_annotation = app.selected_annotation;
+        let can_delete = selected_annotation.is_some();
         let selected_tool = app.annotation_tool;
         let annotation_color = app.annotation_style.stroke_rgba;
         let annotation_width = app.annotation_style.stroke_width;
@@ -306,6 +307,26 @@ impl Render for CaptureOverlay {
                                     });
                                 }))
                                 .child("Redo"),
+                        )
+                    })
+                    .when(can_delete, |tools| {
+                        tools.child(
+                            div()
+                                .id("overlay-delete")
+                                .px_3()
+                                .py_2()
+                                .bg(rgba(0xB91C1CFF))
+                                .text_color(colors.text)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let app = this.app.clone();
+                                    cx.defer(move |cx| {
+                                        app.update(cx, |app, cx| {
+                                            app.delete_selected_annotation(cx);
+                                        });
+                                    });
+                                }))
+                                .child("Delete"),
                         )
                     })
                     .child(
