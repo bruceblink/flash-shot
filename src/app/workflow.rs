@@ -15,8 +15,8 @@ use gpui::{
 };
 
 use super::{
-    FlashShotApp, RecognitionResult, RecordingAudioSelection, overlay::CaptureOverlay,
-    pinned::PinnedImage, render_image::render_image_from_capture,
+    FlashShotApp, RecognitionResult, RecordingAudioSelection, RecordingDisplaySelection,
+    overlay::CaptureOverlay, pinned::PinnedImage, render_image::render_image_from_capture,
     scroll_control::ManualScrollControl,
 };
 use crate::{
@@ -44,7 +44,7 @@ use crate::{
 };
 
 impl FlashShotApp {
-    pub(super) fn toggle_primary_display_recording(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn toggle_display_recording(&mut self, cx: &mut Context<Self>) {
         if let Some(control) = self.recording_control.as_ref() {
             match control.request_stop() {
                 Ok(()) => self.status = "Stopping screen recording...".to_owned(),
@@ -64,8 +64,13 @@ impl FlashShotApp {
             return;
         }
         self.recording_start_in_flight = true;
-        self.status = "Discovering FFmpeg and preparing primary display recording...".to_owned();
-        self.start_recording_request(None, self.recording_audio.clone(), cx);
+        self.status = "Discovering FFmpeg and preparing display recording...".to_owned();
+        self.start_recording_request(
+            None,
+            self.recording_audio.clone(),
+            self.recording_display.clone(),
+            cx,
+        );
     }
 
     pub(super) fn start_region_recording(&mut self, cx: &mut Context<Self>) {
@@ -88,7 +93,12 @@ impl FlashShotApp {
         self.annotation_document = None;
         self.annotation_history = Default::default();
         self.annotation_editor = Default::default();
-        self.start_recording_request(Some(bounds), self.recording_audio.clone(), cx);
+        self.start_recording_request(
+            Some(bounds),
+            self.recording_audio.clone(),
+            self.recording_display.clone(),
+            cx,
+        );
     }
 
     pub(super) fn start_selected_window_recording(&mut self, cx: &mut Context<Self>) {
@@ -113,6 +123,7 @@ impl FlashShotApp {
         self.preview = None;
         self.selection_drag.clear();
         let audio = self.recording_audio.clone();
+        let display = self.recording_display.clone();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -128,7 +139,11 @@ impl FlashShotApp {
                                     )
                                 },
                             )?;
-                            start_recording_target(Some(RecordingTarget::Window { title }), audio)
+                            start_recording_target(
+                                Some(RecordingTarget::Window { title }),
+                                audio,
+                                display,
+                            )
                         })
                         .await;
                 if let Some(this) = this.upgrade() {
@@ -143,6 +158,7 @@ impl FlashShotApp {
         &mut self,
         region: Option<PhysicalRect>,
         audio: RecordingAudioSelection,
+        display: RecordingDisplaySelection,
         cx: &mut Context<Self>,
     ) {
         cx.notify();
@@ -155,6 +171,7 @@ impl FlashShotApp {
                         start_recording_target(
                             region.map(|bounds| RecordingTarget::Region { bounds }),
                             audio,
+                            display,
                         )
                     })
                     .await;
@@ -164,6 +181,54 @@ impl FlashShotApp {
             }
         })
         .detach();
+    }
+
+    pub(super) fn cycle_recording_display(&mut self, cx: &mut Context<Self>) {
+        if self.recording_control.is_some()
+            || self.recording_start_in_flight
+            || self.recording_display_discovery_in_flight
+        {
+            return;
+        }
+        self.recording_display_discovery_in_flight = true;
+        self.status = "Discovering displays for recording...".to_owned();
+        let current = self.recording_display.clone();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { SystemDisplayProvider.displays() })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_recording_display_discovery(current, result, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_recording_display_discovery(
+        &mut self,
+        current: RecordingDisplaySelection,
+        result: std::io::Result<Vec<crate::platform::display::DisplayInfo>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.recording_display_discovery_in_flight = false;
+        match result {
+            Ok(displays) => {
+                self.recording_display = next_recording_display_selection(current, &displays);
+                self.status = format!(
+                    "Recording display: {}",
+                    recording_display_selection_label(&self.recording_display)
+                );
+            }
+            Err(error) => self.status = format!("Could not discover displays: {error}"),
+        }
+        cx.notify();
     }
 
     pub(super) fn cycle_recording_audio(&mut self, cx: &mut Context<Self>) {
@@ -2806,6 +2871,7 @@ fn quick_save_directory() -> std::io::Result<PathBuf> {
 fn start_recording_target(
     target: Option<RecordingTarget>,
     audio_selection: RecordingAudioSelection,
+    display_selection: RecordingDisplaySelection,
 ) -> std::io::Result<crate::recording::RecordingControl> {
     let capabilities = discover()?;
     let audio = match audio_selection {
@@ -2817,16 +2883,7 @@ fn start_recording_target(
     };
     let target = match target {
         Some(target) => target,
-        None => RecordingTarget::Display {
-            bounds: SystemDisplayProvider
-                .displays()?
-                .into_iter()
-                .find(|display| display.primary)
-                .ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "primary display not found")
-                })?
-                .physical_bounds,
-        },
+        None => recording_display_target(&display_selection)?,
     };
     let output = recording_output_path()?;
     start_recording(
@@ -2838,6 +2895,24 @@ fn start_recording_target(
             output,
         },
     )
+}
+
+fn recording_display_target(
+    selection: &RecordingDisplaySelection,
+) -> std::io::Result<RecordingTarget> {
+    let displays = SystemDisplayProvider.displays()?;
+    let display = match selection {
+        RecordingDisplaySelection::Primary => displays.into_iter().find(|display| display.primary),
+        RecordingDisplaySelection::Display { id, .. } => {
+            displays.into_iter().find(|display| display.id == *id)
+        }
+    }
+    .ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "selected display not found")
+    })?;
+    Ok(RecordingTarget::Display {
+        bounds: display.physical_bounds,
+    })
 }
 
 fn recording_output_path() -> std::io::Result<PathBuf> {
@@ -2889,6 +2964,53 @@ pub(super) fn recording_audio_selection_label(selection: &RecordingAudioSelectio
         RecordingAudioSelection::Source(AudioSource::SystemAudio { .. }) => {
             "system audio".to_owned()
         }
+    }
+}
+
+pub(super) fn next_recording_display_selection(
+    current: RecordingDisplaySelection,
+    displays: &[crate::platform::display::DisplayInfo],
+) -> RecordingDisplaySelection {
+    let mut displays = displays.to_vec();
+    displays.sort_by(|left, right| {
+        (
+            !left.primary,
+            left.physical_bounds.left,
+            left.physical_bounds.top,
+            &left.id,
+        )
+            .cmp(&(
+                !right.primary,
+                right.physical_bounds.left,
+                right.physical_bounds.top,
+                &right.id,
+            ))
+    });
+    let mut selections = Vec::with_capacity(displays.len() + 1);
+    selections.push(RecordingDisplaySelection::Primary);
+    selections.extend(displays.iter().enumerate().map(|(index, display)| {
+        RecordingDisplaySelection::Display {
+            id: display.id.clone(),
+            label: format!(
+                "{} ({}x{})",
+                index + 1,
+                display.physical_bounds.width(),
+                display.physical_bounds.height()
+            ),
+        }
+    }));
+    let index = selections
+        .iter()
+        .position(|selection| selection == &current)
+        .map(|index| (index + 1) % selections.len())
+        .unwrap_or(1.min(selections.len().saturating_sub(1)));
+    selections[index].clone()
+}
+
+pub(super) fn recording_display_selection_label(selection: &RecordingDisplaySelection) -> String {
+    match selection {
+        RecordingDisplaySelection::Primary => "primary".to_owned(),
+        RecordingDisplaySelection::Display { label, .. } => format!("display {label}"),
     }
 }
 
@@ -3141,10 +3263,11 @@ mod tests {
         copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color,
         format_recording_progress, intersect_rect, is_current_operation, keyboard_command,
         next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix,
-        next_recording_audio_selection, pinned_size, png_path,
+        next_recording_audio_selection, next_recording_display_selection, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
-        recording_target_label, resolve_pointer_selection, sanitize_save_prefix,
-        save_annotated_frame_selection, style_for_tool, tool_selected_status, with_alpha,
+        recording_display_selection_label, recording_target_label, resolve_pointer_selection,
+        sanitize_save_prefix, save_annotated_frame_selection, style_for_tool, tool_selected_status,
+        with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -3155,6 +3278,7 @@ mod tests {
             },
             geometry::{PhysicalPoint, PhysicalRect},
         },
+        platform::display::{DisplayInfo, DisplayRotation},
         platform::{
             capture::{CaptureFrame, PixelFormat},
             clipboard::ClipboardService,
@@ -3729,6 +3853,61 @@ mod tests {
                 &sources,
             ),
             super::RecordingAudioSelection::Automatic
+        );
+    }
+
+    #[test]
+    fn recording_display_selection_cycles_in_stable_primary_first_order() {
+        let display = |id: &str, left, top, width, height, primary| DisplayInfo {
+            id: id.to_owned(),
+            platform_id: 0,
+            physical_bounds: PhysicalRect {
+                left,
+                top,
+                right: left + width,
+                bottom: top + height,
+            },
+            work_area: PhysicalRect {
+                left,
+                top,
+                right: left + width,
+                bottom: top + height,
+            },
+            dpi_x: 96,
+            dpi_y: 96,
+            scale_factor: 1.0,
+            rotation: DisplayRotation::Landscape,
+            bits_per_pixel: 32,
+            primary,
+        };
+        let displays = [
+            display("secondary", -2560, -100, 2560, 1440, false),
+            display("primary", 0, 0, 1920, 1080, true),
+        ];
+        let selected =
+            next_recording_display_selection(super::RecordingDisplaySelection::Primary, &displays);
+        assert_eq!(
+            selected,
+            super::RecordingDisplaySelection::Display {
+                id: "primary".to_owned(),
+                label: "1 (1920x1080)".to_owned(),
+            }
+        );
+        let secondary = next_recording_display_selection(selected, &displays);
+        assert_eq!(
+            secondary,
+            super::RecordingDisplaySelection::Display {
+                id: "secondary".to_owned(),
+                label: "2 (2560x1440)".to_owned(),
+            }
+        );
+        assert_eq!(
+            recording_display_selection_label(&secondary),
+            "display 2 (2560x1440)"
+        );
+        assert_eq!(
+            next_recording_display_selection(secondary, &displays),
+            super::RecordingDisplaySelection::Primary
         );
     }
 

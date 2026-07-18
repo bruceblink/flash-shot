@@ -54,6 +54,8 @@ $env:FLASH_SHOT_RECORDING_SYSTEM_AUDIO = "default"
 
 主窗口的 `Audio` 按钮会在用户点击后后台发现本机 FFmpeg 支持的输入，并轮换自动配置、关闭、DirectShow 麦克风以及可用的 WASAPI 系统声音。`auto` 保持上述环境变量兼容行为；选择 `off` 会明确禁用音频。
 
+`Display` 按钮会按主显示器优先顺序轮换可录制显示器；显示器选择、音频选择都只在点击时查询系统，不影响应用启动。
+
 快速保存默认写入 `Pictures\Flash Shot\FlashShot-<timestamp>.png`。可通过安全文件名前缀自定义命名：
 
 ```powershell
@@ -124,6 +126,8 @@ cargo run
 ```
 
 The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
+
+The `Display` control cycles recordable monitors in primary-first order. Both display and audio discovery happen only after the respective control is clicked, keeping startup free of FFmpeg probing.
 
 ### Validate
 

@@ -104,6 +104,9 @@ impl Render for FlashShotApp {
         let recording_audio =
             super::workflow::recording_audio_selection_label(&self.recording_audio);
         let recording_audio_discovery = self.recording_audio_discovery_in_flight;
+        let recording_display =
+            super::workflow::recording_display_selection_label(&self.recording_display);
+        let recording_display_discovery = self.recording_display_discovery_in_flight;
         let preview = self.preview.clone();
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
         let frame = self.frame.clone();
@@ -139,6 +142,31 @@ impl Render for FlashShotApp {
                             .flex()
                             .items_center()
                             .gap_2()
+                            .child(
+                                div()
+                                    .id("recording-display")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.muted)
+                                    .when(
+                                        !recording_active
+                                            && !recording_starting
+                                            && !recording_display_discovery,
+                                        |button| {
+                                            button.cursor_pointer().on_click(cx.listener(
+                                                |this, _, _, cx| this.cycle_recording_display(cx),
+                                            ))
+                                        },
+                                    )
+                                    .child(if recording_display_discovery {
+                                        "Display...".to_owned()
+                                    } else {
+                                        format!("Display: {recording_display}")
+                                    }),
+                            )
                             .child(
                                 div()
                                     .id("recording-audio")
@@ -182,7 +210,7 @@ impl Render for FlashShotApp {
                             )
                             .child(
                                 div()
-                                    .id("record-primary-display")
+                                    .id("record-display")
                                     .px_3()
                                     .py_2()
                                     .rounded_md()
@@ -195,9 +223,7 @@ impl Render for FlashShotApp {
                                     .text_color(colors.accent)
                                     .when(!recording_starting, |button| {
                                         button.cursor_pointer().on_click(cx.listener(
-                                            |this, _, _, cx| {
-                                                this.toggle_primary_display_recording(cx)
-                                            },
+                                            |this, _, _, cx| this.toggle_display_recording(cx),
                                         ))
                                     })
                                     .child(if recording_starting {
