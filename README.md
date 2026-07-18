@@ -83,6 +83,15 @@ cargo run --release --bin capture-stress -- --output target/capture-stress.json
 cargo run --bin capture-stress -- --iterations 5
 ```
 
+Measure the CPU export compositor against a fixed 4K scene. This is an export
+measurement rather than a GPUI interaction-frame gate; use an explicit limit
+only after establishing a representative release baseline:
+
+```powershell
+cargo run --release --bin annotation-stress -- --iterations 30
+cargo run --release --bin annotation-stress -- --iterations 30 --max-p95-ms 80
+```
+
 ### 文档
 
 - [产品需求](docs/requirements.md)

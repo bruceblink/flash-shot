@@ -1,5 +1,6 @@
 //! Flash Shot application library.
 
+pub mod annotation_stress;
 pub mod app;
 pub mod capture_stress;
 pub mod diagnostics;
