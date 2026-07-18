@@ -16,6 +16,7 @@ use crate::{
 };
 
 const MOSAIC_BLOCK_SIZE: u32 = 10;
+const BLUR_RADIUS: i32 = 4;
 
 impl CaptureFrame {
     /// Composites renderer-independent annotations at original physical-pixel
@@ -50,6 +51,7 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
     let fill = annotation.style.fill_rgba.map(rgba_bytes);
     let radius = annotation.style.stroke_width.max(1).div_ceil(2) as i32;
     match annotation.kind {
+        AnnotationKind::Blur { bounds } => blur_rect(pixels, frame, bounds),
         AnnotationKind::Mosaic { bounds } => mosaic_rect(pixels, frame, bounds),
         AnnotationKind::Highlight { bounds } => fill_rect(pixels, frame, bounds, color),
         AnnotationKind::Rectangle { bounds } => {
@@ -70,6 +72,39 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
             for segment in points.windows(2) {
                 draw_line(pixels, frame, segment[0], segment[1], color, radius);
             }
+        }
+    }
+}
+
+fn blur_rect(pixels: &mut [u8], frame: &CaptureFrame, bounds: PhysicalRect) {
+    let left = bounds.left.max(frame.bounds.left);
+    let top = bounds.top.max(frame.bounds.top);
+    let right = bounds.right.min(frame.bounds.right);
+    let bottom = bounds.bottom.min(frame.bounds.bottom);
+    if left >= right || top >= bottom {
+        return;
+    }
+    let source = pixels.to_vec();
+    for y in top..bottom {
+        for x in left..right {
+            let sample_left = (x - BLUR_RADIUS).max(left);
+            let sample_top = (y - BLUR_RADIUS).max(top);
+            let sample_right = (x + BLUR_RADIUS + 1).min(right);
+            let sample_bottom = (y + BLUR_RADIUS + 1).min(bottom);
+            let mut totals = [0_u64; 4];
+            let mut count = 0_u64;
+            for sample_y in sample_top..sample_bottom {
+                for sample_x in sample_left..sample_right {
+                    let offset = frame_offset(frame, sample_x, sample_y);
+                    for (channel, total) in totals.iter_mut().enumerate() {
+                        *total += u64::from(source[offset + channel]);
+                    }
+                    count += 1;
+                }
+            }
+            let offset = frame_offset(frame, x, y);
+            let average = totals.map(|total| (total / count.max(1)) as u8);
+            pixels[offset..offset + 4].copy_from_slice(&average);
         }
     }
 }
@@ -743,6 +778,66 @@ mod tests {
         assert_ne!(
             composited.pixel_at(PhysicalPoint { x: 1, y: 0 }),
             composited.pixel_at(PhysicalPoint { x: 11, y: 0 })
+        );
+    }
+
+    #[test]
+    fn composite_blurs_from_a_stable_region_snapshot() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 10,
+                bottom: 1,
+            },
+            width: 10,
+            height: 1,
+            stride: 40,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(
+                (0_u8..10)
+                    .flat_map(|value| [0, 0, value.saturating_mul(20), 255])
+                    .collect::<Vec<_>>(),
+            ),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(8),
+                    kind: AnnotationKind::Blur {
+                        bounds: frame.bounds,
+                    },
+                    style: AnnotationStyle::default(),
+                }),
+            )
+            .unwrap();
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        assert_eq!(
+            composited
+                .pixel_at(PhysicalPoint { x: 0, y: 0 })
+                .unwrap()
+                .red,
+            40
+        );
+        assert_eq!(
+            composited
+                .pixel_at(PhysicalPoint { x: 5, y: 0 })
+                .unwrap()
+                .red,
+            100
+        );
+        assert_eq!(
+            composited
+                .pixel_at(PhysicalPoint { x: 9, y: 0 })
+                .unwrap()
+                .red,
+            140
         );
     }
 

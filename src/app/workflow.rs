@@ -378,6 +378,10 @@ impl FlashShotApp {
         self.select_annotation_tool(AnnotationTool::Mosaic, cx);
     }
 
+    pub(super) fn select_blur_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Blur, cx);
+    }
+
     pub(super) fn select_ellipse_tool(&mut self, cx: &mut Context<Self>) {
         self.select_annotation_tool(AnnotationTool::Ellipse, cx);
     }
@@ -1114,6 +1118,7 @@ impl FlashShotApp {
 
 fn tool_selected_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Blur => "Blur tool selected",
         AnnotationTool::Mosaic => "Mosaic tool selected",
         AnnotationTool::Highlight => "Highlight tool selected",
         AnnotationTool::Rectangle => "Rectangle tool selected",
@@ -1126,6 +1131,7 @@ fn tool_selected_status(tool: AnnotationTool) -> &'static str {
 
 fn drawing_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Blur => "Drawing blur...",
         AnnotationTool::Mosaic => "Drawing mosaic...",
         AnnotationTool::Highlight => "Drawing highlight...",
         AnnotationTool::Rectangle => "Drawing rectangle...",
@@ -1138,6 +1144,7 @@ fn drawing_status(tool: AnnotationTool) -> &'static str {
 
 fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Blur) => "Blur added",
         Some(AnnotationTool::Mosaic) => "Mosaic added",
         Some(AnnotationTool::Highlight) => "Highlight added",
         Some(AnnotationTool::Rectangle) => "Rectangle added",
@@ -1151,6 +1158,7 @@ fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
 
 fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Blur) => "Blur cancelled",
         Some(AnnotationTool::Mosaic) => "Mosaic cancelled",
         Some(AnnotationTool::Highlight) => "Highlight cancelled",
         Some(AnnotationTool::Rectangle) => "Rectangle cancelled",
@@ -1843,6 +1851,25 @@ mod tests {
         assert_eq!(
             annotation_cancelled_status(Some(AnnotationTool::Mosaic)),
             "Mosaic cancelled"
+        );
+    }
+
+    #[test]
+    fn blur_tool_has_specific_user_feedback() {
+        use crate::domain::annotation::AnnotationTool;
+
+        assert_eq!(
+            tool_selected_status(AnnotationTool::Blur),
+            "Blur tool selected"
+        );
+        assert_eq!(drawing_status(AnnotationTool::Blur), "Drawing blur...");
+        assert_eq!(
+            annotation_added_status(Some(AnnotationTool::Blur)),
+            "Blur added"
+        );
+        assert_eq!(
+            annotation_cancelled_status(Some(AnnotationTool::Blur)),
+            "Blur cancelled"
         );
     }
 

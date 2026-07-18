@@ -384,6 +384,30 @@ impl Render for CaptureOverlay {
                     })
                     .child(
                         div()
+                            .id("overlay-tool-blur")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Blur) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Blur) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_blur_tool(cx));
+                                });
+                            }))
+                            .child("Blur"),
+                    )
+                    .child(
+                        div()
                             .id("overlay-tool-mosaic")
                             .px_3()
                             .py_2()
@@ -845,6 +869,10 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
+            AnnotationKind::Blur { bounds } => {
+                paint_rect_fill(window, transform, bounds, rgba(0xCBD5E188));
+                paint_outline(window, transform, bounds, colors.muted, 1);
+            }
             AnnotationKind::Mosaic { bounds } => {
                 paint_rect_fill(window, transform, bounds, rgba(0x11182799));
                 paint_mosaic_grid(window, transform, bounds, colors.muted);
@@ -1005,7 +1033,8 @@ fn paint_resize_handles(
 #[cfg(test)]
 fn outline_shape_bounds(annotation: &Annotation) -> Option<PhysicalRect> {
     match annotation.kind {
-        AnnotationKind::Mosaic { bounds }
+        AnnotationKind::Blur { bounds }
+        | AnnotationKind::Mosaic { bounds }
         | AnnotationKind::Highlight { bounds }
         | AnnotationKind::Rectangle { bounds }
         | AnnotationKind::Ellipse { bounds } => Some(bounds),

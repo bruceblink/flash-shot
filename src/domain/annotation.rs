@@ -40,6 +40,9 @@ impl Default for AnnotationStyle {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnnotationKind {
+    Blur {
+        bounds: PhysicalRect,
+    },
     Mosaic {
         bounds: PhysicalRect,
     },
@@ -167,6 +170,7 @@ impl Annotation {
             .stroke_width
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
+            AnnotationKind::Blur { bounds } => bounds.contains(point),
             AnnotationKind::Mosaic { bounds } => bounds.contains(point),
             AnnotationKind::Highlight { bounds } => bounds.contains(point),
             AnnotationKind::Rectangle { bounds } => {
@@ -193,7 +197,8 @@ impl Annotation {
 
     pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
-            AnnotationKind::Mosaic { bounds }
+            AnnotationKind::Blur { bounds }
+            | AnnotationKind::Mosaic { bounds }
             | AnnotationKind::Highlight { bounds }
             | AnnotationKind::Rectangle { bounds }
             | AnnotationKind::Ellipse { bounds } => bounds,
@@ -212,6 +217,9 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Blur { bounds } => AnnotationKind::Blur {
+                    bounds: translate_rect(bounds, delta_x, delta_y),
+                },
                 AnnotationKind::Mosaic { bounds } => AnnotationKind::Mosaic {
                     bounds: translate_rect(bounds, delta_x, delta_y),
                 },
@@ -261,6 +269,7 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Blur { .. } => AnnotationKind::Blur { bounds },
                 AnnotationKind::Mosaic { .. } => AnnotationKind::Mosaic { bounds },
                 AnnotationKind::Highlight { .. } => AnnotationKind::Highlight { bounds },
                 AnnotationKind::Rectangle { .. } => AnnotationKind::Rectangle { bounds },
@@ -285,6 +294,7 @@ impl Annotation {
 /// The drawable tools whose pointer gestures create a single annotation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnnotationTool {
+    Blur,
     Mosaic,
     Highlight,
     Rectangle,
@@ -352,6 +362,9 @@ impl AnnotationDraft {
         has_visible_geometry.then(|| Annotation {
             id: self.id,
             kind: match self.tool {
+                AnnotationTool::Blur => AnnotationKind::Blur {
+                    bounds: PhysicalRect::new(self.start, self.current),
+                },
                 AnnotationTool::Mosaic => AnnotationKind::Mosaic {
                     bounds: PhysicalRect::new(self.start, self.current),
                 },
@@ -1247,6 +1260,40 @@ mod tests {
         let mosaic = &document.annotations()[0];
         assert!(mosaic.hit_test(PhysicalPoint { x: 0, y: 150 }, 0));
         assert!(!mosaic.hit_test(PhysicalPoint { x: 100, y: 150 }, 0));
+    }
+
+    #[test]
+    fn blur_gesture_uses_a_resizable_rect_with_interior_hit_testing() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(92),
+                AnnotationTool::Blur,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: -100, y: 100 },
+            )
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: 100, y: 200 });
+
+        assert_eq!(
+            editor.draft().unwrap().preview().unwrap().kind,
+            AnnotationKind::Blur {
+                bounds: PhysicalRect {
+                    left: -100,
+                    top: 100,
+                    right: 100,
+                    bottom: 200,
+                },
+            }
+        );
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        let blur = &document.annotations()[0];
+        assert!(blur.hit_test(PhysicalPoint { x: 0, y: 150 }, 0));
+        assert!(!blur.hit_test(PhysicalPoint { x: 100, y: 150 }, 0));
     }
 
     #[test]
