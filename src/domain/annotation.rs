@@ -98,6 +98,17 @@ impl AnnotationDocument {
             .find(|annotation| annotation.id == id)
     }
 
+    /// Returns the uppermost annotation whose visible pixels include `point`.
+    ///
+    /// Later annotations are painted above earlier ones, so hit testing walks
+    /// the document in reverse paint order.
+    pub fn annotation_at(&self, point: PhysicalPoint, tolerance: u32) -> Option<&Annotation> {
+        self.annotations
+            .iter()
+            .rev()
+            .find(|annotation| annotation.hit_test(point, tolerance))
+    }
+
     fn insert(&mut self, annotation: Annotation) -> Result<(), AnnotationError> {
         if self.annotation(annotation.id).is_some() {
             return Err(AnnotationError::DuplicateId(annotation.id));
@@ -123,6 +134,130 @@ impl AnnotationDocument {
             .ok_or(AnnotationError::MissingId(annotation.id))?;
         Ok(std::mem::replace(existing, annotation))
     }
+}
+
+impl Annotation {
+    /// Tests a physical image coordinate against this annotation's visible geometry.
+    pub fn hit_test(&self, point: PhysicalPoint, tolerance: u32) -> bool {
+        let threshold = self
+            .style
+            .stroke_width
+            .saturating_add(tolerance.saturating_mul(2));
+        match self.kind {
+            AnnotationKind::Rectangle { bounds } => {
+                if bounds.width() == 0 || bounds.height() == 0 {
+                    return false;
+                }
+                if self.style.fill_rgba.is_some() && bounds.contains(point) {
+                    return true;
+                }
+                rect_edge_distance(point, bounds) <= threshold
+            }
+            AnnotationKind::Ellipse { bounds } => {
+                ellipse_hit_test(point, bounds, self.style.fill_rgba.is_some(), threshold)
+            }
+            AnnotationKind::Line { start, end } | AnnotationKind::Arrow { start, end } => {
+                segment_distance_squared(point, start, end) <= u64::from(threshold).pow(2)
+            }
+        }
+    }
+}
+
+fn rect_edge_distance(point: PhysicalPoint, bounds: PhysicalRect) -> u32 {
+    let horizontal = if point.x < bounds.left {
+        bounds.left.saturating_sub(point.x)
+    } else if point.x > bounds.right {
+        point.x.saturating_sub(bounds.right)
+    } else {
+        0
+    };
+    let vertical = if point.y < bounds.top {
+        bounds.top.saturating_sub(point.y)
+    } else if point.y > bounds.bottom {
+        point.y.saturating_sub(bounds.bottom)
+    } else {
+        0
+    };
+    if horizontal > 0 || vertical > 0 {
+        horizontal.max(vertical) as u32
+    } else {
+        let left = point.x.saturating_sub(bounds.left);
+        let right = bounds.right.saturating_sub(point.x);
+        let top = point.y.saturating_sub(bounds.top);
+        let bottom = bounds.bottom.saturating_sub(point.y);
+        left.min(right).min(top).min(bottom) as u32
+    }
+}
+
+fn ellipse_hit_test(
+    point: PhysicalPoint,
+    bounds: PhysicalRect,
+    filled: bool,
+    threshold: u32,
+) -> bool {
+    if bounds.width() == 0 || bounds.height() == 0 {
+        return false;
+    }
+    let outer = expand_rect(bounds, threshold as i32);
+    if !inside_ellipse(point, outer) {
+        return false;
+    }
+    if filled && inside_ellipse(point, bounds) {
+        return true;
+    }
+    let inner = inset_rect(bounds, threshold as i32);
+    inner.width() == 0 || inner.height() == 0 || !inside_ellipse(point, inner)
+}
+
+fn expand_rect(bounds: PhysicalRect, amount: i32) -> PhysicalRect {
+    PhysicalRect {
+        left: bounds.left.saturating_sub(amount),
+        top: bounds.top.saturating_sub(amount),
+        right: bounds.right.saturating_add(amount),
+        bottom: bounds.bottom.saturating_add(amount),
+    }
+}
+
+fn inset_rect(bounds: PhysicalRect, amount: i32) -> PhysicalRect {
+    PhysicalRect {
+        left: bounds.left.saturating_add(amount),
+        top: bounds.top.saturating_add(amount),
+        right: bounds.right.saturating_sub(amount),
+        bottom: bounds.bottom.saturating_sub(amount),
+    }
+}
+
+fn inside_ellipse(point: PhysicalPoint, bounds: PhysicalRect) -> bool {
+    let width = f64::from(bounds.width());
+    let height = f64::from(bounds.height());
+    if width == 0.0 || height == 0.0 {
+        return false;
+    }
+    let center_x = (f64::from(bounds.left) + f64::from(bounds.right)) / 2.0;
+    let center_y = (f64::from(bounds.top) + f64::from(bounds.bottom)) / 2.0;
+    let normalized_x = (f64::from(point.x) - center_x) / (width / 2.0);
+    let normalized_y = (f64::from(point.y) - center_y) / (height / 2.0);
+    normalized_x.mul_add(normalized_x, normalized_y * normalized_y) <= 1.0
+}
+
+fn segment_distance_squared(point: PhysicalPoint, start: PhysicalPoint, end: PhysicalPoint) -> u64 {
+    let dx = i64::from(end.x) - i64::from(start.x);
+    let dy = i64::from(end.y) - i64::from(start.y);
+    let length_squared = dx * dx + dy * dy;
+    if length_squared == 0 {
+        let point_dx = i64::from(point.x) - i64::from(start.x);
+        let point_dy = i64::from(point.y) - i64::from(start.y);
+        return (point_dx * point_dx + point_dy * point_dy) as u64;
+    }
+    let offset_x = i64::from(point.x) - i64::from(start.x);
+    let offset_y = i64::from(point.y) - i64::from(start.y);
+    let projection = (offset_x * dx + offset_y * dy) as f64 / length_squared as f64;
+    let clamped = projection.clamp(0.0, 1.0);
+    let nearest_x = f64::from(start.x) + dx as f64 * clamped;
+    let nearest_y = f64::from(start.y) + dy as f64 * clamped;
+    let nearest_dx = f64::from(point.x) - nearest_x;
+    let nearest_dy = f64::from(point.y) - nearest_y;
+    (nearest_dx.mul_add(nearest_dx, nearest_dy * nearest_dy)).round() as u64
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -346,5 +481,119 @@ mod tests {
             }),
             Err(AnnotationError::InvalidCanvasBounds)
         );
+    }
+
+    #[test]
+    fn hit_testing_prefers_the_topmost_visible_annotation() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let bottom = rectangle(
+            1,
+            PhysicalRect {
+                left: 100,
+                top: 100,
+                right: 500,
+                bottom: 500,
+            },
+        );
+        let top = Annotation {
+            id: AnnotationId::new(2),
+            kind: AnnotationKind::Line {
+                start: PhysicalPoint { x: 100, y: 300 },
+                end: PhysicalPoint { x: 500, y: 300 },
+            },
+            style: AnnotationStyle {
+                stroke_width: 6,
+                ..AnnotationStyle::default()
+            },
+        };
+
+        history
+            .apply(&mut document, AnnotationCommand::Insert(bottom.clone()))
+            .unwrap();
+        history
+            .apply(&mut document, AnnotationCommand::Insert(top.clone()))
+            .unwrap();
+
+        assert_eq!(
+            document.annotation_at(PhysicalPoint { x: 300, y: 303 }, 2),
+            Some(&top)
+        );
+        assert_eq!(
+            document.annotation_at(PhysicalPoint { x: 100, y: 250 }, 2),
+            Some(&bottom)
+        );
+        assert_eq!(
+            document.annotation_at(PhysicalPoint { x: 300, y: 250 }, 2),
+            None
+        );
+    }
+
+    #[test]
+    fn outline_shapes_ignore_their_empty_interior_but_fills_select_it() {
+        let outline = Annotation {
+            id: AnnotationId::new(1),
+            kind: AnnotationKind::Rectangle {
+                bounds: PhysicalRect {
+                    left: 100,
+                    top: 100,
+                    right: 300,
+                    bottom: 300,
+                },
+            },
+            style: AnnotationStyle {
+                stroke_width: 4,
+                ..AnnotationStyle::default()
+            },
+        };
+        let filled = Annotation {
+            id: AnnotationId::new(2),
+            kind: AnnotationKind::Ellipse {
+                bounds: PhysicalRect {
+                    left: 100,
+                    top: 100,
+                    right: 300,
+                    bottom: 300,
+                },
+            },
+            style: AnnotationStyle {
+                fill_rgba: Some(0xFFFFFFFF),
+                ..AnnotationStyle::default()
+            },
+        };
+
+        assert!(outline.hit_test(PhysicalPoint { x: 102, y: 200 }, 0));
+        assert!(!outline.hit_test(PhysicalPoint { x: 200, y: 200 }, 0));
+        assert!(filled.hit_test(PhysicalPoint { x: 200, y: 200 }, 0));
+        assert!(!filled.hit_test(PhysicalPoint { x: 100, y: 100 }, 0));
+    }
+
+    #[test]
+    fn line_hit_testing_handles_diagonals_endpoints_and_degenerate_segments() {
+        let line = Annotation {
+            id: AnnotationId::new(3),
+            kind: AnnotationKind::Line {
+                start: PhysicalPoint { x: -100, y: -100 },
+                end: PhysicalPoint { x: 100, y: 100 },
+            },
+            style: AnnotationStyle {
+                stroke_width: 3,
+                ..AnnotationStyle::default()
+            },
+        };
+        let dot = Annotation {
+            id: AnnotationId::new(4),
+            kind: AnnotationKind::Arrow {
+                start: PhysicalPoint { x: 20, y: 20 },
+                end: PhysicalPoint { x: 20, y: 20 },
+            },
+            style: AnnotationStyle::default(),
+        };
+
+        assert!(line.hit_test(PhysicalPoint { x: 2, y: 0 }, 0));
+        assert!(line.hit_test(PhysicalPoint { x: 102, y: 100 }, 0));
+        assert!(!line.hit_test(PhysicalPoint { x: 10, y: 20 }, 0));
+        assert!(dot.hit_test(PhysicalPoint { x: 23, y: 20 }, 0));
+        assert!(!dot.hit_test(PhysicalPoint { x: 30, y: 20 }, 0));
     }
 }
