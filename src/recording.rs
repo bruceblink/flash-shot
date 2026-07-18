@@ -9,6 +9,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::{Command, Output},
+    time::Duration,
 };
 
 use crate::domain::geometry::PhysicalRect;
@@ -17,6 +18,9 @@ const FFMPEG_PATH_ENV: &str = "FLASH_SHOT_FFMPEG";
 const VERSION_ARGUMENTS: &[&str] = &["-hide_banner", "-version"];
 const FORMAT_ARGUMENTS: &[&str] = &["-hide_banner", "-formats"];
 const DEVICE_ARGUMENTS: &[&str] = &["-hide_banner", "-devices"];
+
+/// Maximum time a recording process gets to finalize its container after receiving `q`.
+pub const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Read-only capabilities exposed by an installed FFmpeg executable.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,6 +94,118 @@ pub struct RecordingRequest {
 pub struct FfmpegCommand {
     executable: PathBuf,
     arguments: Vec<OsString>,
+}
+
+/// Observable lifecycle for one FFmpeg recording process.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RecordingState {
+    #[default]
+    Idle,
+    Starting,
+    Recording,
+    Paused,
+    Stopping,
+    Failed,
+}
+
+/// Process-independent recording lifecycle with legal transition checks.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RecordingSession {
+    state: RecordingState,
+    request: Option<RecordingRequest>,
+    failure: Option<String>,
+}
+
+impl RecordingSession {
+    pub const fn state(&self) -> RecordingState {
+        self.state
+    }
+
+    pub fn request(&self) -> Option<&RecordingRequest> {
+        self.request.as_ref()
+    }
+
+    pub fn failure(&self) -> Option<&str> {
+        self.failure.as_deref()
+    }
+
+    /// Starts a session before the external process has confirmed that capture is live.
+    pub fn begin(&mut self, request: RecordingRequest) -> io::Result<()> {
+        self.require(RecordingState::Idle, "begin")?;
+        validate_request(&request)?;
+        self.request = Some(request);
+        self.failure = None;
+        self.state = RecordingState::Starting;
+        Ok(())
+    }
+
+    /// Marks the process as producing a recording after FFmpeg starts successfully.
+    pub fn mark_recording(&mut self) -> io::Result<()> {
+        self.require(RecordingState::Starting, "mark recording")?;
+        self.state = RecordingState::Recording;
+        Ok(())
+    }
+
+    pub fn pause(&mut self) -> io::Result<()> {
+        self.require(RecordingState::Recording, "pause")?;
+        self.state = RecordingState::Paused;
+        Ok(())
+    }
+
+    pub fn resume(&mut self) -> io::Result<()> {
+        self.require(RecordingState::Paused, "resume")?;
+        self.state = RecordingState::Recording;
+        Ok(())
+    }
+
+    /// Enters the finalization state. The process owner should write [`graceful_stop_input`].
+    pub fn request_stop(&mut self) -> io::Result<()> {
+        if !matches!(
+            self.state,
+            RecordingState::Recording | RecordingState::Paused
+        ) {
+            return Err(invalid_recording_transition(self.state, "request stop"));
+        }
+        self.state = RecordingState::Stopping;
+        Ok(())
+    }
+
+    /// Finalizes a normally stopped process and releases its request data.
+    pub fn finish(&mut self) -> io::Result<()> {
+        self.require(RecordingState::Stopping, "finish")?;
+        *self = Self::default();
+        Ok(())
+    }
+
+    /// Records a recoverable process failure without panicking the application.
+    pub fn fail(&mut self, error: impl std::fmt::Display) -> io::Result<()> {
+        if matches!(self.state, RecordingState::Idle | RecordingState::Failed) {
+            return Err(invalid_recording_transition(self.state, "fail"));
+        }
+        self.failure = Some(error.to_string());
+        self.state = RecordingState::Failed;
+        Ok(())
+    }
+
+    /// Clears a completed failure before a new recording is started.
+    pub fn reset(&mut self) -> io::Result<()> {
+        self.require(RecordingState::Failed, "reset")?;
+        *self = Self::default();
+        Ok(())
+    }
+
+    fn require(&self, expected: RecordingState, operation: &'static str) -> io::Result<()> {
+        if self.state == expected {
+            Ok(())
+        } else {
+            Err(invalid_recording_transition(self.state, operation))
+        }
+    }
+}
+
+/// FFmpeg's documented interactive command for a normal, container-safe stop.
+pub const fn graceful_stop_input() -> &'static [u8] {
+    b"q\n"
 }
 
 impl FfmpegCommand {
@@ -220,6 +336,13 @@ fn validate_request(request: &RecordingRequest) -> io::Result<()> {
     }
 }
 
+fn invalid_recording_transition(state: RecordingState, operation: &'static str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("cannot {operation} recording while session is {state:?}"),
+    )
+}
+
 /// Locates FFmpeg from an explicit environment override or the process PATH, then probes it.
 pub fn discover() -> io::Result<FfmpegCapabilities> {
     let executable = executable_from(env::var_os(FFMPEG_PATH_ENV));
@@ -330,8 +453,9 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, RecordingRequest, RecordingTarget,
-        VERSION_ARGUMENTS, build_recording_command, executable_from, first_diagnostic_line,
+        DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, GRACEFUL_STOP_TIMEOUT,
+        RecordingRequest, RecordingSession, RecordingState, RecordingTarget, VERSION_ARGUMENTS,
+        build_recording_command, executable_from, first_diagnostic_line, graceful_stop_input,
         parse_input_formats, parse_version,
     };
     use crate::domain::geometry::PhysicalRect;
@@ -507,11 +631,72 @@ mod tests {
         );
     }
 
+    #[test]
+    fn recording_session_follows_the_normal_start_pause_stop_lifecycle() {
+        let mut session = RecordingSession::default();
+        let request = region_request();
+
+        session.begin(request.clone()).unwrap();
+        assert_eq!(session.state(), RecordingState::Starting);
+        assert_eq!(session.request(), Some(&request));
+        session.mark_recording().unwrap();
+        session.pause().unwrap();
+        assert_eq!(session.state(), RecordingState::Paused);
+        session.resume().unwrap();
+        session.request_stop().unwrap();
+        assert_eq!(graceful_stop_input(), b"q\n");
+        assert_eq!(GRACEFUL_STOP_TIMEOUT, std::time::Duration::from_secs(10));
+        session.finish().unwrap();
+        assert_eq!(session.state(), RecordingState::Idle);
+        assert!(session.request().is_none());
+    }
+
+    #[test]
+    fn recording_session_makes_failures_observable_and_recoverable() {
+        let mut session = RecordingSession::default();
+        session.begin(region_request()).unwrap();
+        session.fail("FFmpeg exited with code 1").unwrap();
+
+        assert_eq!(session.state(), RecordingState::Failed);
+        assert_eq!(session.failure(), Some("FFmpeg exited with code 1"));
+        assert!(session.request_stop().is_err());
+        session.reset().unwrap();
+        assert_eq!(session.state(), RecordingState::Idle);
+        assert!(session.failure().is_none());
+    }
+
+    #[test]
+    fn recording_session_rejects_out_of_order_lifecycle_operations() {
+        let mut session = RecordingSession::default();
+
+        assert!(session.pause().is_err());
+        assert!(session.finish().is_err());
+        assert!(session.reset().is_err());
+        session.begin(region_request()).unwrap();
+        assert!(session.resume().is_err());
+        assert!(session.request_stop().is_err());
+    }
+
     fn capabilities() -> FfmpegCapabilities {
         FfmpegCapabilities {
             executable: PathBuf::from("ffmpeg"),
             version: "7.1".to_owned(),
             input_formats: parse_input_formats(FORMATS),
+        }
+    }
+
+    fn region_request() -> RecordingRequest {
+        RecordingRequest {
+            target: RecordingTarget::Region {
+                bounds: PhysicalRect {
+                    left: 5,
+                    top: 10,
+                    right: 805,
+                    bottom: 610,
+                },
+            },
+            frame_rate: 30,
+            output: PathBuf::from("region.mp4"),
         }
     }
 }
