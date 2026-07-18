@@ -2718,6 +2718,49 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn save_editable_project(&mut self, cx: &mut Context<Self>) {
+        let Some((frame, document)) = self.export_source() else {
+            cx.notify();
+            return;
+        };
+        self.status = "Choose where to save the editable image...".to_owned();
+        cx.notify();
+        let prompt = cx.prompt_for_new_path(&PathBuf::default(), Some("flash-shot-editable.png"));
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = match prompt.await {
+                    Ok(Ok(Some(path))) => {
+                        let path = png_path(path);
+                        cx.background_executor()
+                            .spawn(async move {
+                                save_editable_project(&frame, &document, path.clone())
+                                    .map(|()| path)
+                            })
+                            .await
+                    }
+                    Ok(Ok(None)) => return,
+                    Ok(Err(error)) => Err(std::io::Error::other(error)),
+                    Err(error) => Err(std::io::Error::other(error.to_string())),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.status = match result {
+                            Ok(path) => format!(
+                                "Editable project saved to {} and {}",
+                                path.display(),
+                                annotation_sidecar_path(&path).display()
+                            ),
+                            Err(error) => format!("Could not save editable project: {error}"),
+                        };
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub(super) fn open_annotation_document(&mut self, cx: &mut Context<Self>) {
         let Some(frame) = self.frame.as_ref() else {
             self.status = "Capture frame is unavailable".to_owned();
@@ -3589,6 +3632,10 @@ fn annotation_document_path(mut path: PathBuf) -> PathBuf {
     path
 }
 
+fn annotation_sidecar_path(image_path: &Path) -> PathBuf {
+    image_path.with_extension("annotations.json")
+}
+
 fn save_annotation_document(document: &AnnotationDocument, path: PathBuf) -> std::io::Result<()> {
     let json = document.to_json().map_err(std::io::Error::other)?;
     if let Some(parent) = path
@@ -3604,6 +3651,28 @@ fn save_annotation_document(document: &AnnotationDocument, path: PathBuf) -> std
     file.sync_all()?;
     drop(file);
     crate::image::replace_file(&temporary, &path)
+}
+
+fn save_editable_project(
+    frame: &CaptureFrame,
+    document: &AnnotationDocument,
+    image_path: PathBuf,
+) -> std::io::Result<()> {
+    let local_bounds = PhysicalRect {
+        left: 0,
+        top: 0,
+        right: i32::try_from(frame.width).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "frame width overflow")
+        })?,
+        bottom: i32::try_from(frame.height).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "frame height overflow")
+        })?,
+    };
+    let local_document = document
+        .rebased_to(local_bounds)
+        .map_err(std::io::Error::other)?;
+    frame.save_png(&image_path)?;
+    save_annotation_document(&local_document, annotation_sidecar_path(&image_path))
 }
 
 fn load_annotation_document(
@@ -3910,16 +3979,17 @@ mod tests {
     use super::{
         KeyboardCommand, adjusted_number_value, annotation_added_status,
         annotation_cancelled_status, annotation_document_path, annotation_position,
-        copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha,
-        fill_color, format_recording_progress, intersect_rect, is_current_operation,
-        keyboard_command, load_annotation_document, next_annotation_counters,
+        annotation_sidecar_path, copy_annotated_frame_selection, delayed_capture_status,
+        drawing_status, fill_alpha, fill_color, format_recording_progress, intersect_rect,
+        is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
         next_annotation_selection, next_capture_delay, next_quick_save_path,
         next_quick_save_path_with_prefix, next_recording_audio_selection,
         next_recording_display_selection, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
         recording_display_selection_label, recording_target_label, resolve_pointer_selection,
         sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
-        smart_target_status, style_for_tool, tool_selected_status, with_alpha,
+        save_editable_project, smart_target_status, style_for_tool, tool_selected_status,
+        with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -4533,6 +4603,65 @@ mod tests {
         assert_eq!(
             AnnotationDocument::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap(),
             document
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn editable_project_saves_original_png_and_rebased_annotation_sidecar() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-editable-project-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let image_path = directory.join("capture.png");
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: -10,
+                top: 20,
+                right: -8,
+                bottom: 21,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([1, 2, 3, 255, 4, 5, 6, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(1),
+                    kind: AnnotationKind::Line {
+                        start: PhysicalPoint { x: -10, y: 20 },
+                        end: PhysicalPoint { x: -8, y: 20 },
+                    },
+                    style: AnnotationStyle::default(),
+                }),
+            )
+            .unwrap();
+
+        save_editable_project(&frame, &document, image_path.clone()).unwrap();
+        let reopened = CaptureFrame::open_png(&image_path).unwrap();
+        assert_eq!(reopened.bounds.left, 0);
+        assert_eq!(reopened.bounds.top, 0);
+        assert_eq!((reopened.width, reopened.height), (2, 1));
+        let sidecar = annotation_sidecar_path(&image_path);
+        let loaded = load_annotation_document(&sidecar, reopened.bounds).unwrap();
+        assert_eq!(
+            loaded.annotation(AnnotationId::new(1)).unwrap().bounds(),
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 2,
+                bottom: 0,
+            }
         );
         std::fs::remove_dir_all(directory).unwrap();
     }

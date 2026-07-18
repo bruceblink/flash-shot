@@ -154,6 +154,28 @@ impl AnnotationDocument {
         Ok(validated)
     }
 
+    /// Re-expresses every annotation in another canvas with identical pixel
+    /// dimensions. This preserves geometry while making virtual-desktop
+    /// captures portable alongside a PNG whose origin is `(0, 0)`.
+    pub fn rebased_to(&self, canvas_bounds: PhysicalRect) -> Result<Self, AnnotationError> {
+        if self.canvas_bounds.width() != canvas_bounds.width()
+            || self.canvas_bounds.height() != canvas_bounds.height()
+        {
+            return Err(AnnotationError::IncompatibleCanvasBounds);
+        }
+        let delta_x = canvas_bounds.left.saturating_sub(self.canvas_bounds.left);
+        let delta_y = canvas_bounds.top.saturating_sub(self.canvas_bounds.top);
+        Ok(Self {
+            version: self.version,
+            canvas_bounds,
+            annotations: self
+                .annotations
+                .iter()
+                .map(|annotation| annotation.translated(delta_x, delta_y))
+                .collect(),
+        })
+    }
+
     /// Returns the uppermost annotation whose visible pixels include `point`.
     ///
     /// Later annotations are painted above earlier ones, so hit testing walks
@@ -1264,6 +1286,7 @@ pub enum AnnotationError {
     DuplicateId(AnnotationId),
     MissingId(AnnotationId),
     DraftInProgress,
+    IncompatibleCanvasBounds,
     UnsupportedVersion(u32),
     AnnotationOutsideCanvas(AnnotationId),
     DocumentFormat(String),
@@ -1279,6 +1302,9 @@ impl fmt::Display for AnnotationError {
             Self::MissingId(id) => write!(formatter, "annotation id {} does not exist", id.value()),
             Self::DraftInProgress => {
                 formatter.write_str("an annotation gesture is already in progress")
+            }
+            Self::IncompatibleCanvasBounds => {
+                formatter.write_str("annotation document canvas dimensions do not match")
             }
             Self::UnsupportedVersion(version) => {
                 write!(
@@ -1693,6 +1719,59 @@ mod tests {
             Err(AnnotationError::AnnotationOutsideCanvas(AnnotationId::new(
                 42
             )))
+        );
+    }
+
+    #[test]
+    fn document_rebase_preserves_geometry_relative_to_the_canvas() {
+        let source_canvas = PhysicalRect {
+            left: -1920,
+            top: 100,
+            right: -1820,
+            bottom: 200,
+        };
+        let target_canvas = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 100,
+        };
+        let mut document = AnnotationDocument::new(source_canvas).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(rectangle(
+                    42,
+                    PhysicalRect {
+                        left: -1900,
+                        top: 120,
+                        right: -1880,
+                        bottom: 140,
+                    },
+                )),
+            )
+            .unwrap();
+
+        let rebased = document.rebased_to(target_canvas).unwrap();
+        assert_eq!(rebased.canvas_bounds(), target_canvas);
+        assert_eq!(
+            rebased.annotation(AnnotationId::new(42)).unwrap().bounds(),
+            PhysicalRect {
+                left: 20,
+                top: 20,
+                right: 40,
+                bottom: 40,
+            }
+        );
+        assert_eq!(
+            document.rebased_to(PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 101,
+                bottom: 100,
+            }),
+            Err(AnnotationError::IncompatibleCanvasBounds)
         );
     }
 

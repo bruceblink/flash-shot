@@ -1065,6 +1065,22 @@ impl Render for CaptureOverlay {
                             )
                             .child(
                                 div()
+                                    .id("overlay-save-editable-project")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(rgba(0x111827E6))
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.save_editable_project(cx))
+                                        });
+                                    }))
+                                    .child("Save editable"),
+                            )
+                            .child(
+                                div()
                                     .id("overlay-open-annotations")
                                     .px_3()
                                     .py_2()
