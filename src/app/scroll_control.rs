@@ -70,6 +70,22 @@ impl Render for ManualScrollControl {
                     .gap_2()
                     .child(
                         div()
+                            .id("scroll-assist-down")
+                            .px_3()
+                            .py_1()
+                            .bg(colors.panel)
+                            .text_color(colors.text)
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.assist_manual_scroll(cx))
+                                });
+                            }))
+                            .child("Scroll down"),
+                    )
+                    .child(
+                        div()
                             .id("scroll-capture-next")
                             .px_3()
                             .py_1()

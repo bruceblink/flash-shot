@@ -1599,6 +1599,34 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn assist_manual_scroll(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.manual_scroll_selection else {
+            self.status = "Manual scroll capture is not active".to_owned();
+            cx.notify();
+            return;
+        };
+        if self.manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
+            self.status = "Manual scroll capture is not collecting frames".to_owned();
+            cx.notify();
+            return;
+        }
+        let target = crate::domain::geometry::PhysicalPoint {
+            x: selection.left + (selection.width() / 2) as i32,
+            y: selection.top + (selection.height() / 2) as i32,
+        };
+        match crate::platform::scroll::scroll_notches_at(
+            target,
+            crate::platform::scroll::DEFAULT_SCROLL_NOTCHES,
+        ) {
+            Ok(()) => {
+                self.status =
+                    "Scrolled target content. Capture the next frame when it settles.".to_owned()
+            }
+            Err(error) => self.status = format!("Could not assist scroll: {error}"),
+        }
+        cx.notify();
+    }
+
     fn finish_manual_scroll_frame(
         &mut self,
         result: std::io::Result<CaptureFrame>,
