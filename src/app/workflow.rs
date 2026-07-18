@@ -1445,6 +1445,8 @@ impl FlashShotApp {
             KeyboardCommand::Undo => self.undo_annotation(cx),
             KeyboardCommand::Redo => self.redo_annotation(cx),
             KeyboardCommand::Duplicate => self.duplicate_selected_annotation(cx),
+            KeyboardCommand::BringForward => self.bring_selected_annotation_forward(cx),
+            KeyboardCommand::SendBackward => self.send_selected_annotation_backward(cx),
             KeyboardCommand::Delete => self.delete_selected_annotation(cx),
             KeyboardCommand::Cancel => {
                 if matches!(
@@ -1600,6 +1602,29 @@ impl FlashShotApp {
 
     pub(super) fn send_selected_annotation_to_back(&mut self, cx: &mut Context<Self>) -> bool {
         self.reorder_selected_annotation(0, "Annotation sent to back", cx)
+    }
+
+    pub(super) fn bring_selected_annotation_forward(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self.selected_annotation_index() else {
+            return false;
+        };
+        self.reorder_selected_annotation(index.saturating_add(1), "Annotation brought forward", cx)
+    }
+
+    pub(super) fn send_selected_annotation_backward(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self.selected_annotation_index() else {
+            return false;
+        };
+        self.reorder_selected_annotation(index.saturating_sub(1), "Annotation sent backward", cx)
+    }
+
+    fn selected_annotation_index(&self) -> Option<usize> {
+        let id = self.selected_annotation?;
+        self.annotation_document
+            .as_ref()?
+            .annotations()
+            .iter()
+            .position(|annotation| annotation.id == id)
     }
 
     fn reorder_selected_annotation(
@@ -3375,6 +3400,8 @@ enum KeyboardCommand {
     Undo,
     Redo,
     Duplicate,
+    BringForward,
+    SendBackward,
     Delete,
     Cancel,
     Copy,
@@ -3415,6 +3442,24 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
         && keystroke.key == "d"
     {
         return Some(KeyboardCommand::Duplicate);
+    }
+    if modifiers.secondary()
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+        && keystroke.key == "]"
+    {
+        return Some(KeyboardCommand::BringForward);
+    }
+    if modifiers.secondary()
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+        && keystroke.key == "["
+    {
+        return Some(KeyboardCommand::SendBackward);
     }
     if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
         return None;
@@ -3640,6 +3685,14 @@ mod tests {
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-d").unwrap()),
             Some(KeyboardCommand::Duplicate)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-shift-]").unwrap()),
+            Some(KeyboardCommand::BringForward)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-shift-[").unwrap()),
+            Some(KeyboardCommand::SendBackward)
         );
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-z").unwrap()),

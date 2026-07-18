@@ -415,6 +415,42 @@ impl Render for CaptureOverlay {
                         tools
                             .child(
                                 div()
+                                    .id("overlay-bring-forward")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(colors.panel)
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.bring_selected_annotation_forward(cx);
+                                            });
+                                        });
+                                    }))
+                                    .child("Forward"),
+                            )
+                            .child(
+                                div()
+                                    .id("overlay-send-backward")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(colors.panel)
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.send_selected_annotation_backward(cx);
+                                            });
+                                        });
+                                    }))
+                                    .child("Backward"),
+                            )
+                            .child(
+                                div()
                                     .id("overlay-bring-to-front")
                                     .px_3()
                                     .py_2()
