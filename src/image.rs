@@ -744,6 +744,10 @@ fn png_error(error: png::EncodingError) -> io::Error {
     io::Error::other(error)
 }
 
+fn png_decode_error(error: png::DecodingError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1580,8 +1584,4 @@ mod tests {
             (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
         })
     }
-}
-
-fn png_decode_error(error: png::DecodingError) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, error)
 }

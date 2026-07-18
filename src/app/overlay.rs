@@ -935,6 +935,22 @@ impl Render for CaptureOverlay {
                             )
                             .child(
                                 div()
+                                    .id("overlay-manual-scroll")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(rgba(0x111827E6))
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.start_manual_scroll(cx))
+                                        });
+                                    }))
+                                    .child("Scroll"),
+                            )
+                            .child(
+                                div()
                                     .id("overlay-qr")
                                     .px_3()
                                     .py_2()

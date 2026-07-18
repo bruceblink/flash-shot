@@ -16,7 +16,7 @@ use gpui::{
 
 use super::{
     FlashShotApp, overlay::CaptureOverlay, pinned::PinnedImage,
-    render_image::render_image_from_capture,
+    render_image::render_image_from_capture, scroll_control::ManualScrollControl,
 };
 use crate::{
     domain::{
@@ -27,7 +27,10 @@ use crate::{
     },
     performance::CapturePipelineSample,
     platform::{
-        capture::{CaptureFrame, capture_displays, compose_virtual_desktop},
+        capture::{
+            CaptureBackend, CaptureFrame, SystemCaptureBackend, capture_displays,
+            compose_virtual_desktop,
+        },
         clipboard::{ClipboardService, SystemClipboard},
         window_inspector::{InspectionTarget, SystemWindowInspector, WindowInspector},
         window_visibility,
@@ -176,6 +179,9 @@ impl FlashShotApp {
         self.inspection_target = None;
         self.pending_click_target = None;
         self.inspection_request = None;
+        self.manual_scroll = Default::default();
+        self.manual_scroll_selection = None;
+        self.manual_scroll_capture_in_flight = false;
         self.status = "Capturing virtual desktop...".to_owned();
         if let Some(handle) = self.main_window_handle
             && let Err(error) = window_visibility::hide(handle)
@@ -320,8 +326,12 @@ impl FlashShotApp {
         self.inspection_target = None;
         self.pending_click_target = None;
         self.inspection_request = None;
+        self.manual_scroll = Default::default();
+        self.manual_scroll_selection = None;
+        self.manual_scroll_capture_in_flight = false;
         self.status = "Ready - Ctrl+Shift+Print Screen".to_owned();
         self.close_capture_overlays(cx);
+        self.close_manual_scroll_window(cx);
         self.restore_main_window();
         cx.notify();
     }
@@ -343,6 +353,9 @@ impl FlashShotApp {
         self.inspection_target = None;
         self.pending_click_target = None;
         self.inspection_request = None;
+        self.manual_scroll = Default::default();
+        self.manual_scroll_selection = None;
+        self.manual_scroll_capture_in_flight = false;
         // GPUI has already removed native windows before invoking on_app_quit.
         // Keeping the handles untouched avoids issuing late operations on closed HWNDs.
         log::info!(target: "flash_shot::lifecycle", "capture_workflow_shutdown");
@@ -1305,6 +1318,185 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn start_manual_scroll(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.session.selection() else {
+            self.status = "Select an area before starting manual scroll capture".to_owned();
+            cx.notify();
+            return;
+        };
+        let Some(frame) = self.frame.as_ref() else {
+            self.status = "Capture frame is unavailable".to_owned();
+            cx.notify();
+            return;
+        };
+        let first = match frame.crop(selection) {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.status = format!("Could not start manual scroll: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        if self.manual_scroll.state() == crate::scroll::ManualScrollState::Collecting {
+            self.status = "Manual scroll capture is already active".to_owned();
+            cx.notify();
+            return;
+        }
+        if self.manual_scroll.state() != crate::scroll::ManualScrollState::Idle {
+            let _ = self.manual_scroll.reset();
+        }
+        if let Err(error) = self.manual_scroll.begin(first) {
+            self.status = format!("Could not start manual scroll: {error}");
+            cx.notify();
+            return;
+        }
+        self.manual_scroll_selection = Some(selection);
+        self.status =
+            "Manual scroll started. Scroll the target, then capture the next frame.".to_owned();
+        self.close_capture_overlays(cx);
+        let app = cx.entity();
+        cx.defer(move |cx| open_manual_scroll_control(app, cx));
+        cx.notify();
+    }
+
+    pub(super) fn capture_manual_scroll_frame(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.manual_scroll_selection else {
+            self.status = "Manual scroll capture is not active".to_owned();
+            cx.notify();
+            return;
+        };
+        if self.manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
+            self.status = "Manual scroll capture is not collecting frames".to_owned();
+            cx.notify();
+            return;
+        }
+        if self.manual_scroll_capture_in_flight {
+            self.status = "Scroll frame capture is already in progress".to_owned();
+            cx.notify();
+            return;
+        }
+        self.manual_scroll_capture_in_flight = true;
+        self.status = "Capturing next scroll frame...".to_owned();
+        let generation = self.operation_generation;
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { SystemCaptureBackend.capture(selection) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_manual_scroll_frame(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_manual_scroll_frame(
+        &mut self,
+        result: std::io::Result<CaptureFrame>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
+        self.manual_scroll_capture_in_flight = false;
+        self.status = match result {
+            Ok(frame) => match self.manual_scroll.append(frame, Default::default()) {
+                Ok(overlap) => format!(
+                    "Captured scroll frame {} ({} px overlap)",
+                    self.manual_scroll.frame_count(),
+                    overlap
+                ),
+                Err(error) => format!("Manual scroll stopped: {error}"),
+            },
+            Err(error) => format!("Could not capture scroll frame: {error}"),
+        };
+        cx.notify();
+    }
+
+    pub(super) fn finish_manual_scroll(&mut self, cx: &mut Context<Self>) {
+        if self.manual_scroll_capture_in_flight {
+            self.status = "Wait for the current scroll frame capture to finish".to_owned();
+            cx.notify();
+            return;
+        }
+        let stitched = match self.manual_scroll.finish(Default::default()) {
+            Ok(stitched) => stitched,
+            Err(error) => {
+                self.status = format!("Could not finish manual scroll: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        let frame = stitched.frame;
+        let bounds = frame.bounds;
+        let result = (|| -> std::io::Result<()> {
+            let preview = render_image_from_capture(&frame)?;
+            let document = AnnotationDocument::new(bounds).map_err(std::io::Error::other)?;
+            self.session.select(bounds).map_err(std::io::Error::other)?;
+            self.preview = Some(preview.image);
+            self.frame = Some(frame);
+            self.annotation_document = Some(document);
+            self.annotation_history = Default::default();
+            self.annotation_editor = Default::default();
+            self.annotation_tool = None;
+            self.text_edit = None;
+            self.selected_annotation = None;
+            self.selection_drag.select(bounds);
+            self.manual_scroll_selection = None;
+            self.manual_scroll_capture_in_flight = false;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.status = format!(
+                    "Manual scroll stitched {} frames with {} overlap joins",
+                    self.manual_scroll.frame_count(),
+                    stitched.overlaps.len()
+                );
+                self.close_manual_scroll_window(cx);
+                let _ = self.manual_scroll.reset();
+                let app = cx.entity();
+                cx.defer(move |cx| open_image_overlay(app, bounds, cx));
+            }
+            Err(error) => self.status = format!("Could not open stitched capture: {error}"),
+        }
+        cx.notify();
+    }
+
+    pub(super) fn cancel_manual_scroll(&mut self, cx: &mut Context<Self>) {
+        self.abandon_manual_scroll();
+        self.close_manual_scroll_window(cx);
+        self.status = "Manual scroll capture cancelled".to_owned();
+        self.restore_main_window();
+        cx.notify();
+    }
+
+    pub(super) fn manual_scroll_control_closed(&mut self, cx: &mut Context<Self>) {
+        self.abandon_manual_scroll();
+        self.scroll_window = None;
+        self.status = "Manual scroll capture cancelled".to_owned();
+        self.restore_main_window();
+        cx.notify();
+    }
+
+    fn abandon_manual_scroll(&mut self) {
+        if self.manual_scroll.state() == crate::scroll::ManualScrollState::Collecting {
+            let _ = self.manual_scroll.cancel();
+        }
+        if self.manual_scroll.state() != crate::scroll::ManualScrollState::Idle {
+            let _ = self.manual_scroll.reset();
+        }
+        self.manual_scroll_selection = None;
+        self.manual_scroll_capture_in_flight = false;
+    }
+
     pub(super) fn recognize_qr_selection(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = self.session.selection() else {
             self.status = "Select an area before recognizing a QR code".to_owned();
@@ -1699,6 +1891,14 @@ impl FlashShotApp {
         }
     }
 
+    fn close_manual_scroll_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(window) = self.scroll_window.take() {
+            cx.defer(move |cx| {
+                let _ = window.update(cx, |_, window, _| window.remove_window());
+            });
+        }
+    }
+
     fn restore_main_window(&self) {
         if let Some(handle) = self.main_window_handle
             && let Err(error) = window_visibility::restore(handle)
@@ -1903,6 +2103,54 @@ fn open_image_overlay(app: gpui::Entity<FlashShotApp>, bounds: PhysicalRect, cx:
                 cx.notify();
             });
             log::warn!(target: "flash_shot::image", "image_editor_open_failed error={error}");
+        }
+    }
+}
+
+fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &mut gpui::App) {
+    if app.read(cx).manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
+        return;
+    }
+    let control_app = app.clone();
+    match cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::centered(size(px(390.0), px(120.0)), cx)),
+            titlebar: Some(gpui::TitlebarOptions {
+                title: Some("Flash Shot - Manual Scroll".into()),
+                ..Default::default()
+            }),
+            focus: true,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: true,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: WindowBackgroundAppearance::Opaque,
+            ..Default::default()
+        },
+        move |window, cx| {
+            let close_app = control_app.clone();
+            window.on_window_should_close(cx, move |_, cx| {
+                close_app.update(cx, |app, cx| app.manual_scroll_control_closed(cx));
+                true
+            });
+            let control = cx.new(|cx| ManualScrollControl::new(control_app, cx));
+            control.read(cx).focus_handle(cx).focus(window, cx);
+            control
+        },
+    ) {
+        Ok(window) => app.update(cx, |app, _| app.scroll_window = Some(window)),
+        Err(error) => {
+            app.update(cx, |app, cx| {
+                let _ = app.manual_scroll.cancel();
+                let _ = app.manual_scroll.reset();
+                app.manual_scroll_selection = None;
+                app.manual_scroll_capture_in_flight = false;
+                app.status = format!("Could not open manual scroll controls: {error}");
+                app.restore_main_window();
+                cx.notify();
+            });
+            log::warn!(target: "flash_shot::scroll", "manual_scroll_control_open_failed error={error}");
         }
     }
 }

@@ -3,6 +3,7 @@
 mod overlay;
 mod pinned;
 mod render_image;
+mod scroll_control;
 mod view;
 mod workflow;
 
@@ -54,8 +55,12 @@ pub struct FlashShotApp {
     pending_click_target: Option<InspectionTarget>,
     inspection_request: Option<PhysicalPoint>,
     inspection_in_flight: bool,
+    manual_scroll: crate::scroll::ManualScrollCapture,
+    manual_scroll_selection: Option<crate::domain::geometry::PhysicalRect>,
+    manual_scroll_capture_in_flight: bool,
     operation_generation: u64,
     overlay_windows: Vec<WindowHandle<overlay::CaptureOverlay>>,
+    scroll_window: Option<WindowHandle<scroll_control::ManualScrollControl>>,
     main_window_handle: Option<isize>,
     focus_handle: FocusHandle,
     status: String,
@@ -141,8 +146,12 @@ impl FlashShotApp {
             pending_click_target: None,
             inspection_request: None,
             inspection_in_flight: false,
+            manual_scroll: crate::scroll::ManualScrollCapture::default(),
+            manual_scroll_selection: None,
+            manual_scroll_capture_in_flight: false,
             operation_generation: 0,
             overlay_windows: Vec::new(),
+            scroll_window: None,
             main_window_handle: None,
             focus_handle: cx.focus_handle(),
             status,
