@@ -156,6 +156,18 @@ Use fewer iterations for a quick development smoke test:
 cargo run --bin capture-stress -- --iterations 5
 ```
 
+The app also retains the latest 500 startup and shortcut-to-overlay samples at
+`<application data directory>\metrics\performance.jsonl`. Summarize a representative release
+run and enforce the default p95 thresholds with:
+
+```powershell
+cargo run --release --bin performance-report -- --input "<application data directory>\metrics\performance.jsonl" --output target/performance-summary.json
+```
+
+The command exits with status `2` when a threshold fails, and with status `1` when samples
+are malformed or insufficient. Use `--no-gate` only to inspect an incomplete or exploratory
+sample set.
+
 ### Documentation
 
 - [Product requirements (Chinese)](docs/requirements.md)

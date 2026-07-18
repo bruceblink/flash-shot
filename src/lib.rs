@@ -8,6 +8,7 @@ pub mod history;
 pub mod image;
 pub mod ocr;
 pub mod performance;
+pub mod performance_report;
 pub mod platform;
 pub mod recording;
 pub mod scroll;
