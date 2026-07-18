@@ -967,6 +967,22 @@ impl Render for CaptureOverlay {
                                     }))
                                     .child("OCR"),
                             )
+                            .child(
+                                div()
+                                    .id("overlay-translate")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(rgba(0x111827E6))
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.translate_selection(cx))
+                                        });
+                                    }))
+                                    .child("Translate"),
+                            )
                     })
                     .child(
                         div()

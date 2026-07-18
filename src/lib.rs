@@ -11,6 +11,7 @@ pub mod performance;
 pub mod platform;
 pub mod single_instance;
 pub mod theme;
+pub mod translation;
 
 use app::FlashShotApp;
 use gpui::*;

@@ -1420,6 +1420,80 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn translate_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.session.selection() else {
+            self.status = "Select an area before translating text".to_owned();
+            cx.notify();
+            return;
+        };
+        let config = match crate::translation::TranslationConfig::from_environment() {
+            Ok(Some(config)) => config,
+            Ok(None) => {
+                self.status =
+                    "Translation is disabled. Configure FLASH_SHOT_TRANSLATION_ENDPOINT to opt in."
+                        .to_owned();
+                cx.notify();
+                return;
+            }
+            Err(error) => {
+                self.status = format!("Translation is unavailable: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        let Some((frame, document)) = self.export_source() else {
+            cx.notify();
+            return;
+        };
+
+        self.status = "Recognizing and translating text...".to_owned();
+        let generation = self.operation_generation;
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let frame = frame.composite_annotations(&document)?.crop(selection)?;
+                        let text = crate::ocr::recognize(&frame)?;
+                        crate::translation::translate(&config, &text)
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_translation(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_translation(
+        &mut self,
+        result: std::io::Result<String>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
+        self.status = match result {
+            Ok(text) if text.is_empty() => "No text found in the selection".to_owned(),
+            Ok(text) => format!("Translation: {text}"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT."
+                    .to_owned()
+            }
+            Err(error) => {
+                log::warn!(target: "flash_shot::translation", "translation_failed error={error}");
+                format!("Translation failed: {error}")
+            }
+        };
+        cx.notify();
+    }
+
     pub(super) fn save_selection(&mut self, cx: &mut Context<Self>) {
         let selection = match self.session.start_export() {
             Ok(selection) => selection,
