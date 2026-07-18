@@ -196,9 +196,14 @@ impl Render for CaptureOverlay {
         let text_edit = app.text_edit().cloned();
         let selected_annotation = app.selected_annotation;
         let can_delete = selected_annotation.is_some();
+        let selected_tool = app.annotation_tool;
         let can_rotate = selected_annotation
             .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
             .is_some_and(Annotation::supports_clockwise_rotation);
+        let can_fill = selected_annotation
+            .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
+            .is_some_and(Annotation::supports_fill)
+            || selected_tool.is_some_and(AnnotationTool::supports_fill);
         let selected_number = selected_annotation.and_then(|id| {
             app.annotation_document
                 .as_ref()?
@@ -208,7 +213,6 @@ impl Render for CaptureOverlay {
                     _ => None,
                 })
         });
-        let selected_tool = app.annotation_tool;
         let annotation_color = app.annotation_style.stroke_rgba;
         let annotation_width = app.annotation_style.stroke_width;
         let annotation_opacity = (app.annotation_style.stroke_rgba & 0xFF) as u8;
@@ -884,33 +888,35 @@ impl Render for CaptureOverlay {
                             }))
                     })),
             )
-            .child(
-                div()
-                    .absolute()
-                    .left(px(18.0))
-                    .top(px(118.0))
-                    .px_3()
-                    .py_2()
-                    .id("overlay-fill")
-                    .bg(if fill_enabled {
-                        colors.accent
-                    } else {
-                        colors.panel
-                    })
-                    .text_color(if fill_enabled {
-                        colors.background
-                    } else {
-                        colors.text
-                    })
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let app = this.app.clone();
-                        cx.defer(move |cx| {
-                            app.update(cx, |app, cx| app.toggle_annotation_fill(cx));
-                        });
-                    }))
-                    .child("Fill"),
-            )
+            .when(can_fill, |overlay| {
+                overlay.child(
+                    div()
+                        .absolute()
+                        .left(px(18.0))
+                        .top(px(118.0))
+                        .px_3()
+                        .py_2()
+                        .id("overlay-fill")
+                        .bg(if fill_enabled {
+                            colors.accent
+                        } else {
+                            colors.panel
+                        })
+                        .text_color(if fill_enabled {
+                            colors.background
+                        } else {
+                            colors.text
+                        })
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let app = this.app.clone();
+                            cx.defer(move |cx| {
+                                app.update(cx, |app, cx| app.toggle_annotation_fill(cx));
+                            });
+                        }))
+                        .child("Fill"),
+                )
+            })
             .child(
                 div()
                     .absolute()

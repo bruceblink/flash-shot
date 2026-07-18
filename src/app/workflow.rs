@@ -1213,6 +1213,18 @@ impl FlashShotApp {
     }
 
     pub(super) fn toggle_annotation_fill(&mut self, cx: &mut Context<Self>) {
+        let supported = self
+            .selected_annotation
+            .and_then(|id| self.annotation_document.as_ref()?.annotation(id))
+            .is_some_and(Annotation::supports_fill)
+            || self
+                .annotation_tool
+                .is_some_and(AnnotationTool::supports_fill);
+        if !supported {
+            self.status = "Fill is available for rectangles and ellipses".to_owned();
+            cx.notify();
+            return;
+        }
         self.annotation_style.fill_rgba = self
             .annotation_style
             .fill_rgba

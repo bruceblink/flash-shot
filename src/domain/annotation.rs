@@ -178,6 +178,13 @@ impl AnnotationDocument {
 }
 
 impl Annotation {
+    pub const fn supports_fill(&self) -> bool {
+        matches!(
+            self.kind,
+            AnnotationKind::Rectangle { .. } | AnnotationKind::Ellipse { .. }
+        )
+    }
+
     pub const fn supports_clockwise_rotation(&self) -> bool {
         !matches!(
             self.kind,
@@ -494,6 +501,12 @@ pub enum AnnotationTool {
     Line,
     Arrow,
     Freehand,
+}
+
+impl AnnotationTool {
+    pub const fn supports_fill(self) -> bool {
+        matches!(self, Self::Rectangle | Self::Ellipse)
+    }
 }
 
 /// In-progress pointer gesture. A draft is intentionally absent from the
@@ -1683,6 +1696,33 @@ mod tests {
             style: AnnotationStyle::default(),
         };
         assert_eq!(text.rotated_clockwise_within(canvas), None);
+    }
+
+    #[test]
+    fn fill_capability_is_limited_to_closed_shape_tools() {
+        assert!(AnnotationTool::Rectangle.supports_fill());
+        assert!(AnnotationTool::Ellipse.supports_fill());
+        assert!(!AnnotationTool::Arrow.supports_fill());
+
+        let rectangle = rectangle(
+            42,
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 10,
+                bottom: 10,
+            },
+        );
+        assert!(rectangle.supports_fill());
+        let line = Annotation {
+            id: AnnotationId::new(43),
+            kind: AnnotationKind::Line {
+                start: PhysicalPoint { x: 0, y: 0 },
+                end: PhysicalPoint { x: 10, y: 10 },
+            },
+            style: AnnotationStyle::default(),
+        };
+        assert!(!line.supports_fill());
     }
 
     #[test]
