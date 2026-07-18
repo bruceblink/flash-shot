@@ -27,6 +27,7 @@ use crate::{
     history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::{
+        autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::CaptureFrame,
         shortcut::{GlobalShortcutService, ShortcutEvent},
         tray::{TrayEvent, TrayService},
@@ -67,6 +68,7 @@ pub struct FlashShotApp {
     recording_display: RecordingDisplaySelection,
     recording_display_discovery_in_flight: bool,
     update_check_in_flight: bool,
+    auto_start_enabled: bool,
     capture_delay_seconds: u8,
     delayed_capture_generation: Option<u64>,
     include_cursor: bool,
@@ -162,6 +164,20 @@ impl FlashShotApp {
                 None
             }
         };
+        let auto_start_enabled = match std::env::current_exe()
+            .ok()
+            .map(|executable| SystemAutoStart.state(&executable))
+        {
+            Some(Ok(AutoStartState::Enabled)) => true,
+            Some(Ok(AutoStartState::Disabled | AutoStartState::ManagedByAnotherExecutable)) => {
+                false
+            }
+            Some(Err(error)) => {
+                log::warn!(target: "flash_shot::autostart", "auto_start_state_read_failed error={error}");
+                false
+            }
+            None => false,
+        };
 
         Self {
             colors: ThemeColors::default(),
@@ -195,6 +211,7 @@ impl FlashShotApp {
             recording_display: RecordingDisplaySelection::Primary,
             recording_display_discovery_in_flight: false,
             update_check_in_flight: false,
+            auto_start_enabled,
             capture_delay_seconds: 0,
             delayed_capture_generation: None,
             include_cursor: false,

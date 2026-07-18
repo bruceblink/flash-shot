@@ -28,6 +28,7 @@ use crate::{
     },
     performance::CapturePipelineSample,
     platform::{
+        autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::{
             CaptureBackend, CaptureFrame, CaptureOptions, SystemCaptureBackend,
             capture_displays_with_options, compose_virtual_desktop,
@@ -45,6 +46,37 @@ use crate::{
 };
 
 impl FlashShotApp {
+    pub(super) fn toggle_auto_start(&mut self, cx: &mut Context<Self>) {
+        let executable = match std::env::current_exe() {
+            Ok(executable) => executable,
+            Err(error) => {
+                self.status = format!("Could not find the application executable: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        let requested = !self.auto_start_enabled;
+        match SystemAutoStart.set_enabled(&executable, requested) {
+            Ok(AutoStartState::Enabled) => {
+                self.auto_start_enabled = true;
+                self.status = "Launch at sign-in enabled".to_owned();
+            }
+            Ok(AutoStartState::Disabled) => {
+                self.auto_start_enabled = false;
+                self.status = "Launch at sign-in disabled".to_owned();
+            }
+            Ok(AutoStartState::ManagedByAnotherExecutable) => {
+                self.auto_start_enabled = false;
+                self.status =
+                    "Launch at sign-in is managed by a different Flash Shot executable".to_owned();
+            }
+            Err(error) => {
+                self.status = format!("Could not update launch at sign-in: {error}");
+                log::warn!(target: "flash_shot::autostart", "auto_start_update_failed error={error}");
+            }
+        }
+        cx.notify();
+    }
     pub(super) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
         if self.update_check_in_flight {
             return;

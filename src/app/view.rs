@@ -108,6 +108,7 @@ impl Render for FlashShotApp {
             super::workflow::recording_display_selection_label(&self.recording_display);
         let recording_display_discovery = self.recording_display_discovery_in_flight;
         let update_check_in_flight = self.update_check_in_flight;
+        let auto_start_enabled = self.auto_start_enabled;
         let preview = self.preview.clone();
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
         let frame = self.frame.clone();
@@ -143,6 +144,29 @@ impl Render for FlashShotApp {
                             .flex()
                             .items_center()
                             .gap_2()
+                            .child(
+                                div()
+                                    .id("auto-start")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(if auto_start_enabled {
+                                        colors.accent
+                                    } else {
+                                        colors.border
+                                    })
+                                    .text_color(if auto_start_enabled {
+                                        colors.accent
+                                    } else {
+                                        colors.muted
+                                    })
+                                    .cursor_pointer()
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_auto_start(cx)),
+                                    )
+                                    .child("Start with Windows"),
+                            )
                             .child(
                                 div()
                                     .id("check-for-updates")
