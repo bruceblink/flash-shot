@@ -528,6 +528,24 @@ impl Render for FlashShotApp {
                                             .child("Pin"),
                                     )
                                 })
+                                .when(can_export, |actions| {
+                                    actions.child(
+                                        div()
+                                            .id("record-selection")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .border_1()
+                                            .border_color(colors.accent)
+                                            .text_color(colors.accent)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.start_region_recording(cx)
+                                            }))
+                                            .child("Record Area"),
+                                    )
+                                })
                                 .when(!is_exporting, |actions| {
                                     actions.child(
                                         div()

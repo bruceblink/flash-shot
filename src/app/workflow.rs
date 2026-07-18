@@ -64,13 +64,44 @@ impl FlashShotApp {
         }
         self.recording_start_in_flight = true;
         self.status = "Discovering FFmpeg and preparing primary display recording...".to_owned();
+        self.start_recording_request(None, cx);
+    }
+
+    pub(super) fn start_region_recording(&mut self, cx: &mut Context<Self>) {
+        let Some(bounds) = self.selection_drag.selection() else {
+            self.status = "Select a region before starting a recording".to_owned();
+            cx.notify();
+            return;
+        };
+        if self.recording_control.is_some() || self.recording_start_in_flight {
+            return;
+        }
+        self.recording_start_in_flight = true;
+        self.recording_restores_main_window = true;
+        self.status = "Preparing region recording...".to_owned();
+        self.close_capture_overlays(cx);
+        let _ = self.session.cancel();
+        let _ = self.session.reset();
+        self.frame = None;
+        self.preview = None;
+        self.selection_drag.clear();
+        self.annotation_document = None;
+        self.annotation_history = Default::default();
+        self.annotation_editor = Default::default();
+        if let Some(handle) = self.main_window_handle {
+            let _ = window_visibility::hide(handle);
+        }
+        self.start_recording_request(Some(bounds), cx);
+    }
+
+    fn start_recording_request(&mut self, region: Option<PhysicalRect>, cx: &mut Context<Self>) {
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { start_primary_display_recording() })
+                    .spawn(async move { start_recording_target(region) })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| this.recording_started(result, cx));
@@ -126,6 +157,10 @@ impl FlashShotApp {
             Err(error) => self.status = format!("Could not start screen recording: {error}"),
         }
         self.recording_start_in_flight = false;
+        if self.recording_control.is_none() && self.recording_restores_main_window {
+            self.recording_restores_main_window = false;
+            self.restore_main_window();
+        }
         cx.notify();
     }
 
@@ -149,12 +184,20 @@ impl FlashShotApp {
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording saved to {}", output.display());
+                if self.recording_restores_main_window {
+                    self.recording_restores_main_window = false;
+                    self.restore_main_window();
+                }
             }
             RecordingEvent::Failed { message } => {
                 self.recording_control = None;
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording failed: {message}");
+                if self.recording_restores_main_window {
+                    self.recording_restores_main_window = false;
+                    self.restore_main_window();
+                }
             }
         }
         cx.notify();
@@ -481,6 +524,7 @@ impl FlashShotApp {
         self.recording_control = None;
         self.recording_start_in_flight = false;
         self.recording_paused = false;
+        self.recording_restores_main_window = false;
         // GPUI has already removed native windows before invoking on_app_quit.
         // Keeping the handles untouched avoids issuing late operations on closed HWNDs.
         log::info!(target: "flash_shot::lifecycle", "capture_workflow_shutdown");
@@ -2470,22 +2514,28 @@ fn quick_save_directory() -> std::io::Result<PathBuf> {
     crate::history::managed_history_directory()
 }
 
-fn start_primary_display_recording() -> std::io::Result<crate::recording::RecordingControl> {
+fn start_recording_target(
+    region: Option<PhysicalRect>,
+) -> std::io::Result<crate::recording::RecordingControl> {
     let capabilities = discover()?;
-    let display = SystemDisplayProvider
-        .displays()?
-        .into_iter()
-        .find(|display| display.primary)
-        .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "primary display not found")
-        })?;
+    let target = match region {
+        Some(bounds) => RecordingTarget::Region { bounds },
+        None => RecordingTarget::Display {
+            bounds: SystemDisplayProvider
+                .displays()?
+                .into_iter()
+                .find(|display| display.primary)
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "primary display not found")
+                })?
+                .physical_bounds,
+        },
+    };
     let output = recording_output_path()?;
     start_recording(
         capabilities,
         RecordingRequest {
-            target: RecordingTarget::Display {
-                bounds: display.physical_bounds,
-            },
+            target,
             audio: None,
             frame_rate: 30,
             output,
