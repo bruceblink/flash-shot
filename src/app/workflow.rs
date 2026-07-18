@@ -1507,6 +1507,11 @@ impl FlashShotApp {
     }
 
     pub(super) fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        // Printable keystrokes belong to the active native text editor, not
+        // the annotation shortcut map.
+        if self.text_edit.is_some() {
+            return;
+        }
         let Some(command) = keyboard_command(&event.keystroke) else {
             return;
         };
@@ -1543,6 +1548,14 @@ impl FlashShotApp {
             KeyboardCommand::Nudge(delta_x, delta_y) => {
                 self.nudge_selected_annotation(delta_x, delta_y, cx)
                     || self.nudge_selection(delta_x, delta_y, cx)
+            }
+            KeyboardCommand::SelectTool(Some(tool)) => {
+                self.select_annotation_tool(tool, cx);
+                true
+            }
+            KeyboardCommand::SelectTool(None) => {
+                self.select_selection_tool(cx);
+                true
             }
         };
         if handled {
@@ -3545,6 +3558,7 @@ enum KeyboardCommand {
     Copy,
     QuickSave,
     Nudge(i32, i32),
+    SelectTool(Option<AnnotationTool>),
 }
 
 enum SaveOutcome {
@@ -3603,6 +3617,18 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
         return None;
     }
     match keystroke.key.as_str() {
+        "a" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Arrow))),
+        "b" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Blur))),
+        "e" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Ellipse))),
+        "h" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Highlight))),
+        "l" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Line))),
+        "m" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Mosaic))),
+        "n" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Number))),
+        "p" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Freehand))),
+        "r" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Rectangle))),
+        "s" => Some(KeyboardCommand::SelectTool(None)),
+        "t" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Text))),
+        "w" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Watermark))),
         "tab" if modifiers.shift => Some(KeyboardCommand::SelectPreviousAnnotation),
         "tab" => Some(KeyboardCommand::SelectNextAnnotation),
         "delete" | "backspace" if !modifiers.shift => Some(KeyboardCommand::Delete),
@@ -3678,7 +3704,7 @@ mod tests {
         domain::{
             annotation::{
                 Annotation, AnnotationCommand, AnnotationDocument, AnnotationId, AnnotationKind,
-                AnnotationStyle, CommandHistory,
+                AnnotationStyle, AnnotationTool, CommandHistory,
             },
             geometry::{PhysicalPoint, PhysicalRect},
         },
@@ -3889,6 +3915,19 @@ mod tests {
             keyboard_command(&Keystroke::parse("shift-tab").unwrap()),
             Some(KeyboardCommand::SelectPreviousAnnotation)
         );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("r").unwrap()),
+            Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Rectangle)))
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("t").unwrap()),
+            Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Text)))
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("s").unwrap()),
+            Some(KeyboardCommand::SelectTool(None))
+        );
+        assert_eq!(keyboard_command(&Keystroke::parse("ctrl-r").unwrap()), None);
     }
 
     #[test]
