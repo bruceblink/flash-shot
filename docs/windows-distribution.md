@@ -18,6 +18,28 @@ Use `-SkipBuild` only after producing the matching release executable for the cu
 .\scripts\package-portable.ps1 -SkipBuild
 ```
 
+## Installer
+
+The project includes an Inno Setup 6 installer definition for a standard per-machine Windows install, including a Start menu shortcut and uninstaller. Validate the definition without installing Inno Setup or building an executable:
+
+```powershell
+.\scripts\package-installer.ps1 -ValidateOnly
+```
+
+To produce an unsigned installer, install Inno Setup 6 and run:
+
+```powershell
+.\scripts\package-installer.ps1
+```
+
+To require an Authenticode signature for both the installed executable and setup program, make `signtool.exe` and a usable code-signing certificate available, then run:
+
+```powershell
+.\scripts\package-installer.ps1 -RequireSignature
+```
+
+`-RequireSignature` fails instead of silently publishing an unsigned artifact. The installer does not bundle FFmpeg.
+
 ## Release checks
 
-Before publishing a portable package, run the repository validation gates, build the release package, verify the checksum, and manually smoke-test the extracted executable on a clean Windows profile. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
+Before publishing a portable package or installer, run the repository validation gates, verify the checksum, and manually smoke-test it on a clean Windows profile. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
