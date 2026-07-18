@@ -6,6 +6,7 @@ use super::geometry::{PhysicalPoint, PhysicalRect};
 use super::selection::ResizeHandle;
 
 pub const ANNOTATION_DOCUMENT_VERSION: u32 = 1;
+const MIN_FREEHAND_SAMPLE_DISTANCE: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnnotationId(u64);
@@ -52,6 +53,9 @@ pub enum AnnotationKind {
     Arrow {
         start: PhysicalPoint,
         end: PhysicalPoint,
+    },
+    Freehand {
+        points: Vec<PhysicalPoint>,
     },
 }
 
@@ -160,6 +164,10 @@ impl Annotation {
             AnnotationKind::Line { start, end } | AnnotationKind::Arrow { start, end } => {
                 segment_distance_squared(point, start, end) <= u64::from(threshold).pow(2)
             }
+            AnnotationKind::Freehand { ref points } => points.windows(2).any(|segment| {
+                segment_distance_squared(point, segment[0], segment[1])
+                    <= u64::from(threshold).pow(2)
+            }),
         }
     }
 
@@ -169,6 +177,7 @@ impl Annotation {
             AnnotationKind::Line { start, end } | AnnotationKind::Arrow { start, end } => {
                 PhysicalRect::new(start, end)
             }
+            AnnotationKind::Freehand { ref points } => bounds_for_points(points),
         }
     }
 
@@ -193,6 +202,9 @@ impl Annotation {
                 AnnotationKind::Arrow { start, end } => AnnotationKind::Arrow {
                     start: translate(start),
                     end: translate(end),
+                },
+                AnnotationKind::Freehand { ref points } => AnnotationKind::Freehand {
+                    points: points.iter().copied().map(translate).collect(),
                 },
             },
             style: self.style,
@@ -230,6 +242,9 @@ impl Annotation {
                     start: scale_point(start),
                     end: scale_point(end),
                 },
+                AnnotationKind::Freehand { ref points } => AnnotationKind::Freehand {
+                    points: points.iter().copied().map(scale_point).collect(),
+                },
             },
             style: self.style,
         }
@@ -243,6 +258,7 @@ pub enum AnnotationTool {
     Ellipse,
     Line,
     Arrow,
+    Freehand,
 }
 
 /// In-progress pointer gesture. A draft is intentionally absent from the
@@ -254,6 +270,7 @@ pub struct AnnotationDraft {
     style: AnnotationStyle,
     start: PhysicalPoint,
     current: PhysicalPoint,
+    points: Vec<PhysicalPoint>,
 }
 
 impl AnnotationDraft {
@@ -269,6 +286,7 @@ impl AnnotationDraft {
             style,
             start,
             current: start,
+            points: vec![start],
         }
     }
 
@@ -281,11 +299,24 @@ impl AnnotationDraft {
     }
 
     pub fn update(&mut self, point: PhysicalPoint) {
+        if self.tool == AnnotationTool::Freehand {
+            if let Some(last_sample) = self.points.last().copied() {
+                if squared_distance(last_sample, point)
+                    >= u64::from(MIN_FREEHAND_SAMPLE_DISTANCE).pow(2)
+                {
+                    self.points.push(point);
+                }
+            }
+        }
         self.current = point;
     }
 
     pub fn preview(&self) -> Option<Annotation> {
-        (self.start != self.current).then(|| Annotation {
+        let has_visible_geometry = match self.tool {
+            AnnotationTool::Freehand => self.points.len() >= 2,
+            _ => self.start != self.current,
+        };
+        has_visible_geometry.then(|| Annotation {
             id: self.id,
             kind: match self.tool {
                 AnnotationTool::Rectangle => AnnotationKind::Rectangle {
@@ -301,6 +332,9 @@ impl AnnotationDraft {
                 AnnotationTool::Arrow => AnnotationKind::Arrow {
                     start: self.start,
                     end: self.current,
+                },
+                AnnotationTool::Freehand => AnnotationKind::Freehand {
+                    points: self.points.clone(),
                 },
             },
             style: self.style,
@@ -596,6 +630,35 @@ fn clamp_to_canvas(bounds: PhysicalRect, point: PhysicalPoint) -> PhysicalPoint 
         x: point.x.clamp(bounds.left, bounds.right),
         y: point.y.clamp(bounds.top, bounds.bottom),
     }
+}
+
+fn bounds_for_points(points: &[PhysicalPoint]) -> PhysicalRect {
+    let Some(&first) = points.first() else {
+        return PhysicalRect::default();
+    };
+    let (left, top, right, bottom) = points.iter().skip(1).fold(
+        (first.x, first.y, first.x, first.y),
+        |(left, top, right, bottom), point| {
+            (
+                left.min(point.x),
+                top.min(point.y),
+                right.max(point.x),
+                bottom.max(point.y),
+            )
+        },
+    );
+    PhysicalRect {
+        left,
+        top,
+        right,
+        bottom,
+    }
+}
+
+fn squared_distance(first: PhysicalPoint, second: PhysicalPoint) -> u64 {
+    let dx = i64::from(first.x) - i64::from(second.x);
+    let dy = i64::from(first.y) - i64::from(second.y);
+    (dx * dx + dy * dy) as u64
 }
 
 fn rect_edge_distance(point: PhysicalPoint, bounds: PhysicalRect) -> u32 {
@@ -1355,5 +1418,118 @@ mod tests {
         assert!(editor.cancel());
         assert_eq!(document.annotation(original.id), Some(&original));
         assert_eq!(history.undo_len(), 1);
+    }
+
+    #[test]
+    fn freehand_draft_debounces_nearby_samples_and_commits_one_path() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(401),
+                AnnotationTool::Freehand,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: -100, y: 100 },
+            )
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: -99, y: 100 });
+        editor.update(&document, PhysicalPoint { x: -98, y: 100 });
+        editor.update(&document, PhysicalPoint { x: -90, y: 105 });
+        editor.update(&document, PhysicalPoint { x: -80, y: 110 });
+        assert!(document.annotations().is_empty());
+        assert_eq!(history.undo_len(), 0);
+        assert_eq!(
+            editor.preview(document.canvas_bounds()).unwrap().kind,
+            AnnotationKind::Freehand {
+                points: vec![
+                    PhysicalPoint { x: -100, y: 100 },
+                    PhysicalPoint { x: -98, y: 100 },
+                    PhysicalPoint { x: -90, y: 105 },
+                    PhysicalPoint { x: -80, y: 110 },
+                ],
+            }
+        );
+
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        assert_eq!(document.annotations().len(), 1);
+        assert_eq!(history.undo_len(), 1);
+    }
+
+    #[test]
+    fn freehand_paths_hit_test_and_transform_like_other_annotations() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let original = Annotation {
+            id: AnnotationId::new(402),
+            kind: AnnotationKind::Freehand {
+                points: vec![
+                    PhysicalPoint { x: -500, y: 100 },
+                    PhysicalPoint { x: -300, y: 200 },
+                    PhysicalPoint { x: -100, y: 100 },
+                ],
+            },
+            style: AnnotationStyle::default(),
+        };
+        assert!(original.hit_test(PhysicalPoint { x: -300, y: 201 }, 0));
+        assert!(!original.hit_test(PhysicalPoint { x: -300, y: 260 }, 0));
+        history
+            .apply(&mut document, AnnotationCommand::Insert(original.clone()))
+            .unwrap();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin_move(&document, original.id, PhysicalPoint { x: -300, y: 150 })
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: -200, y: 250 });
+        assert_eq!(
+            editor.preview(document.canvas_bounds()).unwrap().kind,
+            AnnotationKind::Freehand {
+                points: vec![
+                    PhysicalPoint { x: -400, y: 200 },
+                    PhysicalPoint { x: -200, y: 300 },
+                    PhysicalPoint { x: 0, y: 200 },
+                ],
+            }
+        );
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+
+        editor
+            .begin_resize(&document, original.id, ResizeHandle::BottomRight)
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: 400, y: 600 });
+        assert_eq!(
+            editor.preview(document.canvas_bounds()).unwrap().kind,
+            AnnotationKind::Freehand {
+                points: vec![
+                    PhysicalPoint { x: -400, y: 200 },
+                    PhysicalPoint { x: 0, y: 600 },
+                    PhysicalPoint { x: 400, y: 200 },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn freehand_needs_two_distinct_samples_before_entering_history() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(403),
+                AnnotationTool::Freehand,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: 0, y: 0 },
+            )
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: 1, y: 0 });
+        assert!(!editor.commit(&mut document, &mut history).unwrap());
+        assert!(document.annotations().is_empty());
+        assert_eq!(history.undo_len(), 0);
     }
 }
