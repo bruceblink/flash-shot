@@ -491,6 +491,24 @@ impl Render for FlashShotApp {
                                 .when(can_export, |actions| {
                                     actions.child(
                                         div()
+                                            .id("record-window")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .border_1()
+                                            .border_color(colors.accent)
+                                            .text_color(colors.accent)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.start_selected_window_recording(cx)
+                                            }))
+                                            .child("Record Window"),
+                                    )
+                                })
+                                .when(can_export, |actions| {
+                                    actions.child(
+                                        div()
                                             .id("save-selection")
                                             .px_3()
                                             .py_1()

@@ -18,6 +18,7 @@ pub struct InspectionTarget {
 
 pub trait WindowInspector {
     fn target_at(&self, point: PhysicalPoint) -> io::Result<Option<InspectionTarget>>;
+    fn window_title_at(&self, point: PhysicalPoint) -> io::Result<Option<String>>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -26,6 +27,10 @@ pub struct SystemWindowInspector;
 impl WindowInspector for SystemWindowInspector {
     fn target_at(&self, point: PhysicalPoint) -> io::Result<Option<InspectionTarget>> {
         platform::target_at(point)
+    }
+
+    fn window_title_at(&self, point: PhysicalPoint) -> io::Result<Option<String>> {
+        platform::window_title_at(point)
     }
 }
 
@@ -47,7 +52,8 @@ mod platform {
             UI::{
                 Accessibility::{CUIAutomation8, IUIAutomation, IUIAutomationElement},
                 WindowsAndMessaging::{
-                    EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible,
+                    EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+                    IsWindowVisible,
                 },
             },
         },
@@ -70,6 +76,20 @@ mod platform {
             bounds: window_bounds,
             kind: InspectionKind::Window,
         }))
+    }
+
+    pub fn window_title_at(point: PhysicalPoint) -> io::Result<Option<String>> {
+        let Some((window, _)) = window_at(point)? else {
+            return Ok(None);
+        };
+        let mut buffer = vec![0_u16; 512];
+        // SAFETY: buffer is writable and its declared capacity matches the supplied length.
+        let length = unsafe { GetWindowTextW(window, &mut buffer) };
+        if length == 0 {
+            return Ok(None);
+        }
+        let title = String::from_utf16_lossy(&buffer[..length as usize]);
+        Ok((!title.trim().is_empty()).then_some(title))
     }
 
     fn window_at(point: PhysicalPoint) -> io::Result<Option<(HWND, PhysicalRect)>> {
@@ -201,6 +221,10 @@ mod platform {
     use std::io;
 
     pub fn target_at(_point: PhysicalPoint) -> io::Result<Option<InspectionTarget>> {
+        Ok(None)
+    }
+
+    pub fn window_title_at(_point: PhysicalPoint) -> io::Result<Option<String>> {
         Ok(None)
     }
 }

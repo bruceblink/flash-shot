@@ -94,6 +94,57 @@ impl FlashShotApp {
         self.start_recording_request(Some(bounds), cx);
     }
 
+    pub(super) fn start_selected_window_recording(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.selection_drag.selection() else {
+            self.status = "Select a window before starting a recording".to_owned();
+            cx.notify();
+            return;
+        };
+        if self.recording_control.is_some() || self.recording_start_in_flight {
+            return;
+        }
+        let center = crate::domain::geometry::PhysicalPoint {
+            x: selection.left + selection.width() as i32 / 2,
+            y: selection.top + selection.height() as i32 / 2,
+        };
+        self.recording_start_in_flight = true;
+        self.recording_restores_main_window = true;
+        self.status = "Looking up selected window for recording...".to_owned();
+        self.close_capture_overlays(cx);
+        let _ = self.session.cancel();
+        let _ = self.session.reset();
+        self.frame = None;
+        self.preview = None;
+        self.selection_drag.clear();
+        if let Some(handle) = self.main_window_handle {
+            let _ = window_visibility::hide(handle);
+        }
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result =
+                    cx.background_executor()
+                        .spawn(async move {
+                            let title = SystemWindowInspector.window_title_at(center)?.ok_or_else(
+                                || {
+                                    std::io::Error::new(
+                                        std::io::ErrorKind::NotFound,
+                                        "no recordable top-level window at the selected area",
+                                    )
+                                },
+                            )?;
+                            start_recording_target(Some(RecordingTarget::Window { title }))
+                        })
+                        .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| this.recording_started(result, cx));
+                }
+            }
+        })
+        .detach();
+    }
+
     fn start_recording_request(&mut self, region: Option<PhysicalRect>, cx: &mut Context<Self>) {
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -101,7 +152,11 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { start_recording_target(region) })
+                    .spawn(async move {
+                        start_recording_target(
+                            region.map(|bounds| RecordingTarget::Region { bounds }),
+                        )
+                    })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| this.recording_started(result, cx));
@@ -2515,11 +2570,11 @@ fn quick_save_directory() -> std::io::Result<PathBuf> {
 }
 
 fn start_recording_target(
-    region: Option<PhysicalRect>,
+    target: Option<RecordingTarget>,
 ) -> std::io::Result<crate::recording::RecordingControl> {
     let capabilities = discover()?;
-    let target = match region {
-        Some(bounds) => RecordingTarget::Region { bounds },
+    let target = match target {
+        Some(target) => target,
         None => RecordingTarget::Display {
             bounds: SystemDisplayProvider
                 .displays()?
