@@ -252,6 +252,7 @@ impl FlashShotApp {
                 .is_ok()
         {
             self.selected_annotation = Some(annotation.id);
+            self.annotation_style = annotation.style;
             self.status = "Moving annotation...".to_owned();
             return;
         }
@@ -387,12 +388,18 @@ impl FlashShotApp {
 
     pub(super) fn select_annotation_color(&mut self, color: u32, cx: &mut Context<Self>) {
         self.annotation_style.stroke_rgba = color;
+        if self.selected_annotation.is_some() {
+            self.annotation_style.fill_rgba =
+                self.annotation_style.fill_rgba.map(|_| fill_color(color));
+        }
+        self.replace_selected_annotation_style(cx);
         self.status = "Annotation color selected".to_owned();
         cx.notify();
     }
 
     pub(super) fn select_annotation_width(&mut self, width: u32, cx: &mut Context<Self>) {
         self.annotation_style.stroke_width = width.max(1);
+        self.replace_selected_annotation_style(cx);
         self.status = format!(
             "Annotation width: {} px",
             self.annotation_style.stroke_width
@@ -406,6 +413,7 @@ impl FlashShotApp {
             .fill_rgba
             .is_none()
             .then(|| fill_color(self.annotation_style.stroke_rgba));
+        self.replace_selected_annotation_style(cx);
         self.status = if self.annotation_style.fill_rgba.is_some() {
             "Shape fill enabled"
         } else {
@@ -413,6 +421,37 @@ impl FlashShotApp {
         }
         .to_owned();
         cx.notify();
+    }
+
+    fn replace_selected_annotation_style(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self.selected_annotation else {
+            return false;
+        };
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        let Some(existing) = document.annotation(id).cloned() else {
+            self.selected_annotation = None;
+            return false;
+        };
+        let replacement = crate::domain::annotation::Annotation {
+            style: self.annotation_style,
+            ..existing.clone()
+        };
+        if replacement == existing {
+            return false;
+        }
+        match self
+            .annotation_history
+            .apply(document, AnnotationCommand::Replace(replacement))
+        {
+            Ok(()) => true,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                false
+            }
+        }
     }
 
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
