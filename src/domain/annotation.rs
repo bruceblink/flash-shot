@@ -178,6 +178,12 @@ impl AnnotationDocument {
 }
 
 impl Annotation {
+    /// Maps the shared style's thickness presets to readable physical-pixel
+    /// text sizes while preserving the existing 24px default at width 4.
+    pub const fn text_font_size(&self) -> u32 {
+        self.style.stroke_width.saturating_mul(4).saturating_add(8)
+    }
+
     /// Tests a physical image coordinate against this annotation's visible geometry.
     pub fn hit_test(&self, point: PhysicalPoint, tolerance: u32) -> bool {
         let threshold = self
@@ -186,13 +192,13 @@ impl Annotation {
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
             AnnotationKind::Watermark { origin } => {
-                text_bounds(origin, WATERMARK_CONTENT).contains(point)
+                text_bounds(origin, WATERMARK_CONTENT, self.text_font_size()).contains(point)
             }
             AnnotationKind::Text {
                 origin,
                 ref content,
                 ..
-            } => text_bounds(origin, content).contains(point),
+            } => text_bounds(origin, content, self.text_font_size()).contains(point),
             AnnotationKind::Number { center, .. } => {
                 let radius = SEQUENCE_MARKER_RADIUS;
                 PhysicalRect {
@@ -230,12 +236,14 @@ impl Annotation {
 
     pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
-            AnnotationKind::Watermark { origin } => text_bounds(origin, WATERMARK_CONTENT),
+            AnnotationKind::Watermark { origin } => {
+                text_bounds(origin, WATERMARK_CONTENT, self.text_font_size())
+            }
             AnnotationKind::Text {
                 origin,
                 ref content,
                 ..
-            } => text_bounds(origin, content),
+            } => text_bounds(origin, content, self.text_font_size()),
             AnnotationKind::Number { center, .. } => marker_bounds(center),
             AnnotationKind::Blur { bounds }
             | AnnotationKind::Mosaic { bounds }
@@ -897,15 +905,15 @@ fn marker_bounds(center: PhysicalPoint) -> PhysicalRect {
     }
 }
 
-fn text_bounds(origin: PhysicalPoint, content: &str) -> PhysicalRect {
+fn text_bounds(origin: PhysicalPoint, content: &str, font_size: u32) -> PhysicalRect {
     let glyphs = content.chars().count().max(1) as i32;
+    let advance = i32::try_from(font_size.saturating_mul(2).div_ceil(3)).unwrap_or(i32::MAX);
+    let height = i32::try_from(font_size.saturating_add(4)).unwrap_or(i32::MAX);
     PhysicalRect {
         left: origin.x,
         top: origin.y,
-        right: origin
-            .x
-            .saturating_add(glyphs.saturating_mul(TEXT_ANNOTATION_ADVANCE)),
-        bottom: origin.y.saturating_add(TEXT_ANNOTATION_HEIGHT),
+        right: origin.x.saturating_add(glyphs.saturating_mul(advance)),
+        bottom: origin.y.saturating_add(height),
     }
 }
 
@@ -1271,6 +1279,32 @@ mod tests {
             AnnotationKind::Number {
                 center: PhysicalPoint { x: 230, y: 330 },
                 value: 7,
+            }
+        );
+    }
+
+    #[test]
+    fn text_bounds_and_font_size_follow_the_annotation_style() {
+        let text = Annotation {
+            id: AnnotationId::new(92),
+            kind: AnnotationKind::Text {
+                origin: PhysicalPoint { x: 10, y: 20 },
+                content: "Hi".to_owned(),
+            },
+            style: AnnotationStyle {
+                stroke_width: 10,
+                ..AnnotationStyle::default()
+            },
+        };
+
+        assert_eq!(text.text_font_size(), 48);
+        assert_eq!(
+            text.bounds(),
+            PhysicalRect {
+                left: 10,
+                top: 20,
+                right: 74,
+                bottom: 72,
             }
         );
     }

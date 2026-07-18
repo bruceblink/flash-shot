@@ -313,6 +313,7 @@ impl Render for CaptureOverlay {
                                 edit.origin,
                                 &edit.content,
                                 0xFFFFFFFF,
+                                annotation_width.saturating_mul(4).saturating_add(8),
                                 cx,
                             );
                         }
@@ -1312,6 +1313,7 @@ fn paint_annotations(
                 origin,
                 crate::domain::annotation::WATERMARK_CONTENT,
                 annotation.style.stroke_rgba,
+                annotation.text_font_size(),
                 cx,
             ),
             AnnotationKind::Text {
@@ -1323,6 +1325,7 @@ fn paint_annotations(
                 origin,
                 content,
                 annotation.style.stroke_rgba,
+                annotation.text_font_size(),
                 cx,
             ),
             AnnotationKind::Number { center, value } => paint_number_marker(
@@ -1405,14 +1408,15 @@ fn paint_text_annotation(
     origin: PhysicalPoint,
     content: &str,
     color: u32,
+    font_size: u32,
     cx: &mut gpui::App,
 ) {
     let view_origin = transform.physical_to_view(origin);
     let glyph_width = (transform
         .physical_to_view(PhysicalPoint {
-            x: origin
-                .x
-                .saturating_add(crate::domain::annotation::TEXT_ANNOTATION_ADVANCE),
+            x: origin.x.saturating_add(
+                i32::try_from(font_size.saturating_mul(2).div_ceil(3)).unwrap_or(i32::MAX),
+            ),
             y: origin.y,
         })
         .x
@@ -1436,7 +1440,7 @@ fn paint_text_annotation(
         .shape_line(content.into(), px(glyph_width), &[run], None);
     let _ = line.paint(
         point(px(view_origin.x), px(view_origin.y)),
-        px(glyph_width * 1.25),
+        px(glyph_width * (font_size as f32 / 24.0).max(0.5)),
         TextAlign::Left,
         None,
         window,

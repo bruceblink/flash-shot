@@ -26,7 +26,6 @@ use crate::{
 
 const MOSAIC_BLOCK_SIZE: u32 = 10;
 const BLUR_RADIUS: i32 = 4;
-const TEXT_FONT_SIZE: f32 = 24.0;
 
 impl CaptureFrame {
     /// Decodes an external PNG into the BGRA frame format used by the editor.
@@ -163,11 +162,19 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
             origin,
             crate::domain::annotation::WATERMARK_CONTENT,
             color,
+            annotation.text_font_size(),
         ),
         AnnotationKind::Text {
             origin,
             ref content,
-        } => draw_text_annotation(pixels, frame, origin, content, color),
+        } => draw_text_annotation(
+            pixels,
+            frame,
+            origin,
+            content,
+            color,
+            annotation.text_font_size(),
+        ),
         AnnotationKind::Number { center, value } => {
             draw_number_marker(pixels, frame, center, value, color)
         }
@@ -202,7 +209,9 @@ fn draw_text_annotation(
     origin: PhysicalPoint,
     content: &str,
     color: [u8; 4],
+    font_size: u32,
 ) {
+    let font_size = font_size as f32;
     let Ok(handle) =
         SystemSource::new().select_best_match(&[FamilyName::SansSerif], &Properties::new())
     else {
@@ -219,7 +228,7 @@ fn draw_text_annotation(
         };
         let Ok(bounds) = font.raster_bounds(
             glyph,
-            TEXT_FONT_SIZE,
+            font_size,
             Transform2F::default(),
             HintingOptions::None,
             RasterizationOptions::GrayscaleAa,
@@ -231,7 +240,7 @@ fn draw_text_annotation(
             .rasterize_glyph(
                 &mut canvas,
                 glyph,
-                TEXT_FONT_SIZE,
+                font_size,
                 Transform2F::from_translation(-bounds.origin().to_f32()),
                 HintingOptions::None,
                 RasterizationOptions::GrayscaleAa,
@@ -260,8 +269,8 @@ fn draw_text_annotation(
         }
         pen_x += font
             .advance(glyph)
-            .map(|advance| advance.x() * TEXT_FONT_SIZE / font.metrics().units_per_em as f32)
-            .unwrap_or(crate::domain::annotation::TEXT_ANNOTATION_ADVANCE as f32);
+            .map(|advance| advance.x() * font_size / font.metrics().units_per_em as f32)
+            .unwrap_or(font_size * 2.0 / 3.0);
     }
 }
 
