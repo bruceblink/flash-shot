@@ -20,6 +20,8 @@ use crate::{
     theme::ThemeColors,
 };
 
+const OVERLAY_BOTTOM_SAFE_INSET: f32 = 56.0;
+
 pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
     display: DisplayInfo,
@@ -324,7 +326,7 @@ impl Render for CaptureOverlay {
                 div()
                     .absolute()
                     .left(px(18.0))
-                    .bottom(px(18.0))
+                    .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
                     .px_3()
                     .py_2()
                     .bg(rgba(0x111827D9))
@@ -336,7 +338,7 @@ impl Render for CaptureOverlay {
                 div()
                     .absolute()
                     .right(px(18.0))
-                    .bottom(px(18.0))
+                    .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
                     .flex()
                     .gap_2()
                     .when(can_export, |actions| {
@@ -490,9 +492,6 @@ fn paint_annotations(
         return;
     };
     for annotation in annotations.iter().chain(preview) {
-        if outline_shape_bounds(annotation).is_none() {
-            continue;
-        }
         match annotation.kind {
             AnnotationKind::Rectangle { bounds } => {
                 paint_outline(window, transform, bounds, colors.accent)
@@ -505,6 +504,7 @@ fn paint_annotations(
     }
 }
 
+#[cfg(test)]
 fn outline_shape_bounds(annotation: &Annotation) -> Option<PhysicalRect> {
     match annotation.kind {
         AnnotationKind::Rectangle { bounds } | AnnotationKind::Ellipse { bounds } => Some(bounds),
