@@ -424,4 +424,72 @@ mod tests {
         assert_eq!(capture.frame_count(), 0);
         assert!(capture.finish(options()).is_err());
     }
+
+    #[test]
+    fn long_page_stitching_preserves_pixels_with_bounded_output_memory() {
+        const WIDTH: u32 = 128;
+        const VIEWPORT_HEIGHT: u32 = 240;
+        const OVERLAP: u32 = 120;
+        const FRAME_COUNT: u32 = 100;
+
+        let frames: Vec<_> = (0..FRAME_COUNT)
+            .map(|index| {
+                patterned_frame(WIDTH, VIEWPORT_HEIGHT, index * (VIEWPORT_HEIGHT - OVERLAP))
+            })
+            .collect();
+        let stitched = stitch_vertical(
+            &frames,
+            OverlapOptions {
+                minimum_rows: OVERLAP,
+                max_mean_abs_difference: 0,
+            },
+        )
+        .unwrap();
+
+        let expected_height = VIEWPORT_HEIGHT + (FRAME_COUNT - 1) * (VIEWPORT_HEIGHT - OVERLAP);
+        assert_eq!(stitched.frame.height, expected_height);
+        assert_eq!(stitched.overlaps, vec![OVERLAP; (FRAME_COUNT - 1) as usize]);
+        assert_eq!(
+            stitched.frame.pixels.len(),
+            WIDTH as usize * expected_height as usize * 4,
+            "the stitched image owns only the final contiguous pixel buffer"
+        );
+        for (x, y) in [(0, 0), (47, 239), (127, 5_000), (88, expected_height - 1)] {
+            let offset = (y as usize * WIDTH as usize + x as usize) * 4;
+            assert_eq!(
+                &stitched.frame.pixels[offset..offset + 4],
+                &patterned_pixel(x, y),
+                "physical pixel ({x}, {y}) changed during long-page stitching"
+            );
+        }
+    }
+
+    fn patterned_frame(width: u32, height: u32, top: u32) -> CaptureFrame {
+        let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
+        for y in top..top + height {
+            for x in 0..width {
+                pixels.extend_from_slice(&patterned_pixel(x, y));
+            }
+        }
+        CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: top as i32,
+                right: width as i32,
+                bottom: (top + height) as i32,
+            },
+            width,
+            height,
+            stride: width as usize * 4,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(pixels),
+            capture_duration: Duration::from_millis(2),
+            cpu_copy_count: 1,
+        }
+    }
+
+    fn patterned_pixel(x: u32, y: u32) -> [u8; 4] {
+        let value = x.wrapping_mul(31).wrapping_add(y.wrapping_mul(17));
+        [value as u8, (value >> 8) as u8, (value >> 16) as u8, 255]
+    }
 }
