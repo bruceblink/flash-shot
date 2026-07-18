@@ -302,19 +302,30 @@ impl Annotation {
         }
     }
 
-    /// Makes a distinct annotation offset inside the image canvas so a copied
-    /// annotation remains immediately visible and selectable.
-    pub fn duplicated(&self, id: AnnotationId, canvas_bounds: PhysicalRect, offset: i32) -> Self {
+    /// Translates an annotation without allowing any part of its bounds to
+    /// leave the canvas. The original size is retained at each edge.
+    pub fn translated_within(
+        &self,
+        canvas_bounds: PhysicalRect,
+        delta_x: i32,
+        delta_y: i32,
+    ) -> Self {
         let bounds = self.bounds();
-        let delta_x = offset.clamp(
+        let delta_x = delta_x.clamp(
             canvas_bounds.left.saturating_sub(bounds.left),
             canvas_bounds.right.saturating_sub(bounds.right),
         );
-        let delta_y = offset.clamp(
+        let delta_y = delta_y.clamp(
             canvas_bounds.top.saturating_sub(bounds.top),
             canvas_bounds.bottom.saturating_sub(bounds.bottom),
         );
-        let mut duplicate = self.translated(delta_x, delta_y);
+        self.translated(delta_x, delta_y)
+    }
+
+    /// Makes a distinct annotation offset inside the image canvas so a copied
+    /// annotation remains immediately visible and selectable.
+    pub fn duplicated(&self, id: AnnotationId, canvas_bounds: PhysicalRect, offset: i32) -> Self {
+        let mut duplicate = self.translated_within(canvas_bounds, offset, offset);
         duplicate.id = id;
         duplicate
     }
@@ -1471,6 +1482,39 @@ mod tests {
         let duplicate = annotation.duplicated(AnnotationId::new(43), canvas, 12);
 
         assert_eq!(duplicate.bounds(), annotation.bounds());
+    }
+
+    #[test]
+    fn keyboard_translation_preserves_size_and_clamps_to_canvas() {
+        let annotation = rectangle(
+            42,
+            PhysicalRect {
+                left: 500,
+                top: 300,
+                right: 640,
+                bottom: 480,
+            },
+        );
+        let canvas = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 640,
+            bottom: 480,
+        };
+
+        let moved = annotation.translated_within(canvas, -10, -20);
+        let clamped = annotation.translated_within(canvas, 10, 20);
+
+        assert_eq!(
+            moved.bounds(),
+            PhysicalRect {
+                left: 490,
+                top: 280,
+                right: 630,
+                bottom: 460,
+            }
+        );
+        assert_eq!(clamped.bounds(), annotation.bounds());
     }
 
     #[test]

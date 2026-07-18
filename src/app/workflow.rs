@@ -1480,7 +1480,10 @@ impl FlashShotApp {
                     false
                 }
             }
-            KeyboardCommand::Nudge(delta_x, delta_y) => self.nudge_selection(delta_x, delta_y, cx),
+            KeyboardCommand::Nudge(delta_x, delta_y) => {
+                self.nudge_selected_annotation(delta_x, delta_y, cx)
+                    || self.nudge_selection(delta_x, delta_y, cx)
+            }
         };
         if handled {
             cx.stop_propagation();
@@ -1642,6 +1645,43 @@ impl FlashShotApp {
             true
         } else {
             false
+        }
+    }
+
+    fn nudge_selected_annotation(
+        &mut self,
+        delta_x: i32,
+        delta_y: i32,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(id) = self.selected_annotation else {
+            return false;
+        };
+        let Some(document) = self.annotation_document.as_mut() else {
+            return false;
+        };
+        let Some(existing) = document.annotation(id).cloned() else {
+            self.selected_annotation = None;
+            return false;
+        };
+        let replacement = existing.translated_within(document.canvas_bounds(), delta_x, delta_y);
+        if replacement == existing {
+            return true;
+        }
+        match self
+            .annotation_history
+            .apply(document, AnnotationCommand::Replace(replacement))
+        {
+            Ok(()) => {
+                self.status = "Annotation moved".to_owned();
+                cx.notify();
+                true
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                true
+            }
         }
     }
 
