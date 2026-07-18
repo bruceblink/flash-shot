@@ -243,6 +243,68 @@ pub struct RecordingExit {
     pub diagnostic: String,
 }
 
+/// The latest machine-readable progress information emitted by FFmpeg's `-progress` pipe.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RecordingProgress {
+    /// Encoded output timestamp in microseconds, when FFmpeg has reported one.
+    pub output_time_us: Option<u64>,
+    /// Total encoded video frames, when reported by FFmpeg.
+    pub frame: Option<u64>,
+    /// `true` only after FFmpeg emits `progress=end`.
+    pub finished: bool,
+}
+
+/// Incrementally consumes line-oriented FFmpeg `-progress pipe:1` output.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProgressParser {
+    pending: String,
+    progress: RecordingProgress,
+}
+
+impl ProgressParser {
+    pub fn progress(&self) -> RecordingProgress {
+        self.progress
+    }
+
+    /// Pushes any bytes received from stdout and returns a snapshot when a progress block ends.
+    pub fn push(&mut self, bytes: &[u8]) -> Option<RecordingProgress> {
+        self.pending.push_str(&String::from_utf8_lossy(bytes));
+        let mut completed = None;
+        while let Some(newline) = self.pending.find('\n') {
+            let line = self.pending[..newline].trim_end_matches('\r').to_owned();
+            self.pending.drain(..=newline);
+            if let Some(progress) = self.consume_line(&line) {
+                completed = Some(progress);
+            }
+        }
+        completed
+    }
+
+    /// Treats any partial final line as a complete line after stdout closes.
+    pub fn finish(&mut self) -> Option<RecordingProgress> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let line = std::mem::take(&mut self.pending);
+        self.consume_line(line.trim_end_matches('\r'))
+    }
+
+    fn consume_line(&mut self, line: &str) -> Option<RecordingProgress> {
+        let (key, value) = line.split_once('=')?;
+        match key {
+            "out_time_us" => self.progress.output_time_us = value.parse().ok(),
+            "frame" => self.progress.frame = value.parse().ok(),
+            "progress" if value == "end" => {
+                self.progress.finished = true;
+                return Some(self.progress);
+            }
+            "progress" if value == "continue" => return Some(self.progress),
+            _ => {}
+        }
+        None
+    }
+}
+
 /// Owns a single FFmpeg child process and guarantees cleanup when the owner is dropped.
 pub struct RecordingProcess {
     child: Option<Child>,
@@ -678,10 +740,10 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 mod tests {
     use super::{
         AudioSource, DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, FfmpegCommand,
-        GRACEFUL_STOP_TIMEOUT, RecordingProcess, RecordingRequest, RecordingSession,
-        RecordingState, RecordingTarget, VERSION_ARGUMENTS, build_recording_command,
-        diagnostic_suffix, executable_from, first_diagnostic_line, graceful_stop_input,
-        parse_input_formats, parse_version, read_bounded_diagnostics,
+        GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingProcess, RecordingRequest,
+        RecordingSession, RecordingState, RecordingTarget, VERSION_ARGUMENTS,
+        build_recording_command, diagnostic_suffix, executable_from, first_diagnostic_line,
+        graceful_stop_input, parse_input_formats, parse_version, read_bounded_diagnostics,
     };
     use crate::domain::geometry::PhysicalRect;
     use std::{ffi::OsString, io::Cursor, path::PathBuf, time::Duration};
@@ -933,6 +995,46 @@ mod tests {
             ..region_request()
         };
         assert!(build_recording_command(&capabilities(), &request).is_err());
+    }
+
+    #[test]
+    fn progress_parser_combines_fragmented_ffmpeg_progress_blocks() {
+        let mut parser = ProgressParser::default();
+
+        assert_eq!(parser.push(b"frame=12\nout_time_us=50"), None);
+        assert_eq!(
+            parser.push(b"0000\nprogress=continue\n"),
+            Some(super::RecordingProgress {
+                frame: Some(12),
+                output_time_us: Some(500_000),
+                finished: false,
+            })
+        );
+        assert_eq!(
+            parser.push(b"progress=end\n"),
+            Some(super::RecordingProgress {
+                frame: Some(12),
+                output_time_us: Some(500_000),
+                finished: true,
+            })
+        );
+    }
+
+    #[test]
+    fn progress_parser_ignores_invalid_values_and_flushes_a_final_partial_line() {
+        let mut parser = ProgressParser::default();
+
+        assert_eq!(
+            parser.push(b"frame=unknown\nprogress=continue\n"),
+            Some(Default::default())
+        );
+        assert_eq!(parser.push(b"out_time_us=10"), None);
+        assert_eq!(
+            parser.finish(),
+            None,
+            "a final metric alone is not a complete progress block"
+        );
+        assert_eq!(parser.progress().output_time_us, Some(10));
     }
 
     #[test]
