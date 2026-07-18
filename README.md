@@ -52,6 +52,12 @@ $env:FLASH_SHOT_RECORDING_SYSTEM_AUDIO = "default"
 
 `FLASH_SHOT_RECORDING_MICROPHONE` 与 `FLASH_SHOT_RECORDING_SYSTEM_AUDIO` 不能同时设置；未设置时录制无音频。
 
+快速保存默认写入 `Pictures\Flash Shot\FlashShot-<timestamp>.png`。可通过安全文件名前缀自定义命名：
+
+```powershell
+$env:FLASH_SHOT_SAVE_PREFIX = "Release_Notes"
+```
+
 ### 验证
 
 ```powershell

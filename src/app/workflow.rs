@@ -2797,7 +2797,17 @@ fn next_quick_save_path(
     timestamp_ms: u128,
     exists: impl Fn(&Path) -> bool,
 ) -> PathBuf {
-    let stem = format!("FlashShot-{timestamp_ms}");
+    let prefix = quick_save_prefix();
+    next_quick_save_path_with_prefix(directory, &prefix, timestamp_ms, exists)
+}
+
+fn next_quick_save_path_with_prefix(
+    directory: &Path,
+    prefix: &str,
+    timestamp_ms: u128,
+    exists: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    let stem = format!("{prefix}-{timestamp_ms}");
     let initial = directory.join(format!("{stem}.png"));
     if !exists(&initial) {
         return initial;
@@ -2809,6 +2819,23 @@ fn next_quick_save_path(
         }
     }
     unreachable!("u32 path suffixes cannot be exhausted")
+}
+
+fn quick_save_prefix() -> String {
+    std::env::var("FLASH_SHOT_SAVE_PREFIX")
+        .ok()
+        .map(|prefix| sanitize_save_prefix(&prefix))
+        .filter(|prefix| !prefix.is_empty())
+        .unwrap_or_else(|| "FlashShot".to_owned())
+}
+
+fn sanitize_save_prefix(prefix: &str) -> String {
+    prefix
+        .trim()
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        .take(48)
+        .collect()
 }
 
 fn unix_timestamp_ms() -> u128 {
@@ -2998,9 +3025,10 @@ mod tests {
         KeyboardCommand, annotation_added_status, annotation_cancelled_status,
         copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color,
         format_recording_progress, intersect_rect, is_current_operation, keyboard_command,
-        next_capture_delay, next_quick_save_path, pinned_size, png_path,
-        quick_save_annotated_frame_selection_in, resolve_pointer_selection,
-        save_annotated_frame_selection, style_for_tool, tool_selected_status, with_alpha,
+        next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix, pinned_size,
+        png_path, quick_save_annotated_frame_selection_in, resolve_pointer_selection,
+        sanitize_save_prefix, save_annotated_frame_selection, style_for_tool, tool_selected_status,
+        with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -3494,6 +3522,22 @@ mod tests {
                 .is_some_and(|name| name == "FlashShot-1725000000123.png")
         });
         assert_eq!(second, directory.join("FlashShot-1725000000123-2.png"));
+    }
+
+    #[test]
+    fn quick_save_prefix_is_safe_and_part_of_the_collision_resistant_name() {
+        assert_eq!(
+            sanitize_save_prefix("  My Report: Q3/2026  "),
+            "MyReportQ32026"
+        );
+        assert_eq!(sanitize_save_prefix("___"), "___");
+        assert_eq!(sanitize_save_prefix("<>:\\|?*"), "");
+
+        let directory = PathBuf::from("Pictures").join("Flash Shot");
+        assert_eq!(
+            next_quick_save_path_with_prefix(&directory, "Release_Notes", 42, |_| false),
+            directory.join("Release_Notes-42.png")
+        );
     }
 
     #[test]
