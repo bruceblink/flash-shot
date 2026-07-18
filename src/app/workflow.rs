@@ -324,6 +324,10 @@ impl FlashShotApp {
         self.select_annotation_tool(AnnotationTool::Ellipse, cx);
     }
 
+    pub(super) fn select_line_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Line, cx);
+    }
+
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.annotation_tool = None;
@@ -857,7 +861,8 @@ fn tool_selected_status(tool: AnnotationTool) -> &'static str {
     match tool {
         AnnotationTool::Rectangle => "Rectangle tool selected",
         AnnotationTool::Ellipse => "Ellipse tool selected",
-        AnnotationTool::Line | AnnotationTool::Arrow | AnnotationTool::Freehand => "Tool selected",
+        AnnotationTool::Line => "Line tool selected",
+        AnnotationTool::Arrow | AnnotationTool::Freehand => "Tool selected",
     }
 }
 
@@ -865,9 +870,8 @@ fn drawing_status(tool: AnnotationTool) -> &'static str {
     match tool {
         AnnotationTool::Rectangle => "Drawing rectangle...",
         AnnotationTool::Ellipse => "Drawing ellipse...",
-        AnnotationTool::Line | AnnotationTool::Arrow | AnnotationTool::Freehand => {
-            "Drawing annotation..."
-        }
+        AnnotationTool::Line => "Drawing line...",
+        AnnotationTool::Arrow | AnnotationTool::Freehand => "Drawing annotation...",
     }
 }
 
@@ -875,6 +879,7 @@ fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
         Some(AnnotationTool::Rectangle) => "Rectangle added",
         Some(AnnotationTool::Ellipse) => "Ellipse added",
+        Some(AnnotationTool::Line) => "Line added",
         _ => "Annotation added",
     }
 }
@@ -883,6 +888,7 @@ fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
         Some(AnnotationTool::Rectangle) => "Rectangle cancelled",
         Some(AnnotationTool::Ellipse) => "Ellipse cancelled",
+        Some(AnnotationTool::Line) => "Line cancelled",
         _ => "Annotation cancelled",
     }
 }

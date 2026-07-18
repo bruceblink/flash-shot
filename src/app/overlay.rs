@@ -320,6 +320,30 @@ impl Render for CaptureOverlay {
                                 });
                             }))
                             .child("Ellipse"),
+                    )
+                    .child(
+                        div()
+                            .id("overlay-tool-line")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Line) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Line) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_line_tool(cx));
+                                });
+                            }))
+                            .child("Line"),
                     ),
             )
             .child(
@@ -499,6 +523,9 @@ fn paint_annotations(
             AnnotationKind::Ellipse { bounds } => {
                 paint_ellipse_outline(window, transform, bounds, colors.accent)
             }
+            AnnotationKind::Line { start, end } => {
+                paint_line(window, transform, start, end, colors.accent)
+            }
             _ => {}
         }
     }
@@ -534,6 +561,23 @@ fn paint_outline(
         color,
         gpui::BorderStyle::Solid,
     ));
+}
+
+fn paint_line(
+    window: &mut Window,
+    transform: PreviewTransform,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+    color: gpui::Hsla,
+) {
+    let start = transform.physical_to_view(start);
+    let end = transform.physical_to_view(end);
+    let mut path = gpui::PathBuilder::stroke(px(1.0));
+    path.move_to(point(px(start.x), px(start.y)));
+    path.line_to(point(px(end.x), px(end.y)));
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
 }
 
 fn paint_ellipse_outline(
@@ -650,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn outline_renderer_selects_rectangle_and_ellipse_but_not_line_geometry() {
+    fn shape_bounds_helper_selects_rectangle_and_ellipse_but_not_line_geometry() {
         let rectangle = Annotation {
             id: AnnotationId::new(1),
             kind: AnnotationKind::Rectangle {
