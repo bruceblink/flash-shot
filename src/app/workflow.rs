@@ -667,20 +667,24 @@ impl FlashShotApp {
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let generation = self.operation_generation;
         self.delayed_capture_generation = Some(generation);
-        let delay = Duration::from_secs(u64::from(self.capture_delay_seconds));
-        self.status = format!(
-            "Capture scheduled in {} seconds",
-            self.capture_delay_seconds
-        );
+        self.delayed_capture_remaining_seconds = Some(self.capture_delay_seconds);
+        self.status = delayed_capture_status(self.capture_delay_seconds);
         cx.notify();
+        let delay_seconds = self.capture_delay_seconds;
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                cx.background_executor().timer(delay).await;
-                if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
-                        this.start_delayed_capture(generation, cx)
+                for remaining in (0..delay_seconds).rev() {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    let started = this.update(&mut cx, |this, cx| {
+                        this.advance_delayed_capture(generation, remaining, cx)
                     });
+                    if started {
+                        break;
+                    }
                 }
             }
         })
@@ -691,19 +695,33 @@ impl FlashShotApp {
         if self.delayed_capture_generation.take().is_none() {
             return;
         }
+        self.delayed_capture_remaining_seconds = None;
         self.operation_generation = self.operation_generation.wrapping_add(1);
         self.status = "Delayed capture cancelled".to_owned();
         cx.notify();
     }
 
-    fn start_delayed_capture(&mut self, generation: u64, cx: &mut Context<Self>) {
+    fn advance_delayed_capture(
+        &mut self,
+        generation: u64,
+        remaining_seconds: u8,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.delayed_capture_generation != Some(generation)
             || !is_current_operation(self.operation_generation, generation)
         {
-            return;
+            return true;
+        }
+        if remaining_seconds > 0 {
+            self.delayed_capture_remaining_seconds = Some(remaining_seconds);
+            self.status = delayed_capture_status(remaining_seconds);
+            cx.notify();
+            return false;
         }
         self.delayed_capture_generation = None;
+        self.delayed_capture_remaining_seconds = None;
         self.start_capture_immediately(cx);
+        true
     }
 
     fn start_capture_immediately(&mut self, cx: &mut Context<Self>) {
@@ -866,6 +884,7 @@ impl FlashShotApp {
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
         self.delayed_capture_generation = None;
+        self.delayed_capture_remaining_seconds = None;
         self.frame = None;
         self.annotation_document = None;
         self.annotation_history = Default::default();
@@ -893,6 +912,7 @@ impl FlashShotApp {
     pub(super) fn shutdown(&mut self, _cx: &mut Context<Self>) {
         self.operation_generation = self.operation_generation.wrapping_add(1);
         self.delayed_capture_generation = None;
+        self.delayed_capture_remaining_seconds = None;
         if self.session.state() != CaptureSessionState::Idle {
             let _ = self.session.cancel();
         }
@@ -2703,6 +2723,10 @@ fn next_capture_delay(current: u8) -> u8 {
     }
 }
 
+fn delayed_capture_status(remaining_seconds: u8) -> String {
+    format!("Capture scheduled in {remaining_seconds} seconds")
+}
+
 fn open_capture_overlays(
     app: gpui::Entity<FlashShotApp>,
     displays: Vec<CapturedDisplayPreview>,
@@ -3493,10 +3517,11 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 mod tests {
     use super::{
         KeyboardCommand, annotation_added_status, annotation_cancelled_status,
-        copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color,
-        format_recording_progress, intersect_rect, is_current_operation, keyboard_command,
-        next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix,
-        next_recording_audio_selection, next_recording_display_selection, pinned_size, png_path,
+        copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha,
+        fill_color, format_recording_progress, intersect_rect, is_current_operation,
+        keyboard_command, next_capture_delay, next_quick_save_path,
+        next_quick_save_path_with_prefix, next_recording_audio_selection,
+        next_recording_display_selection, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
         recording_display_selection_label, recording_target_label, resolve_pointer_selection,
         sanitize_save_prefix, save_annotated_frame_selection, style_for_tool, tool_selected_status,
@@ -3858,6 +3883,21 @@ mod tests {
         assert_eq!(next_capture_delay(5), 10);
         assert_eq!(next_capture_delay(10), 0);
         assert_eq!(next_capture_delay(9), 0);
+    }
+
+    #[test]
+    fn delayed_capture_status_reports_each_remaining_second() {
+        let remaining = (1..=10)
+            .rev()
+            .map(delayed_capture_status)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            remaining.first().unwrap(),
+            "Capture scheduled in 10 seconds"
+        );
+        assert_eq!(remaining.last().unwrap(), "Capture scheduled in 1 seconds");
+        assert_eq!(remaining.len(), 10);
     }
 
     #[test]

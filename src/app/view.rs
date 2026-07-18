@@ -97,6 +97,7 @@ impl Render for FlashShotApp {
         let is_idle = self.session.state() == CaptureSessionState::Idle;
         let is_busy = self.session.state() == CaptureSessionState::Capturing;
         let delayed_capture = self.delayed_capture_generation.is_some();
+        let delayed_remaining = self.delayed_capture_remaining_seconds;
         let is_exporting = self.session.state() == CaptureSessionState::Exporting;
         let recording_active = self.recording_control.is_some();
         let recording_starting = self.recording_start_in_flight;
@@ -364,12 +365,12 @@ impl Render for FlashShotApp {
                                             },
                                         ))
                                     })
-                                    .child(if delayed_capture {
-                                        "Cancel"
+                                    .child(if let Some(remaining) = delayed_remaining {
+                                        format!("Cancel ({remaining}s)")
                                     } else if is_busy {
-                                        "Capturing..."
+                                        "Capturing...".to_owned()
                                     } else {
-                                        "Capture"
+                                        "Capture".to_owned()
                                     }),
                             ),
                     ),
