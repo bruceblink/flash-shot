@@ -1,6 +1,11 @@
 //! Capture, selection, and clipboard workflow orchestration.
 
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use gpui::{
     AppContext, AsyncApp, Bounds, Context, DisplayId, Focusable, KeyDownEvent, Keystroke,
@@ -310,6 +315,16 @@ impl FlashShotApp {
                     false
                 }
             }
+            KeyboardCommand::QuickSave => {
+                if self.session.state() == CaptureSessionState::Selecting
+                    && self.session.selection().is_some()
+                {
+                    self.quick_save_selection(cx);
+                    true
+                } else {
+                    false
+                }
+            }
             KeyboardCommand::Nudge(delta_x, delta_y) => self.nudge_selection(delta_x, delta_y, cx),
         };
         if handled {
@@ -578,6 +593,47 @@ impl FlashShotApp {
                     }
                     Ok(Ok(None)) => SaveOutcome::Cancelled,
                     Ok(Err(error)) => SaveOutcome::Failed(error.to_string()),
+                    Err(error) => SaveOutcome::Failed(error.to_string()),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_save(outcome, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub(super) fn quick_save_selection(&mut self, cx: &mut Context<Self>) {
+        let selection = match self.session.start_export() {
+            Ok(selection) => selection,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
+        let Some(frame) = self.frame.clone() else {
+            let message = "capture frame is unavailable".to_owned();
+            let _ = self.session.fail(message.clone());
+            self.status = message;
+            cx.notify();
+            return;
+        };
+
+        self.status = "Quick saving selection...".to_owned();
+        let generation = self.operation_generation;
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { quick_save_frame_selection(&frame, selection) })
+                    .await;
+                let outcome = match result {
+                    Ok(path) => SaveOutcome::Saved(path),
                     Err(error) => SaveOutcome::Failed(error.to_string()),
                 };
                 if let Some(this) = this.upgrade() {
@@ -861,6 +917,69 @@ fn save_frame_selection(
     frame.crop(selection)?.save_png(path)
 }
 
+fn quick_save_frame_selection(
+    frame: &CaptureFrame,
+    selection: PhysicalRect,
+) -> std::io::Result<PathBuf> {
+    let directory = quick_save_directory()?;
+    quick_save_frame_selection_in(frame, selection, &directory, unix_timestamp_ms())
+}
+
+fn quick_save_frame_selection_in(
+    frame: &CaptureFrame,
+    selection: PhysicalRect,
+    directory: &Path,
+    timestamp_ms: u128,
+) -> std::io::Result<PathBuf> {
+    let path = next_quick_save_path(directory, timestamp_ms, Path::exists);
+    save_frame_selection(frame, selection, path.clone())?;
+    Ok(path)
+}
+
+fn quick_save_directory() -> std::io::Result<PathBuf> {
+    let user_dirs = directories::UserDirs::new().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "user picture directory is unavailable",
+        )
+    })?;
+    let pictures = user_dirs.picture_dir().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "user picture directory is unavailable",
+        )
+    })?;
+    let directory = pictures.join("Flash Shot");
+    fs::create_dir_all(&directory)?;
+    Ok(directory)
+}
+
+fn next_quick_save_path(
+    directory: &Path,
+    timestamp_ms: u128,
+    exists: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    let stem = format!("FlashShot-{timestamp_ms}");
+    let initial = directory.join(format!("{stem}.png"));
+    if !exists(&initial) {
+        return initial;
+    }
+    for index in 2_u32.. {
+        let path = directory.join(format!("{stem}-{index}.png"));
+        if !exists(&path) {
+            return path;
+        }
+    }
+    unreachable!("u32 path suffixes cannot be exhausted")
+}
+
+fn unix_timestamp_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
 fn png_path(mut path: PathBuf) -> PathBuf {
     let is_png = path
         .extension()
@@ -932,6 +1051,7 @@ fn resolve_pointer_selection(
 enum KeyboardCommand {
     Cancel,
     Copy,
+    QuickSave,
     Nudge(i32, i32),
 }
 
@@ -949,6 +1069,7 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
     match keystroke.key.as_str() {
         "escape" if !modifiers.shift => Some(KeyboardCommand::Cancel),
         "enter" if !modifiers.shift => Some(KeyboardCommand::Copy),
+        "enter" if modifiers.shift => Some(KeyboardCommand::QuickSave),
         "left" => Some(KeyboardCommand::Nudge(
             if modifiers.shift { -10 } else { -1 },
             0,
@@ -973,7 +1094,8 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 mod tests {
     use super::{
         KeyboardCommand, copy_frame_selection, intersect_rect, is_current_operation,
-        keyboard_command, png_path, resolve_pointer_selection, save_frame_selection,
+        keyboard_command, next_quick_save_path, png_path, quick_save_frame_selection_in,
+        resolve_pointer_selection, save_frame_selection,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -1054,6 +1176,10 @@ mod tests {
             Some(KeyboardCommand::Copy)
         );
         assert_eq!(
+            keyboard_command(&Keystroke::parse("shift-enter").unwrap()),
+            Some(KeyboardCommand::QuickSave)
+        );
+        assert_eq!(
             keyboard_command(&Keystroke::parse("escape").unwrap()),
             Some(KeyboardCommand::Cancel)
         );
@@ -1130,6 +1256,67 @@ mod tests {
             png_path(PathBuf::from("capture.PNG")),
             PathBuf::from("capture.PNG")
         );
+    }
+
+    #[test]
+    fn quick_save_names_are_timestamped_and_do_not_overwrite_existing_files() {
+        let directory = PathBuf::from("Pictures").join("Flash Shot");
+        let timestamp_ms = 1_725_000_000_123_u128;
+        let first = super::next_quick_save_path(&directory, timestamp_ms, |_| false);
+
+        assert_eq!(first, directory.join("FlashShot-1725000000123.png"));
+
+        let second = next_quick_save_path(&directory, timestamp_ms, |path| {
+            path.file_name()
+                .is_some_and(|name| name == "FlashShot-1725000000123.png")
+        });
+        assert_eq!(second, directory.join("FlashShot-1725000000123-2.png"));
+    }
+
+    #[test]
+    fn quick_save_writes_the_selected_png_to_the_default_style_directory() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-quick-save-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 2,
+                bottom: 1,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([1, 2, 3, 255, 4, 5, 6, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        let path = quick_save_frame_selection_in(
+            &frame,
+            PhysicalRect {
+                left: 1,
+                top: 0,
+                right: 2,
+                bottom: 1,
+            },
+            &directory,
+            1_725_000_000_123,
+        )
+        .unwrap();
+
+        assert_eq!(path, directory.join("FlashShot-1725000000123.png"));
+        let decoder = png::Decoder::new(BufReader::new(std::fs::File::open(&path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut output = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut output).unwrap();
+        assert_eq!((info.width, info.height), (1, 1));
+        assert_eq!(&output[..info.buffer_size()], &[6, 5, 4, 255]);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

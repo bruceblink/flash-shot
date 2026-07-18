@@ -262,6 +262,22 @@ impl Render for CaptureOverlay {
                                     }))
                                     .child("Save"),
                             )
+                            .child(
+                                div()
+                                    .id("overlay-quick-save")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(rgba(0x111827E6))
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.quick_save_selection(cx))
+                                        });
+                                    }))
+                                    .child("Quick save"),
+                            )
                     })
                     .child(
                         div()
