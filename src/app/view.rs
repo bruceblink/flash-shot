@@ -655,7 +655,7 @@ impl Render for FlashShotApp {
                             .gap_3()
                             .text_color(colors.muted)
                             .child(div().text_lg().child("No capture selected"))
-                            .child(div().text_sm().child("Ctrl+Shift+Print Screen"))
+                            .child(div().text_sm().child(self.capture_shortcut.clone()))
                             .into_any_element()
                     }),
             )

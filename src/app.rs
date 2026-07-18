@@ -78,6 +78,7 @@ pub struct FlashShotApp {
     scroll_window: Option<WindowHandle<scroll_control::ManualScrollControl>>,
     main_window_handle: Option<isize>,
     focus_handle: FocusHandle,
+    capture_shortcut: String,
     status: String,
     performance: PerformanceRecorder,
     history: ScreenshotHistory,
@@ -155,6 +156,7 @@ impl FlashShotApp {
                 CaptureShortcut::default()
             }
         };
+        let capture_shortcut_label = capture_shortcut.to_string();
         let shortcut = match GlobalShortcutService::register_capture(capture_shortcut) {
             Ok((service, events)) => {
                 Self::listen_for_shortcut(events, cx);
@@ -166,7 +168,7 @@ impl FlashShotApp {
             }
         };
         let status = if shortcut.is_some() {
-            format!("Ready - {capture_shortcut}")
+            format!("Ready - {capture_shortcut_label}")
         } else {
             "Ready - global shortcut unavailable".to_owned()
         };
@@ -237,6 +239,7 @@ impl FlashShotApp {
             scroll_window: None,
             main_window_handle: None,
             focus_handle: cx.focus_handle(),
+            capture_shortcut: capture_shortcut_label,
             status,
             performance,
             history,

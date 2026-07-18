@@ -883,7 +883,7 @@ impl FlashShotApp {
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
         self.recognition_result = None;
-        self.status = "Ready - global shortcut active".to_owned();
+        self.status = format!("Ready - {}", self.capture_shortcut);
         self.close_capture_overlays(cx);
         self.close_manual_scroll_window(cx);
         self.restore_main_window();
