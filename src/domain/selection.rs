@@ -170,6 +170,7 @@ impl PreviewTransform {
 pub struct SelectionDrag {
     anchor: Option<PhysicalPoint>,
     current: Option<PhysicalPoint>,
+    dragging: bool,
 }
 
 impl SelectionDrag {
@@ -182,11 +183,13 @@ impl SelectionDrag {
             x: selection.right,
             y: selection.bottom,
         });
+        self.dragging = false;
     }
 
     pub fn begin(&mut self, point: PhysicalPoint) {
         self.anchor = Some(point);
         self.current = Some(point);
+        self.dragging = true;
     }
 
     pub fn update(&mut self, point: PhysicalPoint) {
@@ -240,6 +243,7 @@ impl SelectionDrag {
         };
         self.anchor = Some(anchor);
         self.current = Some(current);
+        self.dragging = true;
     }
 
     pub fn nudge(
@@ -271,7 +275,12 @@ impl SelectionDrag {
             x: moved.right,
             y: moved.bottom,
         });
+        self.dragging = false;
         Some(moved)
+    }
+
+    pub const fn is_dragging(&self) -> bool {
+        self.dragging
     }
 
     pub fn selection(self) -> Option<PhysicalRect> {

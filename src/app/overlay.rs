@@ -13,7 +13,7 @@ use crate::{
     domain::{
         annotation::{Annotation, AnnotationKind, AnnotationTool},
         geometry::{PhysicalPoint, PhysicalRect},
-        selection::{PreviewTransform, ViewPoint, ViewRect},
+        selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     },
     platform::cursor,
     platform::display::DisplayInfo,
@@ -152,7 +152,9 @@ impl Render for CaptureOverlay {
         let colors = ThemeColors::default();
         let display_bounds = self.display.physical_bounds;
         let app = self.app.read(cx);
-        let selection = app.selection_drag.selection();
+        // The session owns the committed selection. Keep rendering it after the
+        // drag has ended, even if a late pointer event clears transient UI state.
+        let selection = visible_selection(app.selection_drag, app.session.selection());
         let inspection_target = app.inspection_target;
         let annotations = app
             .annotation_document
@@ -723,12 +725,23 @@ fn intersect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
     (result.width() > 0 && result.height() > 0).then_some(result)
 }
 
+fn visible_selection(
+    drag: SelectionDrag,
+    committed_selection: Option<PhysicalRect>,
+) -> Option<PhysicalRect> {
+    drag.is_dragging()
+        .then(|| drag.selection())
+        .flatten()
+        .or(committed_selection)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{arrow_head_points, intersect, outline_shape_bounds};
+    use super::{arrow_head_points, intersect, outline_shape_bounds, visible_selection};
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
         geometry::{PhysicalPoint, PhysicalRect},
+        selection::SelectionDrag,
     };
 
     #[test]
@@ -822,5 +835,48 @@ mod tests {
         assert_eq!(left, Some(PhysicalPoint { x: 20, y: 14 }));
         assert_eq!(right, Some(PhysicalPoint { x: 20, y: 26 }));
         assert_eq!(arrow_head_points(end, end, 12.0, 0.55), (None, None));
+    }
+
+    #[test]
+    fn committed_selection_stays_visible_after_the_drag_finishes() {
+        let committed = PhysicalRect {
+            left: 10,
+            top: 20,
+            right: 110,
+            bottom: 120,
+        };
+        let mut drag = SelectionDrag::default();
+        drag.select(committed);
+
+        assert!(!drag.is_dragging());
+        assert_eq!(visible_selection(drag, Some(committed)), Some(committed));
+    }
+
+    #[test]
+    fn active_drag_overrides_the_previous_committed_selection() {
+        let committed = PhysicalRect {
+            left: 10,
+            top: 20,
+            right: 110,
+            bottom: 120,
+        };
+        let current = PhysicalRect {
+            left: 200,
+            top: 300,
+            right: 400,
+            bottom: 500,
+        };
+        let mut drag = SelectionDrag::default();
+        drag.begin(PhysicalPoint {
+            x: current.left,
+            y: current.top,
+        });
+        drag.update(PhysicalPoint {
+            x: current.right,
+            y: current.bottom,
+        });
+
+        assert!(drag.is_dragging());
+        assert_eq!(visible_selection(drag, Some(committed)), Some(current));
     }
 }
