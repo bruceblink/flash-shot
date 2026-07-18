@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod domain;
 pub mod history;
 pub mod image;
+pub mod ocr;
 pub mod performance;
 pub mod platform;
 pub mod single_instance;

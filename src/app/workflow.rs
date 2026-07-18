@@ -1362,6 +1362,64 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn recognize_text_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.session.selection() else {
+            self.status = "Select an area before recognizing text".to_owned();
+            cx.notify();
+            return;
+        };
+        let Some((frame, document)) = self.export_source() else {
+            cx.notify();
+            return;
+        };
+
+        self.status = "Recognizing text locally...".to_owned();
+        let generation = self.operation_generation;
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let frame = frame.composite_annotations(&document)?.crop(selection)?;
+                        crate::ocr::recognize(&frame)
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_text_recognition(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_text_recognition(
+        &mut self,
+        result: std::io::Result<String>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
+        self.status = match result {
+            Ok(text) if text.is_empty() => "No text found in the selection".to_owned(),
+            Ok(text) => format!("OCR: {text}"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT."
+                    .to_owned()
+            }
+            Err(error) => {
+                log::warn!(target: "flash_shot::ocr", "text_recognition_failed error={error}");
+                format!("OCR failed: {error}")
+            }
+        };
+        cx.notify();
+    }
+
     pub(super) fn save_selection(&mut self, cx: &mut Context<Self>) {
         let selection = match self.session.start_export() {
             Ok(selection) => selection,
