@@ -77,7 +77,6 @@ impl FlashShotApp {
             return;
         }
         self.recording_start_in_flight = true;
-        self.recording_restores_main_window = true;
         self.status = "Preparing region recording...".to_owned();
         self.close_capture_overlays(cx);
         let _ = self.session.cancel();
@@ -88,9 +87,6 @@ impl FlashShotApp {
         self.annotation_document = None;
         self.annotation_history = Default::default();
         self.annotation_editor = Default::default();
-        if let Some(handle) = self.main_window_handle {
-            let _ = window_visibility::hide(handle);
-        }
         self.start_recording_request(Some(bounds), cx);
     }
 
@@ -108,7 +104,6 @@ impl FlashShotApp {
             y: selection.top + selection.height() as i32 / 2,
         };
         self.recording_start_in_flight = true;
-        self.recording_restores_main_window = true;
         self.status = "Looking up selected window for recording...".to_owned();
         self.close_capture_overlays(cx);
         let _ = self.session.cancel();
@@ -116,9 +111,6 @@ impl FlashShotApp {
         self.frame = None;
         self.preview = None;
         self.selection_drag.clear();
-        if let Some(handle) = self.main_window_handle {
-            let _ = window_visibility::hide(handle);
-        }
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -212,10 +204,6 @@ impl FlashShotApp {
             Err(error) => self.status = format!("Could not start screen recording: {error}"),
         }
         self.recording_start_in_flight = false;
-        if self.recording_control.is_none() && self.recording_restores_main_window {
-            self.recording_restores_main_window = false;
-            self.restore_main_window();
-        }
         cx.notify();
     }
 
@@ -239,20 +227,12 @@ impl FlashShotApp {
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording saved to {}", output.display());
-                if self.recording_restores_main_window {
-                    self.recording_restores_main_window = false;
-                    self.restore_main_window();
-                }
             }
             RecordingEvent::Failed { message } => {
                 self.recording_control = None;
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording failed: {message}");
-                if self.recording_restores_main_window {
-                    self.recording_restores_main_window = false;
-                    self.restore_main_window();
-                }
             }
         }
         cx.notify();
@@ -579,7 +559,6 @@ impl FlashShotApp {
         self.recording_control = None;
         self.recording_start_in_flight = false;
         self.recording_paused = false;
-        self.recording_restores_main_window = false;
         // GPUI has already removed native windows before invoking on_app_quit.
         // Keeping the handles untouched avoids issuing late operations on closed HWNDs.
         log::info!(target: "flash_shot::lifecycle", "capture_workflow_shutdown");
