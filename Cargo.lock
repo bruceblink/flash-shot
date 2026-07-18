@@ -1569,6 +1569,7 @@ dependencies = [
  "qrcode",
  "raw-window-handle",
  "rqrr",
+ "serde",
  "serde_json",
  "tokio",
  "ureq",

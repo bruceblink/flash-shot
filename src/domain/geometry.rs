@@ -1,12 +1,12 @@
 //! Physical-pixel geometry shared by capture and selection workflows.
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PhysicalPoint {
     pub x: i32,
     pub y: i32,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PhysicalRect {
     pub left: i32,
     pub top: i32,

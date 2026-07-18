@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use super::geometry::{PhysicalPoint, PhysicalRect};
 use super::selection::ResizeHandle;
 
@@ -12,7 +14,7 @@ pub const TEXT_ANNOTATION_HEIGHT: i32 = 28;
 pub const TEXT_ANNOTATION_ADVANCE: i32 = 16;
 pub const WATERMARK_CONTENT: &str = "Flash Shot";
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct AnnotationId(u64);
 
 impl AnnotationId {
@@ -25,7 +27,7 @@ impl AnnotationId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AnnotationStyle {
     pub stroke_rgba: u32,
     pub fill_rgba: Option<u32>,
@@ -42,7 +44,7 @@ impl Default for AnnotationStyle {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AnnotationKind {
     Watermark {
         origin: PhysicalPoint,
@@ -83,14 +85,14 @@ pub enum AnnotationKind {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Annotation {
     pub id: AnnotationId,
     pub kind: AnnotationKind,
     pub style: AnnotationStyle,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AnnotationDocument {
     version: u32,
     canvas_bounds: PhysicalRect,
@@ -125,6 +127,31 @@ impl AnnotationDocument {
         self.annotations
             .iter()
             .find(|annotation| annotation.id == id)
+    }
+
+    /// Serializes the renderer-independent document with its explicit schema
+    /// version so it can be safely persisted independently of the PNG pixels.
+    pub fn to_json(&self) -> Result<String, AnnotationError> {
+        serde_json::to_string(self)
+            .map_err(|error| AnnotationError::DocumentFormat(error.to_string()))
+    }
+
+    /// Restores a document only when it matches the supported schema and all
+    /// coordinates remain inside the declared physical-pixel canvas.
+    pub fn from_json(json: &str) -> Result<Self, AnnotationError> {
+        let document: Self = serde_json::from_str(json)
+            .map_err(|error| AnnotationError::DocumentFormat(error.to_string()))?;
+        if document.version != ANNOTATION_DOCUMENT_VERSION {
+            return Err(AnnotationError::UnsupportedVersion(document.version));
+        }
+        let mut validated = Self::new(document.canvas_bounds)?;
+        for annotation in document.annotations {
+            if !annotation_is_within_canvas(&annotation, validated.canvas_bounds) {
+                return Err(AnnotationError::AnnotationOutsideCanvas(annotation.id));
+            }
+            validated.insert(annotation)?;
+        }
+        Ok(validated)
     }
 
     /// Returns the uppermost annotation whose visible pixels include `point`.
@@ -1004,6 +1031,38 @@ fn bounds_for_points(points: &[PhysicalPoint]) -> PhysicalRect {
     }
 }
 
+fn annotation_is_within_canvas(annotation: &Annotation, canvas: PhysicalRect) -> bool {
+    let contains = |point: PhysicalPoint| {
+        point.x >= canvas.left
+            && point.x <= canvas.right
+            && point.y >= canvas.top
+            && point.y <= canvas.bottom
+    };
+    match annotation.kind {
+        AnnotationKind::Watermark { origin } => contains(origin),
+        AnnotationKind::Text { origin, .. } => contains(origin),
+        AnnotationKind::Number { center, .. } => contains(center),
+        AnnotationKind::Blur { bounds }
+        | AnnotationKind::Mosaic { bounds }
+        | AnnotationKind::Highlight { bounds }
+        | AnnotationKind::Rectangle { bounds }
+        | AnnotationKind::Ellipse { bounds } => {
+            bounds.left >= canvas.left
+                && bounds.top >= canvas.top
+                && bounds.right <= canvas.right
+                && bounds.bottom <= canvas.bottom
+                && bounds.width() > 0
+                && bounds.height() > 0
+        }
+        AnnotationKind::Line { start, end } | AnnotationKind::Arrow { start, end } => {
+            contains(start) && contains(end)
+        }
+        AnnotationKind::Freehand { ref points } => {
+            points.len() >= 2 && points.iter().copied().all(contains)
+        }
+    }
+}
+
 fn marker_bounds(center: PhysicalPoint) -> PhysicalRect {
     PhysicalRect {
         left: center.x.saturating_sub(SEQUENCE_MARKER_RADIUS),
@@ -1205,6 +1264,9 @@ pub enum AnnotationError {
     DuplicateId(AnnotationId),
     MissingId(AnnotationId),
     DraftInProgress,
+    UnsupportedVersion(u32),
+    AnnotationOutsideCanvas(AnnotationId),
+    DocumentFormat(String),
 }
 
 impl fmt::Display for AnnotationError {
@@ -1217,6 +1279,22 @@ impl fmt::Display for AnnotationError {
             Self::MissingId(id) => write!(formatter, "annotation id {} does not exist", id.value()),
             Self::DraftInProgress => {
                 formatter.write_str("an annotation gesture is already in progress")
+            }
+            Self::UnsupportedVersion(version) => {
+                write!(
+                    formatter,
+                    "annotation document version {version} is unsupported"
+                )
+            }
+            Self::AnnotationOutsideCanvas(id) => {
+                write!(
+                    formatter,
+                    "annotation {} is outside the document canvas",
+                    id.value()
+                )
+            }
+            Self::DocumentFormat(error) => {
+                write!(formatter, "invalid annotation document: {error}")
             }
         }
     }
@@ -1564,6 +1642,57 @@ mod tests {
                 AnnotationCommand::Delete(AnnotationId::new(99))
             ),
             Err(AnnotationError::MissingId(AnnotationId::new(99)))
+        );
+    }
+
+    #[test]
+    fn document_json_round_trips_version_canvas_and_annotations() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let annotation = rectangle(
+            42,
+            PhysicalRect {
+                left: 20,
+                top: 30,
+                right: 120,
+                bottom: 130,
+            },
+        );
+        let mut history = CommandHistory::default();
+        history
+            .apply(&mut document, AnnotationCommand::Insert(annotation))
+            .unwrap();
+
+        let json = document.to_json().unwrap();
+        assert!(json.contains("\"version\":1"));
+        assert_eq!(AnnotationDocument::from_json(&json).unwrap(), document);
+    }
+
+    #[test]
+    fn document_json_rejects_unknown_versions_and_outside_geometry() {
+        let unknown_version = r#"{
+            "version": 2,
+            "canvas_bounds": {"left": 0, "top": 0, "right": 100, "bottom": 100},
+            "annotations": []
+        }"#;
+        assert_eq!(
+            AnnotationDocument::from_json(unknown_version),
+            Err(AnnotationError::UnsupportedVersion(2))
+        );
+
+        let outside_line = r#"{
+            "version": 1,
+            "canvas_bounds": {"left": 0, "top": 0, "right": 100, "bottom": 100},
+            "annotations": [{
+                "id": 42,
+                "kind": {"Line": {"start": {"x": 10, "y": 10}, "end": {"x": 120, "y": 10}}},
+                "style": {"stroke_rgba": 4282071295, "fill_rgba": null, "stroke_width": 4}
+            }]
+        }"#;
+        assert_eq!(
+            AnnotationDocument::from_json(outside_line),
+            Err(AnnotationError::AnnotationOutsideCanvas(AnnotationId::new(
+                42
+            )))
         );
     }
 
