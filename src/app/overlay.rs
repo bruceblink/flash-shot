@@ -11,6 +11,7 @@ use gpui::{
 use super::FlashShotApp;
 use crate::{
     domain::{
+        annotation::{Annotation, AnnotationKind, AnnotationTool},
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, ViewPoint, ViewRect},
     },
@@ -149,6 +150,16 @@ impl Render for CaptureOverlay {
         let app = self.app.read(cx);
         let selection = app.selection_drag.selection();
         let inspection_target = app.inspection_target;
+        let annotations = app
+            .annotation_document
+            .as_ref()
+            .map(|document| document.annotations().to_vec())
+            .unwrap_or_default();
+        let annotation_preview = app
+            .annotation_document
+            .as_ref()
+            .and_then(|document| app.annotation_editor.preview(document.canvas_bounds()));
+        let rectangle_tool_selected = app.annotation_tool == Some(AnnotationTool::Rectangle);
         let status = app.status.clone();
         let viewport = local_viewport(window);
         let transform = self.transform(viewport);
@@ -207,6 +218,82 @@ impl Render for CaptureOverlay {
                             },
                         )
                         .size_full(),
+                    ),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| (bounds, transform, annotations, annotation_preview),
+                    move |bounds, (_, transform, annotations, preview), window, _| {
+                        paint_annotation_rectangles(
+                            window,
+                            bounds,
+                            transform,
+                            &annotations,
+                            preview.as_ref(),
+                            colors,
+                        )
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(18.0))
+                    .top(px(18.0))
+                    .flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("overlay-tool-selection")
+                            .px_3()
+                            .py_2()
+                            .bg(if rectangle_tool_selected {
+                                colors.panel
+                            } else {
+                                colors.accent
+                            })
+                            .text_color(if rectangle_tool_selected {
+                                colors.text
+                            } else {
+                                colors.background
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_selection_tool(cx));
+                                });
+                            }))
+                            .child("Select"),
+                    )
+                    .child(
+                        div()
+                            .id("overlay-tool-rectangle")
+                            .px_3()
+                            .py_2()
+                            .bg(if rectangle_tool_selected {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if rectangle_tool_selected {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_rectangle_tool(cx));
+                                });
+                            }))
+                            .child("Rectangle"),
                     ),
             )
             .child(
@@ -367,6 +454,31 @@ fn paint_selection_mask(
     ));
 }
 
+fn paint_annotation_rectangles(
+    window: &mut Window,
+    _viewport: Bounds<Pixels>,
+    transform: Option<PreviewTransform>,
+    annotations: &[Annotation],
+    preview: Option<&Annotation>,
+    colors: ThemeColors,
+) {
+    let Some(transform) = transform else {
+        return;
+    };
+    for annotation in annotations.iter().chain(preview) {
+        if let Some(bounds) = rectangle_bounds(annotation) {
+            paint_outline(window, transform, bounds, colors.accent);
+        }
+    }
+}
+
+fn rectangle_bounds(annotation: &Annotation) -> Option<PhysicalRect> {
+    match annotation.kind {
+        AnnotationKind::Rectangle { bounds } => Some(bounds),
+        _ => None,
+    }
+}
+
 fn paint_outline(
     window: &mut Window,
     transform: PreviewTransform,
@@ -431,8 +543,11 @@ fn intersect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
 
 #[cfg(test)]
 mod tests {
-    use super::intersect;
-    use crate::domain::geometry::PhysicalRect;
+    use super::{intersect, rectangle_bounds};
+    use crate::domain::{
+        annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
+        geometry::{PhysicalPoint, PhysicalRect},
+    };
 
     #[test]
     fn clips_shared_selection_to_each_display() {
@@ -458,5 +573,40 @@ mod tests {
                 bottom: 500,
             })
         );
+    }
+
+    #[test]
+    fn rectangle_renderer_only_selects_the_interactive_rectangle_tool_geometry() {
+        let rectangle = Annotation {
+            id: AnnotationId::new(1),
+            kind: AnnotationKind::Rectangle {
+                bounds: PhysicalRect {
+                    left: 10,
+                    top: 20,
+                    right: 30,
+                    bottom: 40,
+                },
+            },
+            style: AnnotationStyle::default(),
+        };
+        let line = Annotation {
+            id: AnnotationId::new(2),
+            kind: AnnotationKind::Line {
+                start: PhysicalPoint { x: 10, y: 20 },
+                end: PhysicalPoint { x: 30, y: 40 },
+            },
+            style: AnnotationStyle::default(),
+        };
+
+        assert_eq!(
+            rectangle_bounds(&rectangle),
+            Some(PhysicalRect {
+                left: 10,
+                top: 20,
+                right: 30,
+                bottom: 40,
+            })
+        );
+        assert_eq!(rectangle_bounds(&line), None);
     }
 }

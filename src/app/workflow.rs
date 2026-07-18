@@ -16,7 +16,7 @@ use gpui::{
 use super::{FlashShotApp, overlay::CaptureOverlay, render_image::render_image_from_capture};
 use crate::{
     domain::{
-        annotation::AnnotationDocument,
+        annotation::{AnnotationDocument, AnnotationId, AnnotationStyle, AnnotationTool},
         geometry::PhysicalRect,
         selection::{PreviewTransform, ViewPoint, ViewRect},
         session::CaptureSessionState,
@@ -44,6 +44,9 @@ impl FlashShotApp {
         let generation = self.operation_generation;
         self.frame = None;
         self.annotation_document = None;
+        self.annotation_history = Default::default();
+        self.annotation_editor = Default::default();
+        self.annotation_tool = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -144,6 +147,10 @@ impl FlashShotApp {
                     };
                 self.preview = Some(capture.workspace_preview.image);
                 self.annotation_document = Some(annotation_document);
+                self.annotation_history = Default::default();
+                self.annotation_editor = Default::default();
+                self.annotation_tool = None;
+                self.next_annotation_id = 1;
                 self.frame = Some(capture.capture.frame);
                 let app = cx.entity();
                 cx.defer(move |cx| open_capture_overlays(app, capture.displays, pipeline, cx));
@@ -177,6 +184,9 @@ impl FlashShotApp {
         self.operation_generation = self.operation_generation.wrapping_add(1);
         self.frame = None;
         self.annotation_document = None;
+        self.annotation_history = Default::default();
+        self.annotation_editor = Default::default();
+        self.annotation_tool = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -196,6 +206,9 @@ impl FlashShotApp {
         }
         self.frame = None;
         self.annotation_document = None;
+        self.annotation_history = Default::default();
+        self.annotation_editor = Default::default();
+        self.annotation_tool = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -212,6 +225,10 @@ impl FlashShotApp {
         point: crate::domain::geometry::PhysicalPoint,
         resize_handle: Option<crate::domain::selection::ResizeHandle>,
     ) {
+        if self.annotation_tool.is_some() {
+            self.begin_annotation(point);
+            return;
+        }
         self.pending_click_target = self
             .inspection_target
             .filter(|target| target.bounds.contains(point));
@@ -230,6 +247,15 @@ impl FlashShotApp {
         let Some(frame) = self.frame.as_ref() else {
             return;
         };
+        if self.annotation_tool.is_some() {
+            let point = clamp_physical_point(point, frame.bounds);
+            if let Some(document) = self.annotation_document.as_ref() {
+                self.annotation_editor.update(document, point);
+            }
+            self.status = "Drawing rectangle...".to_owned();
+            cx.notify();
+            return;
+        }
         self.selection_drag
             .update(clamp_physical_point(point, frame.bounds));
         if let Some(selection) = self.selection_drag.selection() {
@@ -267,6 +293,14 @@ impl FlashShotApp {
         let Some(frame) = self.frame.as_ref() else {
             return;
         };
+        if self.annotation_tool.is_some() {
+            let point = clamp_physical_point(point, frame.bounds);
+            if let Some(document) = self.annotation_document.as_ref() {
+                self.annotation_editor.update(document, point);
+            }
+            self.finish_annotation(cx);
+            return;
+        }
         self.selection_drag
             .update(clamp_physical_point(point, frame.bounds));
         let selection = self
@@ -278,6 +312,52 @@ impl FlashShotApp {
             self.selection_drag.select(selection);
             let _ = self.session.select(selection);
             self.status = selection_status(selection);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn select_rectangle_tool(&mut self, cx: &mut Context<Self>) {
+        self.annotation_editor.cancel();
+        self.annotation_tool = Some(AnnotationTool::Rectangle);
+        self.status = "Rectangle tool selected".to_owned();
+        cx.notify();
+    }
+
+    pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
+        self.annotation_editor.cancel();
+        self.annotation_tool = None;
+        self.status = "Selection tool selected".to_owned();
+        cx.notify();
+    }
+
+    fn begin_annotation(&mut self, point: crate::domain::geometry::PhysicalPoint) {
+        let (Some(document), Some(tool)) =
+            (self.annotation_document.as_ref(), self.annotation_tool)
+        else {
+            return;
+        };
+        let id = AnnotationId::new(self.next_annotation_id);
+        if self
+            .annotation_editor
+            .begin(document, id, tool, AnnotationStyle::default(), point)
+            .is_ok()
+        {
+            self.next_annotation_id = self.next_annotation_id.saturating_add(1);
+            self.status = "Drawing rectangle...".to_owned();
+        }
+    }
+
+    fn finish_annotation(&mut self, cx: &mut Context<Self>) {
+        let Some(document) = self.annotation_document.as_mut() else {
+            return;
+        };
+        match self
+            .annotation_editor
+            .commit(document, &mut self.annotation_history)
+        {
+            Ok(true) => self.status = "Rectangle added".to_owned(),
+            Ok(false) => self.status = "Rectangle cancelled".to_owned(),
+            Err(error) => self.status = error.to_string(),
         }
         cx.notify();
     }

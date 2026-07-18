@@ -13,7 +13,9 @@ use gpui::{
 
 use crate::{
     domain::{
-        annotation::AnnotationDocument, geometry::PhysicalPoint, selection::SelectionDrag,
+        annotation::{AnnotationDocument, AnnotationEditor, AnnotationTool, CommandHistory},
+        geometry::PhysicalPoint,
+        selection::SelectionDrag,
         session::CaptureSession,
     },
     performance::PerformanceRecorder,
@@ -31,6 +33,10 @@ pub struct FlashShotApp {
     session: CaptureSession,
     frame: Option<CaptureFrame>,
     annotation_document: Option<AnnotationDocument>,
+    annotation_history: CommandHistory,
+    annotation_editor: AnnotationEditor,
+    annotation_tool: Option<AnnotationTool>,
+    next_annotation_id: u64,
     preview: Option<Arc<RenderImage>>,
     selection_drag: SelectionDrag,
     hover_pixel: Option<PhysicalPoint>,
@@ -86,6 +92,10 @@ impl FlashShotApp {
             session: CaptureSession::default(),
             frame: None,
             annotation_document: None,
+            annotation_history: CommandHistory::default(),
+            annotation_editor: AnnotationEditor::default(),
+            annotation_tool: None,
+            next_annotation_id: 1,
             preview: None,
             selection_drag: SelectionDrag::default(),
             hover_pixel: None,
