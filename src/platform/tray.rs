@@ -9,6 +9,21 @@ pub enum TrayEvent {
     QuitRequested,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrayNotification {
+    pub title: String,
+    pub body: String,
+}
+
+impl TrayNotification {
+    pub fn new(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: body.into(),
+        }
+    }
+}
+
 pub struct TrayService {
     listener: platform::TrayListener,
 }
@@ -22,17 +37,25 @@ impl TrayService {
     pub fn is_active(&self) -> bool {
         self.listener.is_active()
     }
+
+    pub fn notify(&self, notification: TrayNotification) -> io::Result<()> {
+        self.listener.notify(notification)
+    }
 }
 
 #[cfg(windows)]
 mod platform {
-    use super::TrayEvent;
+    use super::{TrayEvent, TrayNotification};
     use async_channel::Receiver;
     use std::{
         io,
         mem::size_of,
         ptr,
-        sync::mpsc::{self, SyncSender},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+            mpsc::{self, SyncSender},
+        },
         thread::{self, JoinHandle},
     };
     use windows_sys::Win32::{
@@ -40,8 +63,8 @@ mod platform {
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{
             Shell::{
-                NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
-                Shell_NotifyIconW,
+                NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
+                NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
             },
             WindowsAndMessaging::{
                 AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
@@ -55,6 +78,7 @@ mod platform {
 
     const ICON_ID: u32 = 1;
     const TRAY_CALLBACK: u32 = WM_APP + 1;
+    const TRAY_COMMAND: u32 = WM_APP + 2;
     const MENU_CAPTURE: usize = 1;
     const MENU_QUIT: usize = 2;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
@@ -62,20 +86,32 @@ mod platform {
     pub struct TrayListener {
         thread_id: u32,
         thread: Option<JoinHandle<()>>,
+        commands: Arc<Mutex<Vec<TrayCommand>>>,
+        active: Arc<AtomicBool>,
+    }
+
+    enum TrayCommand {
+        Notify(TrayNotification),
     }
 
     impl TrayListener {
         pub fn start() -> io::Result<(Self, Receiver<TrayEvent>)> {
             let (event_tx, event_rx) = async_channel::bounded(4);
             let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+            let commands = Arc::new(Mutex::new(Vec::new()));
+            let thread_commands = commands.clone();
+            let active = Arc::new(AtomicBool::new(false));
+            let thread_active = active.clone();
             let thread = thread::Builder::new()
                 .name("flash-shot-tray".to_owned())
-                .spawn(move || message_loop(event_tx, ready_tx))?;
+                .spawn(move || message_loop(event_tx, ready_tx, thread_commands, thread_active))?;
             match ready_rx.recv() {
                 Ok(Ok(thread_id)) => Ok((
                     Self {
                         thread_id,
                         thread: Some(thread),
+                        commands,
+                        active,
                     },
                     event_rx,
                 )),
@@ -90,8 +126,28 @@ mod platform {
             }
         }
 
-        pub const fn is_active(&self) -> bool {
-            self.thread.is_some()
+        pub fn is_active(&self) -> bool {
+            self.thread.is_some() && self.active.load(Ordering::Acquire)
+        }
+
+        pub fn notify(&self, notification: TrayNotification) -> io::Result<()> {
+            if !self.is_active() {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "tray listener is not active",
+                ));
+            }
+            let mut commands = self
+                .commands
+                .lock()
+                .map_err(|_| io::Error::other("tray command queue poisoned"))?;
+            commands.push(TrayCommand::Notify(notification));
+            drop(commands);
+            // SAFETY: thread_id belongs to the active listener and the command only reads its queue.
+            if unsafe { PostThreadMessageW(self.thread_id, TRAY_COMMAND, 0, 0) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
         }
     }
 
@@ -107,9 +163,14 @@ mod platform {
         }
     }
 
-    fn message_loop(events: async_channel::Sender<TrayEvent>, ready: SyncSender<io::Result<u32>>) {
+    fn message_loop(
+        events: async_channel::Sender<TrayEvent>,
+        ready: SyncSender<io::Result<u32>>,
+        commands: Arc<Mutex<Vec<TrayCommand>>>,
+        active: Arc<AtomicBool>,
+    ) {
         let result = unsafe { create_tray() };
-        let (window, icon) = match result {
+        let (window, mut icon) = match result {
             Ok(value) => value,
             Err(error) => {
                 let _ = ready.send(Err(error));
@@ -118,7 +179,9 @@ mod platform {
         };
         // SAFETY: called on the listener thread.
         let thread_id = unsafe { GetCurrentThreadId() };
+        active.store(true, Ordering::Release);
         if ready.send(Ok(thread_id)).is_err() {
+            active.store(false, Ordering::Release);
             unsafe { remove_tray(window, &icon) };
             return;
         }
@@ -132,6 +195,8 @@ mod platform {
             }
             if message.message == TRAY_CALLBACK {
                 handle_tray_message(window, message.lParam as u32, &events);
+            } else if message.message == TRAY_COMMAND {
+                process_commands(&commands, &mut icon);
             } else {
                 unsafe {
                     TranslateMessage(&message);
@@ -139,6 +204,7 @@ mod platform {
                 }
             }
         }
+        active.store(false, Ordering::Release);
         unsafe { remove_tray(window, &icon) };
     }
 
@@ -201,6 +267,33 @@ mod platform {
             return Err(io::Error::last_os_error());
         }
         Ok((window, icon))
+    }
+
+    fn process_commands(commands: &Mutex<Vec<TrayCommand>>, icon: &mut NOTIFYICONDATAW) {
+        let commands = match commands.lock() {
+            Ok(mut commands) => std::mem::take(&mut *commands),
+            Err(_) => {
+                log::warn!(target: "flash_shot::tray", "tray_command_queue_poisoned");
+                return;
+            }
+        };
+        for command in commands {
+            match command {
+                TrayCommand::Notify(notification) => show_notification(icon, notification),
+            }
+        }
+    }
+
+    fn show_notification(icon: &mut NOTIFYICONDATAW, notification: TrayNotification) {
+        icon.uFlags = NIF_INFO;
+        icon.dwInfoFlags = NIIF_INFO;
+        copy_wide(&mut icon.szInfoTitle, &notification.title);
+        copy_wide(&mut icon.szInfo, &notification.body);
+        // SAFETY: icon is registered by this listener thread and contains valid, NUL-terminated text.
+        if unsafe { Shell_NotifyIconW(NIM_MODIFY, icon) } == 0 {
+            log::warn!(target: "flash_shot::tray", "tray_notification_failed error={}", io::Error::last_os_error());
+        }
+        icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     }
 
     fn handle_tray_message(window: HWND, message: u32, events: &async_channel::Sender<TrayEvent>) {
@@ -266,6 +359,7 @@ mod platform {
     }
 
     fn copy_wide(target: &mut [u16], value: &str) {
+        target.fill(0);
         let encoded: Vec<u16> = value.encode_utf16().collect();
         let length = encoded.len().min(target.len().saturating_sub(1));
         target[..length].copy_from_slice(&encoded[..length]);
@@ -275,7 +369,7 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::TrayEvent;
+    use super::{TrayEvent, TrayNotification};
     use async_channel::Receiver;
     use std::io;
 
@@ -289,8 +383,15 @@ mod platform {
             ))
         }
 
-        pub const fn is_active(&self) -> bool {
+        pub fn is_active(&self) -> bool {
             false
+        }
+
+        pub fn notify(&self, _notification: TrayNotification) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "tray notifications are currently Windows-only",
+            ))
         }
     }
 }
@@ -298,13 +399,15 @@ mod platform {
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
-    use super::TrayService;
+    use super::{TrayNotification, TrayService};
 
     #[cfg(windows)]
     #[test]
     fn tray_starts_and_stops_cleanly() {
         let (tray, _events) = TrayService::start().unwrap();
         assert!(tray.is_active());
+        tray.notify(TrayNotification::new("Flash Shot", "Notification test"))
+            .unwrap();
         drop(tray);
     }
 }

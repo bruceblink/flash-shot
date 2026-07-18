@@ -30,7 +30,7 @@ use crate::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::CaptureFrame,
         shortcut::{GlobalShortcutService, ShortcutEvent},
-        tray::{TrayEvent, TrayService},
+        tray::{TrayEvent, TrayNotification, TrayService},
         window_inspector::InspectionTarget,
     },
     theme::ThemeColors,
@@ -130,6 +130,15 @@ impl TextEdit {
 }
 
 impl FlashShotApp {
+    pub(super) fn notify_user(&self, title: &str, body: &str) {
+        let Some(tray) = self._tray.as_ref() else {
+            return;
+        };
+        if let Err(error) = tray.notify(TrayNotification::new(title, body)) {
+            log::warn!(target: "flash_shot::tray", "user_notification_failed error={error}");
+        }
+    }
+
     pub fn new(
         performance: PerformanceRecorder,
         history: ScreenshotHistory,

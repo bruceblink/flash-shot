@@ -60,10 +60,12 @@ impl FlashShotApp {
             Ok(AutoStartState::Enabled) => {
                 self.auto_start_enabled = true;
                 self.status = "Launch at sign-in enabled".to_owned();
+                self.notify_user("Flash Shot", "Launch at sign-in enabled");
             }
             Ok(AutoStartState::Disabled) => {
                 self.auto_start_enabled = false;
                 self.status = "Launch at sign-in disabled".to_owned();
+                self.notify_user("Flash Shot", "Launch at sign-in disabled");
             }
             Ok(AutoStartState::ManagedByAnotherExecutable) => {
                 self.auto_start_enabled = false;
@@ -449,6 +451,7 @@ impl FlashShotApp {
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording saved to {}", output.display());
+                self.notify_user("Flash Shot", "Screen recording saved");
             }
             RecordingEvent::Failed { message } => {
                 self.recording_control = None;
@@ -2423,6 +2426,7 @@ impl FlashShotApp {
                     if let Some(history_status) = history_status {
                         self.status.push_str(&history_status);
                     }
+                    self.notify_user("Flash Shot", "Screenshot saved");
                     self.close_capture_overlays(cx);
                     self.restore_main_window();
                 }
@@ -2471,6 +2475,7 @@ impl FlashShotApp {
                     self.status = error.to_string();
                 } else {
                     self.status = "Selection copied to clipboard".to_owned();
+                    self.notify_user("Flash Shot", "Screenshot copied to clipboard");
                     self.close_capture_overlays(cx);
                     self.restore_main_window();
                 }
