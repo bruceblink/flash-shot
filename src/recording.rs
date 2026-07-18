@@ -15,6 +15,7 @@ use std::{
 };
 
 use crate::domain::geometry::PhysicalRect;
+use crate::platform::process_group::ProcessGroup;
 
 const FFMPEG_PATH_ENV: &str = "FLASH_SHOT_FFMPEG";
 const VERSION_ARGUMENTS: &[&str] = &["-hide_banner", "-version"];
@@ -311,6 +312,7 @@ impl ProgressParser {
 /// Owns a single FFmpeg child process and guarantees cleanup when the owner is dropped.
 pub struct RecordingProcess {
     child: Option<Child>,
+    process_group: ProcessGroup,
     stdin: Option<ChildStdin>,
     progress: Arc<Mutex<RecordingProgress>>,
     stdout_reader: Option<JoinHandle<io::Result<RecordingProgress>>>,
@@ -320,6 +322,7 @@ pub struct RecordingProcess {
 impl RecordingProcess {
     /// Starts FFmpeg with piped control input and continuously drained stderr.
     pub fn start(command: FfmpegCommand) -> io::Result<Self> {
+        let process_group = ProcessGroup::create()?;
         let mut child = command
             .into_command()
             .stdin(Stdio::piped())
@@ -329,6 +332,7 @@ impl RecordingProcess {
             .map_err(|error| {
                 io::Error::new(error.kind(), format!("could not start FFmpeg: {error}"))
             })?;
+        process_group.assign(&child)?;
         let stdin = child.stdin.take().ok_or_else(|| {
             io::Error::other("FFmpeg control input pipe was not available after startup")
         })?;
@@ -344,6 +348,7 @@ impl RecordingProcess {
         let stderr_reader = thread::spawn(move || read_bounded_diagnostics(stderr));
         Ok(Self {
             child: Some(child),
+            process_group,
             stdin: Some(stdin),
             progress,
             stdout_reader: Some(stdout_reader),
@@ -389,6 +394,7 @@ impl RecordingProcess {
             }
             if Instant::now() >= deadline {
                 let mut child = self.child.take().expect("checked above");
+                let _ = self.process_group.terminate();
                 let _ = child.kill();
                 let _ = child.wait();
                 self.join_progress()?;
@@ -453,6 +459,7 @@ impl Drop for RecordingProcess {
     fn drop(&mut self) {
         self.stdin.take();
         if let Some(mut child) = self.child.take() {
+            let _ = self.process_group.terminate();
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -1207,6 +1214,37 @@ mod tests {
                 finished: true,
             }
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dropping_a_process_terminates_its_background_child_tree() {
+        let marker = std::env::temp_dir().join(format!(
+            "flash-shot-recording-orphan-{}-{}.txt",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let command = FfmpegCommand {
+            executable: PathBuf::from("cmd.exe"),
+            arguments: [
+                "/C".to_owned(),
+                format!(
+                    r#"start "" /B cmd.exe /C "ping -n 3 127.0.0.1 > nul & echo orphan > \"{}\"" & more > nul"#,
+                    marker.display()
+                ),
+            ]
+            .map(OsString::from)
+            .into(),
+        };
+        let process = RecordingProcess::start(command).unwrap();
+        drop(process);
+        std::thread::sleep(Duration::from_millis(700));
+
+        assert!(
+            !marker.exists(),
+            "a child that outlived the recording Job Object wrote {marker:?}"
+        );
+        let _ = std::fs::remove_file(marker);
     }
 
     fn capabilities() -> FfmpegCapabilities {
