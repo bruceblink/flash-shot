@@ -28,6 +28,9 @@ use crate::{
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
+const MAGNIFIER_RADIUS: i32 = 4;
+const MAGNIFIER_CELL_SIZE: f32 = 12.0;
+const MAGNIFIER_GAP: f32 = 18.0;
 
 pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
@@ -199,6 +202,8 @@ impl Render for CaptureOverlay {
         let can_undo = app.annotation_history.undo_len() > 0;
         let can_redo = app.annotation_history.redo_len() > 0;
         let status = app.status.clone();
+        let hover_pixel = app.hover_pixel;
+        let frame = app.frame.clone();
         let viewport = local_viewport(window);
         let transform = self.transform(viewport);
         let selected_on_display =
@@ -300,6 +305,19 @@ impl Render for CaptureOverlay {
                                 cx,
                             );
                         }
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0(),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| (bounds, transform, hover_pixel, frame),
+                    move |viewport, (_, transform, hover_pixel, frame), window, _| {
+                        paint_magnifier(window, viewport, transform, hover_pixel, frame.as_ref())
                     },
                 )
                 .absolute()
@@ -926,6 +944,82 @@ fn paint_selection_mask(
     ));
 }
 
+fn paint_magnifier(
+    window: &mut Window,
+    viewport: Bounds<Pixels>,
+    transform: Option<PreviewTransform>,
+    hover_pixel: Option<PhysicalPoint>,
+    frame: Option<&crate::platform::capture::CaptureFrame>,
+) {
+    let (Some(transform), Some(center), Some(frame)) = (transform, hover_pixel, frame) else {
+        return;
+    };
+    if !frame.bounds.contains(center) {
+        return;
+    }
+
+    let view_center = transform.physical_to_view(center);
+    let grid_cells = (MAGNIFIER_RADIUS * 2 + 1) as f32;
+    let grid_size = grid_cells * MAGNIFIER_CELL_SIZE;
+    let origin = magnifier_origin(view_center, viewport, grid_size);
+    let panel = Bounds::new(
+        point(px(origin.x - 4.0), px(origin.y - 4.0)),
+        size(px(grid_size + 8.0), px(grid_size + 8.0)),
+    );
+    window.paint_quad(fill(panel, rgba(0x111827F2)));
+    window.paint_quad(gpui::outline(
+        panel,
+        rgba(0xF4F6F8FF),
+        gpui::BorderStyle::Solid,
+    ));
+
+    for row in -MAGNIFIER_RADIUS..=MAGNIFIER_RADIUS {
+        for column in -MAGNIFIER_RADIUS..=MAGNIFIER_RADIUS {
+            let sample_point = PhysicalPoint {
+                x: center
+                    .x
+                    .saturating_add(column)
+                    .clamp(frame.bounds.left, frame.bounds.right.saturating_sub(1)),
+                y: center
+                    .y
+                    .saturating_add(row)
+                    .clamp(frame.bounds.top, frame.bounds.bottom.saturating_sub(1)),
+            };
+            let Some(color) = frame.pixel_at(sample_point) else {
+                continue;
+            };
+            let cell = Bounds::new(
+                point(
+                    px(origin.x + (column + MAGNIFIER_RADIUS) as f32 * MAGNIFIER_CELL_SIZE),
+                    px(origin.y + (row + MAGNIFIER_RADIUS) as f32 * MAGNIFIER_CELL_SIZE),
+                ),
+                size(px(MAGNIFIER_CELL_SIZE), px(MAGNIFIER_CELL_SIZE)),
+            );
+            window.paint_quad(fill(cell, rgba(color.rgba_u32())));
+            window.paint_quad(gpui::outline(
+                cell,
+                if row == 0 && column == 0 {
+                    rgba(0xFFFFFFFF)
+                } else {
+                    rgba(0x00000055)
+                },
+                gpui::BorderStyle::Solid,
+            ));
+        }
+    }
+}
+
+fn magnifier_origin(view_center: ViewPoint, viewport: Bounds<Pixels>, grid_size: f32) -> ViewPoint {
+    let min_x = f32::from(viewport.origin.x) + 4.0;
+    let min_y = f32::from(viewport.origin.y) + 4.0;
+    let max_x = (f32::from(viewport.right()) - grid_size - 4.0).max(min_x);
+    let max_y = (f32::from(viewport.bottom()) - grid_size - 4.0).max(min_y);
+    ViewPoint {
+        x: (view_center.x + MAGNIFIER_GAP).clamp(min_x, max_x),
+        y: (view_center.y + MAGNIFIER_GAP).clamp(min_y, max_y),
+    }
+}
+
 fn paint_annotations(
     window: &mut Window,
     transform: Option<PreviewTransform>,
@@ -1482,12 +1576,16 @@ fn visible_selection(
 
 #[cfg(test)]
 mod tests {
-    use super::{arrow_head_points, intersect, outline_shape_bounds, visible_selection};
+    use super::{
+        MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, arrow_head_points, intersect, magnifier_origin,
+        outline_shape_bounds, visible_selection,
+    };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
         geometry::{PhysicalPoint, PhysicalRect},
-        selection::SelectionDrag,
+        selection::{SelectionDrag, ViewPoint},
     };
+    use gpui::{Bounds, point, px, size};
 
     #[test]
     fn clips_shared_selection_to_each_display() {
@@ -1512,6 +1610,21 @@ mod tests {
                 right: 300,
                 bottom: 500,
             })
+        );
+    }
+
+    #[test]
+    fn magnifier_stays_inside_the_overlay_at_viewport_edges() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(300.0), px(200.0)));
+        let grid_size = (MAGNIFIER_RADIUS * 2 + 1) as f32 * MAGNIFIER_CELL_SIZE;
+
+        assert_eq!(
+            magnifier_origin(ViewPoint { x: 295.0, y: 195.0 }, viewport, grid_size),
+            ViewPoint { x: 188.0, y: 88.0 }
+        );
+        assert_eq!(
+            magnifier_origin(ViewPoint { x: 0.0, y: 0.0 }, viewport, grid_size),
+            ViewPoint { x: 18.0, y: 18.0 }
         );
     }
 
