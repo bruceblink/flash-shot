@@ -316,6 +316,13 @@ impl Render for FlashShotApp {
                                         .border_color(colors.border)
                                         .text_xs()
                                         .text_color(colors.muted)
+                                        .cursor_pointer()
+                                        .when(is_idle, |item| {
+                                            let path = entry.path.clone();
+                                            item.on_click(cx.listener(move |this, _, _, cx| {
+                                                this.open_history_image(path.clone(), cx)
+                                            }))
+                                        })
                                         .child(
                                             entry
                                                 .path

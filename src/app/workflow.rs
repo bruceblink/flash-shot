@@ -289,6 +289,40 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn open_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.session.state() != CaptureSessionState::Idle {
+            return;
+        }
+        if let Err(error) = self.session.begin() {
+            self.status = error.to_string();
+            cx.notify();
+            return;
+        }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.status = format!("Opening {}...", path.display());
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let outcome = match cx
+                    .background_executor()
+                    .spawn(async move { CaptureFrame::open_png(&path).map(|frame| (path, frame)) })
+                    .await
+                {
+                    Ok((path, frame)) => OpenImageOutcome::Opened { path, frame },
+                    Err(error) => OpenImageOutcome::Failed(error.to_string()),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_open_image(outcome, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn finish_open_image(
         &mut self,
         outcome: OpenImageOutcome,
