@@ -284,6 +284,7 @@ pub enum RecordingEvent {
 pub struct RecordingControl {
     commands: async_channel::Sender<RecordingCommand>,
     events: async_channel::Receiver<RecordingEvent>,
+    target: RecordingTarget,
 }
 
 impl RecordingControl {
@@ -314,6 +315,11 @@ impl RecordingControl {
     pub fn events(&self) -> async_channel::Receiver<RecordingEvent> {
         self.events.clone()
     }
+
+    /// The immutable capture target accepted when this worker was started.
+    pub const fn target(&self) -> &RecordingTarget {
+        &self.target
+    }
 }
 
 impl Drop for RecordingControl {
@@ -328,6 +334,7 @@ pub fn start_recording(
     request: RecordingRequest,
 ) -> io::Result<RecordingControl> {
     let command = build_recording_command(&capabilities, &request)?;
+    let target = request.target.clone();
     // Commands must be lossless: a Stop issued immediately after Pause still has to reach the
     // worker even when it has not consumed the preceding command yet.
     let (command_tx, command_rx) = async_channel::unbounded();
@@ -344,6 +351,7 @@ pub fn start_recording(
     Ok(RecordingControl {
         commands: command_tx,
         events: event_rx,
+        target,
     })
 }
 

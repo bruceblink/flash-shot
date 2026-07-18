@@ -184,10 +184,11 @@ impl FlashShotApp {
         match result {
             Ok(control) => {
                 let events = control.events();
+                let target = recording_target_label(control.target());
                 self.recording_control = Some(control);
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
-                self.status = "Starting primary display recording...".to_owned();
+                self.status = format!("Starting {target} recording...");
                 cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                     let mut cx = cx.clone();
                     async move {
@@ -208,19 +209,24 @@ impl FlashShotApp {
     }
 
     fn handle_recording_event(&mut self, event: RecordingEvent, cx: &mut Context<Self>) {
+        let target = self
+            .recording_control
+            .as_ref()
+            .map(|control| recording_target_label(control.target()))
+            .unwrap_or("screen");
         match event {
-            RecordingEvent::Started => self.status = "Recording primary display...".to_owned(),
+            RecordingEvent::Started => self.status = format!("Recording {target}..."),
             RecordingEvent::Paused => {
                 self.recording_paused = true;
-                self.status = "Screen recording paused".to_owned();
+                self.status = format!("{target} recording paused");
             }
             RecordingEvent::Resumed => {
                 self.recording_paused = false;
-                self.status = "Recording primary display...".to_owned();
+                self.status = format!("Recording {target}...");
             }
             RecordingEvent::Progress(progress) => {
                 self.recording_progress = progress;
-                self.status = format_recording_progress(progress);
+                self.status = format_recording_progress(target, progress);
             }
             RecordingEvent::Finished { output } => {
                 self.recording_control = None;
@@ -2786,10 +2792,18 @@ fn recording_output_path() -> std::io::Result<PathBuf> {
     Ok(directory.join(format!("FlashShot-{}.mp4", unix_timestamp_ms())))
 }
 
-fn format_recording_progress(progress: RecordingProgress) -> String {
+fn recording_target_label(target: &RecordingTarget) -> &'static str {
+    match target {
+        RecordingTarget::Display { .. } => "display",
+        RecordingTarget::Window { .. } => "window",
+        RecordingTarget::Region { .. } => "selected area",
+    }
+}
+
+fn format_recording_progress(target: &str, progress: RecordingProgress) -> String {
     let seconds = progress.output_time_us.unwrap_or_default() / 1_000_000;
     let frames = progress.frame.unwrap_or_default();
-    format!("Recording primary display: {seconds}s, {frames} frames")
+    format!("Recording {target}: {seconds}s, {frames} frames")
 }
 
 fn next_quick_save_path(
@@ -3026,9 +3040,9 @@ mod tests {
         copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color,
         format_recording_progress, intersect_rect, is_current_operation, keyboard_command,
         next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix, pinned_size,
-        png_path, quick_save_annotated_frame_selection_in, resolve_pointer_selection,
-        sanitize_save_prefix, save_annotated_frame_selection, style_for_tool, tool_selected_status,
-        with_alpha,
+        png_path, quick_save_annotated_frame_selection_in, recording_target_label,
+        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
+        style_for_tool, tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -3543,12 +3557,47 @@ mod tests {
     #[test]
     fn recording_status_uses_ffmpeg_progress_without_exposing_process_output() {
         assert_eq!(
-            format_recording_progress(crate::recording::RecordingProgress {
-                output_time_us: Some(3_900_000),
-                frame: Some(117),
-                finished: false,
+            format_recording_progress(
+                "selected area",
+                crate::recording::RecordingProgress {
+                    output_time_us: Some(3_900_000),
+                    frame: Some(117),
+                    finished: false,
+                }
+            ),
+            "Recording selected area: 3s, 117 frames"
+        );
+    }
+
+    #[test]
+    fn recording_status_identifies_each_capture_target() {
+        assert_eq!(
+            recording_target_label(&crate::recording::RecordingTarget::Display {
+                bounds: PhysicalRect {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
             }),
-            "Recording primary display: 3s, 117 frames"
+            "display"
+        );
+        assert_eq!(
+            recording_target_label(&crate::recording::RecordingTarget::Window {
+                title: "Editor".to_owned(),
+            }),
+            "window"
+        );
+        assert_eq!(
+            recording_target_label(&crate::recording::RecordingTarget::Region {
+                bounds: PhysicalRect {
+                    left: 10,
+                    top: 10,
+                    right: 100,
+                    bottom: 100,
+                },
+            }),
+            "selected area"
         );
     }
 

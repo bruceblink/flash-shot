@@ -335,6 +335,12 @@ fn utf16_range_to_byte_range(text: &str, range: &std::ops::Range<usize>) -> std:
     byte_offset(range.start)..byte_offset(range.end)
 }
 
+impl Focusable for FlashShotApp {
+    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{byte_range_to_utf16_range, utf16_range_to_byte_range};
@@ -355,11 +361,5 @@ mod tests {
             utf16_range_to_byte_range(text, &emoji_utf16),
             emoji_start..text.len()
         );
-    }
-}
-
-impl Focusable for FlashShotApp {
-    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
-        self.focus_handle.clone()
     }
 }
