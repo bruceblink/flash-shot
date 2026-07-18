@@ -1819,6 +1819,34 @@ impl FlashShotApp {
         self.reorder_selected_annotation(usize::MAX, "Annotation brought to front", cx)
     }
 
+    pub(super) fn select_annotation_layer(
+        &mut self,
+        id: AnnotationId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(document) = self.annotation_document.as_ref() else {
+            return false;
+        };
+        let Some(annotation) = document.annotation(id) else {
+            return false;
+        };
+        let position = document
+            .annotations()
+            .iter()
+            .position(|candidate| candidate.id == id)
+            .map_or(0, |index| index + 1);
+        self.annotation_editor.cancel();
+        self.annotation_tool = None;
+        self.selected_annotation = Some(id);
+        self.annotation_style = annotation.style;
+        self.status = format!(
+            "Selected annotation {position} of {}",
+            document.annotations().len()
+        );
+        cx.notify();
+        true
+    }
+
     fn select_adjacent_annotation(&mut self, reverse: bool, cx: &mut Context<Self>) -> bool {
         let Some(document) = self.annotation_document.as_ref() else {
             return false;

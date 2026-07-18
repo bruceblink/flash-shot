@@ -189,6 +189,7 @@ impl Render for CaptureOverlay {
             .as_ref()
             .map(|document| document.annotations().to_vec())
             .unwrap_or_default();
+        let layer_annotations = annotations.clone();
         let annotation_preview = app
             .annotation_document
             .as_ref()
@@ -345,6 +346,57 @@ impl Render for CaptureOverlay {
                 .right_0()
                 .bottom_0(),
             )
+            .when(!layer_annotations.is_empty(), |overlay| {
+                overlay.child(
+                    div()
+                        .absolute()
+                        .right(px(18.0))
+                        .top(px(18.0))
+                        .w(px(180.0))
+                        .p_2()
+                        .bg(rgba(0x111827E6))
+                        .border_1()
+                        .border_color(colors.border)
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(div().text_sm().text_color(colors.muted).child("Layers"))
+                        .children(layer_annotations.iter().rev().enumerate().map(
+                            |(reverse_index, annotation)| {
+                                let id = annotation.id;
+                                let position = layer_annotations.len() - reverse_index;
+                                let is_selected = selected_annotation == Some(id);
+                                div()
+                                    .id(format!("overlay-layer-{}", id.value()))
+                                    .px_2()
+                                    .py_1()
+                                    .bg(if is_selected {
+                                        colors.accent
+                                    } else {
+                                        colors.panel
+                                    })
+                                    .text_color(if is_selected {
+                                        colors.background
+                                    } else {
+                                        colors.text
+                                    })
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.select_annotation_layer(id, cx);
+                                            });
+                                        });
+                                    }))
+                                    .child(format!(
+                                        "{position}. {}",
+                                        annotation_layer_label(&annotation.kind)
+                                    ))
+                            },
+                        )),
+                )
+            })
             .child(
                 div()
                     .absolute()
@@ -1486,6 +1538,22 @@ fn paint_annotations(
     }
 }
 
+fn annotation_layer_label(kind: &AnnotationKind) -> &'static str {
+    match kind {
+        AnnotationKind::Watermark { .. } => "Watermark",
+        AnnotationKind::Text { .. } => "Text",
+        AnnotationKind::Number { .. } => "Number",
+        AnnotationKind::Blur { .. } => "Blur",
+        AnnotationKind::Mosaic { .. } => "Mosaic",
+        AnnotationKind::Highlight { .. } => "Highlight",
+        AnnotationKind::Rectangle { .. } => "Rectangle",
+        AnnotationKind::Ellipse { .. } => "Ellipse",
+        AnnotationKind::Line { .. } => "Line",
+        AnnotationKind::Arrow { .. } => "Arrow",
+        AnnotationKind::Freehand { .. } => "Freehand",
+    }
+}
+
 fn paint_text_annotation(
     window: &mut Window,
     transform: PreviewTransform,
@@ -1944,8 +2012,8 @@ fn visible_selection(
 #[cfg(test)]
 mod tests {
     use super::{
-        MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, arrow_head_points, intersect, magnifier_origin,
-        outline_shape_bounds, resize_handle_points, visible_selection,
+        MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, annotation_layer_label, arrow_head_points,
+        intersect, magnifier_origin, outline_shape_bounds, resize_handle_points, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2049,6 +2117,23 @@ mod tests {
             })
         );
         assert_eq!(outline_shape_bounds(&line), None);
+    }
+
+    #[test]
+    fn annotation_layer_labels_cover_every_drawable_kind() {
+        assert_eq!(
+            annotation_layer_label(&AnnotationKind::Text {
+                origin: PhysicalPoint { x: 0, y: 0 },
+                content: "Note".to_owned(),
+            }),
+            "Text"
+        );
+        assert_eq!(
+            annotation_layer_label(&AnnotationKind::Freehand {
+                points: vec![PhysicalPoint { x: 0, y: 0 }, PhysicalPoint { x: 1, y: 1 }],
+            }),
+            "Freehand"
+        );
     }
 
     #[test]
