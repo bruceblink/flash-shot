@@ -62,6 +62,8 @@ pub struct FlashShotApp {
     recording_progress: crate::recording::RecordingProgress,
     recording_start_in_flight: bool,
     recording_paused: bool,
+    recording_audio: RecordingAudioSelection,
+    recording_audio_discovery_in_flight: bool,
     capture_delay_seconds: u8,
     delayed_capture_generation: Option<u64>,
     include_cursor: bool,
@@ -91,6 +93,14 @@ pub(super) struct TextEdit {
 pub(super) struct RecognitionResult {
     pub(super) title: String,
     pub(super) text: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) enum RecordingAudioSelection {
+    #[default]
+    Automatic,
+    Disabled,
+    Source(crate::recording::AudioSource),
 }
 
 impl TextEdit {
@@ -167,6 +177,8 @@ impl FlashShotApp {
             recording_progress: Default::default(),
             recording_start_in_flight: false,
             recording_paused: false,
+            recording_audio: RecordingAudioSelection::Automatic,
+            recording_audio_discovery_in_flight: false,
             capture_delay_seconds: 0,
             delayed_capture_generation: None,
             include_cursor: false,

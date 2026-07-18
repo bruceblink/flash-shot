@@ -101,6 +101,9 @@ impl Render for FlashShotApp {
         let recording_active = self.recording_control.is_some();
         let recording_starting = self.recording_start_in_flight;
         let recording_paused = self.recording_paused;
+        let recording_audio =
+            super::workflow::recording_audio_selection_label(&self.recording_audio);
+        let recording_audio_discovery = self.recording_audio_discovery_in_flight;
         let preview = self.preview.clone();
         let frame_bounds = self.frame.as_ref().map(|frame| frame.bounds);
         let frame = self.frame.clone();
@@ -136,6 +139,31 @@ impl Render for FlashShotApp {
                             .flex()
                             .items_center()
                             .gap_2()
+                            .child(
+                                div()
+                                    .id("recording-audio")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.muted)
+                                    .when(
+                                        !recording_active
+                                            && !recording_starting
+                                            && !recording_audio_discovery,
+                                        |button| {
+                                            button.cursor_pointer().on_click(cx.listener(
+                                                |this, _, _, cx| this.cycle_recording_audio(cx),
+                                            ))
+                                        },
+                                    )
+                                    .child(if recording_audio_discovery {
+                                        "Audio...".to_owned()
+                                    } else {
+                                        format!("Audio: {recording_audio}")
+                                    }),
+                            )
                             .child(
                                 div()
                                     .id("pause-recording")

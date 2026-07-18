@@ -15,8 +15,9 @@ use gpui::{
 };
 
 use super::{
-    FlashShotApp, RecognitionResult, overlay::CaptureOverlay, pinned::PinnedImage,
-    render_image::render_image_from_capture, scroll_control::ManualScrollControl,
+    FlashShotApp, RecognitionResult, RecordingAudioSelection, overlay::CaptureOverlay,
+    pinned::PinnedImage, render_image::render_image_from_capture,
+    scroll_control::ManualScrollControl,
 };
 use crate::{
     domain::{
@@ -37,8 +38,8 @@ use crate::{
         window_visibility,
     },
     recording::{
-        RecordingAudioConfig, RecordingEvent, RecordingProgress, RecordingRequest, RecordingTarget,
-        discover, start_recording,
+        AudioSource, RecordingAudioConfig, RecordingEvent, RecordingProgress, RecordingRequest,
+        RecordingTarget, discover, discover_audio_sources, start_recording,
     },
 };
 
@@ -64,7 +65,7 @@ impl FlashShotApp {
         }
         self.recording_start_in_flight = true;
         self.status = "Discovering FFmpeg and preparing primary display recording...".to_owned();
-        self.start_recording_request(None, cx);
+        self.start_recording_request(None, self.recording_audio.clone(), cx);
     }
 
     pub(super) fn start_region_recording(&mut self, cx: &mut Context<Self>) {
@@ -87,7 +88,7 @@ impl FlashShotApp {
         self.annotation_document = None;
         self.annotation_history = Default::default();
         self.annotation_editor = Default::default();
-        self.start_recording_request(Some(bounds), cx);
+        self.start_recording_request(Some(bounds), self.recording_audio.clone(), cx);
     }
 
     pub(super) fn start_selected_window_recording(&mut self, cx: &mut Context<Self>) {
@@ -111,6 +112,7 @@ impl FlashShotApp {
         self.frame = None;
         self.preview = None;
         self.selection_drag.clear();
+        let audio = self.recording_audio.clone();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -126,7 +128,7 @@ impl FlashShotApp {
                                     )
                                 },
                             )?;
-                            start_recording_target(Some(RecordingTarget::Window { title }))
+                            start_recording_target(Some(RecordingTarget::Window { title }), audio)
                         })
                         .await;
                 if let Some(this) = this.upgrade() {
@@ -137,7 +139,12 @@ impl FlashShotApp {
         .detach();
     }
 
-    fn start_recording_request(&mut self, region: Option<PhysicalRect>, cx: &mut Context<Self>) {
+    fn start_recording_request(
+        &mut self,
+        region: Option<PhysicalRect>,
+        audio: RecordingAudioSelection,
+        cx: &mut Context<Self>,
+    ) {
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -147,6 +154,7 @@ impl FlashShotApp {
                     .spawn(async move {
                         start_recording_target(
                             region.map(|bounds| RecordingTarget::Region { bounds }),
+                            audio,
                         )
                     })
                     .await;
@@ -156,6 +164,54 @@ impl FlashShotApp {
             }
         })
         .detach();
+    }
+
+    pub(super) fn cycle_recording_audio(&mut self, cx: &mut Context<Self>) {
+        if self.recording_control.is_some()
+            || self.recording_start_in_flight
+            || self.recording_audio_discovery_in_flight
+        {
+            return;
+        }
+        self.recording_audio_discovery_in_flight = true;
+        self.status = "Discovering recording audio sources...".to_owned();
+        let current = self.recording_audio.clone();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { discover_audio_sources() })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_recording_audio_discovery(current, result, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_recording_audio_discovery(
+        &mut self,
+        current: RecordingAudioSelection,
+        result: std::io::Result<Vec<AudioSource>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.recording_audio_discovery_in_flight = false;
+        match result {
+            Ok(sources) => {
+                self.recording_audio = next_recording_audio_selection(current, &sources);
+                self.status = format!(
+                    "Recording audio: {}",
+                    recording_audio_selection_label(&self.recording_audio)
+                );
+            }
+            Err(error) => self.status = format!("Could not discover recording audio: {error}"),
+        }
+        cx.notify();
     }
 
     pub(super) fn toggle_recording_pause(&mut self, cx: &mut Context<Self>) {
@@ -2749,9 +2805,16 @@ fn quick_save_directory() -> std::io::Result<PathBuf> {
 
 fn start_recording_target(
     target: Option<RecordingTarget>,
+    audio_selection: RecordingAudioSelection,
 ) -> std::io::Result<crate::recording::RecordingControl> {
     let capabilities = discover()?;
-    let audio = RecordingAudioConfig::from_environment()?.source().cloned();
+    let audio = match audio_selection {
+        RecordingAudioSelection::Automatic => {
+            RecordingAudioConfig::from_environment()?.source().cloned()
+        }
+        RecordingAudioSelection::Disabled => None,
+        RecordingAudioSelection::Source(source) => Some(source),
+    };
     let target = match target {
         Some(target) => target,
         None => RecordingTarget::Display {
@@ -2798,6 +2861,44 @@ fn recording_target_label(target: &RecordingTarget) -> &'static str {
         RecordingTarget::Window { .. } => "window",
         RecordingTarget::Region { .. } => "selected area",
     }
+}
+
+pub(super) fn next_recording_audio_selection(
+    current: RecordingAudioSelection,
+    sources: &[AudioSource],
+) -> RecordingAudioSelection {
+    let mut selections = Vec::with_capacity(sources.len() + 2);
+    selections.push(RecordingAudioSelection::Automatic);
+    selections.push(RecordingAudioSelection::Disabled);
+    selections.extend(sources.iter().cloned().map(RecordingAudioSelection::Source));
+    let index = selections
+        .iter()
+        .position(|selection| selection == &current)
+        .map(|index| (index + 1) % selections.len())
+        .unwrap_or(1);
+    selections[index].clone()
+}
+
+pub(super) fn recording_audio_selection_label(selection: &RecordingAudioSelection) -> String {
+    match selection {
+        RecordingAudioSelection::Automatic => "auto".to_owned(),
+        RecordingAudioSelection::Disabled => "off".to_owned(),
+        RecordingAudioSelection::Source(AudioSource::Microphone { device }) => {
+            format!("mic: {}", truncate_recording_audio_label(device))
+        }
+        RecordingAudioSelection::Source(AudioSource::SystemAudio { .. }) => {
+            "system audio".to_owned()
+        }
+    }
+}
+
+fn truncate_recording_audio_label(label: &str) -> String {
+    const MAX_CHARS: usize = 20;
+    let mut result: String = label.chars().take(MAX_CHARS).collect();
+    if label.chars().nth(MAX_CHARS).is_some() {
+        result.push_str("...");
+    }
+    result
 }
 
 fn format_recording_progress(target: &str, progress: RecordingProgress) -> String {
@@ -3039,10 +3140,11 @@ mod tests {
         KeyboardCommand, annotation_added_status, annotation_cancelled_status,
         copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color,
         format_recording_progress, intersect_rect, is_current_operation, keyboard_command,
-        next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix, pinned_size,
-        png_path, quick_save_annotated_frame_selection_in, recording_target_label,
-        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
-        style_for_tool, tool_selected_status, with_alpha,
+        next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix,
+        next_recording_audio_selection, pinned_size, png_path,
+        quick_save_annotated_frame_selection_in, recording_audio_selection_label,
+        recording_target_label, resolve_pointer_selection, sanitize_save_prefix,
+        save_annotated_frame_selection, style_for_tool, tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -3057,6 +3159,7 @@ mod tests {
             capture::{CaptureFrame, PixelFormat},
             clipboard::ClipboardService,
         },
+        recording::AudioSource,
     };
     use gpui::Keystroke;
     use std::{
@@ -3598,6 +3701,34 @@ mod tests {
                 },
             }),
             "selected area"
+        );
+    }
+
+    #[test]
+    fn recording_audio_selection_cycles_from_auto_to_off_then_local_sources() {
+        let sources = [
+            AudioSource::Microphone {
+                device: "USB Mic".to_owned(),
+            },
+            AudioSource::SystemAudio {
+                device: "default".to_owned(),
+            },
+        ];
+        let off =
+            next_recording_audio_selection(super::RecordingAudioSelection::Automatic, &sources);
+        assert_eq!(off, super::RecordingAudioSelection::Disabled);
+        let microphone = next_recording_audio_selection(off, &sources);
+        assert_eq!(
+            microphone,
+            super::RecordingAudioSelection::Source(sources[0].clone())
+        );
+        assert_eq!(recording_audio_selection_label(&microphone), "mic: USB Mic");
+        assert_eq!(
+            next_recording_audio_selection(
+                super::RecordingAudioSelection::Source(sources[1].clone()),
+                &sources,
+            ),
+            super::RecordingAudioSelection::Automatic
         );
     }
 

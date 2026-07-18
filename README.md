@@ -52,6 +52,8 @@ $env:FLASH_SHOT_RECORDING_SYSTEM_AUDIO = "default"
 
 `FLASH_SHOT_RECORDING_MICROPHONE` 与 `FLASH_SHOT_RECORDING_SYSTEM_AUDIO` 不能同时设置；未设置时录制无音频。
 
+主窗口的 `Audio` 按钮会在用户点击后后台发现本机 FFmpeg 支持的输入，并轮换自动配置、关闭、DirectShow 麦克风以及可用的 WASAPI 系统声音。`auto` 保持上述环境变量兼容行为；选择 `off` 会明确禁用音频。
+
 快速保存默认写入 `Pictures\Flash Shot\FlashShot-<timestamp>.png`。可通过安全文件名前缀自定义命名：
 
 ```powershell
@@ -120,6 +122,8 @@ Requirements:
 ```powershell
 cargo run
 ```
+
+The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
 
 ### Validate
 

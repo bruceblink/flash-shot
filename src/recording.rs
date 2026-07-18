@@ -24,6 +24,15 @@ const SYSTEM_AUDIO_DEVICE_ENV: &str = "FLASH_SHOT_RECORDING_SYSTEM_AUDIO";
 const VERSION_ARGUMENTS: &[&str] = &["-hide_banner", "-version"];
 const FORMAT_ARGUMENTS: &[&str] = &["-hide_banner", "-formats"];
 const DEVICE_ARGUMENTS: &[&str] = &["-hide_banner", "-devices"];
+const DSHOW_AUDIO_DEVICE_ARGUMENTS: &[&str] = &[
+    "-hide_banner",
+    "-list_devices",
+    "true",
+    "-f",
+    "dshow",
+    "-i",
+    "dummy",
+];
 
 /// Maximum time a recording process gets to finalize its container after receiving `q`.
 pub const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -95,6 +104,29 @@ pub enum AudioSource {
     Microphone { device: String },
     /// A WASAPI loopback or output device name as reported by FFmpeg.
     SystemAudio { device: String },
+}
+
+/// Lists local audio inputs that can be selected without opening a recording session.
+///
+/// FFmpeg reports DirectShow devices on stderr and exits unsuccessfully after listing them,
+/// so this intentionally does not use the normal successful-probe path.
+pub fn discover_audio_sources() -> io::Result<Vec<AudioSource>> {
+    let capabilities = discover()?;
+    let mut sources = Vec::new();
+    if capabilities.supports_microphone_capture() {
+        let output = run_listing_probe(capabilities.executable(), DSHOW_AUDIO_DEVICE_ARGUMENTS)?;
+        sources.extend(
+            parse_dshow_audio_devices(&output)
+                .into_iter()
+                .map(|device| AudioSource::Microphone { device }),
+        );
+    }
+    if capabilities.supports_system_audio_capture() {
+        sources.push(AudioSource::SystemAudio {
+            device: "default".to_owned(),
+        });
+    }
+    Ok(sources)
 }
 
 /// Explicit local audio selection loaded without probing or opening a device.
@@ -1036,6 +1068,22 @@ fn run_probe(executable: &OsStr, arguments: &[&str]) -> io::Result<Output> {
     )))
 }
 
+fn run_listing_probe(executable: &Path, arguments: &[&str]) -> io::Result<String> {
+    let output = Command::new(executable)
+        .args(arguments)
+        .output()
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "could not start FFmpeg '{}': {error}",
+                    executable.to_string_lossy()
+                ),
+            )
+        })?;
+    Ok(combined_output(&output))
+}
+
 fn combined_output(output: &Output) -> String {
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
@@ -1078,6 +1126,36 @@ fn parse_input_formats(output: &str) -> Vec<String> {
     inputs
 }
 
+fn parse_dshow_audio_devices(output: &str) -> Vec<String> {
+    let mut devices = Vec::new();
+    let mut in_audio_section = false;
+    for line in output.lines() {
+        let line = line.trim();
+        if line.contains("DirectShow audio devices") {
+            in_audio_section = true;
+            continue;
+        }
+        if line.contains("DirectShow video devices") {
+            in_audio_section = false;
+            continue;
+        }
+        if !in_audio_section || line.contains("Alternative name") {
+            continue;
+        }
+        let Some((_, quoted)) = line.split_once('"') else {
+            continue;
+        };
+        let Some((name, _)) = quoted.split_once('"') else {
+            continue;
+        };
+        let name = name.trim();
+        if !name.is_empty() && !devices.iter().any(|device| device == name) {
+            devices.push(name.to_owned());
+        }
+    }
+    devices
+}
+
 fn first_diagnostic_line(output: &str) -> Option<&str> {
     output.lines().map(str::trim).find(|line| !line.is_empty())
 }
@@ -1089,8 +1167,8 @@ mod tests {
         GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingAudioConfig, RecordingProcess,
         RecordingProgress, RecordingRequest, RecordingSession, RecordingState, RecordingTarget,
         VERSION_ARGUMENTS, audio_source_from_config, build_recording_command, diagnostic_suffix,
-        executable_from, first_diagnostic_line, graceful_stop_input, parse_input_formats,
-        parse_version, read_bounded_diagnostics,
+        executable_from, first_diagnostic_line, graceful_stop_input, parse_dshow_audio_devices,
+        parse_input_formats, parse_version, read_bounded_diagnostics,
     };
     use crate::domain::geometry::PhysicalRect;
     use std::{ffi::OsString, io::Cursor, path::PathBuf, time::Duration};
@@ -1101,6 +1179,16 @@ mod tests {
   D  gdigrab          GDI API Windows frame grabber\n\
   D  dshow            DirectShow capture\n\
  DE png_pipe          PNG pipe\n\
+";
+
+    const DSHOW_DEVICES: &str = "\
+[dshow @ 000001] DirectShow video devices (some header)\n\
+[dshow @ 000001]  \"Camera\"\n\
+[dshow @ 000001] DirectShow audio devices\n\
+[dshow @ 000001]  \"Microphone (USB Audio)\"\n\
+[dshow @ 000001]     Alternative name \"@device_cm_{abc}\"\n\
+[dshow @ 000001]  \"Microphone (USB Audio)\"\n\
+[dshow @ 000001]  \"Line In\"\n\
 ";
 
     #[test]
@@ -1127,6 +1215,14 @@ mod tests {
         assert_eq!(
             parse_input_formats(FORMATS),
             ["ddagrab", "gdigrab", "dshow", "png_pipe"]
+        );
+    }
+
+    #[test]
+    fn parser_extracts_unique_audio_device_names_from_dshow_listing() {
+        assert_eq!(
+            parse_dshow_audio_devices(DSHOW_DEVICES),
+            ["Microphone (USB Audio)", "Line In"]
         );
     }
 
