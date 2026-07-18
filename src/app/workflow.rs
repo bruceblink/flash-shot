@@ -22,7 +22,7 @@ use super::{
 use crate::{
     domain::{
         annotation::{AnnotationCommand, AnnotationDocument, AnnotationId, AnnotationTool},
-        geometry::PhysicalRect,
+        geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, ViewPoint, ViewRect},
         session::CaptureSessionState,
     },
@@ -35,7 +35,9 @@ use crate::{
         },
         clipboard::{ClipboardService, SystemClipboard},
         display::{DisplayProvider, SystemDisplayProvider},
-        window_inspector::{InspectionTarget, SystemWindowInspector, WindowInspector},
+        window_inspector::{
+            InspectionKind, InspectionTarget, SystemWindowInspector, WindowInspector,
+        },
         window_visibility,
     },
     recording::{
@@ -1801,6 +1803,11 @@ impl FlashShotApp {
                     point.y,
                     color.hex_rgb()
                 )
+            } else if let Some(target) = self
+                .inspection_target
+                .filter(|target| target.bounds.contains(point))
+            {
+                smart_target_status(target, point, color.hex_rgb())
             } else {
                 format!("({}, {}) {}", point.x, point.y, color.hex_rgb())
             };
@@ -3353,6 +3360,20 @@ fn selection_status(selection: PhysicalRect) -> String {
     )
 }
 
+fn smart_target_status(target: InspectionTarget, point: PhysicalPoint, color: String) -> String {
+    let kind = match target.kind {
+        InspectionKind::Control => "Control",
+        InspectionKind::Window => "Window",
+    };
+    format!(
+        "{kind}: {} x {} px | ({}, {}) {color}",
+        target.bounds.width(),
+        target.bounds.height(),
+        point.x,
+        point.y,
+    )
+}
+
 fn fill_color(stroke_rgba: u32) -> u32 {
     with_alpha(stroke_rgba, fill_alpha(stroke_rgba as u8))
 }
@@ -3524,8 +3545,8 @@ mod tests {
         next_recording_display_selection, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
         recording_display_selection_label, recording_target_label, resolve_pointer_selection,
-        sanitize_save_prefix, save_annotated_frame_selection, style_for_tool, tool_selected_status,
-        with_alpha,
+        sanitize_save_prefix, save_annotated_frame_selection, smart_target_status, style_for_tool,
+        tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -4349,6 +4370,24 @@ mod tests {
             bottom: 260,
         };
         assert_eq!(resolve_pointer_selection(drag, Some(target)), Some(drag));
+    }
+
+    #[test]
+    fn smart_target_status_includes_target_kind_bounds_and_pixel_details() {
+        let target = InspectionTarget {
+            bounds: PhysicalRect {
+                left: -200,
+                top: 50,
+                right: 300,
+                bottom: 250,
+            },
+            kind: InspectionKind::Control,
+        };
+
+        assert_eq!(
+            smart_target_status(target, PhysicalPoint { x: 12, y: 34 }, "#AABBCC".to_owned()),
+            "Control: 500 x 200 px | (12, 34) #AABBCC"
+        );
     }
 
     #[test]
