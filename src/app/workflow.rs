@@ -47,6 +47,7 @@ impl FlashShotApp {
         self.annotation_history = Default::default();
         self.annotation_editor = Default::default();
         self.annotation_tool = None;
+        self.selected_annotation = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -187,6 +188,7 @@ impl FlashShotApp {
         self.annotation_history = Default::default();
         self.annotation_editor = Default::default();
         self.annotation_tool = None;
+        self.selected_annotation = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -229,6 +231,17 @@ impl FlashShotApp {
             self.begin_annotation(point);
             return;
         }
+        if let Some(document) = self.annotation_document.as_ref()
+            && let Some(annotation) = document.annotation_at(point, 6)
+            && self
+                .annotation_editor
+                .begin_move(document, annotation.id, point)
+                .is_ok()
+        {
+            self.selected_annotation = Some(annotation.id);
+            self.status = "Moving annotation...".to_owned();
+            return;
+        }
         self.pending_click_target = self
             .inspection_target
             .filter(|target| target.bounds.contains(point));
@@ -253,6 +266,14 @@ impl FlashShotApp {
                 self.annotation_editor.update(document, point);
             }
             self.status = drawing_status(tool).to_owned();
+            cx.notify();
+            return;
+        }
+        if self.annotation_editor.moving().is_some() {
+            if let Some(document) = self.annotation_document.as_ref() {
+                self.annotation_editor.update(document, point);
+            }
+            self.status = "Moving annotation...".to_owned();
             cx.notify();
             return;
         }
@@ -301,6 +322,14 @@ impl FlashShotApp {
             self.finish_annotation(cx);
             return;
         }
+        if self.annotation_editor.moving().is_some() {
+            if let Some(document) = self.annotation_document.as_ref() {
+                self.annotation_editor
+                    .update(document, clamp_physical_point(point, frame.bounds));
+            }
+            self.finish_annotation(cx);
+            return;
+        }
         self.selection_drag
             .update(clamp_physical_point(point, frame.bounds));
         let selection = self
@@ -339,6 +368,7 @@ impl FlashShotApp {
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.annotation_tool = None;
+        self.selected_annotation = None;
         self.status = "Selection tool selected".to_owned();
         cx.notify();
     }
@@ -346,6 +376,7 @@ impl FlashShotApp {
     fn select_annotation_tool(&mut self, tool: AnnotationTool, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.annotation_tool = Some(tool);
+        self.selected_annotation = None;
         self.status = tool_selected_status(tool).to_owned();
         cx.notify();
     }
@@ -372,11 +403,14 @@ impl FlashShotApp {
             return;
         };
         let tool = self.annotation_tool;
+        let moving = self.annotation_editor.moving().is_some();
         match self
             .annotation_editor
             .commit(document, &mut self.annotation_history)
         {
+            Ok(true) if moving => self.status = "Annotation moved".to_owned(),
             Ok(true) => self.status = annotation_added_status(tool).to_owned(),
+            Ok(false) if moving => self.status = "Annotation move cancelled".to_owned(),
             Ok(false) => self.status = annotation_cancelled_status(tool).to_owned(),
             Err(error) => self.status = error.to_string(),
         }

@@ -171,7 +171,7 @@ impl Annotation {
         }
     }
 
-    fn bounds(&self) -> PhysicalRect {
+    pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
             AnnotationKind::Rectangle { bounds } | AnnotationKind::Ellipse { bounds } => bounds,
             AnnotationKind::Line { start, end } | AnnotationKind::Arrow { start, end } => {

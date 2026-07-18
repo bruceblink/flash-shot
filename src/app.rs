@@ -13,7 +13,9 @@ use gpui::{
 
 use crate::{
     domain::{
-        annotation::{AnnotationDocument, AnnotationEditor, AnnotationTool, CommandHistory},
+        annotation::{
+            AnnotationDocument, AnnotationEditor, AnnotationId, AnnotationTool, CommandHistory,
+        },
         geometry::PhysicalPoint,
         selection::SelectionDrag,
         session::CaptureSession,
@@ -36,6 +38,7 @@ pub struct FlashShotApp {
     annotation_history: CommandHistory,
     annotation_editor: AnnotationEditor,
     annotation_tool: Option<AnnotationTool>,
+    selected_annotation: Option<AnnotationId>,
     next_annotation_id: u64,
     preview: Option<Arc<RenderImage>>,
     selection_drag: SelectionDrag,
@@ -95,6 +98,7 @@ impl FlashShotApp {
             annotation_history: CommandHistory::default(),
             annotation_editor: AnnotationEditor::default(),
             annotation_tool: None,
+            selected_annotation: None,
             next_annotation_id: 1,
             preview: None,
             selection_drag: SelectionDrag::default(),

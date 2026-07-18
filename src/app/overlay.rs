@@ -11,7 +11,7 @@ use gpui::{
 use super::FlashShotApp;
 use crate::{
     domain::{
-        annotation::{Annotation, AnnotationKind, AnnotationTool},
+        annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationTool},
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     },
@@ -165,6 +165,7 @@ impl Render for CaptureOverlay {
             .annotation_document
             .as_ref()
             .and_then(|document| app.annotation_editor.preview(document.canvas_bounds()));
+        let selected_annotation = app.selected_annotation;
         let selected_tool = app.annotation_tool;
         let can_undo = app.annotation_history.undo_len() > 0;
         let can_redo = app.annotation_history.redo_len() > 0;
@@ -230,14 +231,26 @@ impl Render for CaptureOverlay {
             )
             .child(
                 canvas(
-                    move |bounds, _, _| (bounds, transform, annotations, annotation_preview),
-                    move |bounds, (_, transform, annotations, preview), window, _| {
+                    move |bounds, _, _| {
+                        (
+                            bounds,
+                            transform,
+                            annotations,
+                            annotation_preview,
+                            selected_annotation,
+                        )
+                    },
+                    move |bounds,
+                          (_, transform, annotations, preview, selected_annotation),
+                          window,
+                          _| {
                         paint_annotations(
                             window,
                             bounds,
                             transform,
                             &annotations,
                             preview.as_ref(),
+                            selected_annotation,
                             colors,
                         )
                     },
@@ -600,12 +613,17 @@ fn paint_annotations(
     transform: Option<PreviewTransform>,
     annotations: &[Annotation],
     preview: Option<&Annotation>,
+    selected_annotation: Option<AnnotationId>,
     colors: ThemeColors,
 ) {
     let Some(transform) = transform else {
         return;
     };
-    for annotation in annotations.iter().chain(preview) {
+    for annotation in annotations
+        .iter()
+        .filter(|annotation| Some(annotation.id) != preview.map(|preview| preview.id))
+        .chain(preview)
+    {
         match annotation.kind {
             AnnotationKind::Rectangle { bounds } => {
                 paint_outline(window, transform, bounds, colors.accent)
@@ -622,6 +640,9 @@ fn paint_annotations(
             AnnotationKind::Freehand { ref points } => {
                 paint_freehand(window, transform, points, colors.accent)
             }
+        }
+        if Some(annotation.id) == selected_annotation {
+            paint_outline(window, transform, annotation.bounds(), colors.success);
         }
     }
 }
@@ -807,6 +828,7 @@ fn visible_selection(
     drag.is_dragging()
         .then(|| drag.selection())
         .flatten()
+        .filter(|selection| selection.width() > 0 && selection.height() > 0)
         .or(committed_selection)
 }
 
@@ -953,5 +975,20 @@ mod tests {
 
         assert!(drag.is_dragging());
         assert_eq!(visible_selection(drag, Some(committed)), Some(current));
+    }
+
+    #[test]
+    fn zero_sized_drag_keeps_the_committed_selection_visible() {
+        let committed = PhysicalRect {
+            left: 10,
+            top: 20,
+            right: 110,
+            bottom: 120,
+        };
+        let mut drag = SelectionDrag::default();
+        drag.begin(PhysicalPoint { x: 300, y: 400 });
+
+        assert!(drag.is_dragging());
+        assert_eq!(visible_selection(drag, Some(committed)), Some(committed));
     }
 }
