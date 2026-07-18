@@ -64,7 +64,7 @@ impl FfmpegCapabilities {
     }
 
     pub fn supports_system_audio_capture(&self) -> bool {
-        self.supports_input("wasapi") || self.supports_input("dshow")
+        self.supports_input("wasapi")
     }
 
     pub fn supports_input(&self, name: &str) -> bool {
@@ -83,10 +83,20 @@ pub enum RecordingTarget {
     Region { bounds: PhysicalRect },
 }
 
+/// An explicitly selected local audio input for a recording.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AudioSource {
+    /// A DirectShow microphone device name as reported by FFmpeg.
+    Microphone { device: String },
+    /// A WASAPI loopback or output device name as reported by FFmpeg.
+    SystemAudio { device: String },
+}
+
 /// A validated first-pass MP4 recording request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordingRequest {
     pub target: RecordingTarget,
+    pub audio: Option<AudioSource>,
     pub frame_rate: u16,
     pub output: PathBuf,
 }
@@ -409,6 +419,12 @@ pub fn build_recording_command(
             ]);
         }
     }
+    let has_audio = if let Some(audio) = &request.audio {
+        arguments.extend(audio_input(capabilities, audio)?);
+        true
+    } else {
+        false
+    };
     arguments.extend([
         OsString::from("-c:v"),
         OsString::from("libx264"),
@@ -416,12 +432,51 @@ pub fn build_recording_command(
         OsString::from("yuv420p"),
         OsString::from("-movflags"),
         OsString::from("+faststart"),
-        request.output.as_os_str().to_owned(),
     ]);
+    if has_audio {
+        arguments.extend([OsString::from("-c:a"), OsString::from("aac")]);
+    }
+    arguments.push(request.output.as_os_str().to_owned());
     Ok(FfmpegCommand {
         executable: capabilities.executable.clone(),
         arguments,
     })
+}
+
+fn audio_input(
+    capabilities: &FfmpegCapabilities,
+    audio: &AudioSource,
+) -> io::Result<Vec<OsString>> {
+    match audio {
+        AudioSource::Microphone { device } => {
+            if !capabilities.supports_microphone_capture() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "FFmpeg does not support microphone capture (dshow unavailable)",
+                ));
+            }
+            Ok(vec![
+                OsString::from("-f"),
+                OsString::from("dshow"),
+                OsString::from("-i"),
+                OsString::from(format!("audio={device}")),
+            ])
+        }
+        AudioSource::SystemAudio { device } => {
+            if !capabilities.supports_system_audio_capture() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "FFmpeg does not support Windows system audio capture (wasapi unavailable)",
+                ));
+            }
+            Ok(vec![
+                OsString::from("-f"),
+                OsString::from("wasapi"),
+                OsString::from("-i"),
+                OsString::from(device),
+            ])
+        }
+    }
 }
 
 fn desktop_input(
@@ -485,7 +540,23 @@ fn validate_request(request: &RecordingRequest) -> io::Result<()> {
             io::ErrorKind::InvalidInput,
             "recording window title must not be empty",
         )),
+        _ if request
+            .audio
+            .as_ref()
+            .is_some_and(|audio| audio_device_name(audio).trim().is_empty()) =>
+        {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "recording audio device name must not be empty",
+            ))
+        }
         _ => Ok(()),
+    }
+}
+
+fn audio_device_name(audio: &AudioSource) -> &str {
+    match audio {
+        AudioSource::Microphone { device } | AudioSource::SystemAudio { device } => device,
     }
 }
 
@@ -606,7 +677,7 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, FfmpegCommand,
+        AudioSource, DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, FfmpegCommand,
         GRACEFUL_STOP_TIMEOUT, RecordingProcess, RecordingRequest, RecordingSession,
         RecordingState, RecordingTarget, VERSION_ARGUMENTS, build_recording_command,
         diagnostic_suffix, executable_from, first_diagnostic_line, graceful_stop_input,
@@ -674,7 +745,7 @@ mod tests {
         assert!(capabilities.supports_window_capture());
         assert!(capabilities.supports_region_capture());
         assert!(capabilities.supports_microphone_capture());
-        assert!(capabilities.supports_system_audio_capture());
+        assert!(!capabilities.supports_system_audio_capture());
         assert!(!capabilities.supports_input("avfoundation"));
     }
 
@@ -691,6 +762,7 @@ mod tests {
                         bottom: 1120,
                     },
                 },
+                audio: None,
                 frame_rate: 60,
                 output: PathBuf::from("recording.mp4"),
             },
@@ -735,6 +807,7 @@ mod tests {
                 target: RecordingTarget::Window {
                     title: "Editor & terminal".to_owned(),
                 },
+                audio: None,
                 frame_rate: 30,
                 output: PathBuf::from("window.mp4"),
             },
@@ -753,6 +826,7 @@ mod tests {
         let capabilities = capabilities();
         let invalid = |target, frame_rate, output| RecordingRequest {
             target,
+            audio: None,
             frame_rate,
             output: PathBuf::from(output),
         };
@@ -803,6 +877,62 @@ mod tests {
         session.finish().unwrap();
         assert_eq!(session.state(), RecordingState::Idle);
         assert!(session.request().is_none());
+    }
+
+    #[test]
+    fn microphone_and_system_audio_use_their_explicit_ffmpeg_inputs() {
+        let microphone = RecordingRequest {
+            audio: Some(AudioSource::Microphone {
+                device: "Microphone (USB)".to_owned(),
+            }),
+            ..region_request()
+        };
+        let microphone = build_recording_command(&capabilities(), &microphone).unwrap();
+        assert!(
+            microphone
+                .arguments()
+                .windows(2)
+                .any(|pair| { pair == [OsString::from("-f"), OsString::from("dshow")] })
+        );
+        assert!(microphone.arguments().windows(2).any(|pair| {
+            pair == [
+                OsString::from("-i"),
+                OsString::from("audio=Microphone (USB)"),
+            ]
+        }));
+
+        let system = RecordingRequest {
+            audio: Some(AudioSource::SystemAudio {
+                device: "default".to_owned(),
+            }),
+            ..region_request()
+        };
+        let system = build_recording_command(&wasapi_capabilities(), &system).unwrap();
+        assert!(
+            system
+                .arguments()
+                .windows(2)
+                .any(|pair| { pair == [OsString::from("-f"), OsString::from("wasapi")] })
+        );
+    }
+
+    #[test]
+    fn audio_requires_a_supported_backend_and_non_empty_device_name() {
+        let request = RecordingRequest {
+            audio: Some(AudioSource::SystemAudio {
+                device: "default".to_owned(),
+            }),
+            ..region_request()
+        };
+        assert!(build_recording_command(&capabilities(), &request).is_err());
+
+        let request = RecordingRequest {
+            audio: Some(AudioSource::Microphone {
+                device: " ".to_owned(),
+            }),
+            ..region_request()
+        };
+        assert!(build_recording_command(&capabilities(), &request).is_err());
     }
 
     #[test]
@@ -879,6 +1009,12 @@ mod tests {
         }
     }
 
+    fn wasapi_capabilities() -> FfmpegCapabilities {
+        let mut capabilities = capabilities();
+        capabilities.input_formats.push("wasapi".to_owned());
+        capabilities
+    }
+
     fn region_request() -> RecordingRequest {
         RecordingRequest {
             target: RecordingTarget::Region {
@@ -889,6 +1025,7 @@ mod tests {
                     bottom: 610,
                 },
             },
+            audio: None,
             frame_rate: 30,
             output: PathBuf::from("region.mp4"),
         }
