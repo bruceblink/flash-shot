@@ -6,10 +6,11 @@
 use std::{
     env,
     ffi::{OsStr, OsString},
-    io,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Output},
-    time::Duration,
+    process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio},
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 use crate::domain::geometry::PhysicalRect;
@@ -21,6 +22,7 @@ const DEVICE_ARGUMENTS: &[&str] = &["-hide_banner", "-devices"];
 
 /// Maximum time a recording process gets to finalize its container after receiving `q`.
 pub const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 
 /// Read-only capabilities exposed by an installed FFmpeg executable.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -222,6 +224,157 @@ impl FfmpegCommand {
         command.args(self.arguments);
         command
     }
+}
+
+/// Completion data retained after an FFmpeg process has exited.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecordingExit {
+    pub success: bool,
+    pub diagnostic: String,
+}
+
+/// Owns a single FFmpeg child process and guarantees cleanup when the owner is dropped.
+pub struct RecordingProcess {
+    child: Option<Child>,
+    stdin: Option<ChildStdin>,
+    stderr_reader: Option<JoinHandle<io::Result<Vec<u8>>>>,
+}
+
+impl RecordingProcess {
+    /// Starts FFmpeg with piped control input and continuously drained stderr.
+    pub fn start(command: FfmpegCommand) -> io::Result<Self> {
+        let mut child = command
+            .into_command()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| {
+                io::Error::new(error.kind(), format!("could not start FFmpeg: {error}"))
+            })?;
+        let stdin = child.stdin.take().ok_or_else(|| {
+            io::Error::other("FFmpeg control input pipe was not available after startup")
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            io::Error::other("FFmpeg diagnostic pipe was not available after startup")
+        })?;
+        let stderr_reader = thread::spawn(move || read_bounded_diagnostics(stderr));
+        Ok(Self {
+            child: Some(child),
+            stdin: Some(stdin),
+            stderr_reader: Some(stderr_reader),
+        })
+    }
+
+    /// Waits for natural completion and returns the bounded FFmpeg diagnostic output.
+    pub fn wait_for_exit(&mut self) -> io::Result<RecordingExit> {
+        let status = self
+            .child
+            .take()
+            .ok_or_else(|| io::Error::other("recording process has already been reaped"))?
+            .wait()?;
+        self.stdin.take();
+        self.complete(status)
+    }
+
+    /// Requests a container-safe FFmpeg stop, then kills only after the timeout expires.
+    pub fn stop_gracefully(&mut self, timeout: Duration) -> io::Result<RecordingExit> {
+        let stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("recording process control input is unavailable"))?;
+        write_graceful_stop(stdin)?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let child = self
+                .child
+                .as_mut()
+                .ok_or_else(|| io::Error::other("recording process has already been reaped"))?;
+            if let Some(status) = child.try_wait()? {
+                self.child.take();
+                return self.complete(status);
+            }
+            if Instant::now() >= deadline {
+                let mut child = self.child.take().expect("checked above");
+                let _ = child.kill();
+                let _ = child.wait();
+                let diagnostic = self.join_diagnostics()?;
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "FFmpeg did not stop within {} ms and was terminated{}",
+                        timeout.as_millis(),
+                        diagnostic_suffix(&diagnostic),
+                    ),
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn complete(&mut self, status: ExitStatus) -> io::Result<RecordingExit> {
+        let diagnostic = self.join_diagnostics()?;
+        let exit = RecordingExit {
+            success: status.success(),
+            diagnostic,
+        };
+        if exit.success {
+            Ok(exit)
+        } else {
+            Err(io::Error::other(format!(
+                "FFmpeg exited with {status}{}",
+                diagnostic_suffix(&exit.diagnostic),
+            )))
+        }
+    }
+
+    fn join_diagnostics(&mut self) -> io::Result<String> {
+        let Some(reader) = self.stderr_reader.take() else {
+            return Ok(String::new());
+        };
+        let bytes = reader
+            .join()
+            .map_err(|_| io::Error::other("FFmpeg diagnostic reader panicked"))??;
+        Ok(String::from_utf8_lossy(&bytes).trim().to_owned())
+    }
+}
+
+impl Drop for RecordingProcess {
+    fn drop(&mut self) {
+        self.stdin.take();
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(reader) = self.stderr_reader.take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+fn write_graceful_stop(mut stdin: ChildStdin) -> io::Result<()> {
+    stdin.write_all(graceful_stop_input())?;
+    stdin.flush()
+}
+
+fn read_bounded_diagnostics(mut stderr: impl Read) -> io::Result<Vec<u8>> {
+    let mut retained = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let read = stderr.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = MAX_DIAGNOSTIC_BYTES.saturating_sub(retained.len());
+        retained.extend_from_slice(&buffer[..read.min(remaining)]);
+    }
+    Ok(retained)
+}
+
+fn diagnostic_suffix(diagnostic: &str) -> String {
+    first_diagnostic_line(diagnostic)
+        .map(|line| format!(": {line}"))
+        .unwrap_or_default()
 }
 
 /// Builds a shell-free FFmpeg command for a display, window, or region recording.
@@ -453,13 +606,14 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, GRACEFUL_STOP_TIMEOUT,
-        RecordingRequest, RecordingSession, RecordingState, RecordingTarget, VERSION_ARGUMENTS,
-        build_recording_command, executable_from, first_diagnostic_line, graceful_stop_input,
-        parse_input_formats, parse_version,
+        DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, FfmpegCommand,
+        GRACEFUL_STOP_TIMEOUT, RecordingProcess, RecordingRequest, RecordingSession,
+        RecordingState, RecordingTarget, VERSION_ARGUMENTS, build_recording_command,
+        diagnostic_suffix, executable_from, first_diagnostic_line, graceful_stop_input,
+        parse_input_formats, parse_version, read_bounded_diagnostics,
     };
     use crate::domain::geometry::PhysicalRect;
-    use std::{ffi::OsString, path::PathBuf};
+    use std::{ffi::OsString, io::Cursor, path::PathBuf, time::Duration};
 
     const FORMATS: &str = "\
  File formats:\n\
@@ -675,6 +829,46 @@ mod tests {
         session.begin(region_request()).unwrap();
         assert!(session.resume().is_err());
         assert!(session.request_stop().is_err());
+    }
+
+    #[test]
+    fn diagnostics_are_bounded_and_include_only_the_first_line_in_errors() {
+        let diagnostics =
+            read_bounded_diagnostics(Cursor::new(b"failed to initialize\nverbose")).unwrap();
+        let diagnostics = String::from_utf8(diagnostics).unwrap();
+
+        assert_eq!(diagnostic_suffix(&diagnostics), ": failed to initialize");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_stop_sends_ffmpeg_control_input_and_reaps_the_child() {
+        let command = FfmpegCommand {
+            executable: PathBuf::from("cmd.exe"),
+            arguments: ["/C", "more > nul & echo finalized 1>&2"]
+                .map(OsString::from)
+                .into(),
+        };
+        let mut process = RecordingProcess::start(command).unwrap();
+        let exit = process.stop_gracefully(Duration::from_secs(2)).unwrap();
+
+        assert!(exit.success);
+        assert_eq!(exit.diagnostic, "finalized");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_exit_errors_include_bounded_ffmpeg_diagnostics() {
+        let command = FfmpegCommand {
+            executable: PathBuf::from("cmd.exe"),
+            arguments: ["/C", "echo encoder failed 1>&2 & exit /b 7"]
+                .map(OsString::from)
+                .into(),
+        };
+        let mut process = RecordingProcess::start(command).unwrap();
+        let error = process.wait_for_exit().unwrap_err();
+
+        assert!(error.to_string().contains("encoder failed"));
     }
 
     fn capabilities() -> FfmpegCapabilities {
