@@ -917,6 +917,22 @@ impl Render for CaptureOverlay {
                                     }))
                                     .child("Quick save"),
                             )
+                            .child(
+                                div()
+                                    .id("overlay-pin")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(rgba(0x111827E6))
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.pin_selection(cx))
+                                        });
+                                    }))
+                                    .child("Pin"),
+                            )
                     })
                     .child(
                         div()

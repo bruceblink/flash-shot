@@ -382,6 +382,26 @@ impl Render for FlashShotApp {
                                             .child("Save"),
                                     )
                                 })
+                                .when(can_export, |actions| {
+                                    actions.child(
+                                        div()
+                                            .id("pin-selection")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .border_1()
+                                            .border_color(colors.accent)
+                                            .text_color(colors.accent)
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.pin_selection(cx)
+                                                }),
+                                            )
+                                            .child("Pin"),
+                                    )
+                                })
                                 .when(!is_exporting, |actions| {
                                     actions.child(
                                         div()

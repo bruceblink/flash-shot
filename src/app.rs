@@ -1,6 +1,7 @@
 //! GPUI capture workspace state and module boundaries.
 
 mod overlay;
+mod pinned;
 mod render_image;
 mod view;
 mod workflow;

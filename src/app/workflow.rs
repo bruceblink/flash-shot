@@ -14,7 +14,10 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, point, px, size,
 };
 
-use super::{FlashShotApp, overlay::CaptureOverlay, render_image::render_image_from_capture};
+use super::{
+    FlashShotApp, overlay::CaptureOverlay, pinned::PinnedImage,
+    render_image::render_image_from_capture,
+};
 use crate::{
     domain::{
         annotation::{AnnotationCommand, AnnotationDocument, AnnotationId, AnnotationTool},
@@ -1122,6 +1125,68 @@ impl FlashShotApp {
         .detach();
     }
 
+    pub(super) fn pin_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.session.selection() else {
+            self.status = "Select an area before pinning".to_owned();
+            cx.notify();
+            return;
+        };
+        let Some((frame, document)) = self.export_source() else {
+            cx.notify();
+            return;
+        };
+        let pinned_frame = match frame
+            .composite_annotations(&document)
+            .and_then(|frame| frame.crop(selection))
+        {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.status = format!("Could not pin selection: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        let pinned = match render_image_from_capture(&pinned_frame) {
+            Ok(image) => image,
+            Err(error) => {
+                self.status = format!("Could not render pinned selection: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        let window_size = pinned_size(pinned_frame.width as f32, pinned_frame.height as f32);
+        let window_bounds = WindowBounds::centered(window_size, cx);
+        match cx.open_window(
+            WindowOptions {
+                window_bounds: Some(window_bounds),
+                titlebar: None,
+                focus: true,
+                show: true,
+                kind: WindowKind::PopUp,
+                is_movable: true,
+                is_resizable: true,
+                is_minimizable: false,
+                window_background: WindowBackgroundAppearance::Opaque,
+                window_min_size: Some(size(px(180.0), px(140.0))),
+                ..Default::default()
+            },
+            move |window, cx| {
+                let pinned = cx.new(|cx| PinnedImage::new(pinned.image, cx));
+                pinned.read(cx).focus_handle(cx).focus(window, cx);
+                pinned
+            },
+        ) {
+            Ok(_) => {
+                self.status = "Selection pinned in an always-on-top window".to_owned();
+            }
+            Err(error) => {
+                self.status = format!("Could not open pinned window: {error}");
+                log::warn!(target: "flash_shot::pinned", "pinned_window_open_failed error={error}");
+            }
+        }
+        cx.notify();
+    }
+
     pub(super) fn save_selection(&mut self, cx: &mut Context<Self>) {
         let selection = match self.session.start_export() {
             Ok(selection) => selection,
@@ -1727,6 +1792,21 @@ fn fill_color(stroke_rgba: u32) -> u32 {
     with_alpha(stroke_rgba, fill_alpha(stroke_rgba as u8))
 }
 
+fn pinned_size(image_width: f32, image_height: f32) -> gpui::Size<Pixels> {
+    const HEADER_HEIGHT: f32 = 26.0;
+    const MAX_WIDTH: f32 = 640.0;
+    const MAX_HEIGHT: f32 = 540.0;
+    let width = image_width.max(1.0);
+    let height = image_height.max(1.0);
+    let scale = (MAX_WIDTH / width)
+        .min((MAX_HEIGHT - HEADER_HEIGHT) / height)
+        .min(1.0);
+    size(
+        px((width * scale).max(180.0)),
+        px((height * scale + HEADER_HEIGHT).max(140.0)),
+    )
+}
+
 fn with_alpha(color: u32, alpha: u8) -> u32 {
     (color & 0xFFFFFF00) | u32::from(alpha)
 }
@@ -1838,7 +1918,7 @@ mod tests {
     use super::{
         KeyboardCommand, annotation_added_status, annotation_cancelled_status,
         copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color, intersect_rect,
-        is_current_operation, keyboard_command, next_quick_save_path, png_path,
+        is_current_operation, keyboard_command, next_quick_save_path, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, resolve_pointer_selection,
         save_annotated_frame_selection, style_for_tool, tool_selected_status, with_alpha,
     };
@@ -2160,6 +2240,17 @@ mod tests {
         assert_eq!(with_alpha(0xFF3B30FF, 128), 0xFF3B3080);
         assert_eq!(fill_alpha(255), 0x66);
         assert_eq!(fill_alpha(128), 0x33);
+    }
+
+    #[test]
+    fn pinned_window_size_preserves_small_images_and_constrains_large_ones() {
+        let small = pinned_size(100.0, 80.0);
+        assert_eq!(f32::from(small.width), 180.0);
+        assert_eq!(f32::from(small.height), 140.0);
+
+        let large = pinned_size(1_280.0, 720.0);
+        assert_eq!(f32::from(large.width), 640.0);
+        assert_eq!(f32::from(large.height), 386.0);
     }
 
     #[test]

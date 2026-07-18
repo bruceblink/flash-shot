@@ -10,11 +10,16 @@ pub fn restore(handle: isize) -> io::Result<()> {
     platform::restore(handle)
 }
 
+pub fn make_topmost(handle: isize) -> io::Result<()> {
+    platform::make_topmost(handle)
+}
+
 #[cfg(windows)]
 mod platform {
     use std::{ffi::c_void, io};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IsWindow, SW_HIDE, SW_RESTORE, SetForegroundWindow, ShowWindow,
+        HWND_TOPMOST, IsWindow, SW_HIDE, SW_RESTORE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow,
+        SetWindowPos, ShowWindow,
     };
 
     fn window(handle: isize) -> io::Result<*mut c_void> {
@@ -46,6 +51,15 @@ mod platform {
         }
         Ok(())
     }
+
+    pub fn make_topmost(handle: isize) -> io::Result<()> {
+        let window = window(handle)?;
+        // SAFETY: window is live and the call only changes its z-order.
+        if unsafe { SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 #[cfg(not(windows))]
@@ -57,6 +71,10 @@ mod platform {
     }
 
     pub fn restore(_handle: isize) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn make_topmost(_handle: isize) -> io::Result<()> {
         Ok(())
     }
 }
