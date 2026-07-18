@@ -1007,6 +1007,9 @@ impl Render for CaptureOverlay {
                     .right(px(18.0))
                     .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
                     .flex()
+                    .max_w(px(620.0))
+                    .flex_wrap()
+                    .justify_end()
                     .gap_2()
                     .when(can_export, |actions| {
                         actions
