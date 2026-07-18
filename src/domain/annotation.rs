@@ -40,6 +40,9 @@ impl Default for AnnotationStyle {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnnotationKind {
+    Mosaic {
+        bounds: PhysicalRect,
+    },
     Highlight {
         bounds: PhysicalRect,
     },
@@ -164,6 +167,7 @@ impl Annotation {
             .stroke_width
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
+            AnnotationKind::Mosaic { bounds } => bounds.contains(point),
             AnnotationKind::Highlight { bounds } => bounds.contains(point),
             AnnotationKind::Rectangle { bounds } => {
                 if bounds.width() == 0 || bounds.height() == 0 {
@@ -189,7 +193,8 @@ impl Annotation {
 
     pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
-            AnnotationKind::Highlight { bounds }
+            AnnotationKind::Mosaic { bounds }
+            | AnnotationKind::Highlight { bounds }
             | AnnotationKind::Rectangle { bounds }
             | AnnotationKind::Ellipse { bounds } => bounds,
             AnnotationKind::Line { start, end } | AnnotationKind::Arrow { start, end } => {
@@ -207,6 +212,9 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Mosaic { bounds } => AnnotationKind::Mosaic {
+                    bounds: translate_rect(bounds, delta_x, delta_y),
+                },
                 AnnotationKind::Highlight { bounds } => AnnotationKind::Highlight {
                     bounds: translate_rect(bounds, delta_x, delta_y),
                 },
@@ -253,6 +261,7 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
+                AnnotationKind::Mosaic { .. } => AnnotationKind::Mosaic { bounds },
                 AnnotationKind::Highlight { .. } => AnnotationKind::Highlight { bounds },
                 AnnotationKind::Rectangle { .. } => AnnotationKind::Rectangle { bounds },
                 AnnotationKind::Ellipse { .. } => AnnotationKind::Ellipse { bounds },
@@ -276,6 +285,7 @@ impl Annotation {
 /// The drawable tools whose pointer gestures create a single annotation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnnotationTool {
+    Mosaic,
     Highlight,
     Rectangle,
     Ellipse,
@@ -342,6 +352,9 @@ impl AnnotationDraft {
         has_visible_geometry.then(|| Annotation {
             id: self.id,
             kind: match self.tool {
+                AnnotationTool::Mosaic => AnnotationKind::Mosaic {
+                    bounds: PhysicalRect::new(self.start, self.current),
+                },
                 AnnotationTool::Highlight => AnnotationKind::Highlight {
                     bounds: PhysicalRect::new(self.start, self.current),
                 },
@@ -1200,6 +1213,40 @@ mod tests {
         let highlight = &document.annotations()[0];
         assert!(highlight.hit_test(PhysicalPoint { x: 0, y: 150 }, 0));
         assert!(!highlight.hit_test(PhysicalPoint { x: 100, y: 150 }, 0));
+    }
+
+    #[test]
+    fn mosaic_gesture_uses_a_resizable_rect_with_interior_hit_testing() {
+        let mut document = AnnotationDocument::new(canvas()).unwrap();
+        let mut history = CommandHistory::default();
+        let mut editor = AnnotationEditor::default();
+
+        editor
+            .begin(
+                &document,
+                AnnotationId::new(91),
+                AnnotationTool::Mosaic,
+                AnnotationStyle::default(),
+                PhysicalPoint { x: -100, y: 100 },
+            )
+            .unwrap();
+        editor.update(&document, PhysicalPoint { x: 100, y: 200 });
+
+        assert_eq!(
+            editor.draft().unwrap().preview().unwrap().kind,
+            AnnotationKind::Mosaic {
+                bounds: PhysicalRect {
+                    left: -100,
+                    top: 100,
+                    right: 100,
+                    bottom: 200,
+                },
+            }
+        );
+        assert!(editor.commit(&mut document, &mut history).unwrap());
+        let mosaic = &document.annotations()[0];
+        assert!(mosaic.hit_test(PhysicalPoint { x: 0, y: 150 }, 0));
+        assert!(!mosaic.hit_test(PhysicalPoint { x: 100, y: 150 }, 0));
     }
 
     #[test]

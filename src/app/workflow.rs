@@ -374,6 +374,10 @@ impl FlashShotApp {
         self.select_annotation_tool(AnnotationTool::Highlight, cx);
     }
 
+    pub(super) fn select_mosaic_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Mosaic, cx);
+    }
+
     pub(super) fn select_ellipse_tool(&mut self, cx: &mut Context<Self>) {
         self.select_annotation_tool(AnnotationTool::Ellipse, cx);
     }
@@ -1110,6 +1114,7 @@ impl FlashShotApp {
 
 fn tool_selected_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Mosaic => "Mosaic tool selected",
         AnnotationTool::Highlight => "Highlight tool selected",
         AnnotationTool::Rectangle => "Rectangle tool selected",
         AnnotationTool::Ellipse => "Ellipse tool selected",
@@ -1121,6 +1126,7 @@ fn tool_selected_status(tool: AnnotationTool) -> &'static str {
 
 fn drawing_status(tool: AnnotationTool) -> &'static str {
     match tool {
+        AnnotationTool::Mosaic => "Drawing mosaic...",
         AnnotationTool::Highlight => "Drawing highlight...",
         AnnotationTool::Rectangle => "Drawing rectangle...",
         AnnotationTool::Ellipse => "Drawing ellipse...",
@@ -1132,6 +1138,7 @@ fn drawing_status(tool: AnnotationTool) -> &'static str {
 
 fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Mosaic) => "Mosaic added",
         Some(AnnotationTool::Highlight) => "Highlight added",
         Some(AnnotationTool::Rectangle) => "Rectangle added",
         Some(AnnotationTool::Ellipse) => "Ellipse added",
@@ -1144,6 +1151,7 @@ fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
 
 fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
     match tool {
+        Some(AnnotationTool::Mosaic) => "Mosaic cancelled",
         Some(AnnotationTool::Highlight) => "Highlight cancelled",
         Some(AnnotationTool::Rectangle) => "Rectangle cancelled",
         Some(AnnotationTool::Ellipse) => "Ellipse cancelled",
@@ -1816,6 +1824,25 @@ mod tests {
                 fill_rgba: None,
                 stroke_width: 1,
             }
+        );
+    }
+
+    #[test]
+    fn mosaic_tool_has_specific_user_feedback() {
+        use crate::domain::annotation::AnnotationTool;
+
+        assert_eq!(
+            tool_selected_status(AnnotationTool::Mosaic),
+            "Mosaic tool selected"
+        );
+        assert_eq!(drawing_status(AnnotationTool::Mosaic), "Drawing mosaic...");
+        assert_eq!(
+            annotation_added_status(Some(AnnotationTool::Mosaic)),
+            "Mosaic added"
+        );
+        assert_eq!(
+            annotation_cancelled_status(Some(AnnotationTool::Mosaic)),
+            "Mosaic cancelled"
         );
     }
 

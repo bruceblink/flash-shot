@@ -15,6 +15,8 @@ use crate::{
     platform::capture::{CaptureFrame, PixelFormat},
 };
 
+const MOSAIC_BLOCK_SIZE: u32 = 10;
+
 impl CaptureFrame {
     /// Composites renderer-independent annotations at original physical-pixel
     /// coordinates, producing a new immutable frame suitable for export.
@@ -48,6 +50,7 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
     let fill = annotation.style.fill_rgba.map(rgba_bytes);
     let radius = annotation.style.stroke_width.max(1).div_ceil(2) as i32;
     match annotation.kind {
+        AnnotationKind::Mosaic { bounds } => mosaic_rect(pixels, frame, bounds),
         AnnotationKind::Highlight { bounds } => fill_rect(pixels, frame, bounds, color),
         AnnotationKind::Rectangle { bounds } => {
             if let Some(fill) = fill {
@@ -69,6 +72,47 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
             }
         }
     }
+}
+
+fn mosaic_rect(pixels: &mut [u8], frame: &CaptureFrame, bounds: PhysicalRect) {
+    let left = bounds.left.max(frame.bounds.left);
+    let top = bounds.top.max(frame.bounds.top);
+    let right = bounds.right.min(frame.bounds.right);
+    let bottom = bounds.bottom.min(frame.bounds.bottom);
+    if left >= right || top >= bottom {
+        return;
+    }
+    let block_size = MOSAIC_BLOCK_SIZE as i32;
+    for block_top in (top..bottom).step_by(MOSAIC_BLOCK_SIZE as usize) {
+        for block_left in (left..right).step_by(MOSAIC_BLOCK_SIZE as usize) {
+            let block_right = (block_left + block_size).min(right);
+            let block_bottom = (block_top + block_size).min(bottom);
+            let pixel_count =
+                u32::try_from((block_right - block_left) * (block_bottom - block_top))
+                    .unwrap_or(u32::MAX)
+                    .max(1);
+            let mut totals = [0_u64; 4];
+            for y in block_top..block_bottom {
+                for x in block_left..block_right {
+                    let offset = frame_offset(frame, x, y);
+                    for (channel, total) in totals.iter_mut().enumerate() {
+                        *total += u64::from(pixels[offset + channel]);
+                    }
+                }
+            }
+            let average = totals.map(|total| (total / u64::from(pixel_count)) as u8);
+            for y in block_top..block_bottom {
+                for x in block_left..block_right {
+                    let offset = frame_offset(frame, x, y);
+                    pixels[offset..offset + 4].copy_from_slice(&average);
+                }
+            }
+        }
+    }
+}
+
+fn frame_offset(frame: &CaptureFrame, x: i32, y: i32) -> usize {
+    (y - frame.bounds.top) as usize * frame.stride + (x - frame.bounds.left) as usize * 4
 }
 
 fn rgba_bytes(rgba: u32) -> [u8; 4] {
@@ -257,10 +301,9 @@ fn draw_disc(
 }
 
 fn blend_pixel(pixels: &mut [u8], frame: &CaptureFrame, point: PhysicalPoint, color: [u8; 4]) {
-    let Some(local) = frame.bounds.translate_to_local(point) else {
+    let Some(offset) = pixel_offset(frame, point) else {
         return;
     };
-    let offset = local.y as usize * frame.stride + local.x as usize * 4;
     let alpha = u16::from(color[3]);
     let inverse = 255 - alpha;
     pixels[offset] =
@@ -270,6 +313,11 @@ fn blend_pixel(pixels: &mut [u8], frame: &CaptureFrame, point: PhysicalPoint, co
     pixels[offset + 2] =
         ((u16::from(color[0]) * alpha + u16::from(pixels[offset + 2]) * inverse) / 255) as u8;
     pixels[offset + 3] = (alpha + u16::from(pixels[offset + 3]) * inverse / 255) as u8;
+}
+
+fn pixel_offset(frame: &CaptureFrame, point: PhysicalPoint) -> Option<usize> {
+    let local = frame.bounds.translate_to_local(point)?;
+    Some(local.y as usize * frame.stride + local.x as usize * 4)
 }
 
 impl CaptureFrame {
@@ -637,6 +685,64 @@ mod tests {
                 .unwrap()
                 .red,
             20
+        );
+    }
+
+    #[test]
+    fn composite_pixelates_mosaic_rects_at_original_physical_pixels() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 12,
+                bottom: 2,
+            },
+            width: 12,
+            height: 2,
+            stride: 48,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(
+                (0_u8..24)
+                    .flat_map(|value| {
+                        [value, value.saturating_add(1), value.saturating_add(2), 255]
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(7),
+                    kind: AnnotationKind::Mosaic {
+                        bounds: PhysicalRect {
+                            left: 1,
+                            top: 0,
+                            right: 12,
+                            bottom: 2,
+                        },
+                    },
+                    style: AnnotationStyle::default(),
+                }),
+            )
+            .unwrap();
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        assert_eq!(
+            composited.pixel_at(PhysicalPoint { x: 0, y: 0 }),
+            frame.pixel_at(PhysicalPoint { x: 0, y: 0 })
+        );
+        assert_eq!(
+            composited.pixel_at(PhysicalPoint { x: 1, y: 0 }),
+            composited.pixel_at(PhysicalPoint { x: 10, y: 1 })
+        );
+        assert_ne!(
+            composited.pixel_at(PhysicalPoint { x: 1, y: 0 }),
+            composited.pixel_at(PhysicalPoint { x: 11, y: 0 })
         );
     }
 

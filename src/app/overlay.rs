@@ -384,6 +384,30 @@ impl Render for CaptureOverlay {
                     })
                     .child(
                         div()
+                            .id("overlay-tool-mosaic")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Mosaic) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Mosaic) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_mosaic_tool(cx));
+                                });
+                            }))
+                            .child("Mosaic"),
+                    )
+                    .child(
+                        div()
                             .id("overlay-tool-highlight")
                             .px_3()
                             .py_2()
@@ -821,6 +845,10 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
+            AnnotationKind::Mosaic { bounds } => {
+                paint_rect_fill(window, transform, bounds, rgba(0x11182799));
+                paint_mosaic_grid(window, transform, bounds, colors.muted);
+            }
             AnnotationKind::Highlight { bounds } => {
                 paint_rect_fill(
                     window,
@@ -877,6 +905,38 @@ fn paint_annotations(
             paint_outline(window, transform, annotation.bounds(), colors.success, 1);
             paint_resize_handles(window, transform, annotation.bounds(), colors.success);
         }
+    }
+}
+
+fn paint_mosaic_grid(
+    window: &mut Window,
+    transform: PreviewTransform,
+    bounds: PhysicalRect,
+    color: gpui::Hsla,
+) {
+    const BLOCK_SIZE: i32 = 10;
+    for x in (bounds.left..=bounds.right).step_by(BLOCK_SIZE as usize) {
+        paint_line(
+            window,
+            transform,
+            PhysicalPoint { x, y: bounds.top },
+            PhysicalPoint {
+                x,
+                y: bounds.bottom,
+            },
+            color,
+            1,
+        );
+    }
+    for y in (bounds.top..=bounds.bottom).step_by(BLOCK_SIZE as usize) {
+        paint_line(
+            window,
+            transform,
+            PhysicalPoint { x: bounds.left, y },
+            PhysicalPoint { x: bounds.right, y },
+            color,
+            1,
+        );
     }
 }
 
@@ -945,7 +1005,8 @@ fn paint_resize_handles(
 #[cfg(test)]
 fn outline_shape_bounds(annotation: &Annotation) -> Option<PhysicalRect> {
     match annotation.kind {
-        AnnotationKind::Highlight { bounds }
+        AnnotationKind::Mosaic { bounds }
+        | AnnotationKind::Highlight { bounds }
         | AnnotationKind::Rectangle { bounds }
         | AnnotationKind::Ellipse { bounds } => Some(bounds),
         _ => None,
