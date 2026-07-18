@@ -1472,20 +1472,7 @@ impl FlashShotApp {
             KeyboardCommand::SelectNextAnnotation => self.select_adjacent_annotation(false, cx),
             KeyboardCommand::SelectPreviousAnnotation => self.select_adjacent_annotation(true, cx),
             KeyboardCommand::Delete => self.delete_selected_annotation(cx),
-            KeyboardCommand::Cancel => {
-                if matches!(
-                    self.session.state(),
-                    CaptureSessionState::Capturing
-                        | CaptureSessionState::Selecting
-                        | CaptureSessionState::Completed
-                        | CaptureSessionState::Failed
-                ) {
-                    self.reset(cx);
-                    true
-                } else {
-                    false
-                }
-            }
+            KeyboardCommand::Cancel => self.cancel_editor_or_capture(cx),
             KeyboardCommand::Copy => {
                 if self.session.state() == CaptureSessionState::Selecting
                     && self.session.selection().is_some()
@@ -1514,6 +1501,33 @@ impl FlashShotApp {
         if handled {
             cx.stop_propagation();
         }
+    }
+
+    fn cancel_editor_or_capture(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.cancel_text_edit(cx) {
+            return true;
+        }
+        if self.annotation_editor.cancel() {
+            self.status = "Annotation edit cancelled".to_owned();
+            cx.notify();
+            return true;
+        }
+        if self.selected_annotation.take().is_some() {
+            self.status = "Annotation deselected".to_owned();
+            cx.notify();
+            return true;
+        }
+        if matches!(
+            self.session.state(),
+            CaptureSessionState::Capturing
+                | CaptureSessionState::Selecting
+                | CaptureSessionState::Completed
+                | CaptureSessionState::Failed
+        ) {
+            self.reset(cx);
+            return true;
+        }
+        false
     }
 
     pub(super) fn undo_annotation(&mut self, cx: &mut Context<Self>) -> bool {
