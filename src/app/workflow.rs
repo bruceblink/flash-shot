@@ -495,12 +495,17 @@ impl FlashShotApp {
                     Ok(Ok(Some(mut paths))) => match paths.pop() {
                         Some(path) => match cx
                             .background_executor()
-                            .spawn(async move {
-                                CaptureFrame::open_png(&path).map(|frame| (path, frame))
-                            })
+                            .spawn(async move { open_image_project(&path) })
                             .await
                         {
-                            Ok((path, frame)) => OpenImageOutcome::Opened { path, frame },
+                            Ok((path, frame, document, document_warning)) => {
+                                OpenImageOutcome::Opened {
+                                    path,
+                                    frame,
+                                    document,
+                                    document_warning,
+                                }
+                            }
                             Err(error) => OpenImageOutcome::Failed(error.to_string()),
                         },
                         None => OpenImageOutcome::Cancelled,
@@ -537,10 +542,15 @@ impl FlashShotApp {
             async move {
                 let outcome = match cx
                     .background_executor()
-                    .spawn(async move { CaptureFrame::open_png(&path).map(|frame| (path, frame)) })
+                    .spawn(async move { open_image_project(&path) })
                     .await
                 {
-                    Ok((path, frame)) => OpenImageOutcome::Opened { path, frame },
+                    Ok((path, frame, document, document_warning)) => OpenImageOutcome::Opened {
+                        path,
+                        frame,
+                        document,
+                        document_warning,
+                    },
                     Err(error) => OpenImageOutcome::Failed(error.to_string()),
                 };
                 if let Some(this) = this.upgrade() {
@@ -563,13 +573,20 @@ impl FlashShotApp {
             return;
         }
         match outcome {
-            OpenImageOutcome::Opened { path, frame } => {
+            OpenImageOutcome::Opened {
+                path,
+                frame,
+                document,
+                document_warning,
+            } => {
                 let bounds = frame.bounds;
                 let result = (|| -> std::io::Result<()> {
                     self.session.frames_ready().map_err(std::io::Error::other)?;
                     let preview = render_image_from_capture(&frame)?;
-                    let document =
-                        AnnotationDocument::new(bounds).map_err(std::io::Error::other)?;
+                    let document = document
+                        .unwrap_or(AnnotationDocument::new(bounds).map_err(std::io::Error::other)?);
+                    let (next_annotation_id, next_sequence_number) =
+                        next_annotation_counters(&document);
                     self.session.select(bounds).map_err(std::io::Error::other)?;
                     self.preview = Some(preview.image);
                     self.frame = Some(frame);
@@ -579,14 +596,19 @@ impl FlashShotApp {
                     self.annotation_tool = None;
                     self.text_edit = None;
                     self.selected_annotation = None;
-                    self.next_annotation_id = 1;
-                    self.next_sequence_number = 1;
+                    self.next_annotation_id = next_annotation_id;
+                    self.next_sequence_number = next_sequence_number;
                     self.selection_drag.select(bounds);
                     Ok(())
                 })();
                 match result {
                     Ok(()) => {
-                        self.status = format!("Opened {} for annotation", path.display());
+                        self.status = match document_warning {
+                            Some(warning) => {
+                                format!("Opened {} without annotations: {warning}", path.display())
+                            }
+                            None => format!("Opened {} for annotation", path.display()),
+                        };
                         if let Some(handle) = self.main_window_handle
                             && let Err(error) = window_visibility::hide(handle)
                         {
@@ -3690,6 +3712,30 @@ fn load_annotation_document(
     Ok(document)
 }
 
+fn open_image_project(
+    path: &Path,
+) -> std::io::Result<(
+    PathBuf,
+    CaptureFrame,
+    Option<AnnotationDocument>,
+    Option<String>,
+)> {
+    let frame = CaptureFrame::open_png(path)?;
+    let sidecar = annotation_sidecar_path(path);
+    if !sidecar.exists() {
+        return Ok((path.to_owned(), frame, None, None));
+    }
+    match load_annotation_document(&sidecar, frame.bounds) {
+        Ok(document) => Ok((path.to_owned(), frame, Some(document), None)),
+        Err(error) => Ok((
+            path.to_owned(),
+            frame,
+            None,
+            Some(format!("could not load {}: {error}", sidecar.display())),
+        )),
+    }
+}
+
 fn next_annotation_counters(document: &AnnotationDocument) -> (u64, u32) {
     let next_id = document
         .annotations()
@@ -3848,7 +3894,12 @@ enum SaveOutcome {
 }
 
 enum OpenImageOutcome {
-    Opened { path: PathBuf, frame: CaptureFrame },
+    Opened {
+        path: PathBuf,
+        frame: CaptureFrame,
+        document: Option<AnnotationDocument>,
+        document_warning: Option<String>,
+    },
     Cancelled,
     Failed(String),
 }
@@ -3984,7 +4035,7 @@ mod tests {
         is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
         next_annotation_selection, next_capture_delay, next_quick_save_path,
         next_quick_save_path_with_prefix, next_recording_audio_selection,
-        next_recording_display_selection, pinned_size, png_path,
+        next_recording_display_selection, open_image_project, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
         recording_display_selection_label, recording_target_label, resolve_pointer_selection,
         sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
@@ -4663,6 +4714,44 @@ mod tests {
                 bottom: 0,
             }
         );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn open_image_project_restores_a_valid_sidecar_and_tolerates_a_bad_one() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-open-project-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let image_path = directory.join("capture.png");
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 2,
+                bottom: 1,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([0, 0, 0, 255, 0, 0, 0, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let document = AnnotationDocument::new(frame.bounds).unwrap();
+        save_editable_project(&frame, &document, image_path.clone()).unwrap();
+
+        let (_, _, loaded, warning) = open_image_project(&image_path).unwrap();
+        assert_eq!(loaded, Some(document));
+        assert_eq!(warning, None);
+
+        std::fs::write(annotation_sidecar_path(&image_path), "not json").unwrap();
+        let (_, _, loaded, warning) = open_image_project(&image_path).unwrap();
+        assert_eq!(loaded, None);
+        assert!(warning.unwrap().contains("could not load"));
         std::fs::remove_dir_all(directory).unwrap();
     }
 
