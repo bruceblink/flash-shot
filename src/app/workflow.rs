@@ -4,7 +4,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use gpui::{
@@ -356,7 +356,72 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn cycle_capture_delay(&mut self, cx: &mut Context<Self>) {
+        self.capture_delay_seconds = next_capture_delay(self.capture_delay_seconds);
+        self.status = if self.capture_delay_seconds == 0 {
+            "Capture delay disabled".to_owned()
+        } else {
+            format!(
+                "Capture delay set to {} seconds",
+                self.capture_delay_seconds
+            )
+        };
+        cx.notify();
+    }
+
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
+        if self.session.state() != CaptureSessionState::Idle
+            || self.delayed_capture_generation.is_some()
+        {
+            return;
+        }
+        if self.capture_delay_seconds == 0 {
+            self.start_capture_immediately(cx);
+            return;
+        }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.delayed_capture_generation = Some(generation);
+        let delay = Duration::from_secs(u64::from(self.capture_delay_seconds));
+        self.status = format!(
+            "Capture scheduled in {} seconds",
+            self.capture_delay_seconds
+        );
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                cx.background_executor().timer(delay).await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.start_delayed_capture(generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub(super) fn cancel_delayed_capture(&mut self, cx: &mut Context<Self>) {
+        if self.delayed_capture_generation.take().is_none() {
+            return;
+        }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        self.status = "Delayed capture cancelled".to_owned();
+        cx.notify();
+    }
+
+    fn start_delayed_capture(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if self.delayed_capture_generation != Some(generation)
+            || !is_current_operation(self.operation_generation, generation)
+        {
+            return;
+        }
+        self.delayed_capture_generation = None;
+        self.start_capture_immediately(cx);
+    }
+
+    fn start_capture_immediately(&mut self, cx: &mut Context<Self>) {
         if self.session.state() != CaptureSessionState::Idle {
             return;
         }
@@ -513,6 +578,7 @@ impl FlashShotApp {
             CaptureSessionState::Idle => {}
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
+        self.delayed_capture_generation = None;
         self.frame = None;
         self.annotation_document = None;
         self.annotation_history = Default::default();
@@ -538,6 +604,7 @@ impl FlashShotApp {
 
     pub(super) fn shutdown(&mut self, _cx: &mut Context<Self>) {
         self.operation_generation = self.operation_generation.wrapping_add(1);
+        self.delayed_capture_generation = None;
         if self.session.state() != CaptureSessionState::Idle {
             let _ = self.session.cancel();
         }
@@ -2209,6 +2276,15 @@ fn is_current_operation(current: u64, completed: u64) -> bool {
     current == completed
 }
 
+fn next_capture_delay(current: u8) -> u8 {
+    match current {
+        0 => 3,
+        3 => 5,
+        5 => 10,
+        _ => 0,
+    }
+}
+
 fn open_capture_overlays(
     app: gpui::Entity<FlashShotApp>,
     displays: Vec<CapturedDisplayPreview>,
@@ -2833,9 +2909,9 @@ mod tests {
         KeyboardCommand, annotation_added_status, annotation_cancelled_status,
         copy_annotated_frame_selection, drawing_status, fill_alpha, fill_color,
         format_recording_progress, intersect_rect, is_current_operation, keyboard_command,
-        next_quick_save_path, pinned_size, png_path, quick_save_annotated_frame_selection_in,
-        resolve_pointer_selection, save_annotated_frame_selection, style_for_tool,
-        tool_selected_status, with_alpha,
+        next_capture_delay, next_quick_save_path, pinned_size, png_path,
+        quick_save_annotated_frame_selection_in, resolve_pointer_selection,
+        save_annotated_frame_selection, style_for_tool, tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -3166,6 +3242,15 @@ mod tests {
         let large = pinned_size(1_280.0, 720.0);
         assert_eq!(f32::from(large.width), 640.0);
         assert_eq!(f32::from(large.height), 386.0);
+    }
+
+    #[test]
+    fn capture_delay_cycles_through_the_supported_values() {
+        assert_eq!(next_capture_delay(0), 3);
+        assert_eq!(next_capture_delay(3), 5);
+        assert_eq!(next_capture_delay(5), 10);
+        assert_eq!(next_capture_delay(10), 0);
+        assert_eq!(next_capture_delay(9), 0);
     }
 
     #[test]

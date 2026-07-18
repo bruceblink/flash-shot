@@ -96,6 +96,7 @@ impl Render for FlashShotApp {
         let colors = self.colors;
         let is_idle = self.session.state() == CaptureSessionState::Idle;
         let is_busy = self.session.state() == CaptureSessionState::Capturing;
+        let delayed_capture = self.delayed_capture_generation.is_some();
         let is_exporting = self.session.state() == CaptureSessionState::Exporting;
         let recording_active = self.recording_control.is_some();
         let recording_starting = self.recording_start_in_flight;
@@ -196,22 +197,54 @@ impl Render for FlashShotApp {
                             )
                             .child(
                                 div()
+                                    .id("capture-delay")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.muted)
+                                    .when(is_idle && !delayed_capture, |button| {
+                                        button.cursor_pointer().on_click(cx.listener(
+                                            |this, _, _, cx| this.cycle_capture_delay(cx),
+                                        ))
+                                    })
+                                    .child(if self.capture_delay_seconds == 0 {
+                                        "Delay".to_owned()
+                                    } else {
+                                        format!("{}s", self.capture_delay_seconds)
+                                    }),
+                            )
+                            .child(
+                                div()
                                     .id("capture-action")
                                     .px_4()
                                     .py_2()
                                     .rounded_md()
-                                    .bg(if is_idle {
+                                    .bg(if is_idle || delayed_capture {
                                         colors.accent
                                     } else {
                                         colors.border
                                     })
                                     .text_color(colors.background)
-                                    .when(is_idle, |button| {
-                                        button.cursor_pointer().on_click(
-                                            cx.listener(|this, _, _, cx| this.start_capture(cx)),
-                                        )
+                                    .when(is_idle || delayed_capture, |button| {
+                                        button.cursor_pointer().on_click(cx.listener(
+                                            |this, _, _, cx| {
+                                                if this.delayed_capture_generation.is_some() {
+                                                    this.cancel_delayed_capture(cx);
+                                                } else {
+                                                    this.start_capture(cx);
+                                                }
+                                            },
+                                        ))
                                     })
-                                    .child(if is_busy { "Capturing..." } else { "Capture" }),
+                                    .child(if delayed_capture {
+                                        "Cancel"
+                                    } else if is_busy {
+                                        "Capturing..."
+                                    } else {
+                                        "Capture"
+                                    }),
                             ),
                     ),
             )
