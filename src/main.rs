@@ -26,8 +26,14 @@ fn main() {
         log::error!(target: "flash_shot::performance", "performance_recorder_init_failed error={error}");
         std::process::exit(1);
     });
+    let history = flash_shot::history::managed_history_directory()
+        .and_then(flash_shot::history::ScreenshotHistory::open)
+        .unwrap_or_else(|error| {
+            log::error!(target: "flash_shot::history", "history_init_failed error={error}");
+            std::process::exit(1);
+        });
     log::info!(target: "flash_shot::lifecycle", "application_start");
-    if let Err(error) = flash_shot::run(started_at, performance) {
+    if let Err(error) = flash_shot::run(started_at, performance, history) {
         log::error!(target: "flash_shot::lifecycle", "application_run_failed error={error}");
         std::process::exit(1);
     }

@@ -105,6 +105,7 @@ impl Render for FlashShotApp {
         let can_export =
             selection.is_some() && self.session.state() == CaptureSessionState::Selecting;
         let hover_pixel = self.hover_pixel;
+        let history_entries: Vec<_> = self.history.entries().iter().take(5).cloned().collect();
         let viewport_bounds = Rc::new(Cell::new(Bounds::default()));
 
         div()
@@ -145,6 +146,62 @@ impl Render for FlashShotApp {
                             .child(if is_busy { "Capturing..." } else { "Capture" }),
                     ),
             )
+            .when(!history_entries.is_empty(), |layout| {
+                layout.child(
+                    div()
+                        .px_5()
+                        .pb_3()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(colors.muted)
+                                        .child("Recent captures"),
+                                )
+                                .child(
+                                    div()
+                                        .id("clear-history")
+                                        .text_sm()
+                                        .text_color(colors.accent)
+                                        .cursor_pointer()
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.clear_history(cx)),
+                                        )
+                                        .child("Clear"),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .children(history_entries.into_iter().map(|entry| {
+                                    div()
+                                        .id(format!("history-{}", entry.created_at_ms))
+                                        .px_2()
+                                        .py_1()
+                                        .border_1()
+                                        .border_color(colors.border)
+                                        .text_xs()
+                                        .text_color(colors.muted)
+                                        .child(
+                                            entry
+                                                .path
+                                                .file_name()
+                                                .and_then(|name| name.to_str())
+                                                .unwrap_or("Screenshot")
+                                                .to_owned(),
+                                        )
+                                })),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex_1()

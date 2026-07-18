@@ -4,6 +4,7 @@ pub mod app;
 pub mod capture_stress;
 pub mod diagnostics;
 pub mod domain;
+pub mod history;
 pub mod image;
 pub mod performance;
 pub mod platform;
@@ -12,6 +13,7 @@ pub mod theme;
 
 use app::FlashShotApp;
 use gpui::*;
+use history::ScreenshotHistory;
 use performance::PerformanceRecorder;
 use std::time::Instant;
 
@@ -29,6 +31,7 @@ fn build_menus() -> Vec<Menu> {
 pub fn run(
     started_at: Instant,
     performance: PerformanceRecorder,
+    history: ScreenshotHistory,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -60,7 +63,7 @@ pub fn run(
             window.on_next_frame(move |_, _| {
                 startup_performance.record_duration("startup_to_first_frame", started_at.elapsed());
             });
-            cx.new(|cx| FlashShotApp::new(performance, cx))
+            cx.new(|cx| FlashShotApp::new(performance, history, cx))
         }) {
             log::error!(target: "flash_shot::lifecycle", "main_window_open_failed error={error}");
             cx.quit();

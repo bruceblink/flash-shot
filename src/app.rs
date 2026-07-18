@@ -23,6 +23,7 @@ use crate::{
         selection::SelectionDrag,
         session::CaptureSession,
     },
+    history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::{
         capture::CaptureFrame,
@@ -59,6 +60,7 @@ pub struct FlashShotApp {
     focus_handle: FocusHandle,
     status: String,
     performance: PerformanceRecorder,
+    history: ScreenshotHistory,
     _shutdown: Subscription,
     _shortcut: Option<GlobalShortcutService>,
     _tray: Option<TrayService>,
@@ -84,7 +86,11 @@ impl TextEdit {
 }
 
 impl FlashShotApp {
-    pub fn new(performance: PerformanceRecorder, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        performance: PerformanceRecorder,
+        history: ScreenshotHistory,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let shutdown = cx.on_app_quit(|this, cx| {
             this.shutdown(cx);
             async {}
@@ -141,6 +147,7 @@ impl FlashShotApp {
             focus_handle: cx.focus_handle(),
             status,
             performance,
+            history,
             _shutdown: shutdown,
             _shortcut: shortcut,
             _tray: tray,

@@ -1,7 +1,6 @@
 //! Capture, selection, and clipboard workflow orchestration.
 
 use std::{
-    fs,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -1224,7 +1223,10 @@ impl FlashShotApp {
                             })
                             .await;
                         match result {
-                            Ok(path) => SaveOutcome::Saved(path),
+                            Ok(path) => SaveOutcome::Saved {
+                                path,
+                                managed: false,
+                            },
                             Err(error) => SaveOutcome::Failed(error.to_string()),
                         }
                     }
@@ -1269,7 +1271,10 @@ impl FlashShotApp {
                     })
                     .await;
                 let outcome = match result {
-                    Ok(path) => SaveOutcome::Saved(path),
+                    Ok(path) => SaveOutcome::Saved {
+                        path,
+                        managed: true,
+                    },
                     Err(error) => SaveOutcome::Failed(error.to_string()),
                 };
                 if let Some(this) = this.upgrade() {
@@ -1299,11 +1304,18 @@ impl FlashShotApp {
             return;
         }
         match outcome {
-            SaveOutcome::Saved(path) => {
+            SaveOutcome::Saved { path, managed } => {
                 if let Err(error) = self.session.export_completed() {
                     self.status = error.to_string();
                 } else {
+                    let history_status = managed.then(|| self.history.record(path.clone())).transpose().err().map(|error| {
+                        log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
+                        format!("; history unavailable: {error}")
+                    });
                     self.status = format!("Selection saved to {}", path.display());
+                    if let Some(history_status) = history_status {
+                        self.status.push_str(&history_status);
+                    }
                     self.close_capture_overlays(cx);
                     self.restore_main_window();
                 }
@@ -1321,6 +1333,17 @@ impl FlashShotApp {
                 self.status = message;
                 self.close_capture_overlays(cx);
                 self.restore_main_window();
+            }
+        }
+        cx.notify();
+    }
+
+    pub(super) fn clear_history(&mut self, cx: &mut Context<Self>) {
+        match self.history.clear() {
+            Ok(()) => self.status = "Screenshot history cleared".to_owned(),
+            Err(error) => {
+                self.status = format!("Could not clear screenshot history: {error}");
+                log::warn!(target: "flash_shot::history", "history_clear_failed error={error}");
             }
         }
         cx.notify();
@@ -1702,21 +1725,7 @@ fn quick_save_annotated_frame_selection_in(
 }
 
 fn quick_save_directory() -> std::io::Result<PathBuf> {
-    let user_dirs = directories::UserDirs::new().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "user picture directory is unavailable",
-        )
-    })?;
-    let pictures = user_dirs.picture_dir().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "user picture directory is unavailable",
-        )
-    })?;
-    let directory = pictures.join("Flash Shot");
-    fs::create_dir_all(&directory)?;
-    Ok(directory)
+    crate::history::managed_history_directory()
 }
 
 fn next_quick_save_path(
@@ -1866,7 +1875,7 @@ enum KeyboardCommand {
 }
 
 enum SaveOutcome {
-    Saved(PathBuf),
+    Saved { path: PathBuf, managed: bool },
     Cancelled,
     Failed(String),
 }
