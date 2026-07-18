@@ -90,6 +90,7 @@ cargo run --bin capture-stress -- --iterations 5
 - [开发计划](docs/plan.md)
 - [Windows 截图技术验证报告](docs/windows-capture-validation.md)
 - [Windows 分发](docs/windows-distribution.md)
+- [Linux 平台可行性验证](docs/linux-platform-validation.md)
 
 ## English
 
@@ -158,6 +159,7 @@ cargo run --bin capture-stress -- --iterations 5
 - [Product requirements (Chinese)](docs/requirements.md)
 - [Architecture (Chinese)](docs/architecture.md)
 - [Delivery plan (Chinese)](docs/plan.md)
+- [Linux platform feasibility validation (Chinese)](docs/linux-platform-validation.md)
 
 ## License
 
