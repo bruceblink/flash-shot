@@ -197,6 +197,30 @@ impl Render for FlashShotApp {
                             )
                             .child(
                                 div()
+                                    .id("capture-cursor")
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(if self.include_cursor {
+                                        colors.accent
+                                    } else {
+                                        colors.border
+                                    })
+                                    .text_color(if self.include_cursor {
+                                        colors.accent
+                                    } else {
+                                        colors.muted
+                                    })
+                                    .when(is_idle && !delayed_capture, |button| {
+                                        button.cursor_pointer().on_click(cx.listener(
+                                            |this, _, _, cx| this.toggle_capture_cursor(cx),
+                                        ))
+                                    })
+                                    .child("Cursor"),
+                            )
+                            .child(
+                                div()
                                     .id("capture-delay")
                                     .px_3()
                                     .py_2()

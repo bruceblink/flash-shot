@@ -88,10 +88,22 @@ pub trait CaptureBackend {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemCaptureBackend;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CaptureOptions {
+    pub include_cursor: bool,
+}
+
 impl CaptureBackend for SystemCaptureBackend {
     fn capture(&self, bounds: PhysicalRect) -> io::Result<CaptureFrame> {
-        platform::capture(bounds)
+        capture_with_options(bounds, CaptureOptions::default())
     }
+}
+
+pub fn capture_with_options(
+    bounds: PhysicalRect,
+    options: CaptureOptions,
+) -> io::Result<CaptureFrame> {
+    platform::capture(bounds, options)
 }
 
 #[derive(Clone, Debug)]
@@ -108,6 +120,37 @@ pub struct DisplayCapture {
 
 pub fn capture_displays() -> io::Result<Vec<DisplayCapture>> {
     capture_displays_with(&SystemDisplayProvider, &SystemCaptureBackend)
+}
+
+pub fn capture_displays_with_options(options: CaptureOptions) -> io::Result<Vec<DisplayCapture>> {
+    let mut displays = SystemDisplayProvider.displays()?;
+    if displays.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "display capture requires at least one display",
+        ));
+    }
+    displays.sort_by(|left, right| {
+        left.physical_bounds
+            .top
+            .cmp(&right.physical_bounds.top)
+            .then_with(|| left.physical_bounds.left.cmp(&right.physical_bounds.left))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    displays
+        .into_iter()
+        .map(|display| {
+            let frame = capture_with_options(display.physical_bounds, options)?;
+            frame.validate()?;
+            if frame.bounds != display.physical_bounds {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "captured frame bounds do not match the display",
+                ));
+            }
+            Ok(DisplayCapture { display, frame })
+        })
+        .collect()
 }
 
 pub fn compose_virtual_desktop(captures: &[DisplayCapture]) -> io::Result<CaptureFrame> {
@@ -208,7 +251,7 @@ pub fn capture_virtual_desktop() -> io::Result<VirtualDesktopCapture> {
 
 #[cfg(windows)]
 mod platform {
-    use super::{CaptureFrame, PixelFormat};
+    use super::{CaptureFrame, CaptureOptions, PixelFormat};
     use crate::domain::geometry::PhysicalRect;
     use std::{io, mem::size_of, ptr, sync::Arc, time::Instant};
     use windows_sys::Win32::Graphics::Gdi::{
@@ -216,8 +259,11 @@ mod platform {
         CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HBITMAP, HDC,
         HGDIOBJ, ReleaseDC, SRCCOPY, SelectObject,
     };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CURSOR_SHOWING, CURSORINFO, DI_NORMAL, DrawIconEx, GetCursorInfo, GetIconInfo,
+    };
 
-    pub fn capture(bounds: PhysicalRect) -> io::Result<CaptureFrame> {
+    pub fn capture(bounds: PhysicalRect, options: CaptureOptions) -> io::Result<CaptureFrame> {
         let width = bounds.width();
         let height = bounds.height();
         if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
@@ -250,6 +296,9 @@ mod platform {
         } == 0
         {
             return Err(io::Error::last_os_error());
+        }
+        if options.include_cursor {
+            draw_cursor(memory_dc.0, bounds)?;
         }
 
         let stride = width as usize * 4;
@@ -300,6 +349,53 @@ mod platform {
         };
         frame.validate()?;
         Ok(frame)
+    }
+
+    fn draw_cursor(dc: HDC, bounds: PhysicalRect) -> io::Result<()> {
+        let mut cursor = CURSORINFO {
+            cbSize: size_of::<CURSORINFO>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: cursor declares the required size and is writable for GetCursorInfo.
+        if unsafe { GetCursorInfo(&mut cursor) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if cursor.flags & CURSOR_SHOWING == 0
+            || cursor.hCursor.is_null()
+            || !bounds.contains(crate::domain::geometry::PhysicalPoint {
+                x: cursor.ptScreenPos.x,
+                y: cursor.ptScreenPos.y,
+            })
+        {
+            return Ok(());
+        }
+        let mut icon = Default::default();
+        // SAFETY: the live system cursor is valid for this synchronous query.
+        if unsafe { GetIconInfo(cursor.hCursor, &mut icon) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let _mask = OwnedBitmap(icon.hbmMask);
+        let _color = OwnedBitmap(icon.hbmColor);
+        let x = cursor.ptScreenPos.x - bounds.left - icon.xHotspot as i32;
+        let y = cursor.ptScreenPos.y - bounds.top - icon.yHotspot as i32;
+        // SAFETY: dc is valid and the cursor handle remains valid for this call.
+        if unsafe {
+            DrawIconEx(
+                dc,
+                x,
+                y,
+                cursor.hCursor,
+                0,
+                0,
+                0,
+                ptr::null_mut(),
+                DI_NORMAL,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     struct ScreenDc(HDC);
@@ -365,6 +461,17 @@ mod platform {
         }
     }
 
+    struct OwnedBitmap(HBITMAP);
+
+    impl Drop for OwnedBitmap {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: GetIconInfo transferred ownership of this bitmap handle.
+                unsafe { DeleteObject(self.0 as HGDIOBJ) };
+            }
+        }
+    }
+
     struct BitmapSelection {
         dc: HDC,
         previous: HGDIOBJ,
@@ -392,11 +499,11 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::CaptureFrame;
+    use super::{CaptureFrame, CaptureOptions};
     use crate::domain::geometry::PhysicalRect;
     use std::io;
 
-    pub fn capture(_bounds: PhysicalRect) -> io::Result<CaptureFrame> {
+    pub fn capture(_bounds: PhysicalRect, _options: CaptureOptions) -> io::Result<CaptureFrame> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "screen capture is currently Windows-only",
@@ -407,14 +514,19 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::{
-        CaptureBackend, CaptureFrame, PixelColor, PixelFormat, SystemCaptureBackend,
-        capture_displays_with, compose_virtual_desktop,
+        CaptureBackend, CaptureFrame, CaptureOptions, PixelColor, PixelFormat,
+        SystemCaptureBackend, capture_displays_with, compose_virtual_desktop,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     use crate::platform::display::{DisplayInfo, DisplayProvider, DisplayRotation};
     #[cfg(windows)]
     use crate::platform::display::{SystemDisplayProvider, virtual_desktop_bounds};
     use std::{io, sync::Arc, time::Duration};
+
+    #[test]
+    fn cursor_capture_is_opt_in() {
+        assert!(!CaptureOptions::default().include_cursor);
+    }
 
     #[cfg(windows)]
     #[test]
@@ -430,6 +542,24 @@ mod tests {
         assert_eq!(frame.pixels.len(), frame.stride * frame.height as usize);
         assert_eq!(frame.cpu_copy_count, 1);
         assert!(frame.pixels.iter().any(|value| *value != 0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn captures_a_valid_frame_when_cursor_compositing_is_enabled() {
+        let displays = SystemDisplayProvider.displays().unwrap();
+        let bounds = virtual_desktop_bounds(&displays).unwrap();
+
+        let frame = super::capture_with_options(
+            bounds,
+            CaptureOptions {
+                include_cursor: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(frame.bounds, bounds);
+        frame.validate().unwrap();
     }
 
     #[cfg(windows)]

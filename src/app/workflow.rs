@@ -28,8 +28,8 @@ use crate::{
     performance::CapturePipelineSample,
     platform::{
         capture::{
-            CaptureBackend, CaptureFrame, SystemCaptureBackend, capture_displays,
-            compose_virtual_desktop,
+            CaptureBackend, CaptureFrame, CaptureOptions, SystemCaptureBackend,
+            capture_displays_with_options, compose_virtual_desktop,
         },
         clipboard::{ClipboardService, SystemClipboard},
         display::{DisplayProvider, SystemDisplayProvider},
@@ -369,6 +369,16 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn toggle_capture_cursor(&mut self, cx: &mut Context<Self>) {
+        self.include_cursor = !self.include_cursor;
+        self.status = if self.include_cursor {
+            "Capture will include the system cursor".to_owned()
+        } else {
+            "Capture will omit the system cursor".to_owned()
+        };
+        cx.notify();
+    }
+
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
         if self.session.state() != CaptureSessionState::Idle
             || self.delayed_capture_generation.is_some()
@@ -460,12 +470,13 @@ impl FlashShotApp {
         cx.notify();
 
         let started_at = Instant::now();
+        let include_cursor = self.include_cursor;
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { capture_virtual_desktop_preview() })
+                    .spawn(async move { capture_virtual_desktop_preview(include_cursor) })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
@@ -2513,8 +2524,10 @@ struct CapturedDisplayPreview {
     upload_bytes: usize,
 }
 
-fn capture_virtual_desktop_preview() -> std::io::Result<CapturedDesktopPreview> {
-    let display_captures = capture_displays()?;
+fn capture_virtual_desktop_preview(
+    include_cursor: bool,
+) -> std::io::Result<CapturedDesktopPreview> {
+    let display_captures = capture_displays_with_options(CaptureOptions { include_cursor })?;
     let frame = compose_virtual_desktop(&display_captures)?;
     let workspace_preview = render_image_from_capture(&frame)?;
     let displays = display_captures
