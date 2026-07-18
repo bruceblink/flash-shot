@@ -1,7 +1,128 @@
 //! Process-wide screenshot hotkey registration and lifecycle.
 
 use async_channel::Receiver;
-use std::io;
+use std::{fmt, io};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CaptureShortcut {
+    control: bool,
+    alt: bool,
+    shift: bool,
+    key: ShortcutKey,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShortcutKey {
+    PrintScreen,
+    Letter(char),
+    Function(u8),
+}
+
+impl Default for CaptureShortcut {
+    fn default() -> Self {
+        Self {
+            control: true,
+            alt: false,
+            shift: true,
+            key: ShortcutKey::PrintScreen,
+        }
+    }
+}
+
+impl CaptureShortcut {
+    pub fn from_environment() -> Result<Self, ShortcutParseError> {
+        match std::env::var("FLASH_SHOT_CAPTURE_HOTKEY") {
+            Ok(value) if !value.trim().is_empty() => value.parse(),
+            Ok(_) | Err(std::env::VarError::NotPresent) => Ok(Self::default()),
+            Err(std::env::VarError::NotUnicode(_)) => Err(ShortcutParseError),
+        }
+    }
+}
+
+impl fmt::Display for CaptureShortcut {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts = Vec::new();
+        if self.control {
+            parts.push("Ctrl".to_owned());
+        }
+        if self.alt {
+            parts.push("Alt".to_owned());
+        }
+        if self.shift {
+            parts.push("Shift".to_owned());
+        }
+        parts.push(match self.key {
+            ShortcutKey::PrintScreen => "Print Screen".to_owned(),
+            ShortcutKey::Letter(letter) => letter.to_string(),
+            ShortcutKey::Function(number) => format!("F{number}"),
+        });
+        formatter.write_str(&parts.join("+"))
+    }
+}
+
+impl std::str::FromStr for CaptureShortcut {
+    type Err = ShortcutParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let mut control = false;
+        let mut alt = false;
+        let mut shift = false;
+        let mut key = None;
+        for part in value
+            .split('+')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
+            let normalized = part.to_ascii_lowercase().replace([' ', '-'], "");
+            match normalized.as_str() {
+                "ctrl" | "control" if !control => control = true,
+                "alt" if !alt => alt = true,
+                "shift" if !shift => shift = true,
+                "printscreen" | "prtsc" if key.is_none() => key = Some(ShortcutKey::PrintScreen),
+                _ if key.is_none() && normalized.len() == 1 => {
+                    let letter = normalized.chars().next().unwrap();
+                    if letter.is_ascii_alphabetic() {
+                        key = Some(ShortcutKey::Letter(letter.to_ascii_uppercase()));
+                    } else {
+                        return Err(ShortcutParseError);
+                    }
+                }
+                _ if key.is_none() => {
+                    let number = normalized
+                        .strip_prefix('f')
+                        .and_then(|number| number.parse::<u8>().ok())
+                        .filter(|number| (1..=24).contains(number));
+                    key = Some(
+                        number
+                            .map(ShortcutKey::Function)
+                            .ok_or(ShortcutParseError)?,
+                    );
+                }
+                _ => return Err(ShortcutParseError),
+            }
+        }
+        if !(control || alt || shift) || key.is_none() {
+            return Err(ShortcutParseError);
+        }
+        Ok(Self {
+            control,
+            alt,
+            shift,
+            key: key.unwrap(),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ShortcutParseError;
+
+impl fmt::Display for ShortcutParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("expected Ctrl/Alt/Shift plus A-Z, F1-F24, or PrintScreen")
+    }
+}
+
+impl std::error::Error for ShortcutParseError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShortcutEvent {
@@ -13,8 +134,10 @@ pub struct GlobalShortcutService {
 }
 
 impl GlobalShortcutService {
-    pub fn register_capture() -> io::Result<(Self, Receiver<ShortcutEvent>)> {
-        let (listener, events) = platform::ShortcutListener::register()?;
+    pub fn register_capture(
+        shortcut: CaptureShortcut,
+    ) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
+        let (listener, events) = platform::ShortcutListener::register(shortcut)?;
         Ok((Self { listener }, events))
     }
 
@@ -25,7 +148,7 @@ impl GlobalShortcutService {
 
 #[cfg(windows)]
 mod platform {
-    use super::ShortcutEvent;
+    use super::{CaptureShortcut, ShortcutEvent, ShortcutKey};
     use async_channel::Receiver;
     use std::{
         io, ptr,
@@ -44,16 +167,14 @@ mod platform {
     };
 
     const HOTKEY_ID: i32 = 1;
-    const CAPTURE_MODIFIERS: u32 = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT;
-
     pub struct ShortcutListener {
         thread_id: u32,
         thread: Option<JoinHandle<()>>,
     }
 
     impl ShortcutListener {
-        pub fn register() -> io::Result<(Self, Receiver<ShortcutEvent>)> {
-            Self::register_key(CAPTURE_MODIFIERS, VK_SNAPSHOT as u32)
+        pub fn register(shortcut: CaptureShortcut) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
+            Self::register_key(modifiers(shortcut), virtual_key(shortcut))
         }
 
         pub(super) fn register_key(
@@ -87,6 +208,28 @@ mod platform {
 
         pub const fn is_active(&self) -> bool {
             self.thread.is_some()
+        }
+    }
+
+    fn modifiers(shortcut: CaptureShortcut) -> u32 {
+        let mut modifiers = MOD_NOREPEAT;
+        if shortcut.control {
+            modifiers |= MOD_CONTROL;
+        }
+        if shortcut.alt {
+            modifiers |= windows_sys::Win32::UI::Input::KeyboardAndMouse::MOD_ALT;
+        }
+        if shortcut.shift {
+            modifiers |= MOD_SHIFT;
+        }
+        modifiers
+    }
+
+    fn virtual_key(shortcut: CaptureShortcut) -> u32 {
+        match shortcut.key {
+            ShortcutKey::PrintScreen => VK_SNAPSHOT as u32,
+            ShortcutKey::Letter(letter) => letter as u32,
+            ShortcutKey::Function(number) => 0x70 + u32::from(number - 1),
         }
     }
 
@@ -139,6 +282,7 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
+    use super::CaptureShortcut;
     #[cfg(windows)]
     use super::platform::ShortcutListener;
     #[cfg(windows)]
@@ -152,18 +296,51 @@ mod tests {
         assert!(listener.is_active());
         drop(listener);
     }
+
+    #[test]
+    fn parses_supported_shortcut_forms_and_normalizes_the_display() {
+        assert_eq!(
+            "ctrl + alt + s"
+                .parse::<CaptureShortcut>()
+                .unwrap()
+                .to_string(),
+            "Ctrl+Alt+S"
+        );
+        assert_eq!(
+            "Shift+F12".parse::<CaptureShortcut>().unwrap().to_string(),
+            "Shift+F12"
+        );
+        assert_eq!(
+            "Ctrl+PrtSc".parse::<CaptureShortcut>().unwrap().to_string(),
+            "Ctrl+Print Screen"
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_or_ambiguous_shortcut_forms() {
+        for shortcut in [
+            "S",
+            "Ctrl",
+            "Ctrl+Shift",
+            "Ctrl+1",
+            "Ctrl+F25",
+            "Ctrl+Ctrl+S",
+        ] {
+            assert!(shortcut.parse::<CaptureShortcut>().is_err(), "{shortcut}");
+        }
+    }
 }
 
 #[cfg(not(windows))]
 mod platform {
-    use super::ShortcutEvent;
+    use super::{CaptureShortcut, ShortcutEvent};
     use async_channel::Receiver;
     use std::io;
 
     pub struct ShortcutListener;
 
     impl ShortcutListener {
-        pub fn register() -> io::Result<(Self, Receiver<ShortcutEvent>)> {
+        pub fn register(_shortcut: CaptureShortcut) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "global shortcuts are currently Windows-only",

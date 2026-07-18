@@ -131,6 +131,8 @@ The `Audio` control discovers supported local FFmpeg inputs on demand and cycles
 
 The `Display` control cycles recordable monitors in primary-first order. Both display and audio discovery happen only after the respective control is clicked, keeping startup free of FFmpeg probing.
 
+The capture shortcut defaults to `Ctrl+Shift+Print Screen`. Set `FLASH_SHOT_CAPTURE_HOTKEY` before launch to use a different safe global combination, for example `Ctrl+Alt+S`, `Shift+F12`, or `Ctrl+PrintScreen`. It must include `Ctrl`, `Alt`, or `Shift`, plus one letter, `F1` through `F24`, or `PrintScreen`; invalid values fall back to the default.
+
 `Start with Windows` configures only the current user's sign-in entry. It does not require elevation, and it never removes a `Flash Shot` startup entry that points to a different executable.
 
 Set `FLASH_SHOT_UPDATE_ENDPOINT` to an HTTPS URL serving a verified `release-manifest.json` to enable the optional `Check Updates` button. No update request, download, or installation happens unless the user explicitly clicks the button; see [Windows distribution](docs/windows-distribution.md#manual-update-check) for the manifest contract.

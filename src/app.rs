@@ -29,7 +29,7 @@ use crate::{
     platform::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::CaptureFrame,
-        shortcut::{GlobalShortcutService, ShortcutEvent},
+        shortcut::{CaptureShortcut, GlobalShortcutService, ShortcutEvent},
         tray::{TrayEvent, TrayNotification, TrayService},
         window_inspector::InspectionTarget,
     },
@@ -148,7 +148,14 @@ impl FlashShotApp {
             this.shutdown(cx);
             async {}
         });
-        let shortcut = match GlobalShortcutService::register_capture() {
+        let capture_shortcut = match CaptureShortcut::from_environment() {
+            Ok(shortcut) => shortcut,
+            Err(error) => {
+                log::warn!(target: "flash_shot::shortcut", "capture_hotkey_config_invalid error={error}");
+                CaptureShortcut::default()
+            }
+        };
+        let shortcut = match GlobalShortcutService::register_capture(capture_shortcut) {
             Ok((service, events)) => {
                 Self::listen_for_shortcut(events, cx);
                 Some(service)
@@ -159,7 +166,7 @@ impl FlashShotApp {
             }
         };
         let status = if shortcut.is_some() {
-            "Ready - Ctrl+Shift+Print Screen".to_owned()
+            format!("Ready - {capture_shortcut}")
         } else {
             "Ready - global shortcut unavailable".to_owned()
         };
