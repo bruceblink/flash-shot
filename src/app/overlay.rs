@@ -346,6 +346,30 @@ impl Render for CaptureOverlay {
                                 });
                             }))
                             .child("Line"),
+                    )
+                    .child(
+                        div()
+                            .id("overlay-tool-arrow")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Arrow) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Arrow) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_arrow_tool(cx));
+                                });
+                            }))
+                            .child("Arrow"),
                     ),
             )
             .child(
@@ -528,6 +552,9 @@ fn paint_annotations(
             AnnotationKind::Line { start, end } => {
                 paint_line(window, transform, start, end, colors.accent)
             }
+            AnnotationKind::Arrow { start, end } => {
+                paint_arrow(window, transform, start, end, colors.accent)
+            }
             _ => {}
         }
     }
@@ -580,6 +607,41 @@ fn paint_line(
     if let Ok(path) = path.build() {
         window.paint_path(path, color);
     }
+}
+
+fn paint_arrow(
+    window: &mut Window,
+    transform: PreviewTransform,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+    color: gpui::Hsla,
+) {
+    paint_line(window, transform, start, end, color);
+    let (left, right) = arrow_head_points(start, end, 12.0, 0.55);
+    for point in [left, right].into_iter().flatten() {
+        paint_line(window, transform, end, point, color);
+    }
+}
+
+fn arrow_head_points(
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+    size: f32,
+    angle: f32,
+) -> (Option<PhysicalPoint>, Option<PhysicalPoint>) {
+    let dx = (end.x - start.x) as f32;
+    let dy = (end.y - start.y) as f32;
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return (None, None);
+    }
+    let unit_x = dx / length;
+    let unit_y = dy / length;
+    let point_for = |angle: f32| PhysicalPoint {
+        x: (end.x as f32 + (-unit_x * angle.cos() - unit_y * angle.sin()) * size).round() as i32,
+        y: (end.y as f32 + (-unit_x * angle.sin() + unit_y * angle.cos()) * size).round() as i32,
+    };
+    (Some(point_for(angle)), Some(point_for(-angle)))
 }
 
 fn paint_ellipse_outline(
@@ -663,7 +725,7 @@ fn intersect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
 
 #[cfg(test)]
 mod tests {
-    use super::{intersect, outline_shape_bounds};
+    use super::{arrow_head_points, intersect, outline_shape_bounds};
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
         geometry::{PhysicalPoint, PhysicalRect},
@@ -749,5 +811,16 @@ mod tests {
             })
         );
         assert_eq!(outline_shape_bounds(&line), None);
+    }
+
+    #[test]
+    fn arrow_head_uses_two_symmetric_wings_and_skips_zero_length_arrows() {
+        let start = PhysicalPoint { x: 10, y: 20 };
+        let end = PhysicalPoint { x: 30, y: 20 };
+        let (left, right) = arrow_head_points(start, end, 12.0, 0.55);
+
+        assert_eq!(left, Some(PhysicalPoint { x: 20, y: 14 }));
+        assert_eq!(right, Some(PhysicalPoint { x: 20, y: 26 }));
+        assert_eq!(arrow_head_points(end, end, 12.0, 0.55), (None, None));
     }
 }
