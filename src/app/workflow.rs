@@ -1469,6 +1469,8 @@ impl FlashShotApp {
             KeyboardCommand::Duplicate => self.duplicate_selected_annotation(cx),
             KeyboardCommand::BringForward => self.bring_selected_annotation_forward(cx),
             KeyboardCommand::SendBackward => self.send_selected_annotation_backward(cx),
+            KeyboardCommand::SelectNextAnnotation => self.select_adjacent_annotation(false, cx),
+            KeyboardCommand::SelectPreviousAnnotation => self.select_adjacent_annotation(true, cx),
             KeyboardCommand::Delete => self.delete_selected_annotation(cx),
             KeyboardCommand::Cancel => {
                 if matches!(
@@ -1620,6 +1622,34 @@ impl FlashShotApp {
 
     pub(super) fn bring_selected_annotation_to_front(&mut self, cx: &mut Context<Self>) -> bool {
         self.reorder_selected_annotation(usize::MAX, "Annotation brought to front", cx)
+    }
+
+    fn select_adjacent_annotation(&mut self, reverse: bool, cx: &mut Context<Self>) -> bool {
+        let Some(document) = self.annotation_document.as_ref() else {
+            return false;
+        };
+        let ids = document
+            .annotations()
+            .iter()
+            .map(|annotation| annotation.id)
+            .collect::<Vec<_>>();
+        let Some(id) = next_annotation_selection(&ids, self.selected_annotation, reverse) else {
+            return false;
+        };
+        let Some(annotation) = document.annotation(id) else {
+            return false;
+        };
+        self.annotation_editor.cancel();
+        self.annotation_tool = None;
+        self.selected_annotation = Some(id);
+        self.annotation_style = annotation.style;
+        self.status = format!(
+            "Selected annotation {} of {}",
+            annotation_position(&ids, id),
+            ids.len()
+        );
+        cx.notify();
+        true
     }
 
     pub(super) fn send_selected_annotation_to_back(&mut self, cx: &mut Context<Self>) -> bool {
@@ -3447,6 +3477,8 @@ enum KeyboardCommand {
     Duplicate,
     BringForward,
     SendBackward,
+    SelectNextAnnotation,
+    SelectPreviousAnnotation,
     Delete,
     Cancel,
     Copy,
@@ -3510,6 +3542,8 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
         return None;
     }
     match keystroke.key.as_str() {
+        "tab" if modifiers.shift => Some(KeyboardCommand::SelectPreviousAnnotation),
+        "tab" => Some(KeyboardCommand::SelectNextAnnotation),
         "delete" | "backspace" if !modifiers.shift => Some(KeyboardCommand::Delete),
         "escape" if !modifiers.shift => Some(KeyboardCommand::Cancel),
         "enter" if !modifiers.shift => Some(KeyboardCommand::Copy),
@@ -3534,13 +3568,37 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
     }
 }
 
+fn next_annotation_selection(
+    annotations: &[AnnotationId],
+    selected: Option<AnnotationId>,
+    reverse: bool,
+) -> Option<AnnotationId> {
+    let len = annotations.len();
+    let current = selected.and_then(|id| annotations.iter().position(|candidate| *candidate == id));
+    let index = match (current, reverse) {
+        (Some(index), false) => (index + 1) % len,
+        (Some(0), true) => len - 1,
+        (Some(index), true) => index - 1,
+        (None, false) => 0,
+        (None, true) => len - 1,
+    };
+    annotations.get(index).copied()
+}
+
+fn annotation_position(annotations: &[AnnotationId], selected: AnnotationId) -> usize {
+    annotations
+        .iter()
+        .position(|candidate| *candidate == selected)
+        .map_or(0, |index| index + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        KeyboardCommand, annotation_added_status, annotation_cancelled_status,
+        KeyboardCommand, annotation_added_status, annotation_cancelled_status, annotation_position,
         copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha,
         fill_color, format_recording_progress, intersect_rect, is_current_operation,
-        keyboard_command, next_capture_delay, next_quick_save_path,
+        keyboard_command, next_annotation_selection, next_capture_delay, next_quick_save_path,
         next_quick_save_path_with_prefix, next_recording_audio_selection,
         next_recording_display_selection, pinned_size, png_path,
         quick_save_annotated_frame_selection_in, recording_audio_selection_label,
@@ -3756,6 +3814,46 @@ mod tests {
             keyboard_command(&Keystroke::parse("backspace").unwrap()),
             Some(KeyboardCommand::Delete)
         );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("tab").unwrap()),
+            Some(KeyboardCommand::SelectNextAnnotation)
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("shift-tab").unwrap()),
+            Some(KeyboardCommand::SelectPreviousAnnotation)
+        );
+    }
+
+    #[test]
+    fn annotation_selection_cycles_in_layer_order() {
+        let annotations = [
+            AnnotationId::new(1),
+            AnnotationId::new(2),
+            AnnotationId::new(3),
+        ];
+
+        assert_eq!(
+            next_annotation_selection(&annotations, None, false),
+            Some(AnnotationId::new(1))
+        );
+        assert_eq!(
+            next_annotation_selection(&annotations, Some(AnnotationId::new(1)), false),
+            Some(AnnotationId::new(2))
+        );
+        assert_eq!(
+            next_annotation_selection(&annotations, Some(AnnotationId::new(3)), false),
+            Some(AnnotationId::new(1))
+        );
+        assert_eq!(
+            next_annotation_selection(&annotations, None, true),
+            Some(AnnotationId::new(3))
+        );
+        assert_eq!(
+            next_annotation_selection(&annotations, Some(AnnotationId::new(1)), true),
+            Some(AnnotationId::new(3))
+        );
+        assert_eq!(annotation_position(&annotations, AnnotationId::new(2)), 2);
+        assert_eq!(next_annotation_selection(&[], None, false), None);
     }
 
     #[test]
