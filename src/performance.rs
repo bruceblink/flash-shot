@@ -12,6 +12,20 @@ use std::{
 const REPORT_FILE: &str = "performance.jsonl";
 const MAX_SAMPLES: usize = 500;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CapturePipelineSample {
+    pub shortcut_to_frame_ready: Duration,
+    pub shortcut_to_overlay_frame: Duration,
+    pub platform_capture: Duration,
+    pub display_count: usize,
+    pub frame_width: u32,
+    pub frame_height: u32,
+    pub cpu_copy_count: u32,
+    pub overlay_image_count: usize,
+    pub overlay_image_bytes: usize,
+    pub workspace_image_bytes: usize,
+}
+
 #[derive(Clone)]
 pub struct PerformanceRecorder {
     report_path: Arc<PathBuf>,
@@ -28,7 +42,15 @@ impl PerformanceRecorder {
     }
 
     pub fn record_duration(&self, metric: &'static str, duration: Duration) {
-        if let Err(error) = self.append(metric, duration.as_secs_f64() * 1_000.0) {
+        let entry = serde_json::json!({
+            "schema_version": 1,
+            "timestamp_ms": unix_timestamp_ms(),
+            "type": "duration",
+            "metric": metric,
+            "unit": "ms",
+            "value": duration.as_secs_f64() * 1_000.0,
+        });
+        if let Err(error) = self.append(entry) {
             log::warn!(
                 target: "flash_shot::performance",
                 "performance_sample_write_failed metric={metric} error={error}"
@@ -36,18 +58,42 @@ impl PerformanceRecorder {
         }
     }
 
-    fn append(&self, metric: &str, value_ms: f64) -> io::Result<()> {
+    pub fn record_capture_pipeline(&self, sample: CapturePipelineSample) {
+        let entry = serde_json::json!({
+            "schema_version": 1,
+            "timestamp_ms": unix_timestamp_ms(),
+            "type": "capture_pipeline",
+            "latency_ms": {
+                "shortcut_to_frame_ready": duration_ms(sample.shortcut_to_frame_ready),
+                "shortcut_to_overlay_frame": duration_ms(sample.shortcut_to_overlay_frame),
+                "platform_capture": duration_ms(sample.platform_capture),
+            },
+            "frame": {
+                "width": sample.frame_width,
+                "height": sample.frame_height,
+                "display_count": sample.display_count,
+                "cpu_copy_count": sample.cpu_copy_count,
+            },
+            "preview_images": {
+                "overlay_count": sample.overlay_image_count,
+                "overlay_encoded_bytes": sample.overlay_image_bytes,
+                "workspace_encoded_bytes": sample.workspace_image_bytes,
+                "upload_strategy": "one_cached_image_per_display",
+            },
+        });
+        if let Err(error) = self.append(entry) {
+            log::warn!(
+                target: "flash_shot::performance",
+                "capture_pipeline_sample_write_failed error={error}"
+            );
+        }
+    }
+
+    fn append(&self, entry: serde_json::Value) -> io::Result<()> {
         let _guard = self
             .write_lock
             .lock()
             .map_err(|_| io::Error::other("performance recorder lock poisoned"))?;
-        let entry = serde_json::json!({
-            "schema_version": 1,
-            "timestamp_ms": unix_timestamp_ms(),
-            "metric": metric,
-            "unit": "ms",
-            "value": value_ms,
-        });
 
         let mut samples = read_samples(&self.report_path)?;
         samples.push_back(entry.to_string());
@@ -56,6 +102,10 @@ impl PerformanceRecorder {
         }
         write_samples(&self.report_path, samples)
     }
+}
+
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
 }
 
 fn read_samples(path: &Path) -> io::Result<VecDeque<String>> {
@@ -96,7 +146,7 @@ fn unix_timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SAMPLES, PerformanceRecorder, REPORT_FILE};
+    use super::{CapturePipelineSample, MAX_SAMPLES, PerformanceRecorder, REPORT_FILE};
     use std::{fs, time::Duration};
 
     fn test_directory(name: &str) -> std::path::PathBuf {
@@ -117,6 +167,7 @@ mod tests {
         let contents = fs::read_to_string(directory.join(REPORT_FILE)).unwrap();
         let value: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
         assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["type"], "duration");
         assert_eq!(value["metric"], "startup_to_first_frame");
         assert_eq!(value["unit"], "ms");
         assert_eq!(value["value"], 42.0);
@@ -130,7 +181,7 @@ mod tests {
 
         for value in 0..=MAX_SAMPLES {
             recorder
-                .append("sample", value as f64)
+                .append(serde_json::json!({ "value": value }))
                 .expect("sample should be written");
         }
 
@@ -139,6 +190,40 @@ mod tests {
         let first: serde_json::Value =
             serde_json::from_str(contents.lines().next().unwrap()).unwrap();
         assert_eq!(first["value"], 1.0);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn capture_pipeline_records_latency_copies_and_preview_images() {
+        let directory = test_directory("capture-pipeline");
+        let recorder = PerformanceRecorder::new(&directory).unwrap();
+
+        recorder.record_capture_pipeline(CapturePipelineSample {
+            shortcut_to_frame_ready: Duration::from_millis(18),
+            shortcut_to_overlay_frame: Duration::from_millis(27),
+            platform_capture: Duration::from_millis(11),
+            display_count: 2,
+            frame_width: 4480,
+            frame_height: 1440,
+            cpu_copy_count: 3,
+            overlay_image_count: 2,
+            overlay_image_bytes: 123_456,
+            workspace_image_bytes: 98_765,
+        });
+
+        let contents = fs::read_to_string(directory.join(REPORT_FILE)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+        assert_eq!(value["type"], "capture_pipeline");
+        assert_eq!(value["latency_ms"]["shortcut_to_frame_ready"], 18.0);
+        assert_eq!(value["latency_ms"]["shortcut_to_overlay_frame"], 27.0);
+        assert_eq!(value["latency_ms"]["platform_capture"], 11.0);
+        assert_eq!(value["frame"]["display_count"], 2);
+        assert_eq!(value["frame"]["cpu_copy_count"], 3);
+        assert_eq!(value["preview_images"]["overlay_count"], 2);
+        assert_eq!(
+            value["preview_images"]["upload_strategy"],
+            "one_cached_image_per_display"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 }

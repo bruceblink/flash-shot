@@ -15,6 +15,7 @@ use crate::{
         selection::{PreviewTransform, ViewPoint, ViewRect},
         session::CaptureSessionState,
     },
+    performance::CapturePipelineSample,
     platform::{
         capture::{CaptureFrame, capture_displays, compose_virtual_desktop},
         clipboard::{ClipboardService, SystemClipboard},
@@ -86,8 +87,11 @@ impl FlashShotApp {
                     cx.notify();
                     return;
                 }
-                self.performance
-                    .record_duration("shortcut_to_frame_ready", started_at.elapsed());
+                let frame_ready_at = Instant::now();
+                self.performance.record_duration(
+                    "shortcut_to_frame_ready",
+                    frame_ready_at.duration_since(started_at),
+                );
                 self.status = format!(
                     "{} x {} physical pixels - {} display(s) - {:.1} ms - {} CPU copy",
                     capture.capture.frame.width,
@@ -96,10 +100,26 @@ impl FlashShotApp {
                     capture.capture.frame.capture_duration.as_secs_f64() * 1_000.0,
                     capture.capture.frame.cpu_copy_count
                 );
+                let pipeline = CapturePipelineMeasurement {
+                    started_at,
+                    frame_ready_at,
+                    platform_capture: capture.capture.frame.capture_duration,
+                    display_count: capture.capture.display_count,
+                    frame_width: capture.capture.frame.width,
+                    frame_height: capture.capture.frame.height,
+                    cpu_copy_count: capture.capture.frame.cpu_copy_count,
+                    overlay_image_count: capture.displays.len(),
+                    overlay_image_bytes: capture
+                        .displays
+                        .iter()
+                        .map(|display| display.preview.bytes.len())
+                        .sum(),
+                    workspace_image_bytes: capture.png.len(),
+                };
                 self.preview = Some(Arc::new(Image::from_bytes(ImageFormat::Png, capture.png)));
                 self.frame = Some(capture.capture.frame);
                 let app = cx.entity();
-                cx.defer(move |cx| open_capture_overlays(app, capture.displays, cx));
+                cx.defer(move |cx| open_capture_overlays(app, capture.displays, pipeline, cx));
             }
             Err(error) => {
                 let message = format!("Capture failed: {error}");
@@ -615,6 +635,7 @@ impl FlashShotApp {
 fn open_capture_overlays(
     app: gpui::Entity<FlashShotApp>,
     displays: Vec<CapturedDisplayPreview>,
+    pipeline: CapturePipelineMeasurement,
     cx: &mut gpui::App,
 ) {
     if app.read(cx).session.state() != CaptureSessionState::Selecting {
@@ -627,6 +648,8 @@ fn open_capture_overlays(
         let info = display.display;
         let primary = info.primary;
         let preview = display.preview;
+        let performance = app.read(cx).performance.clone();
+        let primary_pipeline = primary.then_some(pipeline);
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -645,6 +668,11 @@ fn open_capture_overlays(
             {
                 let app = app.clone();
                 move |window, cx| {
+                    if let Some(pipeline) = primary_pipeline {
+                        window.on_next_frame(move |_, _| {
+                            performance.record_capture_pipeline(pipeline.finish(Instant::now()));
+                        });
+                    }
                     let overlay = cx.new(|cx| CaptureOverlay::new(app, info, preview, cx));
                     if primary {
                         overlay.read(cx).focus_handle(cx).focus(window, cx);
@@ -682,6 +710,37 @@ struct CapturedDesktopPreview {
     capture: crate::platform::capture::VirtualDesktopCapture,
     png: Vec<u8>,
     displays: Vec<CapturedDisplayPreview>,
+}
+
+#[derive(Clone, Copy)]
+struct CapturePipelineMeasurement {
+    started_at: Instant,
+    frame_ready_at: Instant,
+    platform_capture: std::time::Duration,
+    display_count: usize,
+    frame_width: u32,
+    frame_height: u32,
+    cpu_copy_count: u32,
+    overlay_image_count: usize,
+    overlay_image_bytes: usize,
+    workspace_image_bytes: usize,
+}
+
+impl CapturePipelineMeasurement {
+    fn finish(self, overlay_frame_at: Instant) -> CapturePipelineSample {
+        CapturePipelineSample {
+            shortcut_to_frame_ready: self.frame_ready_at.duration_since(self.started_at),
+            shortcut_to_overlay_frame: overlay_frame_at.duration_since(self.started_at),
+            platform_capture: self.platform_capture,
+            display_count: self.display_count,
+            frame_width: self.frame_width,
+            frame_height: self.frame_height,
+            cpu_copy_count: self.cpu_copy_count,
+            overlay_image_count: self.overlay_image_count,
+            overlay_image_bytes: self.overlay_image_bytes,
+            workspace_image_bytes: self.workspace_image_bytes,
+        }
+    }
 }
 
 struct CapturedDisplayPreview {
