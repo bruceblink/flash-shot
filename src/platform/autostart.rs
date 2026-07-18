@@ -44,9 +44,19 @@ fn is_our_command(value: &str, executable: &Path) -> io::Result<bool> {
     Ok(value.eq_ignore_ascii_case(&command_for(executable)?))
 }
 
+fn state_for_value(value: Option<&str>, executable: &Path) -> io::Result<AutoStartState> {
+    match value {
+        Some(value) if is_our_command(value, executable)? => Ok(AutoStartState::Enabled),
+        Some(_) => Ok(AutoStartState::ManagedByAnotherExecutable),
+        None => Ok(AutoStartState::Disabled),
+    }
+}
+
 #[cfg(windows)]
 mod platform {
-    use super::{AutoStartState, RUN_KEY, VALUE_NAME, command_for, is_our_command};
+    use super::{
+        AutoStartState, RUN_KEY, VALUE_NAME, command_for, is_our_command, state_for_value,
+    };
     use std::{io, path::Path};
     use winreg::{RegKey, enums::HKEY_CURRENT_USER};
 
@@ -56,9 +66,10 @@ mod platform {
             return Ok(AutoStartState::Disabled);
         };
         match run.get_value::<String, _>(VALUE_NAME) {
-            Ok(value) if is_our_command(&value, executable)? => Ok(AutoStartState::Enabled),
-            Ok(_) => Ok(AutoStartState::ManagedByAnotherExecutable),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AutoStartState::Disabled),
+            Ok(value) => state_for_value(Some(&value), executable),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                state_for_value(None, executable)
+            }
             Err(error) => Err(error),
         }
     }
@@ -66,6 +77,9 @@ mod platform {
     pub fn set_enabled(executable: &Path, enabled: bool) -> io::Result<AutoStartState> {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         if enabled {
+            if state(executable)? == AutoStartState::ManagedByAnotherExecutable {
+                return Ok(AutoStartState::ManagedByAnotherExecutable);
+            }
             let (run, _) = hkcu.create_subkey(RUN_KEY)?;
             run.set_value(VALUE_NAME, &command_for(executable)?)?;
             return Ok(AutoStartState::Enabled);
@@ -112,7 +126,7 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{AutoStartState, command_for, is_our_command};
+    use super::{AutoStartState, command_for, is_our_command, state_for_value};
     use std::path::Path;
 
     #[test]
@@ -136,6 +150,15 @@ mod tests {
         assert_ne!(
             AutoStartState::ManagedByAnotherExecutable,
             AutoStartState::Disabled
+        );
+    }
+
+    #[test]
+    fn another_installation_is_never_treated_as_ours() {
+        let executable = Path::new(r"C:\Program Files\Flash Shot\flash-shot.exe");
+        assert_eq!(
+            state_for_value(Some(r#""D:\Portable\flash-shot.exe""#), executable).unwrap(),
+            AutoStartState::ManagedByAnotherExecutable
         );
     }
 }
