@@ -372,6 +372,30 @@ impl Render for CaptureOverlay {
                                 });
                             }))
                             .child("Arrow"),
+                    )
+                    .child(
+                        div()
+                            .id("overlay-tool-freehand")
+                            .px_3()
+                            .py_2()
+                            .bg(if selected_tool == Some(AnnotationTool::Freehand) {
+                                colors.accent
+                            } else {
+                                colors.panel
+                            })
+                            .text_color(if selected_tool == Some(AnnotationTool::Freehand) {
+                                colors.background
+                            } else {
+                                colors.text
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.select_freehand_tool(cx));
+                                });
+                            }))
+                            .child("Freehand"),
                     ),
             )
             .child(
@@ -557,7 +581,9 @@ fn paint_annotations(
             AnnotationKind::Arrow { start, end } => {
                 paint_arrow(window, transform, start, end, colors.accent)
             }
-            _ => {}
+            AnnotationKind::Freehand { ref points } => {
+                paint_freehand(window, transform, points, colors.accent)
+            }
         }
     }
 }
@@ -622,6 +648,17 @@ fn paint_arrow(
     let (left, right) = arrow_head_points(start, end, 12.0, 0.55);
     for point in [left, right].into_iter().flatten() {
         paint_line(window, transform, end, point, color);
+    }
+}
+
+fn paint_freehand(
+    window: &mut Window,
+    transform: PreviewTransform,
+    points: &[PhysicalPoint],
+    color: gpui::Hsla,
+) {
+    for segment in points.windows(2) {
+        paint_line(window, transform, segment[0], segment[1], color);
     }
 }
 

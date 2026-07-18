@@ -332,6 +332,10 @@ impl FlashShotApp {
         self.select_annotation_tool(AnnotationTool::Arrow, cx);
     }
 
+    pub(super) fn select_freehand_tool(&mut self, cx: &mut Context<Self>) {
+        self.select_annotation_tool(AnnotationTool::Freehand, cx);
+    }
+
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.annotation_tool = None;
@@ -867,7 +871,7 @@ fn tool_selected_status(tool: AnnotationTool) -> &'static str {
         AnnotationTool::Ellipse => "Ellipse tool selected",
         AnnotationTool::Line => "Line tool selected",
         AnnotationTool::Arrow => "Arrow tool selected",
-        AnnotationTool::Freehand => "Tool selected",
+        AnnotationTool::Freehand => "Freehand tool selected",
     }
 }
 
@@ -877,7 +881,7 @@ fn drawing_status(tool: AnnotationTool) -> &'static str {
         AnnotationTool::Ellipse => "Drawing ellipse...",
         AnnotationTool::Line => "Drawing line...",
         AnnotationTool::Arrow => "Drawing arrow...",
-        AnnotationTool::Freehand => "Drawing annotation...",
+        AnnotationTool::Freehand => "Drawing freehand...",
     }
 }
 
@@ -887,6 +891,7 @@ fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
         Some(AnnotationTool::Ellipse) => "Ellipse added",
         Some(AnnotationTool::Line) => "Line added",
         Some(AnnotationTool::Arrow) => "Arrow added",
+        Some(AnnotationTool::Freehand) => "Freehand stroke added",
         _ => "Annotation added",
     }
 }
@@ -897,6 +902,7 @@ fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
         Some(AnnotationTool::Ellipse) => "Ellipse cancelled",
         Some(AnnotationTool::Line) => "Line cancelled",
         Some(AnnotationTool::Arrow) => "Arrow cancelled",
+        Some(AnnotationTool::Freehand) => "Freehand stroke cancelled",
         _ => "Annotation cancelled",
     }
 }
@@ -1278,9 +1284,10 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KeyboardCommand, copy_annotated_frame_selection, intersect_rect, is_current_operation,
+        KeyboardCommand, annotation_added_status, annotation_cancelled_status,
+        copy_annotated_frame_selection, drawing_status, intersect_rect, is_current_operation,
         keyboard_command, next_quick_save_path, png_path, quick_save_annotated_frame_selection_in,
-        resolve_pointer_selection, save_annotated_frame_selection,
+        resolve_pointer_selection, save_annotated_frame_selection, tool_selected_status,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -1455,6 +1462,28 @@ mod tests {
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-enter").unwrap()),
             None
+        );
+    }
+
+    #[test]
+    fn freehand_tool_has_specific_user_feedback() {
+        use crate::domain::annotation::AnnotationTool;
+
+        assert_eq!(
+            tool_selected_status(AnnotationTool::Freehand),
+            "Freehand tool selected"
+        );
+        assert_eq!(
+            drawing_status(AnnotationTool::Freehand),
+            "Drawing freehand..."
+        );
+        assert_eq!(
+            annotation_added_status(Some(AnnotationTool::Freehand)),
+            "Freehand stroke added"
+        );
+        assert_eq!(
+            annotation_cancelled_status(Some(AnnotationTool::Freehand)),
+            "Freehand stroke cancelled"
         );
     }
 
