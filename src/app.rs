@@ -339,6 +339,9 @@ impl FlashShotApp {
                                 this.start_delayed_capture(seconds, cx)
                             });
                         }
+                        TrayEvent::ToggleDisplayRecordingRequested => {
+                            this.update(&mut cx, |this, cx| this.toggle_display_recording(cx));
+                        }
                         TrayEvent::OpenHistoryDirectoryRequested => {
                             this.update(&mut cx, |this, cx| this.open_history_directory(cx));
                         }

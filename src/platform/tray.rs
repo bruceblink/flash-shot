@@ -9,6 +9,7 @@ pub enum TrayEvent {
     FullScreenCaptureRequested,
     FullScreenCopyRequested,
     DelayedCaptureRequested(u8),
+    ToggleDisplayRecordingRequested,
     OpenHistoryDirectoryRequested,
     OpenImageRequested,
     HistoryRequested,
@@ -94,11 +95,12 @@ mod platform {
     const MENU_DELAYED_CAPTURE_3_SECONDS: usize = 4;
     const MENU_DELAYED_CAPTURE_5_SECONDS: usize = 5;
     const MENU_DELAYED_CAPTURE_10_SECONDS: usize = 6;
-    const MENU_OPEN_HISTORY_DIRECTORY: usize = 7;
-    const MENU_OPEN_IMAGE: usize = 8;
-    const MENU_HISTORY: usize = 9;
-    const MENU_SETTINGS: usize = 10;
-    const MENU_QUIT: usize = 11;
+    const MENU_TOGGLE_DISPLAY_RECORDING: usize = 7;
+    const MENU_OPEN_HISTORY_DIRECTORY: usize = 8;
+    const MENU_OPEN_IMAGE: usize = 9;
+    const MENU_HISTORY: usize = 10;
+    const MENU_SETTINGS: usize = 11;
+    const MENU_QUIT: usize = 12;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -368,6 +370,7 @@ mod platform {
         let delayed_capture_3_seconds = wide("Capture in 3 seconds");
         let delayed_capture_5_seconds = wide("Capture in 5 seconds");
         let delayed_capture_10_seconds = wide("Capture in 10 seconds");
+        let toggle_display_recording = wide("Start or stop display recording");
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
@@ -404,6 +407,12 @@ mod platform {
                 MF_STRING,
                 MENU_DELAYED_CAPTURE_10_SECONDS,
                 delayed_capture_10_seconds.as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                MENU_TOGGLE_DISPLAY_RECORDING,
+                toggle_display_recording.as_ptr(),
             );
             AppendMenuW(
                 menu,
@@ -450,6 +459,7 @@ mod platform {
             MENU_DELAYED_CAPTURE_3_SECONDS => Some(TrayEvent::DelayedCaptureRequested(3)),
             MENU_DELAYED_CAPTURE_5_SECONDS => Some(TrayEvent::DelayedCaptureRequested(5)),
             MENU_DELAYED_CAPTURE_10_SECONDS => Some(TrayEvent::DelayedCaptureRequested(10)),
+            MENU_TOGGLE_DISPLAY_RECORDING => Some(TrayEvent::ToggleDisplayRecordingRequested),
             MENU_OPEN_HISTORY_DIRECTORY => Some(TrayEvent::OpenHistoryDirectoryRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
@@ -584,8 +594,19 @@ mod tests {
         use super::{TrayEvent, platform::tray_event_for_command};
 
         assert_eq!(
-            tray_event_for_command(7),
+            tray_event_for_command(8),
             Some(TrayEvent::OpenHistoryDirectoryRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recording_menu_item_dispatches_the_recording_toggle_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(7),
+            Some(TrayEvent::ToggleDisplayRecordingRequested)
         );
     }
 }
