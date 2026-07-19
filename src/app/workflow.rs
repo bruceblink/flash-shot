@@ -31,7 +31,7 @@ use crate::{
     platform::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::{
-            CaptureBackend, CaptureFrame, CaptureOptions, SystemCaptureBackend,
+            CaptureBackend, CaptureFrame, CaptureOptions, DisplayCapture, SystemCaptureBackend,
             capture_displays_with_options, compose_virtual_desktop,
         },
         clipboard::{ClipboardService, SystemClipboard},
@@ -861,12 +861,49 @@ impl FlashShotApp {
         self.start_capture_with_options(0, true, cx);
     }
 
+    pub(super) fn copy_full_screen(&mut self, cx: &mut Context<Self>) {
+        if self.full_screen_copy_generation.is_some()
+            || self.delayed_capture_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        let generation = self.operation_generation;
+        self.full_screen_copy_generation = Some(generation);
+        self.status = "Capturing full screen for clipboard...".to_owned();
+        self.hide_settings_window();
+        cx.notify();
+
+        let include_cursor = self.include_cursor;
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let frame = capture_virtual_desktop_frame(include_cursor)?;
+                        SystemClipboard.copy_image(&frame)
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_full_screen_copy(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn start_capture_with_options(
         &mut self,
         delay_seconds: u8,
         preselect_full_screen: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.full_screen_copy_generation.is_some() {
+            return;
+        }
         if self.delayed_capture_generation.is_some() {
             self.cancel_delayed_capture(cx);
             return;
@@ -1115,6 +1152,7 @@ impl FlashShotApp {
         self.operation_generation = self.operation_generation.wrapping_add(1);
         self.delayed_capture_generation = None;
         self.delayed_capture_remaining_seconds = None;
+        self.full_screen_copy_generation = None;
         self.frame = None;
         self.annotation_document = None;
         self.annotation_history = Default::default();
@@ -3171,6 +3209,34 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    fn finish_full_screen_copy(
+        &mut self,
+        result: std::io::Result<()>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !full_screen_copy_is_current(
+            self.full_screen_copy_generation,
+            self.operation_generation,
+            generation,
+            self.session.state(),
+        ) {
+            return;
+        }
+        self.full_screen_copy_generation = None;
+        match result {
+            Ok(()) => {
+                self.status = "Full screen copied to clipboard".to_owned();
+                self.notify_user("Flash Shot", "Full screen copied to clipboard");
+            }
+            Err(error) => {
+                self.status = format!("Could not copy full screen: {error}");
+                log::warn!(target: "flash_shot::capture", "full_screen_copy_failed error={error}");
+            }
+        }
+        cx.notify();
+    }
+
     fn close_capture_overlays(&mut self, cx: &mut Context<Self>) {
         let windows = std::mem::take(&mut self.overlay_windows);
         if !windows.is_empty() {
@@ -3292,6 +3358,17 @@ fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
 
 fn is_current_operation(current: u64, completed: u64) -> bool {
     current == completed
+}
+
+fn full_screen_copy_is_current(
+    active_generation: Option<u64>,
+    current_generation: u64,
+    completion_generation: u64,
+    session_state: CaptureSessionState,
+) -> bool {
+    active_generation == Some(completion_generation)
+        && is_current_operation(current_generation, completion_generation)
+        && session_state == CaptureSessionState::Idle
 }
 
 fn next_capture_delay(current: u8) -> u8 {
@@ -3549,10 +3626,7 @@ fn capture_virtual_desktop_preview(
     include_cursor: bool,
 ) -> std::io::Result<CapturedDesktopPreview> {
     let display_captures = capture_displays_with_options(CaptureOptions { include_cursor })?;
-    let frame = match display_captures.as_slice() {
-        [capture] => capture.frame.clone(),
-        _ => compose_virtual_desktop(&display_captures)?,
-    };
+    let frame = compose_captured_displays(&display_captures)?;
     let displays = display_captures
         .into_iter()
         .map(|capture| {
@@ -3585,6 +3659,18 @@ fn capture_virtual_desktop_preview(
         displays,
         render_upload_copy_count,
     })
+}
+
+fn capture_virtual_desktop_frame(include_cursor: bool) -> std::io::Result<CaptureFrame> {
+    let display_captures = capture_displays_with_options(CaptureOptions { include_cursor })?;
+    compose_captured_displays(&display_captures)
+}
+
+fn compose_captured_displays(display_captures: &[DisplayCapture]) -> std::io::Result<CaptureFrame> {
+    match display_captures {
+        [capture] => Ok(capture.frame.clone()),
+        captures => compose_virtual_desktop(captures),
+    }
 }
 
 fn display_window_bounds(display: &crate::platform::display::DisplayInfo) -> Bounds<Pixels> {
@@ -4331,19 +4417,19 @@ mod tests {
     use super::{
         KeyboardCommand, adjusted_number_value, annotation_added_status,
         annotation_cancelled_status, annotation_document_path, annotation_position,
-        annotation_sidecar_path, copy_annotated_frame_selection, delayed_capture_status,
-        drawing_status, fill_alpha, fill_color, format_recording_progress, intersect_rect,
-        is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
-        next_annotation_selection, next_capture_delay, next_quick_save_path,
-        next_quick_save_path_with_prefix, next_recording_audio_selection,
-        next_recording_display_selection, open_annotation_project, open_image_project, pinned_size,
-        png_path, project_image_path, quick_save_annotated_frame_selection_in,
-        recording_audio_selection_label, recording_display_selection_label, recording_target_label,
-        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
-        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-        text_annotation_with_content, tool_selected_status, with_alpha,
+        annotation_sidecar_path, compose_captured_displays, copy_annotated_frame_selection,
+        delayed_capture_status, drawing_status, fill_alpha, fill_color, format_recording_progress,
+        full_screen_copy_is_current, intersect_rect, is_current_operation, keyboard_command,
+        load_annotation_document, next_annotation_counters, next_annotation_selection,
+        next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix,
+        next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
+        open_image_project, pinned_size, png_path, project_image_path,
+        quick_save_annotated_frame_selection_in, recording_audio_selection_label,
+        recording_display_selection_label, recording_target_label, resolve_pointer_selection,
+        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
+        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
+        tool_selected_status, with_alpha,
     };
-    use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
         domain::{
             annotation::{
@@ -4351,11 +4437,13 @@ mod tests {
                 AnnotationStyle, AnnotationTool, CommandHistory,
             },
             geometry::{PhysicalPoint, PhysicalRect},
+            session::CaptureSessionState,
         },
-        platform::display::{DisplayInfo, DisplayRotation},
         platform::{
-            capture::{CaptureFrame, PixelFormat},
+            capture::{CaptureFrame, DisplayCapture, PixelFormat},
             clipboard::ClipboardService,
+            display::{DisplayInfo, DisplayRotation},
+            window_inspector::{InspectionKind, InspectionTarget},
         },
         recording::AudioSource,
     };
@@ -4846,6 +4934,74 @@ mod tests {
         );
         assert_eq!(remaining.last().unwrap(), "Capture scheduled in 1 seconds");
         assert_eq!(remaining.len(), 10);
+    }
+
+    #[test]
+    fn full_screen_copy_completion_does_not_override_a_new_capture_session() {
+        assert!(full_screen_copy_is_current(
+            Some(12),
+            12,
+            12,
+            CaptureSessionState::Idle
+        ));
+        assert!(!full_screen_copy_is_current(
+            Some(12),
+            13,
+            12,
+            CaptureSessionState::Idle
+        ));
+        assert!(!full_screen_copy_is_current(
+            Some(13),
+            13,
+            12,
+            CaptureSessionState::Idle
+        ));
+        assert!(!full_screen_copy_is_current(
+            Some(12),
+            12,
+            12,
+            CaptureSessionState::Capturing
+        ));
+    }
+
+    #[test]
+    fn captured_display_composition_reuses_one_frame_without_an_extra_copy() {
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2,
+            bottom: 1,
+        };
+        let frame = CaptureFrame {
+            bounds,
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(vec![1, 2, 3, 255, 4, 5, 6, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let captures = [DisplayCapture {
+            display: DisplayInfo {
+                id: "primary".to_owned(),
+                platform_id: 1,
+                physical_bounds: bounds,
+                work_area: bounds,
+                dpi_x: 96,
+                dpi_y: 96,
+                scale_factor: 1.0,
+                primary: true,
+                rotation: DisplayRotation::Landscape,
+                bits_per_pixel: 32,
+            },
+            frame: frame.clone(),
+        }];
+
+        assert_eq!(
+            compose_captured_displays(&captures).unwrap().pixels,
+            frame.pixels
+        );
     }
 
     #[test]

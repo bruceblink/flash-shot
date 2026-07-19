@@ -74,6 +74,7 @@ pub struct FlashShotApp {
     capture_delay_seconds: u8,
     delayed_capture_generation: Option<u64>,
     delayed_capture_remaining_seconds: Option<u8>,
+    full_screen_copy_generation: Option<u64>,
     include_cursor: bool,
     recognition_result: Option<RecognitionResult>,
     overlay_more_actions: bool,
@@ -276,6 +277,7 @@ impl FlashShotApp {
             capture_delay_seconds: settings.capture_delay_seconds,
             delayed_capture_generation: None,
             delayed_capture_remaining_seconds: None,
+            full_screen_copy_generation: None,
             include_cursor: settings.include_cursor,
             recognition_result: None,
             overlay_more_actions: false,
@@ -328,6 +330,9 @@ impl FlashShotApp {
                         }
                         TrayEvent::FullScreenCaptureRequested => {
                             this.update(&mut cx, |this, cx| this.start_full_screen_capture(cx));
+                        }
+                        TrayEvent::FullScreenCopyRequested => {
+                            this.update(&mut cx, |this, cx| this.copy_full_screen(cx));
                         }
                         TrayEvent::DelayedCaptureRequested => {
                             this.update(&mut cx, |this, cx| this.start_delayed_capture(3, cx));

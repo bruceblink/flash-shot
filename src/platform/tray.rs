@@ -7,6 +7,7 @@ use std::io;
 pub enum TrayEvent {
     CaptureRequested,
     FullScreenCaptureRequested,
+    FullScreenCopyRequested,
     DelayedCaptureRequested,
     OpenImageRequested,
     HistoryRequested,
@@ -88,11 +89,12 @@ mod platform {
     const TRAY_COMMAND: u32 = WM_APP + 2;
     const MENU_CAPTURE: usize = 1;
     const MENU_FULL_SCREEN_CAPTURE: usize = 2;
-    const MENU_DELAYED_CAPTURE: usize = 3;
-    const MENU_OPEN_IMAGE: usize = 4;
-    const MENU_HISTORY: usize = 5;
-    const MENU_SETTINGS: usize = 6;
-    const MENU_QUIT: usize = 7;
+    const MENU_FULL_SCREEN_COPY: usize = 3;
+    const MENU_DELAYED_CAPTURE: usize = 4;
+    const MENU_OPEN_IMAGE: usize = 5;
+    const MENU_HISTORY: usize = 6;
+    const MENU_SETTINGS: usize = 7;
+    const MENU_QUIT: usize = 8;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -358,6 +360,7 @@ mod platform {
         }
         let capture = wide("Capture");
         let full_screen_capture = wide("Capture full screen");
+        let full_screen_copy = wide("Copy full screen to clipboard");
         let delayed_capture = wide("Capture in 3 seconds");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
@@ -370,6 +373,12 @@ mod platform {
                 MF_STRING,
                 MENU_FULL_SCREEN_CAPTURE,
                 full_screen_capture.as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                MENU_FULL_SCREEN_COPY,
+                full_screen_copy.as_ptr(),
             );
             AppendMenuW(
                 menu,
@@ -412,6 +421,7 @@ mod platform {
         match command {
             MENU_CAPTURE => Some(TrayEvent::CaptureRequested),
             MENU_FULL_SCREEN_CAPTURE => Some(TrayEvent::FullScreenCaptureRequested),
+            MENU_FULL_SCREEN_COPY => Some(TrayEvent::FullScreenCopyRequested),
             MENU_DELAYED_CAPTURE => Some(TrayEvent::DelayedCaptureRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
@@ -505,7 +515,7 @@ mod tests {
         use super::{TrayEvent, platform::tray_event_for_command};
 
         assert_eq!(
-            tray_event_for_command(3),
+            tray_event_for_command(4),
             Some(TrayEvent::DelayedCaptureRequested)
         );
     }
@@ -518,6 +528,17 @@ mod tests {
         assert_eq!(
             tray_event_for_command(2),
             Some(TrayEvent::FullScreenCaptureRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn full_screen_copy_menu_item_dispatches_the_clipboard_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(3),
+            Some(TrayEvent::FullScreenCopyRequested)
         );
     }
 }
