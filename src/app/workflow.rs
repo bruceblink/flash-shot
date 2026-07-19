@@ -850,10 +850,23 @@ impl FlashShotApp {
     }
 
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
-        self.start_delayed_capture(self.capture_delay_seconds, cx);
+        self.start_capture_with_options(self.capture_delay_seconds, false, cx);
     }
 
     pub(super) fn start_delayed_capture(&mut self, delay_seconds: u8, cx: &mut Context<Self>) {
+        self.start_capture_with_options(delay_seconds, false, cx);
+    }
+
+    pub(super) fn start_full_screen_capture(&mut self, cx: &mut Context<Self>) {
+        self.start_capture_with_options(0, true, cx);
+    }
+
+    fn start_capture_with_options(
+        &mut self,
+        delay_seconds: u8,
+        preselect_full_screen: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.delayed_capture_generation.is_some() {
             self.cancel_delayed_capture(cx);
             return;
@@ -862,7 +875,7 @@ impl FlashShotApp {
             return;
         }
         if delay_seconds == 0 {
-            self.start_capture_immediately(cx);
+            self.start_capture_immediately(preselect_full_screen, cx);
             return;
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
@@ -880,7 +893,12 @@ impl FlashShotApp {
                         break;
                     };
                     let started = this.update(&mut cx, |this, cx| {
-                        this.advance_delayed_capture(generation, remaining, cx)
+                        this.advance_delayed_capture(
+                            generation,
+                            remaining,
+                            preselect_full_screen,
+                            cx,
+                        )
                     });
                     if started {
                         break;
@@ -905,6 +923,7 @@ impl FlashShotApp {
         &mut self,
         generation: u64,
         remaining_seconds: u8,
+        preselect_full_screen: bool,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.delayed_capture_generation != Some(generation)
@@ -920,11 +939,11 @@ impl FlashShotApp {
         }
         self.delayed_capture_generation = None;
         self.delayed_capture_remaining_seconds = None;
-        self.start_capture_immediately(cx);
+        self.start_capture_immediately(preselect_full_screen, cx);
         true
     }
 
-    fn start_capture_immediately(&mut self, cx: &mut Context<Self>) {
+    fn start_capture_immediately(&mut self, preselect_full_screen: bool, cx: &mut Context<Self>) {
         if self.session.state() != CaptureSessionState::Idle {
             return;
         }
@@ -968,7 +987,13 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_capture(result, started_at, generation, cx)
+                        this.finish_capture(
+                            result,
+                            started_at,
+                            generation,
+                            preselect_full_screen,
+                            cx,
+                        )
                     });
                 }
             }
@@ -981,6 +1006,7 @@ impl FlashShotApp {
         result: std::io::Result<CapturedDesktopPreview>,
         started_at: Instant,
         generation: u64,
+        preselect_full_screen: bool,
         cx: &mut Context<Self>,
     ) {
         if !is_current_operation(self.operation_generation, generation) {
@@ -1047,7 +1073,16 @@ impl FlashShotApp {
                 self.text_edit_annotation = None;
                 self.next_annotation_id = 1;
                 self.next_sequence_number = 1;
+                let frame_bounds = capture.capture.frame.bounds;
                 self.frame = Some(capture.capture.frame);
+                if preselect_full_screen {
+                    if let Err(error) = self.session.select(frame_bounds) {
+                        self.status = error.to_string();
+                        cx.notify();
+                        return;
+                    }
+                    self.selection_drag.select(frame_bounds);
+                }
                 let app = cx.entity();
                 cx.defer(move |cx| open_capture_overlays(app, capture.displays, pipeline, cx));
             }

@@ -326,6 +326,9 @@ impl FlashShotApp {
                         TrayEvent::CaptureRequested => {
                             this.update(&mut cx, |this, cx| this.start_capture(cx));
                         }
+                        TrayEvent::FullScreenCaptureRequested => {
+                            this.update(&mut cx, |this, cx| this.start_full_screen_capture(cx));
+                        }
                         TrayEvent::DelayedCaptureRequested => {
                             this.update(&mut cx, |this, cx| this.start_delayed_capture(3, cx));
                         }
