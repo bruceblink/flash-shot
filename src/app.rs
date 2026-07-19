@@ -326,6 +326,12 @@ impl FlashShotApp {
                         TrayEvent::CaptureRequested => {
                             this.update(&mut cx, |this, cx| this.start_capture(cx));
                         }
+                        TrayEvent::OpenImageRequested => {
+                            this.update(&mut cx, |this, cx| this.open_image(cx));
+                        }
+                        TrayEvent::HistoryRequested => {
+                            this.update(&mut cx, |this, cx| this.show_history_window(cx));
+                        }
                         TrayEvent::SettingsRequested => {
                             this.update(&mut cx, |this, cx| this.show_settings_window(cx));
                         }

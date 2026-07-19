@@ -3158,6 +3158,11 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn show_history_window(&mut self, cx: &mut Context<Self>) {
+        self.select_settings_section(SettingsSection::Files, cx);
+        self.show_settings_window(cx);
+    }
+
     pub(crate) fn hide_settings_window(&mut self) {
         if let Some(handle) = self.settings_window_handle
             && let Err(error) = window_visibility::hide(handle)

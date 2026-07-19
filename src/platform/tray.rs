@@ -6,6 +6,8 @@ use std::io;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrayEvent {
     CaptureRequested,
+    OpenImageRequested,
+    HistoryRequested,
     SettingsRequested,
     QuitRequested,
 }
@@ -70,9 +72,10 @@ mod platform {
             WindowsAndMessaging::{
                 AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
                 DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HWND_MESSAGE,
-                IDI_APPLICATION, LoadIconW, MF_STRING, MSG, PostThreadMessageW, RegisterClassW,
-                SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-                TranslateMessage, WM_APP, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
+                IDI_APPLICATION, LoadIconW, MF_SEPARATOR, MF_STRING, MSG, PostThreadMessageW,
+                RegisterClassW, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+                TrackPopupMenu, TranslateMessage, WM_APP, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP,
+                WNDCLASSW,
             },
         },
     };
@@ -81,8 +84,10 @@ mod platform {
     const TRAY_CALLBACK: u32 = WM_APP + 1;
     const TRAY_COMMAND: u32 = WM_APP + 2;
     const MENU_CAPTURE: usize = 1;
-    const MENU_SETTINGS: usize = 2;
-    const MENU_QUIT: usize = 3;
+    const MENU_OPEN_IMAGE: usize = 2;
+    const MENU_HISTORY: usize = 3;
+    const MENU_SETTINGS: usize = 4;
+    const MENU_QUIT: usize = 5;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -319,11 +324,17 @@ mod platform {
             return None;
         }
         let capture = wide("Capture");
+        let open_image = wide("Open image");
+        let history = wide("Screenshot history");
         let settings = wide("Settings");
         let quit = wide("Quit Flash Shot");
         unsafe {
             AppendMenuW(menu, MF_STRING, MENU_CAPTURE, capture.as_ptr());
+            AppendMenuW(menu, MF_STRING, MENU_OPEN_IMAGE, open_image.as_ptr());
+            AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
+            AppendMenuW(menu, MF_STRING, MENU_HISTORY, history.as_ptr());
             AppendMenuW(menu, MF_STRING, MENU_SETTINGS, settings.as_ptr());
+            AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
             AppendMenuW(menu, MF_STRING, MENU_QUIT, quit.as_ptr());
             SetForegroundWindow(window);
         }
@@ -346,6 +357,8 @@ mod platform {
         unsafe { DestroyMenu(menu) };
         match command as usize {
             MENU_CAPTURE => Some(TrayEvent::CaptureRequested),
+            MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
+            MENU_HISTORY => Some(TrayEvent::HistoryRequested),
             MENU_SETTINGS => Some(TrayEvent::SettingsRequested),
             MENU_QUIT => Some(TrayEvent::QuitRequested),
             _ => None,
