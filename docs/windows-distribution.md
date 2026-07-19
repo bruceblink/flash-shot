@@ -92,4 +92,10 @@ The workflow runs the Rust gates, builds the unsigned portable ZIP and Inno Setu
 
 ## Release checks
 
-Before publishing a draft, download the uploaded artifacts, re-check their SHA-256 sidecars, run the portable startup preflight, and manually smoke-test the portable ZIP and installer on a clean Windows profile. Check screenshot capture, annotation, save/copy, and the FFmpeg recording path when a compatible FFmpeg build is available. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
+Before publishing a draft, download and verify every uploaded asset, its SHA-256 sidecar, and `release-manifest.json`; the command also performs the portable startup preflight:
+
+```powershell
+.\scripts\verify-github-release.ps1 -Tag v0.1.0
+```
+
+It first rejects a draft that has missing, duplicate, or unsupported assets, then deletes its temporary download directory after a successful or failed check. Pass `-OutputDirectory target\release-v0.1.0` to retain the downloaded assets for manual inspection. Manually smoke-test the portable ZIP and installer on a clean Windows profile. Check screenshot capture, annotation, save/copy, and the FFmpeg recording path when a compatible FFmpeg build is available. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
