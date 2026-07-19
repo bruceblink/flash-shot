@@ -182,6 +182,20 @@ those gates pass. It exits with status `2` when a threshold fails, and with stat
 samples are malformed or insufficient. `--no-gate` and `--include-nonrelease` produce
 exploratory reports with both fields set to `false`.
 
+Collect an isolated ten-startup Release baseline without mixing older samples into the result:
+
+```powershell
+.\scripts\measure-release-startup.ps1
+```
+
+This starts the Release executable ten times, writes a time-windowed startup-only p95 report to
+`target\release-startup-performance.json`, and stops on a startup crash, a missing current sample,
+or a startup p95 above 500 ms. It deliberately does not claim full release qualification because
+the shortcut-to-overlay metrics need their own real interaction sampling.
+
+Use `-SkipBuild` only when both Release binaries were built from the current source; the script
+checks the reporter protocol before it starts sampling.
+
 ### Documentation
 
 - [Product requirements (Chinese)](docs/requirements.md)

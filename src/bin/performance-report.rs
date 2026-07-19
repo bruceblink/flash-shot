@@ -4,6 +4,8 @@ use std::{io, path::PathBuf};
 
 use flash_shot::performance_report::{PerformanceThresholds, summarize_file};
 
+const PERFORMANCE_REPORT_PROTOCOL_VERSION: &str = "performance-report-v2";
+
 fn main() {
     match execute() {
         Ok(true) => {}
@@ -16,7 +18,12 @@ fn main() {
 }
 
 fn execute() -> io::Result<bool> {
-    let (input, thresholds, output) = parse_args(std::env::args().skip(1))?;
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.len() == 1 && args[0] == "--protocol-version" {
+        println!("{PERFORMANCE_REPORT_PROTOCOL_VERSION}");
+        return Ok(true);
+    }
+    let (input, thresholds, output) = parse_args(args)?;
     let report = summarize_file(input, &thresholds)?;
     let json = report.to_pretty_json()?;
     println!("{json}");
@@ -57,6 +64,10 @@ fn parse_args(
             "--minimum-samples" => thresholds.minimum_samples = parse_usize(value()?, &argument)?,
             "--since-ms" => thresholds.since_timestamp_ms = Some(parse_u128(value()?, &argument)?),
             "--include-nonrelease" => thresholds.require_release_profile = false,
+            "--startup-only" => {
+                thresholds.shortcut_to_frame_ready_p95_ms = None;
+                thresholds.shortcut_to_overlay_frame_p95_ms = None;
+            }
             "--no-gate" => {
                 thresholds = PerformanceThresholds {
                     minimum_samples: 0,
@@ -144,5 +155,27 @@ mod tests {
         ])
         .unwrap();
         assert!(!thresholds.require_release_profile);
+    }
+
+    #[test]
+    fn startup_only_keeps_the_release_startup_gate() {
+        let (_, thresholds, _) = parse_args([
+            "--input".to_owned(),
+            "metrics.jsonl".to_owned(),
+            "--startup-only".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(thresholds.startup_p95_ms, Some(500));
+        assert_eq!(thresholds.shortcut_to_frame_ready_p95_ms, None);
+        assert_eq!(thresholds.shortcut_to_overlay_frame_p95_ms, None);
+        assert!(thresholds.require_release_profile);
+    }
+
+    #[test]
+    fn protocol_version_is_stable_for_measurement_scripts() {
+        assert_eq!(
+            super::PERFORMANCE_REPORT_PROTOCOL_VERSION,
+            "performance-report-v2"
+        );
     }
 }
