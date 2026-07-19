@@ -62,7 +62,7 @@ mod platform {
         thread::{self, JoinHandle},
     };
     use windows_sys::Win32::{
-        Foundation::{HWND, LPARAM, POINT, WPARAM},
+        Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{
             Shell::{
@@ -71,11 +71,12 @@ mod platform {
             },
             WindowsAndMessaging::{
                 AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
-                DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HWND_MESSAGE,
-                IDI_APPLICATION, LoadIconW, MF_SEPARATOR, MF_STRING, MSG, PostThreadMessageW,
-                RegisterClassW, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-                TrackPopupMenu, TranslateMessage, WM_APP, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP,
-                WNDCLASSW,
+                DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW,
+                GetWindowLongPtrW, IDI_APPLICATION, LoadIconW, MF_SEPARATOR, MF_STRING, MSG,
+                PostMessageW, PostThreadMessageW, RegisterClassW, SetForegroundWindow,
+                SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+                TranslateMessage, WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL, WM_QUIT,
+                WM_RBUTTONUP, WNDCLASSW,
             },
         },
     };
@@ -99,6 +100,10 @@ mod platform {
 
     enum TrayCommand {
         Notify(TrayNotification),
+    }
+
+    struct TrayWindowContext {
+        events: async_channel::Sender<TrayEvent>,
     }
 
     impl TrayListener {
@@ -176,7 +181,8 @@ mod platform {
         commands: Arc<Mutex<Vec<TrayCommand>>>,
         active: Arc<AtomicBool>,
     ) {
-        let result = unsafe { create_tray() };
+        let context = Box::new(TrayWindowContext { events });
+        let result = unsafe { create_tray(&context) };
         let (window, mut icon) = match result {
             Ok(value) => value,
             Err(error) => {
@@ -200,9 +206,7 @@ mod platform {
             if result <= 0 {
                 break;
             }
-            if message.message == TRAY_CALLBACK {
-                handle_tray_message(window, message.lParam as u32, &events);
-            } else if message.message == TRAY_COMMAND {
+            if message.message == TRAY_COMMAND {
                 process_commands(&commands, &mut icon);
             } else {
                 unsafe {
@@ -215,14 +219,14 @@ mod platform {
         unsafe { remove_tray(window, &icon) };
     }
 
-    unsafe fn create_tray() -> io::Result<(HWND, NOTIFYICONDATAW)> {
+    unsafe fn create_tray(context: &TrayWindowContext) -> io::Result<(HWND, NOTIFYICONDATAW)> {
         let class = wide(WINDOW_CLASS);
         let instance = unsafe { GetModuleHandleW(ptr::null()) };
         if instance.is_null() {
             return Err(io::Error::last_os_error());
         }
         let window_class = WNDCLASSW {
-            lpfnWndProc: Some(DefWindowProcW),
+            lpfnWndProc: Some(tray_window_proc),
             hInstance: instance,
             lpszClassName: class.as_ptr(),
             ..Default::default()
@@ -243,7 +247,9 @@ mod platform {
                 0,
                 0,
                 0,
-                HWND_MESSAGE,
+                // A message-only window cannot be made foreground. The tray popup must have a
+                // regular hidden top-level owner for Windows to display it reliably.
+                ptr::null_mut(),
                 ptr::null_mut(),
                 instance,
                 ptr::null(),
@@ -252,6 +258,9 @@ mod platform {
         if window.is_null() {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: the boxed context lives for the lifetime of the listener thread and is
+        // cleared only after the message window is destroyed.
+        unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, context as *const _ as isize) };
 
         let app_icon = unsafe { LoadIconW(instance, ptr::without_provenance(1)) };
         let icon_handle = if app_icon.is_null() {
@@ -303,15 +312,36 @@ mod platform {
         icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     }
 
-    fn handle_tray_message(window: HWND, message: u32, events: &async_channel::Sender<TrayEvent>) {
-        match message {
-            WM_LBUTTONUP | WM_RBUTTONUP => {
-                if let Some(event) = show_menu(window) {
-                    let _ = events.try_send(event);
-                }
+    unsafe extern "system" fn tray_window_proc(
+        window: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if message == TRAY_CALLBACK {
+            // SAFETY: create_tray installs this pointer before registering the icon, and the
+            // listener keeps the boxed context alive until after DestroyWindow returns.
+            let context =
+                unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *const TrayWindowContext;
+            if let Some(context) = unsafe { context.as_ref() } {
+                handle_tray_message(window, lparam as u32, &context.events);
             }
-            _ => {}
+            return 0;
         }
+        // SAFETY: unhandled messages use the standard message-window behavior.
+        unsafe { DefWindowProcW(window, message, wparam, lparam) }
+    }
+
+    fn handle_tray_message(window: HWND, message: u32, events: &async_channel::Sender<TrayEvent>) {
+        if tray_menu_requested(message) && let Some(event) = show_menu(window) {
+            let _ = events.try_send(event);
+        }
+    }
+
+    pub(super) fn tray_menu_requested(message: u32) -> bool {
+        // Windows 11 can report a context-menu callback while earlier shell versions report
+        // button-up events, so accept both forms.
+        matches!(message, WM_LBUTTONUP | WM_RBUTTONUP | WM_CONTEXTMENU)
     }
 
     fn show_menu(window: HWND) -> Option<TrayEvent> {
@@ -351,6 +381,9 @@ mod platform {
         } else {
             0
         };
+        // Windows otherwise keeps the popup associated with this foreground window and can
+        // suppress the next taskbar interaction after a dismissal.
+        unsafe { PostMessageW(window, WM_NULL, 0, 0) };
         unsafe { DestroyMenu(menu) };
         match command as usize {
             MENU_CAPTURE => Some(TrayEvent::CaptureRequested),
@@ -424,5 +457,19 @@ mod tests {
         tray.notify(TrayNotification::new("Flash Shot", "Notification test"))
             .unwrap();
         drop(tray);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tray_clicks_request_the_popup_menu() {
+        use super::platform::tray_menu_requested;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            WM_CONTEXTMENU, WM_LBUTTONUP, WM_RBUTTONUP,
+        };
+
+        assert!(tray_menu_requested(WM_LBUTTONUP));
+        assert!(tray_menu_requested(WM_RBUTTONUP));
+        assert!(tray_menu_requested(WM_CONTEXTMENU));
+        assert!(!tray_menu_requested(0));
     }
 }
