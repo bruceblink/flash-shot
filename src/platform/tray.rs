@@ -6,6 +6,7 @@ use std::io;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrayEvent {
     CaptureRequested,
+    DelayedCaptureRequested,
     OpenImageRequested,
     HistoryRequested,
     SettingsRequested,
@@ -85,10 +86,11 @@ mod platform {
     const TRAY_CALLBACK: u32 = WM_APP + 1;
     const TRAY_COMMAND: u32 = WM_APP + 2;
     const MENU_CAPTURE: usize = 1;
-    const MENU_OPEN_IMAGE: usize = 2;
-    const MENU_HISTORY: usize = 3;
-    const MENU_SETTINGS: usize = 4;
-    const MENU_QUIT: usize = 5;
+    const MENU_DELAYED_CAPTURE: usize = 2;
+    const MENU_OPEN_IMAGE: usize = 3;
+    const MENU_HISTORY: usize = 4;
+    const MENU_SETTINGS: usize = 5;
+    const MENU_QUIT: usize = 6;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -333,7 +335,9 @@ mod platform {
     }
 
     fn handle_tray_message(window: HWND, message: u32, events: &async_channel::Sender<TrayEvent>) {
-        if tray_menu_requested(message) && let Some(event) = show_menu(window) {
+        if tray_menu_requested(message)
+            && let Some(event) = show_menu(window)
+        {
             let _ = events.try_send(event);
         }
     }
@@ -351,12 +355,19 @@ mod platform {
             return None;
         }
         let capture = wide("Capture");
+        let delayed_capture = wide("Capture in 3 seconds");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
         let settings = wide("Settings");
         let quit = wide("Quit Flash Shot");
         unsafe {
             AppendMenuW(menu, MF_STRING, MENU_CAPTURE, capture.as_ptr());
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                MENU_DELAYED_CAPTURE,
+                delayed_capture.as_ptr(),
+            );
             AppendMenuW(menu, MF_STRING, MENU_OPEN_IMAGE, open_image.as_ptr());
             AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
             AppendMenuW(menu, MF_STRING, MENU_HISTORY, history.as_ptr());
@@ -385,8 +396,13 @@ mod platform {
         // suppress the next taskbar interaction after a dismissal.
         unsafe { PostMessageW(window, WM_NULL, 0, 0) };
         unsafe { DestroyMenu(menu) };
-        match command as usize {
+        tray_event_for_command(command as usize)
+    }
+
+    pub(super) fn tray_event_for_command(command: usize) -> Option<TrayEvent> {
+        match command {
             MENU_CAPTURE => Some(TrayEvent::CaptureRequested),
+            MENU_DELAYED_CAPTURE => Some(TrayEvent::DelayedCaptureRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
             MENU_SETTINGS => Some(TrayEvent::SettingsRequested),
@@ -471,5 +487,16 @@ mod tests {
         assert!(tray_menu_requested(WM_RBUTTONUP));
         assert!(tray_menu_requested(WM_CONTEXTMENU));
         assert!(!tray_menu_requested(0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delayed_capture_menu_item_dispatches_the_delayed_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(2),
+            Some(TrayEvent::DelayedCaptureRequested)
+        );
     }
 }

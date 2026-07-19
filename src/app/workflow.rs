@@ -850,6 +850,10 @@ impl FlashShotApp {
     }
 
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
+        self.start_delayed_capture(self.capture_delay_seconds, cx);
+    }
+
+    pub(super) fn start_delayed_capture(&mut self, delay_seconds: u8, cx: &mut Context<Self>) {
         if self.delayed_capture_generation.is_some() {
             self.cancel_delayed_capture(cx);
             return;
@@ -857,17 +861,16 @@ impl FlashShotApp {
         if self.session.state() != CaptureSessionState::Idle {
             return;
         }
-        if self.capture_delay_seconds == 0 {
+        if delay_seconds == 0 {
             self.start_capture_immediately(cx);
             return;
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let generation = self.operation_generation;
         self.delayed_capture_generation = Some(generation);
-        self.delayed_capture_remaining_seconds = Some(self.capture_delay_seconds);
-        self.status = delayed_capture_status(self.capture_delay_seconds);
+        self.delayed_capture_remaining_seconds = Some(delay_seconds);
+        self.status = delayed_capture_status(delay_seconds);
         cx.notify();
-        let delay_seconds = self.capture_delay_seconds;
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
