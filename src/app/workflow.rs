@@ -1371,10 +1371,22 @@ impl FlashShotApp {
             return;
         };
         let id = AnnotationId::new(self.next_annotation_id);
-        if tool == AnnotationTool::Text {
+        if matches!(tool, AnnotationTool::Text | AnnotationTool::Watermark) {
             self.annotation_editor.cancel();
-            self.text_edit = Some(super::TextEdit::new(point));
-            self.status = "Type text, then press Enter".to_owned();
+            self.text_edit = Some(if tool == AnnotationTool::Watermark {
+                super::TextEdit::with_content(
+                    point,
+                    crate::domain::annotation::WATERMARK_CONTENT.to_owned(),
+                    true,
+                )
+            } else {
+                super::TextEdit::new(point)
+            });
+            self.status = if tool == AnnotationTool::Watermark {
+                "Type watermark, then press Enter".to_owned()
+            } else {
+                "Type text, then press Enter".to_owned()
+            };
             return;
         }
         let started = if tool == AnnotationTool::Number {
@@ -1454,13 +1466,23 @@ impl FlashShotApp {
             return false;
         };
         let id = AnnotationId::new(self.next_annotation_id);
-        let started = self.annotation_editor.begin_text(
-            document,
-            id,
-            self.annotation_style,
-            edit.origin,
-            edit.content,
-        );
+        let started = if self.annotation_tool == Some(AnnotationTool::Watermark) {
+            self.annotation_editor.begin_watermark(
+                document,
+                id,
+                self.annotation_style,
+                edit.origin,
+                edit.content,
+            )
+        } else {
+            self.annotation_editor.begin_text(
+                document,
+                id,
+                self.annotation_style,
+                edit.origin,
+                edit.content,
+            )
+        };
         if let Err(error) = started {
             self.status = error.to_string();
             cx.notify();

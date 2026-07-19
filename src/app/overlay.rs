@@ -1443,11 +1443,14 @@ fn paint_annotations(
     {
         let color = rgba(annotation.style.stroke_rgba).into();
         match annotation.kind {
-            AnnotationKind::Watermark { origin } => paint_text_annotation(
+            AnnotationKind::Watermark {
+                origin,
+                ref content,
+            } => paint_text_annotation(
                 window,
                 transform,
                 origin,
-                crate::domain::annotation::WATERMARK_CONTENT,
+                content,
                 annotation.style.stroke_rgba,
                 annotation.text_font_size(),
                 cx,

@@ -156,11 +156,14 @@ fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotat
     let fill = annotation.style.fill_rgba.map(rgba_bytes);
     let radius = annotation.style.stroke_width.max(1).div_ceil(2) as i32;
     match annotation.kind {
-        AnnotationKind::Watermark { origin } => draw_text_annotation(
+        AnnotationKind::Watermark {
+            origin,
+            ref content,
+        } => draw_text_annotation(
             pixels,
             frame,
             origin,
-            crate::domain::annotation::WATERMARK_CONTENT,
+            content,
             color,
             annotation.text_font_size(),
         ),
@@ -1431,6 +1434,7 @@ mod tests {
                     id: AnnotationId::new(11),
                     kind: AnnotationKind::Watermark {
                         origin: PhysicalPoint { x: 8, y: 8 },
+                        content: "Confidential".to_owned(),
                     },
                     style: AnnotationStyle {
                         stroke_rgba: 0xFF0000FF,

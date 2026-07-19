@@ -122,10 +122,15 @@ pub(super) enum RecordingDisplaySelection {
 
 impl TextEdit {
     pub(super) fn new(origin: PhysicalPoint) -> Self {
+        Self::with_content(origin, String::new(), false)
+    }
+
+    pub(super) fn with_content(origin: PhysicalPoint, content: String, select_all: bool) -> Self {
+        let selected_range = if select_all { 0..content.len() } else { 0..0 };
         Self {
             origin,
-            content: String::new(),
-            selected_range: 0..0,
+            content,
+            selected_range,
             marked_range: None,
         }
     }

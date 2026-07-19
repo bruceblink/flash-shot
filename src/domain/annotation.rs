@@ -14,6 +14,10 @@ pub const TEXT_ANNOTATION_HEIGHT: i32 = 28;
 pub const TEXT_ANNOTATION_ADVANCE: i32 = 16;
 pub const WATERMARK_CONTENT: &str = "Flash Shot";
 
+fn default_watermark_content() -> String {
+    WATERMARK_CONTENT.to_owned()
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct AnnotationId(u64);
 
@@ -48,6 +52,8 @@ impl Default for AnnotationStyle {
 pub enum AnnotationKind {
     Watermark {
         origin: PhysicalPoint,
+        #[serde(default = "default_watermark_content")]
+        content: String,
     },
     Text {
         origin: PhysicalPoint,
@@ -256,9 +262,10 @@ impl Annotation {
             .stroke_width
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
-            AnnotationKind::Watermark { origin } => {
-                text_bounds(origin, WATERMARK_CONTENT, self.text_font_size()).contains(point)
-            }
+            AnnotationKind::Watermark {
+                origin,
+                ref content,
+            } => text_bounds(origin, content, self.text_font_size()).contains(point),
             AnnotationKind::Text {
                 origin,
                 ref content,
@@ -301,9 +308,10 @@ impl Annotation {
 
     pub fn bounds(&self) -> PhysicalRect {
         match self.kind {
-            AnnotationKind::Watermark { origin } => {
-                text_bounds(origin, WATERMARK_CONTENT, self.text_font_size())
-            }
+            AnnotationKind::Watermark {
+                origin,
+                ref content,
+            } => text_bounds(origin, content, self.text_font_size()),
             AnnotationKind::Text {
                 origin,
                 ref content,
@@ -330,8 +338,12 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
-                AnnotationKind::Watermark { origin } => AnnotationKind::Watermark {
+                AnnotationKind::Watermark {
+                    origin,
+                    ref content,
+                } => AnnotationKind::Watermark {
                     origin: translate(origin),
+                    content: content.clone(),
                 },
                 AnnotationKind::Text {
                     origin,
@@ -494,11 +506,12 @@ impl Annotation {
         Self {
             id: self.id,
             kind: match self.kind {
-                AnnotationKind::Watermark { .. } => AnnotationKind::Watermark {
+                AnnotationKind::Watermark { ref content, .. } => AnnotationKind::Watermark {
                     origin: PhysicalPoint {
                         x: bounds.left,
                         y: bounds.top,
                     },
+                    content: content.clone(),
                 },
                 AnnotationKind::Text { ref content, .. } => AnnotationKind::Text {
                     origin: PhysicalPoint {
@@ -622,7 +635,7 @@ impl AnnotationDraft {
 
     pub fn preview(&self) -> Option<Annotation> {
         let has_visible_geometry = match self.tool {
-            AnnotationTool::Watermark => true,
+            AnnotationTool::Watermark => self.text.as_ref().is_some_and(|text| !text.is_empty()),
             AnnotationTool::Text => self.text.as_ref().is_some_and(|text| !text.is_empty()),
             AnnotationTool::Number => true,
             AnnotationTool::Freehand => self.points.len() >= 2,
@@ -631,7 +644,10 @@ impl AnnotationDraft {
         has_visible_geometry.then(|| Annotation {
             id: self.id,
             kind: match self.tool {
-                AnnotationTool::Watermark => AnnotationKind::Watermark { origin: self.start },
+                AnnotationTool::Watermark => AnnotationKind::Watermark {
+                    origin: self.start,
+                    content: self.text.clone().unwrap_or_default(),
+                },
                 AnnotationTool::Text => AnnotationKind::Text {
                     origin: self.start,
                     content: self.text.clone().unwrap_or_default(),
@@ -867,6 +883,29 @@ impl AnnotationEditor {
         origin: PhysicalPoint,
         text: String,
     ) -> Result<(), AnnotationError> {
+        self.begin_text_for_tool(document, id, AnnotationTool::Text, style, origin, text)
+    }
+
+    pub fn begin_watermark(
+        &mut self,
+        document: &AnnotationDocument,
+        id: AnnotationId,
+        style: AnnotationStyle,
+        origin: PhysicalPoint,
+        text: String,
+    ) -> Result<(), AnnotationError> {
+        self.begin_text_for_tool(document, id, AnnotationTool::Watermark, style, origin, text)
+    }
+
+    fn begin_text_for_tool(
+        &mut self,
+        document: &AnnotationDocument,
+        id: AnnotationId,
+        tool: AnnotationTool,
+        style: AnnotationStyle,
+        origin: PhysicalPoint,
+        text: String,
+    ) -> Result<(), AnnotationError> {
         if self.has_active_gesture() {
             return Err(AnnotationError::DraftInProgress);
         }
@@ -876,7 +915,7 @@ impl AnnotationEditor {
         self.draft = Some(
             AnnotationDraft::begin(
                 id,
-                AnnotationTool::Text,
+                tool,
                 style,
                 clamp_to_canvas(document.canvas_bounds(), origin),
             )
@@ -1061,7 +1100,7 @@ fn annotation_is_within_canvas(annotation: &Annotation, canvas: PhysicalRect) ->
             && point.y <= canvas.bottom
     };
     match annotation.kind {
-        AnnotationKind::Watermark { origin } => contains(origin),
+        AnnotationKind::Watermark { origin, .. } => contains(origin),
         AnnotationKind::Text { origin, .. } => contains(origin),
         AnnotationKind::Number { center, .. } => contains(center),
         AnnotationKind::Blur { bounds }
@@ -1333,7 +1372,7 @@ mod tests {
     use super::{
         ANNOTATION_DOCUMENT_VERSION, Annotation, AnnotationCommand, AnnotationDocument,
         AnnotationEditor, AnnotationError, AnnotationId, AnnotationKind, AnnotationStyle,
-        AnnotationTool, CommandHistory,
+        AnnotationTool, CommandHistory, WATERMARK_CONTENT,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     use crate::domain::selection::ResizeHandle;
@@ -1407,17 +1446,20 @@ mod tests {
         let origin = PhysicalPoint { x: -120, y: 240 };
 
         editor
-            .begin(
+            .begin_watermark(
                 &document,
                 AnnotationId::new(81),
-                AnnotationTool::Watermark,
                 AnnotationStyle::default(),
                 origin,
+                "Internal only".to_owned(),
             )
             .unwrap();
         assert_eq!(
             editor.preview(document.canvas_bounds()).unwrap().kind,
-            AnnotationKind::Watermark { origin }
+            AnnotationKind::Watermark {
+                origin,
+                content: "Internal only".to_owned(),
+            }
         );
         assert!(editor.commit(&mut document, &mut history).unwrap());
         let watermark = document.annotation(AnnotationId::new(81)).unwrap().clone();
@@ -1426,6 +1468,30 @@ mod tests {
         assert!(document.annotations().is_empty());
         assert!(history.redo(&mut document).unwrap());
         assert_eq!(document.annotation(AnnotationId::new(81)), Some(&watermark));
+    }
+
+    #[test]
+    fn legacy_watermarks_default_to_the_original_content_when_deserialized() {
+        let document = AnnotationDocument::from_json(
+            r#"{
+                "version": 1,
+                "canvas_bounds": {"left": 0, "top": 0, "right": 100, "bottom": 100},
+                "annotations": [{
+                    "id": 81,
+                    "kind": {"Watermark": {"origin": {"x": 4, "y": 8}}},
+                    "style": {"stroke_rgba": 4282071295, "fill_rgba": null, "stroke_width": 4}
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            document.annotation(AnnotationId::new(81)).unwrap().kind,
+            AnnotationKind::Watermark {
+                origin: PhysicalPoint { x: 4, y: 8 },
+                content: WATERMARK_CONTENT.to_owned(),
+            }
+        );
     }
 
     #[test]
