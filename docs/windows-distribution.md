@@ -88,7 +88,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow runs the Rust gates, builds the unsigned portable ZIP and Inno Setup executable, generates and re-verifies `release-manifest.json`, then creates a **draft** GitHub Release with the ZIP, installer, their SHA-256 sidecars, and manifest. Publishing the draft is a deliberate operator action after clean-profile smoke testing. Releases are unsigned unless the packaging process has been separately extended with an available code-signing certificate; an unsigned release must remain identified as such.
+The workflow runs the Rust gates, builds the unsigned portable ZIP and Inno Setup executable, starts the freshly extracted portable ZIP for five seconds, generates and re-verifies `release-manifest.json`, then creates a **draft** GitHub Release with the ZIP, installer, their SHA-256 sidecars, and manifest. Publishing the draft is a deliberate operator action after clean-profile smoke testing. Releases are unsigned unless the packaging process has been separately extended with an available code-signing certificate; an unsigned release must remain identified as such.
 
 ## Release checks
 

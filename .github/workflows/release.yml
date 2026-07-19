@@ -45,6 +45,17 @@ jobs:
         run: |
           .\scripts\package-portable.ps1
           .\scripts\package-installer.ps1
+      - name: Smoke test portable startup
+        shell: pwsh
+        run: |
+          $portable = Get-ChildItem -LiteralPath dist -Filter "FlashShot-*-windows-*.zip" -File
+          if ($portable.Count -ne 1) {
+            throw "Expected exactly one portable release archive, found $($portable.Count)."
+          }
+          .\scripts\smoke-portable-startup.ps1 -ArchivePath $portable.FullName
+      - name: Generate release manifest
+        shell: pwsh
+        run: |
           .\scripts\release-manifest.ps1 -AssetDirectory dist
           .\scripts\release-manifest.ps1 -AssetDirectory dist -VerifyOnly
       - name: Create draft GitHub release
