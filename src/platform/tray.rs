@@ -1,4 +1,4 @@
-//! Windows notification-area entry with capture and quit commands.
+//! Windows notification-area entry with capture, file, and settings commands.
 
 use async_channel::Receiver;
 use std::io;
@@ -305,10 +305,7 @@ mod platform {
 
     fn handle_tray_message(window: HWND, message: u32, events: &async_channel::Sender<TrayEvent>) {
         match message {
-            WM_LBUTTONUP => {
-                let _ = events.try_send(TrayEvent::CaptureRequested);
-            }
-            WM_RBUTTONUP => {
+            WM_LBUTTONUP | WM_RBUTTONUP => {
                 if let Some(event) = show_menu(window) {
                     let _ = events.try_send(event);
                 }
