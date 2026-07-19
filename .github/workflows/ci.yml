@@ -19,5 +19,6 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: .\scripts\package-installer.ps1 -ValidateOnly
+      - run: .\scripts\test-portable-package.ps1
       - run: .\scripts\test-release-manifest.ps1
       - run: .\scripts\test-release-tag.ps1

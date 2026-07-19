@@ -9,6 +9,11 @@ Build a versioned, unsigned portable ZIP from a Windows MSVC Rust host:
 ```
 
 The output is written to `dist\FlashShot-<version>-windows-<architecture>.zip` with a matching `.sha256` file. The archive contains `flash-shot.exe`, `LICENSE.txt`, `README.md`, and `PORTABLE.txt`.
+The packaging script verifies the SHA-256 sidecar and this exact archive layout before reporting success. Re-check an existing archive independently with:
+
+```powershell
+.\scripts\verify-portable-package.ps1 -ArchivePath "dist\FlashShot-0.1.0-windows-x86_64.zip"
+```
 
 The package intentionally does not include FFmpeg. Recording users must install a compatible FFmpeg build or set `FLASH_SHOT_FFMPEG` to its executable path. This keeps the application license boundary and FFmpeg distribution choice explicit.
 

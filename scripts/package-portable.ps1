@@ -55,6 +55,10 @@ try {
     Compress-Archive -LiteralPath $packageRoot -DestinationPath $archive -Force
     $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath $checksum -Encoding ascii
+    & (Join-Path $PSScriptRoot "verify-portable-package.ps1") -ArchivePath $archive
+    if ($LASTEXITCODE -ne 0) {
+        throw "Portable package verification failed with exit code $LASTEXITCODE."
+    }
 }
 finally {
     if (Test-Path -LiteralPath $staging) {
