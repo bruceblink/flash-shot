@@ -15,6 +15,14 @@ The packaging script verifies the SHA-256 sidecar and this exact archive layout 
 .\scripts\verify-portable-package.ps1 -ArchivePath "dist\FlashShot-0.1.0-windows-x86_64.zip"
 ```
 
+Before distributing a portable ZIP, run its release executable from a fresh temporary extraction and require it to stay alive for five seconds:
+
+```powershell
+.\scripts\smoke-portable-startup.ps1 -ArchivePath "dist\FlashShot-0.1.0-windows-x86_64.zip"
+```
+
+This is an artifact-startup preflight, not a substitute for manually testing on a clean Windows user profile.
+
 The package intentionally does not include FFmpeg. Recording users must install a compatible FFmpeg build or set `FLASH_SHOT_FFMPEG` to its executable path. This keeps the application license boundary and FFmpeg distribution choice explicit.
 
 Use `-SkipBuild` only after producing the matching release executable for the current Rust host target:
@@ -84,4 +92,4 @@ The workflow runs the Rust gates, builds the unsigned portable ZIP and Inno Setu
 
 ## Release checks
 
-Before publishing a draft, download the uploaded artifacts, re-check their SHA-256 sidecars, and manually smoke-test the portable ZIP and installer on a clean Windows profile. Check screenshot capture, annotation, save/copy, and the FFmpeg recording path when a compatible FFmpeg build is available. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
+Before publishing a draft, download the uploaded artifacts, re-check their SHA-256 sidecars, run the portable startup preflight, and manually smoke-test the portable ZIP and installer on a clean Windows profile. Check screenshot capture, annotation, save/copy, and the FFmpeg recording path when a compatible FFmpeg build is available. Code signing and installer production are separate release steps; an unsigned package must not be represented as signed.
