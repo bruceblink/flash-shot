@@ -2334,7 +2334,7 @@ impl FlashShotApp {
                 ..Default::default()
             },
             move |window, cx| {
-                let pinned = cx.new(|cx| PinnedImage::new(pinned.image, cx));
+                let pinned = cx.new(|cx| PinnedImage::new(pinned.image, pinned_frame, cx));
                 pinned.read(cx).focus_handle(cx).focus(window, cx);
                 pinned
             },
