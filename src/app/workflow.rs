@@ -769,7 +769,17 @@ impl FlashShotApp {
     }
 
     pub(super) fn cycle_capture_delay(&mut self, cx: &mut Context<Self>) {
-        self.capture_delay_seconds = next_capture_delay(self.capture_delay_seconds);
+        let previous_delay = self.capture_delay_seconds;
+        let next_delay = next_capture_delay(previous_delay);
+        self.capture_delay_seconds = next_delay;
+        self.settings.capture_delay_seconds = next_delay;
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.capture_delay_seconds = previous_delay;
+            self.settings.capture_delay_seconds = previous_delay;
+            self.status = format!("Could not save capture delay: {error}");
+            cx.notify();
+            return;
+        }
         self.status = if self.capture_delay_seconds == 0 {
             "Capture delay disabled".to_owned()
         } else {
@@ -782,7 +792,16 @@ impl FlashShotApp {
     }
 
     pub(super) fn toggle_capture_cursor(&mut self, cx: &mut Context<Self>) {
-        self.include_cursor = !self.include_cursor;
+        let previous_value = self.include_cursor;
+        self.include_cursor = !previous_value;
+        self.settings.include_cursor = self.include_cursor;
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.include_cursor = previous_value;
+            self.settings.include_cursor = previous_value;
+            self.status = format!("Could not save cursor preference: {error}");
+            cx.notify();
+            return;
+        }
         self.status = if self.include_cursor {
             "Capture will include the system cursor".to_owned()
         } else {
