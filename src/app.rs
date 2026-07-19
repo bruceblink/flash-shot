@@ -334,8 +334,10 @@ impl FlashShotApp {
                         TrayEvent::FullScreenCopyRequested => {
                             this.update(&mut cx, |this, cx| this.copy_full_screen(cx));
                         }
-                        TrayEvent::DelayedCaptureRequested => {
-                            this.update(&mut cx, |this, cx| this.start_delayed_capture(3, cx));
+                        TrayEvent::DelayedCaptureRequested(seconds) => {
+                            this.update(&mut cx, |this, cx| {
+                                this.start_delayed_capture(seconds, cx)
+                            });
                         }
                         TrayEvent::OpenHistoryDirectoryRequested => {
                             this.update(&mut cx, |this, cx| this.open_history_directory(cx));

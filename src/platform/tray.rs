@@ -8,7 +8,7 @@ pub enum TrayEvent {
     CaptureRequested,
     FullScreenCaptureRequested,
     FullScreenCopyRequested,
-    DelayedCaptureRequested,
+    DelayedCaptureRequested(u8),
     OpenHistoryDirectoryRequested,
     OpenImageRequested,
     HistoryRequested,
@@ -91,12 +91,14 @@ mod platform {
     const MENU_CAPTURE: usize = 1;
     const MENU_FULL_SCREEN_CAPTURE: usize = 2;
     const MENU_FULL_SCREEN_COPY: usize = 3;
-    const MENU_DELAYED_CAPTURE: usize = 4;
-    const MENU_OPEN_HISTORY_DIRECTORY: usize = 5;
-    const MENU_OPEN_IMAGE: usize = 6;
-    const MENU_HISTORY: usize = 7;
-    const MENU_SETTINGS: usize = 8;
-    const MENU_QUIT: usize = 9;
+    const MENU_DELAYED_CAPTURE_3_SECONDS: usize = 4;
+    const MENU_DELAYED_CAPTURE_5_SECONDS: usize = 5;
+    const MENU_DELAYED_CAPTURE_10_SECONDS: usize = 6;
+    const MENU_OPEN_HISTORY_DIRECTORY: usize = 7;
+    const MENU_OPEN_IMAGE: usize = 8;
+    const MENU_HISTORY: usize = 9;
+    const MENU_SETTINGS: usize = 10;
+    const MENU_QUIT: usize = 11;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -363,7 +365,9 @@ mod platform {
         let capture = wide("Capture");
         let full_screen_capture = wide("Capture full screen");
         let full_screen_copy = wide("Copy full screen to clipboard");
-        let delayed_capture = wide("Capture in 3 seconds");
+        let delayed_capture_3_seconds = wide("Capture in 3 seconds");
+        let delayed_capture_5_seconds = wide("Capture in 5 seconds");
+        let delayed_capture_10_seconds = wide("Capture in 10 seconds");
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
@@ -386,8 +390,20 @@ mod platform {
             AppendMenuW(
                 menu,
                 MF_STRING,
-                MENU_DELAYED_CAPTURE,
-                delayed_capture.as_ptr(),
+                MENU_DELAYED_CAPTURE_3_SECONDS,
+                delayed_capture_3_seconds.as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                MENU_DELAYED_CAPTURE_5_SECONDS,
+                delayed_capture_5_seconds.as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                MENU_DELAYED_CAPTURE_10_SECONDS,
+                delayed_capture_10_seconds.as_ptr(),
             );
             AppendMenuW(
                 menu,
@@ -431,7 +447,9 @@ mod platform {
             MENU_CAPTURE => Some(TrayEvent::CaptureRequested),
             MENU_FULL_SCREEN_CAPTURE => Some(TrayEvent::FullScreenCaptureRequested),
             MENU_FULL_SCREEN_COPY => Some(TrayEvent::FullScreenCopyRequested),
-            MENU_DELAYED_CAPTURE => Some(TrayEvent::DelayedCaptureRequested),
+            MENU_DELAYED_CAPTURE_3_SECONDS => Some(TrayEvent::DelayedCaptureRequested(3)),
+            MENU_DELAYED_CAPTURE_5_SECONDS => Some(TrayEvent::DelayedCaptureRequested(5)),
+            MENU_DELAYED_CAPTURE_10_SECONDS => Some(TrayEvent::DelayedCaptureRequested(10)),
             MENU_OPEN_HISTORY_DIRECTORY => Some(TrayEvent::OpenHistoryDirectoryRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
@@ -521,12 +539,20 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn delayed_capture_menu_item_dispatches_the_delayed_event() {
+    fn delayed_capture_menu_items_dispatch_their_configured_delays() {
         use super::{TrayEvent, platform::tray_event_for_command};
 
         assert_eq!(
             tray_event_for_command(4),
-            Some(TrayEvent::DelayedCaptureRequested)
+            Some(TrayEvent::DelayedCaptureRequested(3))
+        );
+        assert_eq!(
+            tray_event_for_command(5),
+            Some(TrayEvent::DelayedCaptureRequested(5))
+        );
+        assert_eq!(
+            tray_event_for_command(6),
+            Some(TrayEvent::DelayedCaptureRequested(10))
         );
     }
 
@@ -558,7 +584,7 @@ mod tests {
         use super::{TrayEvent, platform::tray_event_for_command};
 
         assert_eq!(
-            tray_event_for_command(5),
+            tray_event_for_command(7),
             Some(TrayEvent::OpenHistoryDirectoryRequested)
         );
     }
