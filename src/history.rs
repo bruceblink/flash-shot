@@ -70,6 +70,24 @@ impl ScreenshotHistory {
         &self.entries
     }
 
+    pub const fn limit(&self) -> usize {
+        self.limit
+    }
+
+    /// Applies a new retention limit immediately so the managed directory and
+    /// its index cannot temporarily disagree about what history retains.
+    pub fn set_limit(&mut self, limit: usize) -> io::Result<()> {
+        if limit == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "screenshot history limit must be greater than zero",
+            ));
+        }
+        self.limit = limit;
+        self.prune()?;
+        self.write_index()
+    }
+
     pub fn record(&mut self, path: PathBuf) -> io::Result<()> {
         let path = path.canonicalize().unwrap_or(path);
         if !path.starts_with(&self.root) {
@@ -243,6 +261,27 @@ mod tests {
         history.record(first.clone()).unwrap();
         history.record(second.clone()).unwrap();
 
+        assert!(!first.exists());
+        assert!(second.exists());
+        assert_eq!(history.entries().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lowering_the_retention_limit_prunes_existing_history_immediately() {
+        let root = directory("change-limit");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.png");
+        let second = root.join("two.png");
+        fs::write(&first, b"one").unwrap();
+        fs::write(&second, b"two").unwrap();
+        let mut history = ScreenshotHistory::open_with_limit(&root, 2).unwrap();
+        history.record(first.clone()).unwrap();
+        history.record(second.clone()).unwrap();
+
+        history.set_limit(1).unwrap();
+
+        assert_eq!(history.limit(), 1);
         assert!(!first.exists());
         assert!(second.exists());
         assert_eq!(history.entries().len(), 1);

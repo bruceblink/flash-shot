@@ -59,7 +59,7 @@ impl gpui::Render for FlashShotApp {
                                 },
                             )
                             .when(self.settings_section == SettingsSection::Files, |content| {
-                                content.child(file_settings(colors, is_idle, app.clone()))
+                                content.child(file_settings(self, colors, is_idle, app.clone()))
                             })
                             .when(
                                 self.settings_section == SettingsSection::Recording,
@@ -211,6 +211,7 @@ fn capture_settings(
 }
 
 fn file_settings(
+    app_state: &FlashShotApp,
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
@@ -234,7 +235,17 @@ fn file_settings(
                 "Open Project",
                 colors,
                 is_idle,
-                move |_, _, cx| app.update(cx, |this, cx| this.open_editable_project(cx)),
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.open_editable_project(cx))
+                },
+            ))
+            .child(settings_button(
+                "settings-history-retention",
+                &format!("Keep {}", app_state.settings.history_limit),
+                colors,
+                is_idle,
+                move |_, _, cx| app.update(cx, |this, cx| this.cycle_history_limit(cx)),
             )),
     )
 }

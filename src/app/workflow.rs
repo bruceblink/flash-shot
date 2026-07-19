@@ -735,10 +735,12 @@ impl FlashShotApp {
                             }
                             None => format!("Opened {} for annotation", path.display()),
                         };
-                        if let Some(handle) = self.main_window_handle
+                        if let Some(handle) = self.settings_window_handle
                             && let Err(error) = window_visibility::hide(handle)
                         {
-                            let message = format!("Could not hide the main window: {error}");
+                            let message = format!(
+                                "Could not hide settings before opening the editor: {error}"
+                            );
                             let _ = self.session.fail(message.clone());
                             self.status = message;
                             cx.notify();
@@ -807,6 +809,27 @@ impl FlashShotApp {
         } else {
             "Capture will omit the system cursor".to_owned()
         };
+        cx.notify();
+    }
+
+    pub(super) fn cycle_history_limit(&mut self, cx: &mut Context<Self>) {
+        let previous_limit = self.settings.history_limit;
+        let next_limit = next_history_limit(previous_limit);
+        if let Err(error) = self.history.set_limit(usize::from(next_limit)) {
+            self.status = format!("Could not update screenshot history retention: {error}");
+            cx.notify();
+            return;
+        }
+        self.settings.history_limit = next_limit;
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.status = format!(
+                "History retention is {} captures for this session but could not be saved: {error}",
+                next_limit
+            );
+            cx.notify();
+            return;
+        }
+        self.status = format!("Screenshot history retains the latest {next_limit} captures");
         cx.notify();
     }
 
@@ -926,6 +949,7 @@ impl FlashShotApp {
         self.manual_scroll_capture_in_flight = false;
         self.recognition_result = None;
         self.overlay_more_actions = false;
+        self.overlay_annotation_controls = false;
         self.status = "Capturing virtual desktop...".to_owned();
         self.hide_settings_window();
         cx.notify();
@@ -1072,6 +1096,7 @@ impl FlashShotApp {
         self.manual_scroll_capture_in_flight = false;
         self.recognition_result = None;
         self.overlay_more_actions = false;
+        self.overlay_annotation_controls = false;
         self.status = format!("Ready - {}", self.capture_shortcut);
         self.close_capture_overlays(cx);
         self.close_manual_scroll_window(cx);
@@ -3124,7 +3149,7 @@ impl FlashShotApp {
     }
 
     pub(super) fn show_settings_window(&mut self, cx: &mut Context<Self>) {
-        if let Some(handle) = self.main_window_handle
+        if let Some(handle) = self.settings_window_handle
             && let Err(error) = window_visibility::restore(handle)
         {
             self.status = format!("Could not open settings: {error}");
@@ -3134,7 +3159,7 @@ impl FlashShotApp {
     }
 
     pub(crate) fn hide_settings_window(&mut self) {
-        if let Some(handle) = self.main_window_handle
+        if let Some(handle) = self.settings_window_handle
             && let Err(error) = window_visibility::hide(handle)
         {
             log::warn!(target: "flash_shot::settings", "settings_window_hide_failed error={error}");
@@ -3143,6 +3168,11 @@ impl FlashShotApp {
 
     pub(super) fn toggle_overlay_more_actions(&mut self, cx: &mut Context<Self>) {
         self.overlay_more_actions = !self.overlay_more_actions;
+        cx.notify();
+    }
+
+    pub(super) fn toggle_overlay_annotation_controls(&mut self, cx: &mut Context<Self>) {
+        self.overlay_annotation_controls = !self.overlay_annotation_controls;
         cx.notify();
     }
 
@@ -3227,6 +3257,15 @@ fn next_capture_delay(current: u8) -> u8 {
         3 => 5,
         5 => 10,
         _ => 0,
+    }
+}
+
+fn next_history_limit(current: u16) -> u16 {
+    match current {
+        10 => 30,
+        30 => 100,
+        100 => 300,
+        _ => 10,
     }
 }
 

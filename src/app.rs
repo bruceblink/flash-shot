@@ -77,10 +77,11 @@ pub struct FlashShotApp {
     include_cursor: bool,
     recognition_result: Option<RecognitionResult>,
     overlay_more_actions: bool,
+    overlay_annotation_controls: bool,
     operation_generation: u64,
     overlay_windows: Vec<WindowHandle<overlay::CaptureOverlay>>,
     scroll_window: Option<WindowHandle<scroll_control::ManualScrollControl>>,
-    main_window_handle: Option<isize>,
+    settings_window_handle: Option<isize>,
     focus_handle: FocusHandle,
     capture_shortcut: String,
     settings_section: SettingsSection,
@@ -155,7 +156,7 @@ impl TextEdit {
 
 impl FlashShotApp {
     pub(crate) fn set_settings_window_handle(&mut self, handle: isize) {
-        self.main_window_handle = Some(handle);
+        self.settings_window_handle = Some(handle);
     }
 
     pub(super) fn notify_user(&self, title: &str, body: &str) {
@@ -278,10 +279,11 @@ impl FlashShotApp {
             include_cursor: settings.include_cursor,
             recognition_result: None,
             overlay_more_actions: false,
+            overlay_annotation_controls: false,
             operation_generation: 0,
             overlay_windows: Vec::new(),
             scroll_window: None,
-            main_window_handle: None,
+            settings_window_handle: None,
             focus_handle: cx.focus_handle(),
             capture_shortcut: capture_shortcut_label,
             settings_section: SettingsSection::default(),

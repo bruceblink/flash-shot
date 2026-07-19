@@ -41,6 +41,8 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 cargo run
 ```
 
+应用启动后默认只驻留在通知区域，不显示常驻操作窗口。使用全局快捷键即可进入截图选区；只有在选区出现后才会显示标注和导出工具。右键点击托盘图标可打开截图、设置和退出菜单，单击托盘图标会直接开始截图。关闭设置窗口只会将其隐藏，应用会继续在后台运行。
+
 录屏依赖用户本机或随应用分发的 FFmpeg。默认视频保存到 `Videos\Flash Shot`（不可用时回退到当前目录）。可通过以下环境变量显式指定可执行文件和一个可选音频源：
 
 ```powershell
@@ -195,6 +197,16 @@ the shortcut-to-overlay metrics need their own real interaction sampling.
 
 Use `-SkipBuild` only when both Release binaries were built from the current source; the script
 checks the reporter protocol before it starts sampling.
+
+Collect an isolated shortcut-to-overlay baseline with the dedicated `Ctrl+Alt+F12` hotkey:
+
+```powershell
+.\scripts\measure-release-capture.ps1
+```
+
+The script starts one Release application, triggers and cancels ten real capture overlays, and
+gates the current window's frame-ready and overlay p95 values at 100 ms. It requires an
+interactive Windows desktop and no existing Flash Shot process.
 
 ### Documentation
 

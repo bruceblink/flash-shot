@@ -4,7 +4,7 @@ use std::{io, path::PathBuf};
 
 use flash_shot::performance_report::{PerformanceThresholds, summarize_file};
 
-const PERFORMANCE_REPORT_PROTOCOL_VERSION: &str = "performance-report-v2";
+const PERFORMANCE_REPORT_PROTOCOL_VERSION: &str = "performance-report-v3";
 
 fn main() {
     match execute() {
@@ -68,6 +68,7 @@ fn parse_args(
                 thresholds.shortcut_to_frame_ready_p95_ms = None;
                 thresholds.shortcut_to_overlay_frame_p95_ms = None;
             }
+            "--capture-only" => thresholds.startup_p95_ms = None,
             "--no-gate" => {
                 thresholds = PerformanceThresholds {
                     minimum_samples: 0,
@@ -172,10 +173,24 @@ mod tests {
     }
 
     #[test]
+    fn capture_only_keeps_the_release_capture_gates() {
+        let (_, thresholds, _) = parse_args([
+            "--input".to_owned(),
+            "metrics.jsonl".to_owned(),
+            "--capture-only".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(thresholds.startup_p95_ms, None);
+        assert_eq!(thresholds.shortcut_to_frame_ready_p95_ms, Some(100));
+        assert_eq!(thresholds.shortcut_to_overlay_frame_p95_ms, Some(100));
+        assert!(thresholds.require_release_profile);
+    }
+
+    #[test]
     fn protocol_version_is_stable_for_measurement_scripts() {
         assert_eq!(
             super::PERFORMANCE_REPORT_PROTOCOL_VERSION,
-            "performance-report-v2"
+            "performance-report-v3"
         );
     }
 }

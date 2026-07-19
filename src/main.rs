@@ -26,12 +26,6 @@ fn main() {
         log::error!(target: "flash_shot::performance", "performance_recorder_init_failed error={error}");
         std::process::exit(1);
     });
-    let history = flash_shot::history::managed_history_directory()
-        .and_then(flash_shot::history::ScreenshotHistory::open)
-        .unwrap_or_else(|error| {
-            log::error!(target: "flash_shot::history", "history_init_failed error={error}");
-            std::process::exit(1);
-        });
     let (settings, settings_path) = flash_shot::settings::UserSettings::load(
         &diagnostics.paths.config_dir,
     )
@@ -42,6 +36,17 @@ fn main() {
             diagnostics.paths.config_dir.join("settings.json"),
         )
     });
+    let history = flash_shot::history::managed_history_directory()
+        .and_then(|directory| {
+            flash_shot::history::ScreenshotHistory::open_with_limit(
+                directory,
+                usize::from(settings.history_limit),
+            )
+        })
+        .unwrap_or_else(|error| {
+            log::error!(target: "flash_shot::history", "history_init_failed error={error}");
+            std::process::exit(1);
+        });
     log::info!(target: "flash_shot::lifecycle", "application_start");
     if let Err(error) = flash_shot::run(started_at, performance, history, settings, settings_path) {
         log::error!(target: "flash_shot::lifecycle", "application_run_failed error={error}");
