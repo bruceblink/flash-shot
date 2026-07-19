@@ -28,6 +28,7 @@ use crate::{
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
+const ANNOTATION_FONT_SIZES: [u32; 4] = [16, 24, 32, 48];
 const ANNOTATION_OPACITIES: [u8; 4] = [255, 192, 128, 64];
 const MAGNIFIER_RADIUS: i32 = 4;
 const MAGNIFIER_CELL_SIZE: f32 = 12.0;
@@ -198,6 +199,7 @@ impl Render for CaptureOverlay {
         let text_edit_annotation = app.text_edit_annotation();
         let selected_annotation = app.selected_annotation;
         let can_delete = selected_annotation.is_some();
+        let selected_tool = app.annotation_tool;
         let can_edit_text = selected_annotation
             .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
             .is_some_and(|annotation| {
@@ -206,7 +208,13 @@ impl Render for CaptureOverlay {
                     AnnotationKind::Text { .. } | AnnotationKind::Watermark { .. }
                 )
             });
-        let selected_tool = app.annotation_tool;
+        let can_adjust_font_size = selected_annotation
+            .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
+            .is_some_and(is_text_annotation)
+            || matches!(
+                selected_tool,
+                Some(AnnotationTool::Text | AnnotationTool::Watermark)
+            );
         let can_rotate = selected_annotation
             .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
             .is_some_and(Annotation::supports_clockwise_rotation);
@@ -225,6 +233,7 @@ impl Render for CaptureOverlay {
         });
         let annotation_color = app.annotation_style.stroke_rgba;
         let annotation_width = app.annotation_style.stroke_width;
+        let annotation_font_size = app.annotation_style.text_font_size;
         let annotation_opacity = (app.annotation_style.stroke_rgba & 0xFF) as u8;
         let fill_enabled = app.annotation_style.fill_rgba.is_some();
         let can_undo = app.annotation_history.undo_len() > 0;
@@ -342,7 +351,7 @@ impl Render for CaptureOverlay {
                                 edit.origin,
                                 &edit.content,
                                 0xFFFFFFFF,
-                                annotation_width.saturating_mul(4).saturating_add(8),
+                                annotation_font_size,
                                 cx,
                             );
                         }
@@ -981,6 +990,44 @@ impl Render for CaptureOverlay {
                             }))
                     })),
             )
+            .when(can_adjust_font_size, |overlay| {
+                overlay.child(
+                    div()
+                        .absolute()
+                        .left(px(18.0))
+                        .top(px(178.0))
+                        .flex()
+                        .gap_2()
+                        .children(ANNOTATION_FONT_SIZES.into_iter().map(|font_size| {
+                            div()
+                                .id(format!("overlay-font-size-{font_size}"))
+                                .w(px(30.0))
+                                .h(px(22.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(colors.panel)
+                                .border_2()
+                                .border_color(if font_size == annotation_font_size {
+                                    colors.text
+                                } else {
+                                    colors.border
+                                })
+                                .text_color(colors.text)
+                                .text_xs()
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let app = this.app.clone();
+                                    cx.defer(move |cx| {
+                                        app.update(cx, |app, cx| {
+                                            app.select_annotation_font_size(font_size, cx)
+                                        });
+                                    });
+                                }))
+                                .child(font_size.to_string())
+                        })),
+                )
+            })
             .when(can_fill, |overlay| {
                 overlay.child(
                     div()
@@ -1607,6 +1654,13 @@ fn annotation_layer_label(kind: &AnnotationKind) -> &'static str {
     }
 }
 
+fn is_text_annotation(annotation: &Annotation) -> bool {
+    matches!(
+        annotation.kind,
+        AnnotationKind::Text { .. } | AnnotationKind::Watermark { .. }
+    )
+}
+
 fn paint_text_annotation(
     window: &mut Window,
     transform: PreviewTransform,
@@ -2066,7 +2120,8 @@ fn visible_selection(
 mod tests {
     use super::{
         MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, annotation_layer_label, arrow_head_points,
-        intersect, magnifier_origin, outline_shape_bounds, resize_handle_points, visible_selection,
+        intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
+        resize_handle_points, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2187,6 +2242,29 @@ mod tests {
             }),
             "Freehand"
         );
+    }
+
+    #[test]
+    fn text_annotation_helper_excludes_non_text_annotations() {
+        let text = Annotation {
+            id: AnnotationId::new(1),
+            kind: AnnotationKind::Text {
+                origin: PhysicalPoint { x: 0, y: 0 },
+                content: "Note".to_owned(),
+            },
+            style: AnnotationStyle::default(),
+        };
+        let line = Annotation {
+            id: AnnotationId::new(2),
+            kind: AnnotationKind::Line {
+                start: PhysicalPoint { x: 0, y: 0 },
+                end: PhysicalPoint { x: 1, y: 1 },
+            },
+            style: AnnotationStyle::default(),
+        };
+
+        assert!(is_text_annotation(&text));
+        assert!(!is_text_annotation(&line));
     }
 
     #[test]

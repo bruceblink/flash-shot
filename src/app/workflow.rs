@@ -1281,6 +1281,13 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn select_annotation_font_size(&mut self, font_size: u32, cx: &mut Context<Self>) {
+        self.annotation_style.text_font_size = font_size.max(1);
+        self.replace_selected_annotation_style(cx);
+        self.status = format!("Text size: {} px", self.annotation_style.text_font_size);
+        cx.notify();
+    }
+
     pub(super) fn select_annotation_opacity(&mut self, opacity: u8, cx: &mut Context<Self>) {
         self.annotation_style.stroke_rgba = with_alpha(self.annotation_style.stroke_rgba, opacity);
         if let Some(fill) = self.annotation_style.fill_rgba {
@@ -4032,6 +4039,7 @@ fn style_for_tool(
             stroke_rgba: fill_color(style.stroke_rgba),
             fill_rgba: None,
             stroke_width: 1,
+            text_font_size: style.text_font_size,
         }
     } else {
         style
@@ -4366,6 +4374,7 @@ mod tests {
                         stroke_rgba: 0xFF0000FF,
                         fill_rgba: None,
                         stroke_width: 1,
+                        text_font_size: 24,
                     },
                 }),
             )
@@ -4572,6 +4581,7 @@ mod tests {
             stroke_rgba: 0xFFCC00FF,
             fill_rgba: None,
             stroke_width: 6,
+            text_font_size: 24,
         };
         let text = Annotation {
             id: AnnotationId::new(7),
@@ -4653,12 +4663,14 @@ mod tests {
                     stroke_rgba: 0xFFCC00FF,
                     fill_rgba: Some(0xFFFFFFFF),
                     stroke_width: 10,
+                    text_font_size: 24,
                 },
             ),
             AnnotationStyle {
                 stroke_rgba: 0xFFCC0066,
                 fill_rgba: None,
                 stroke_width: 1,
+                text_font_size: 24,
             }
         );
     }
@@ -4834,6 +4846,7 @@ mod tests {
                         stroke_rgba: 0x00FF00FF,
                         fill_rgba: None,
                         stroke_width: 1,
+                        text_font_size: 24,
                     },
                 }),
             )

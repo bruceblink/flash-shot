@@ -118,6 +118,7 @@ fn benchmark_document(bounds: PhysicalRect) -> io::Result<AnnotationDocument> {
         stroke_rgba: 0xFF3B30FF,
         fill_rgba: Some(0xFF3B3044),
         stroke_width: 4,
+        text_font_size: 24,
     };
     for (id, kind) in [
         AnnotationKind::Rectangle {

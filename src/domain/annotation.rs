@@ -14,8 +14,14 @@ pub const TEXT_ANNOTATION_HEIGHT: i32 = 28;
 pub const TEXT_ANNOTATION_ADVANCE: i32 = 16;
 pub const WATERMARK_CONTENT: &str = "Flash Shot";
 
+pub const DEFAULT_TEXT_FONT_SIZE: u32 = 24;
+
 fn default_watermark_content() -> String {
     WATERMARK_CONTENT.to_owned()
+}
+
+const fn default_text_font_size() -> u32 {
+    DEFAULT_TEXT_FONT_SIZE
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -36,6 +42,8 @@ pub struct AnnotationStyle {
     pub stroke_rgba: u32,
     pub fill_rgba: Option<u32>,
     pub stroke_width: u32,
+    #[serde(default = "default_text_font_size")]
+    pub text_font_size: u32,
 }
 
 impl Default for AnnotationStyle {
@@ -44,6 +52,7 @@ impl Default for AnnotationStyle {
             stroke_rgba: 0xFF3B30FF,
             fill_rgba: None,
             stroke_width: 4,
+            text_font_size: DEFAULT_TEXT_FONT_SIZE,
         }
     }
 }
@@ -249,10 +258,12 @@ impl Annotation {
         )
     }
 
-    /// Maps the shared style's thickness presets to readable physical-pixel
-    /// text sizes while preserving the existing 24px default at width 4.
     pub const fn text_font_size(&self) -> u32 {
-        self.style.stroke_width.saturating_mul(4).saturating_add(8)
+        if self.style.text_font_size == 0 {
+            1
+        } else {
+            self.style.text_font_size
+        }
     }
 
     /// Tests a physical image coordinate against this annotation's visible geometry.
@@ -1372,7 +1383,7 @@ mod tests {
     use super::{
         ANNOTATION_DOCUMENT_VERSION, Annotation, AnnotationCommand, AnnotationDocument,
         AnnotationEditor, AnnotationError, AnnotationId, AnnotationKind, AnnotationStyle,
-        AnnotationTool, CommandHistory, WATERMARK_CONTENT,
+        AnnotationTool, CommandHistory, DEFAULT_TEXT_FONT_SIZE, WATERMARK_CONTENT,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     use crate::domain::selection::ResizeHandle;
@@ -1562,7 +1573,7 @@ mod tests {
     }
 
     #[test]
-    fn text_bounds_and_font_size_follow_the_annotation_style() {
+    fn text_bounds_follow_the_explicit_font_size_not_the_stroke_width() {
         let text = Annotation {
             id: AnnotationId::new(92),
             kind: AnnotationKind::Text {
@@ -1571,19 +1582,44 @@ mod tests {
             },
             style: AnnotationStyle {
                 stroke_width: 10,
+                text_font_size: 32,
                 ..AnnotationStyle::default()
             },
         };
 
-        assert_eq!(text.text_font_size(), 48);
+        assert_eq!(text.text_font_size(), 32);
         assert_eq!(
             text.bounds(),
             PhysicalRect {
                 left: 10,
                 top: 20,
-                right: 74,
-                bottom: 72,
+                right: 54,
+                bottom: 56,
             }
+        );
+    }
+
+    #[test]
+    fn legacy_annotation_styles_default_to_the_original_text_size() {
+        let document = AnnotationDocument::from_json(
+            r#"{
+                "version": 1,
+                "canvas_bounds": {"left": 0, "top": 0, "right": 100, "bottom": 100},
+                "annotations": [{
+                    "id": 83,
+                    "kind": {"Text": {"origin": {"x": 4, "y": 8}, "content": "Note"}},
+                    "style": {"stroke_rgba": 4282071295, "fill_rgba": null, "stroke_width": 10}
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            document
+                .annotation(AnnotationId::new(83))
+                .unwrap()
+                .text_font_size(),
+            DEFAULT_TEXT_FONT_SIZE
         );
     }
 
@@ -2145,6 +2181,7 @@ mod tests {
                     stroke_rgba: 0xFFCC0066,
                     fill_rgba: None,
                     stroke_width: 1,
+                    text_font_size: 24,
                 },
                 PhysicalPoint { x: -100, y: 100 },
             )

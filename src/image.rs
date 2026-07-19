@@ -868,6 +868,7 @@ mod tests {
                         stroke_rgba: 0xFF0000FF,
                         stroke_width: 1,
                         fill_rgba: None,
+                        text_font_size: 24,
                     },
                 }),
             )
@@ -925,6 +926,7 @@ mod tests {
                         stroke_rgba: 0x0000FFFF,
                         fill_rgba: Some(0x00FF0080),
                         stroke_width: 1,
+                        text_font_size: 24,
                     },
                 }),
             )
@@ -975,6 +977,7 @@ mod tests {
                         stroke_rgba: 0xFFCC0080,
                         fill_rgba: None,
                         stroke_width: 1,
+                        text_font_size: 24,
                     },
                 }),
             )
@@ -1231,6 +1234,7 @@ mod tests {
                         stroke_rgba: 0xFF0000FF,
                         fill_rgba: None,
                         stroke_width: 1,
+                        text_font_size: 24,
                     },
                 }),
             )
@@ -1285,6 +1289,7 @@ mod tests {
                         stroke_rgba: 0x00FF00FF,
                         fill_rgba: None,
                         stroke_width: 1,
+                        text_font_size: 24,
                     },
                 }),
             )
@@ -1292,6 +1297,66 @@ mod tests {
 
         let composited = frame.composite_annotations(&document).unwrap();
         assert!(composited.pixels.chunks_exact(4).any(|pixel| pixel[1] > 0));
+    }
+
+    #[test]
+    fn composite_uses_the_explicit_text_font_size() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 128,
+                bottom: 96,
+            },
+            width: 128,
+            height: 96,
+            stride: 512,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(vec![0; 128 * 96 * 4]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        for (id, origin, font_size) in [
+            (12, PhysicalPoint { x: 8, y: 60 }, 16),
+            (13, PhysicalPoint { x: 72, y: 60 }, 48),
+        ] {
+            history
+                .apply(
+                    &mut document,
+                    AnnotationCommand::Insert(Annotation {
+                        id: AnnotationId::new(id),
+                        kind: AnnotationKind::Text {
+                            origin,
+                            content: "M".to_owned(),
+                        },
+                        style: AnnotationStyle {
+                            stroke_rgba: 0xFFFFFFFF,
+                            fill_rgba: None,
+                            stroke_width: 1,
+                            text_font_size: font_size,
+                        },
+                    }),
+                )
+                .unwrap();
+        }
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        let small_height = nonzero_green_height(&composited, 0, 63).unwrap();
+        let large_height = nonzero_green_height(&composited, 64, 127).unwrap();
+        assert!(large_height > small_height);
+    }
+
+    fn nonzero_green_height(frame: &CaptureFrame, left: i32, right: i32) -> Option<i32> {
+        let rows = (frame.bounds.top..frame.bounds.bottom).filter(|&y| {
+            (left..right).any(|x| {
+                frame
+                    .pixel_at(PhysicalPoint { x, y })
+                    .is_some_and(|pixel| pixel.green > 0)
+            })
+        });
+        Some(rows.clone().max()? - rows.min()? + 1)
     }
 
     #[test]
@@ -1440,6 +1505,7 @@ mod tests {
                         stroke_rgba: 0xFF0000FF,
                         fill_rgba: None,
                         stroke_width: 1,
+                        text_font_size: 24,
                     },
                 }),
             )
@@ -1496,6 +1562,7 @@ mod tests {
                     stroke_rgba: 0xFF3B30CC,
                     fill_rgba: Some(0xFF3B3044),
                     stroke_width: 2,
+                    text_font_size: 24,
                 },
             },
             Annotation {
@@ -1512,6 +1579,7 @@ mod tests {
                     stroke_rgba: 0x007AFFFF,
                     fill_rgba: Some(0x007AFF55),
                     stroke_width: 2,
+                    text_font_size: 24,
                 },
             },
             Annotation {
@@ -1524,6 +1592,7 @@ mod tests {
                     stroke_rgba: 0x34C759FF,
                     fill_rgba: None,
                     stroke_width: 2,
+                    text_font_size: 24,
                 },
             },
             Annotation {
@@ -1539,6 +1608,7 @@ mod tests {
                     stroke_rgba: 0xAF52DEFF,
                     fill_rgba: None,
                     stroke_width: 2,
+                    text_font_size: 24,
                 },
             },
             Annotation {
@@ -1555,6 +1625,7 @@ mod tests {
                     stroke_rgba: 0xFFCC0066,
                     fill_rgba: None,
                     stroke_width: 1,
+                    text_font_size: 24,
                 },
             },
             Annotation {
