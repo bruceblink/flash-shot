@@ -32,8 +32,18 @@ fn main() {
             log::error!(target: "flash_shot::history", "history_init_failed error={error}");
             std::process::exit(1);
         });
+    let (settings, settings_path) = flash_shot::settings::UserSettings::load(
+        &diagnostics.paths.config_dir,
+    )
+    .unwrap_or_else(|error| {
+        log::warn!(target: "flash_shot::settings", "settings_load_failed error={error}");
+        (
+            flash_shot::settings::UserSettings::default(),
+            diagnostics.paths.config_dir.join("settings.json"),
+        )
+    });
     log::info!(target: "flash_shot::lifecycle", "application_start");
-    if let Err(error) = flash_shot::run(started_at, performance, history) {
+    if let Err(error) = flash_shot::run(started_at, performance, history, settings, settings_path) {
         log::error!(target: "flash_shot::lifecycle", "application_run_failed error={error}");
         std::process::exit(1);
     }

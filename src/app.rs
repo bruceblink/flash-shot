@@ -7,7 +7,7 @@ mod scroll_control;
 mod view;
 mod workflow;
 
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use gpui::{
     AsyncApp, Context, EntityInputHandler, FocusHandle, Focusable, RenderImage, Subscription,
@@ -33,6 +33,7 @@ use crate::{
         tray::{TrayEvent, TrayNotification, TrayService},
         window_inspector::InspectionTarget,
     },
+    settings::UserSettings,
     theme::ThemeColors,
 };
 
@@ -82,12 +83,26 @@ pub struct FlashShotApp {
     main_window_handle: Option<isize>,
     focus_handle: FocusHandle,
     capture_shortcut: String,
+    settings_section: SettingsSection,
+    settings: UserSettings,
+    settings_path: PathBuf,
     status: String,
     performance: PerformanceRecorder,
     history: ScreenshotHistory,
     _shutdown: Subscription,
     _shortcut: Option<GlobalShortcutService>,
     _tray: Option<TrayService>,
+}
+
+/// The settings window is intentionally segmented so the capture service has
+/// no always-visible command surface and each configuration task stays small.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum SettingsSection {
+    #[default]
+    Capture,
+    Files,
+    Recording,
+    System,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -155,16 +170,30 @@ impl FlashShotApp {
     pub fn new(
         performance: PerformanceRecorder,
         history: ScreenshotHistory,
+        settings: UserSettings,
+        settings_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Self {
         let shutdown = cx.on_app_quit(|this, cx| {
             this.shutdown(cx);
             async {}
         });
-        let capture_shortcut = match CaptureShortcut::from_environment() {
-            Ok(shortcut) => shortcut,
+        let capture_shortcut = match settings
+            .capture_shortcut
+            .as_deref()
+            .map(str::parse)
+            .transpose()
+        {
+            Ok(Some(shortcut)) => shortcut,
+            Ok(None) => match CaptureShortcut::from_environment() {
+                Ok(shortcut) => shortcut,
+                Err(error) => {
+                    log::warn!(target: "flash_shot::shortcut", "capture_hotkey_config_invalid error={error}");
+                    CaptureShortcut::default()
+                }
+            },
             Err(error) => {
-                log::warn!(target: "flash_shot::shortcut", "capture_hotkey_config_invalid error={error}");
+                log::warn!(target: "flash_shot::shortcut", "saved_capture_hotkey_invalid error={error}");
                 CaptureShortcut::default()
             }
         };
@@ -255,6 +284,9 @@ impl FlashShotApp {
             main_window_handle: None,
             focus_handle: cx.focus_handle(),
             capture_shortcut: capture_shortcut_label,
+            settings_section: SettingsSection::default(),
+            settings,
+            settings_path,
             status,
             performance,
             history,

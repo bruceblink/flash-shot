@@ -72,7 +72,7 @@ mod platform {
                 DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HWND_MESSAGE,
                 IDI_APPLICATION, LoadIconW, MF_STRING, MSG, PostThreadMessageW, RegisterClassW,
                 SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-                TranslateMessage, WM_APP, WM_LBUTTONDBLCLK, WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
+                TranslateMessage, WM_APP, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
             },
         },
     };
@@ -300,7 +300,7 @@ mod platform {
 
     fn handle_tray_message(window: HWND, message: u32, events: &async_channel::Sender<TrayEvent>) {
         match message {
-            WM_LBUTTONDBLCLK => {
+            WM_LBUTTONUP => {
                 let _ = events.try_send(TrayEvent::CaptureRequested);
             }
             WM_RBUTTONUP => {

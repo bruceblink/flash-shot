@@ -15,8 +15,8 @@ use gpui::{
 
 use super::{
     FlashShotApp, RecognitionResult, RecordingAudioSelection, RecordingDisplaySelection,
-    overlay::CaptureOverlay, pinned::PinnedImage, render_image::render_image_from_capture,
-    scroll_control::ManualScrollControl,
+    SettingsSection, overlay::CaptureOverlay, pinned::PinnedImage,
+    render_image::render_image_from_capture, scroll_control::ManualScrollControl,
 };
 use crate::{
     domain::{
@@ -36,6 +36,7 @@ use crate::{
         },
         clipboard::{ClipboardService, SystemClipboard},
         display::{DisplayProvider, SystemDisplayProvider},
+        shortcut::GlobalShortcutService,
         window_inspector::{
             InspectionKind, InspectionTarget, SystemWindowInspector, WindowInspector,
         },
@@ -49,6 +50,79 @@ use crate::{
 };
 
 impl FlashShotApp {
+    pub(super) fn select_settings_section(
+        &mut self,
+        section: SettingsSection,
+        cx: &mut Context<Self>,
+    ) {
+        if self.settings_section != section {
+            self.settings_section = section;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn select_capture_shortcut(&mut self, preset: &'static str, cx: &mut Context<Self>) {
+        if self.capture_shortcut == preset {
+            return;
+        }
+        let shortcut = match crate::platform::shortcut::CaptureShortcut::parse_preset(preset) {
+            Ok(shortcut) => shortcut,
+            Err(error) => {
+                self.status = format!("Could not use shortcut: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        let previous_label = self.capture_shortcut.clone();
+        let previous_preference = self.settings.capture_shortcut.clone();
+        let previous_service = self._shortcut.take();
+        drop(previous_service);
+        let replacement = match GlobalShortcutService::register_capture(shortcut) {
+            Ok((service, events)) => {
+                Self::listen_for_shortcut(events, cx);
+                service
+            }
+            Err(error) => {
+                self.restore_capture_shortcut(&previous_label, cx);
+                self.status = format!("Could not register {preset}: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        self._shortcut = Some(replacement);
+        self.capture_shortcut = shortcut.to_string();
+        self.settings.capture_shortcut = Some(self.capture_shortcut.clone());
+        match self.settings.save(&self.settings_path) {
+            Ok(()) => {
+                self.status = format!("Capture shortcut changed to {}", self.capture_shortcut);
+            }
+            Err(error) => {
+                let replacement = self._shortcut.take();
+                drop(replacement);
+                self.restore_capture_shortcut(&previous_label, cx);
+                self.capture_shortcut = previous_label;
+                self.settings.capture_shortcut = previous_preference;
+                self.status = format!("Could not save shortcut preference: {error}");
+            }
+        }
+        cx.notify();
+    }
+
+    fn restore_capture_shortcut(&mut self, label: &str, cx: &mut Context<Self>) {
+        let Ok(shortcut) = label.parse() else {
+            return;
+        };
+        match GlobalShortcutService::register_capture(shortcut) {
+            Ok((service, events)) => {
+                Self::listen_for_shortcut(events, cx);
+                self._shortcut = Some(service);
+            }
+            Err(error) => {
+                log::warn!(target: "flash_shot::shortcut", "capture_hotkey_restore_failed shortcut={label} error={error}");
+            }
+        }
+    }
+
     pub(super) fn toggle_auto_start(&mut self, cx: &mut Context<Self>) {
         let executable = match std::env::current_exe() {
             Ok(executable) => executable,
@@ -734,9 +808,11 @@ impl FlashShotApp {
     }
 
     pub(super) fn start_capture(&mut self, cx: &mut Context<Self>) {
-        if self.session.state() != CaptureSessionState::Idle
-            || self.delayed_capture_generation.is_some()
-        {
+        if self.delayed_capture_generation.is_some() {
+            self.cancel_delayed_capture(cx);
+            return;
+        }
+        if self.session.state() != CaptureSessionState::Idle {
             return;
         }
         if self.capture_delay_seconds == 0 {

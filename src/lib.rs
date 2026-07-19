@@ -13,6 +13,7 @@ pub mod performance_report;
 pub mod platform;
 pub mod recording;
 pub mod scroll;
+pub mod settings;
 pub mod single_instance;
 pub mod theme;
 pub mod translation;
@@ -23,7 +24,8 @@ use gpui::*;
 use history::ScreenshotHistory;
 use performance::PerformanceRecorder;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use std::time::Instant;
+use settings::UserSettings;
+use std::{path::PathBuf, time::Instant};
 
 actions!(flash_shot, [Quit]);
 
@@ -40,6 +42,8 @@ pub fn run(
     started_at: Instant,
     performance: PerformanceRecorder,
     history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -74,7 +78,8 @@ pub fn run(
             window.on_next_frame(move |_, _| {
                 startup_performance.record_duration("startup_to_first_frame", started_at.elapsed());
             });
-            let app = cx.new(|cx| FlashShotApp::new(performance, history, cx));
+            let app =
+                cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx));
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()
             {
@@ -82,6 +87,13 @@ pub fn run(
                     app.set_settings_window_handle(handle.hwnd.get())
                 });
             }
+            // The settings surface is an on-demand control panel, not the
+            // application's lifetime. Closing it returns Flash Shot to the tray.
+            let close_app = app.clone();
+            window.on_window_should_close(cx, move |_, cx| {
+                close_app.update(cx, |app, _| app.hide_settings_window());
+                false
+            });
             app
         }) {
             log::error!(target: "flash_shot::lifecycle", "main_window_open_failed error={error}");

@@ -30,12 +30,26 @@ impl Default for CaptureShortcut {
 }
 
 impl CaptureShortcut {
+    pub const PRESETS: [&'static str; 4] = [
+        "Ctrl+Shift+Print Screen",
+        "Ctrl+Alt+S",
+        "Ctrl+Shift+S",
+        "Shift+F12",
+    ];
+
     pub fn from_environment() -> Result<Self, ShortcutParseError> {
         match std::env::var("FLASH_SHOT_CAPTURE_HOTKEY") {
             Ok(value) if !value.trim().is_empty() => value.parse(),
             Ok(_) | Err(std::env::VarError::NotPresent) => Ok(Self::default()),
             Err(std::env::VarError::NotUnicode(_)) => Err(ShortcutParseError),
         }
+    }
+
+    pub fn parse_preset(value: &str) -> Result<Self, ShortcutParseError> {
+        if !Self::PRESETS.contains(&value) {
+            return Err(ShortcutParseError);
+        }
+        value.parse()
     }
 }
 
@@ -314,6 +328,15 @@ mod tests {
             "Ctrl+PrtSc".parse::<CaptureShortcut>().unwrap().to_string(),
             "Ctrl+Print Screen"
         );
+    }
+
+    #[test]
+    fn preset_shortcuts_are_safe_and_displayable() {
+        for preset in CaptureShortcut::PRESETS {
+            let shortcut = CaptureShortcut::parse_preset(preset).unwrap();
+            assert!(!shortcut.to_string().is_empty());
+        }
+        assert!(CaptureShortcut::parse_preset("Ctrl+Alt+F12").is_err());
     }
 
     #[test]
