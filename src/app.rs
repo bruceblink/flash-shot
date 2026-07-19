@@ -337,6 +337,9 @@ impl FlashShotApp {
                         TrayEvent::DelayedCaptureRequested => {
                             this.update(&mut cx, |this, cx| this.start_delayed_capture(3, cx));
                         }
+                        TrayEvent::OpenHistoryDirectoryRequested => {
+                            this.update(&mut cx, |this, cx| this.open_history_directory(cx));
+                        }
                         TrayEvent::OpenImageRequested => {
                             this.update(&mut cx, |this, cx| this.open_image(cx));
                         }

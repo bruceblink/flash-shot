@@ -35,6 +35,7 @@ use crate::{
             capture_displays_with_options, compose_virtual_desktop,
         },
         clipboard::{ClipboardService, SystemClipboard},
+        directory,
         display::{DisplayProvider, SystemDisplayProvider},
         shortcut::GlobalShortcutService,
         window_inspector::{
@@ -3265,6 +3266,19 @@ impl FlashShotApp {
     pub(super) fn show_history_window(&mut self, cx: &mut Context<Self>) {
         self.select_settings_section(SettingsSection::Files, cx);
         self.show_settings_window(cx);
+    }
+
+    pub(super) fn open_history_directory(&mut self, cx: &mut Context<Self>) {
+        self.status = match crate::history::managed_history_directory()
+            .and_then(|path| directory::open(&path).map(|()| path))
+        {
+            Ok(path) => format!("Opened screenshot folder {}", path.display()),
+            Err(error) => {
+                log::warn!(target: "flash_shot::history", "history_directory_open_failed error={error}");
+                format!("Could not open screenshot folder: {error}")
+            }
+        };
+        cx.notify();
     }
 
     pub(crate) fn hide_settings_window(&mut self) {

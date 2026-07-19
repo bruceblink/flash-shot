@@ -9,6 +9,7 @@ pub enum TrayEvent {
     FullScreenCaptureRequested,
     FullScreenCopyRequested,
     DelayedCaptureRequested,
+    OpenHistoryDirectoryRequested,
     OpenImageRequested,
     HistoryRequested,
     SettingsRequested,
@@ -91,10 +92,11 @@ mod platform {
     const MENU_FULL_SCREEN_CAPTURE: usize = 2;
     const MENU_FULL_SCREEN_COPY: usize = 3;
     const MENU_DELAYED_CAPTURE: usize = 4;
-    const MENU_OPEN_IMAGE: usize = 5;
-    const MENU_HISTORY: usize = 6;
-    const MENU_SETTINGS: usize = 7;
-    const MENU_QUIT: usize = 8;
+    const MENU_OPEN_HISTORY_DIRECTORY: usize = 5;
+    const MENU_OPEN_IMAGE: usize = 6;
+    const MENU_HISTORY: usize = 7;
+    const MENU_SETTINGS: usize = 8;
+    const MENU_QUIT: usize = 9;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -362,6 +364,7 @@ mod platform {
         let full_screen_capture = wide("Capture full screen");
         let full_screen_copy = wide("Copy full screen to clipboard");
         let delayed_capture = wide("Capture in 3 seconds");
+        let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
         let settings = wide("Settings");
@@ -385,6 +388,12 @@ mod platform {
                 MF_STRING,
                 MENU_DELAYED_CAPTURE,
                 delayed_capture.as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                MENU_OPEN_HISTORY_DIRECTORY,
+                open_history_directory.as_ptr(),
             );
             AppendMenuW(menu, MF_STRING, MENU_OPEN_IMAGE, open_image.as_ptr());
             AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
@@ -423,6 +432,7 @@ mod platform {
             MENU_FULL_SCREEN_CAPTURE => Some(TrayEvent::FullScreenCaptureRequested),
             MENU_FULL_SCREEN_COPY => Some(TrayEvent::FullScreenCopyRequested),
             MENU_DELAYED_CAPTURE => Some(TrayEvent::DelayedCaptureRequested),
+            MENU_OPEN_HISTORY_DIRECTORY => Some(TrayEvent::OpenHistoryDirectoryRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
             MENU_SETTINGS => Some(TrayEvent::SettingsRequested),
@@ -539,6 +549,17 @@ mod tests {
         assert_eq!(
             tray_event_for_command(3),
             Some(TrayEvent::FullScreenCopyRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn screenshot_folder_menu_item_dispatches_the_directory_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(5),
+            Some(TrayEvent::OpenHistoryDirectoryRequested)
         );
     }
 }
