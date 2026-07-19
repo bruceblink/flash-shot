@@ -23,9 +23,13 @@ use crate::{
     theme::ThemeColors,
 };
 
-// Keep the action row above a scaled Windows taskbar when the borderless overlay
-// extends over the full display rather than the working area.
+const OVERLAY_EDGE_INSET: f32 = 18.0;
+// Keep fallback controls above a scaled Windows taskbar when the borderless
+// overlay extends over the full display rather than the working area.
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
+const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
+const OVERLAY_ACTION_BAR_HEIGHT: f32 = 128.0;
+const OVERLAY_ACTION_BAR_GAP: f32 = 12.0;
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
 const ANNOTATION_FONT_SIZES: [u32; 4] = [16, 24, 32, 48];
@@ -245,6 +249,7 @@ impl Render for CaptureOverlay {
         let transform = self.transform(viewport);
         let selected_on_display =
             selection.and_then(|selection| intersect(selection, display_bounds));
+        let action_position = action_toolbar_position(selected_on_display, transform, viewport);
         let target_on_display = selection
             .is_none()
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
@@ -430,7 +435,7 @@ impl Render for CaptureOverlay {
             .child(
                 div()
                     .absolute()
-                    .left(px(18.0))
+                    .left(px(OVERLAY_EDGE_INSET))
                     .top(px(18.0))
                     .flex()
                     .gap_2()
@@ -1144,10 +1149,16 @@ impl Render for CaptureOverlay {
             .child(
                 div()
                     .absolute()
-                    .right(px(18.0))
-                    .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
+                    .when_some(action_position, |actions, position| {
+                        actions.left(px(position.x)).top(px(position.y))
+                    })
+                    .when(action_position.is_none(), |actions| {
+                        actions
+                            .right(px(OVERLAY_EDGE_INSET))
+                            .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
+                    })
                     .flex()
-                    .max_w(px(620.0))
+                    .max_w(px(OVERLAY_ACTION_BAR_WIDTH))
                     .flex_wrap()
                     .justify_end()
                     .gap_2()
@@ -2116,17 +2127,59 @@ fn visible_selection(
         .or(committed_selection)
 }
 
+fn action_toolbar_position(
+    selection: Option<PhysicalRect>,
+    transform: Option<PreviewTransform>,
+    viewport: Bounds<Pixels>,
+) -> Option<ViewPoint> {
+    let selection = selection?;
+    let transform = transform?;
+    let viewport = view_rect(viewport);
+    let selection_top = transform
+        .physical_to_view(PhysicalPoint {
+            x: selection.left,
+            y: selection.top,
+        })
+        .y;
+    let selection_bottom = transform
+        .physical_to_view(PhysicalPoint {
+            x: selection.right,
+            y: selection.bottom,
+        })
+        .y;
+    let selection_right = transform
+        .physical_to_view(PhysicalPoint {
+            x: selection.right,
+            y: selection.bottom,
+        })
+        .x;
+    let left_limit =
+        (viewport.right() - OVERLAY_ACTION_BAR_WIDTH - OVERLAY_EDGE_INSET).max(viewport.left);
+    let left = (selection_right - OVERLAY_ACTION_BAR_WIDTH)
+        .clamp(viewport.left + OVERLAY_EDGE_INSET, left_limit);
+    let lowest_top = (viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - OVERLAY_ACTION_BAR_HEIGHT)
+        .max(viewport.top + OVERLAY_EDGE_INSET);
+    let below = selection_bottom + OVERLAY_ACTION_BAR_GAP;
+    let above = selection_top - OVERLAY_ACTION_BAR_HEIGHT - OVERLAY_ACTION_BAR_GAP;
+    let top = if below <= lowest_top {
+        below
+    } else {
+        above.max(viewport.top + OVERLAY_EDGE_INSET).min(lowest_top)
+    };
+    Some(ViewPoint { x: left, y: top })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, annotation_layer_label, arrow_head_points,
-        intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
+        MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, action_toolbar_position, annotation_layer_label,
+        arrow_head_points, intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
         resize_handle_points, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
         geometry::{PhysicalPoint, PhysicalRect},
-        selection::{SelectionDrag, ViewPoint},
+        selection::{PreviewTransform, SelectionDrag, ViewPoint},
     };
     use gpui::{Bounds, point, px, size};
 
@@ -2355,6 +2408,31 @@ mod tests {
 
         assert!(drag.is_dragging());
         assert_eq!(visible_selection(drag, Some(committed)), Some(committed));
+    }
+
+    #[test]
+    fn action_toolbar_stays_near_the_selection_and_above_the_taskbar_safe_area() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let transform = PreviewTransform::contain(
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 1280,
+                bottom: 720,
+            },
+            super::view_rect(viewport),
+        );
+        let selection = PhysicalRect {
+            left: 900,
+            top: 580,
+            right: 1200,
+            bottom: 700,
+        };
+
+        assert_eq!(
+            action_toolbar_position(Some(selection), transform, viewport),
+            Some(ViewPoint { x: 580.0, y: 440.0 })
+        );
     }
 
     #[test]
