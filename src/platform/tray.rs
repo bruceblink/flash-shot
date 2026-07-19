@@ -6,6 +6,7 @@ use std::io;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrayEvent {
     CaptureRequested,
+    SettingsRequested,
     QuitRequested,
 }
 
@@ -80,7 +81,8 @@ mod platform {
     const TRAY_CALLBACK: u32 = WM_APP + 1;
     const TRAY_COMMAND: u32 = WM_APP + 2;
     const MENU_CAPTURE: usize = 1;
-    const MENU_QUIT: usize = 2;
+    const MENU_SETTINGS: usize = 2;
+    const MENU_QUIT: usize = 3;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -317,9 +319,11 @@ mod platform {
             return None;
         }
         let capture = wide("Capture");
+        let settings = wide("Settings");
         let quit = wide("Quit Flash Shot");
         unsafe {
             AppendMenuW(menu, MF_STRING, MENU_CAPTURE, capture.as_ptr());
+            AppendMenuW(menu, MF_STRING, MENU_SETTINGS, settings.as_ptr());
             AppendMenuW(menu, MF_STRING, MENU_QUIT, quit.as_ptr());
             SetForegroundWindow(window);
         }
@@ -342,6 +346,7 @@ mod platform {
         unsafe { DestroyMenu(menu) };
         match command as usize {
             MENU_CAPTURE => Some(TrayEvent::CaptureRequested),
+            MENU_SETTINGS => Some(TrayEvent::SettingsRequested),
             MENU_QUIT => Some(TrayEvent::QuitRequested),
             _ => None,
         }

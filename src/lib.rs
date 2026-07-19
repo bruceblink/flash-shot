@@ -22,6 +22,7 @@ use app::FlashShotApp;
 use gpui::*;
 use history::ScreenshotHistory;
 use performance::PerformanceRecorder;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::time::Instant;
 
 actions!(flash_shot, [Quit]);
@@ -55,10 +56,13 @@ pub fn run(
         ]);
 
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(920.), px(760.)), cx)),
-            window_min_size: Some(size(px(680.), px(560.))),
+            window_bounds: Some(WindowBounds::centered(size(px(520.), px(640.)), cx)),
+            window_min_size: Some(size(px(420.), px(420.))),
+            // Flash Shot runs from its tray icon. The settings surface is restored only
+            // when requested, keeping app launch out of the capture workflow.
+            show: false,
             titlebar: Some(TitlebarOptions {
-                title: Some("Flash Shot".into()),
+                title: Some("Flash Shot Settings".into()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -70,13 +74,19 @@ pub fn run(
             window.on_next_frame(move |_, _| {
                 startup_performance.record_duration("startup_to_first_frame", started_at.elapsed());
             });
-            cx.new(|cx| FlashShotApp::new(performance, history, cx))
+            let app = cx.new(|cx| FlashShotApp::new(performance, history, cx));
+            if let Ok(handle) = window.window_handle()
+                && let RawWindowHandle::Win32(handle) = handle.as_raw()
+            {
+                app.update(cx, |app, _| {
+                    app.set_settings_window_handle(handle.hwnd.get())
+                });
+            }
+            app
         }) {
             log::error!(target: "flash_shot::lifecycle", "main_window_open_failed error={error}");
             cx.quit();
-            return;
         }
-        cx.activate(true);
     });
     Ok(())
 }

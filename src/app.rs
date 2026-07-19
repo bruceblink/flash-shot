@@ -75,6 +75,7 @@ pub struct FlashShotApp {
     delayed_capture_remaining_seconds: Option<u8>,
     include_cursor: bool,
     recognition_result: Option<RecognitionResult>,
+    overlay_more_actions: bool,
     operation_generation: u64,
     overlay_windows: Vec<WindowHandle<overlay::CaptureOverlay>>,
     scroll_window: Option<WindowHandle<scroll_control::ManualScrollControl>>,
@@ -138,6 +139,10 @@ impl TextEdit {
 }
 
 impl FlashShotApp {
+    pub(crate) fn set_settings_window_handle(&mut self, handle: isize) {
+        self.main_window_handle = Some(handle);
+    }
+
     pub(super) fn notify_user(&self, title: &str, body: &str) {
         let Some(tray) = self._tray.as_ref() else {
             return;
@@ -243,6 +248,7 @@ impl FlashShotApp {
             delayed_capture_remaining_seconds: None,
             include_cursor: false,
             recognition_result: None,
+            overlay_more_actions: false,
             operation_generation: 0,
             overlay_windows: Vec::new(),
             scroll_window: None,
@@ -285,6 +291,9 @@ impl FlashShotApp {
                     match event {
                         TrayEvent::CaptureRequested => {
                             this.update(&mut cx, |this, cx| this.start_capture(cx));
+                        }
+                        TrayEvent::SettingsRequested => {
+                            this.update(&mut cx, |this, cx| this.show_settings_window(cx));
                         }
                         TrayEvent::QuitRequested => {
                             cx.update(|cx| cx.quit());

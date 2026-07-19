@@ -9,9 +9,8 @@ use std::{
 
 use gpui::{
     AppContext, AsyncApp, Bounds, Context, DisplayId, Focusable, KeyDownEvent, Keystroke,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, RenderImage,
-    WeakEntity, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, point, px,
-    size,
+    PathPromptOptions, Pixels, RenderImage, WeakEntity, WindowBackgroundAppearance, WindowBounds,
+    WindowKind, WindowOptions, point, px, size,
 };
 
 use super::{
@@ -26,7 +25,6 @@ use crate::{
             AnnotationTool,
         },
         geometry::{PhysicalPoint, PhysicalRect},
-        selection::{PreviewTransform, ViewPoint, ViewRect},
         session::CaptureSessionState,
     },
     performance::CapturePipelineSample,
@@ -832,16 +830,9 @@ impl FlashShotApp {
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
         self.recognition_result = None;
+        self.overlay_more_actions = false;
         self.status = "Capturing virtual desktop...".to_owned();
-        if let Some(handle) = self.main_window_handle
-            && let Err(error) = window_visibility::hide(handle)
-        {
-            let message = format!("Could not hide the main window: {error}");
-            let _ = self.session.fail(message.clone());
-            self.status = message;
-            cx.notify();
-            return;
-        }
+        self.hide_settings_window();
         cx.notify();
 
         let started_at = Instant::now();
@@ -904,7 +895,7 @@ impl FlashShotApp {
                     frame_width: capture.capture.frame.width,
                     frame_height: capture.capture.frame.height,
                     capture_cpu_copy_count: capture.capture.frame.cpu_copy_count,
-                    render_upload_copy_count: (capture.displays.len() + 1) as u32,
+                    render_upload_copy_count: capture.render_upload_copy_count,
                     overlay_image_count: capture.displays.len(),
                     overlay_upload_bytes: capture
                         .displays
@@ -920,7 +911,7 @@ impl FlashShotApp {
                             let message = format!("Could not create annotation document: {error}");
                             let _ = self.session.fail(message.clone());
                             self.status = message;
-                            self.restore_main_window();
+                            self.return_to_background();
                             cx.notify();
                             return;
                         }
@@ -943,7 +934,7 @@ impl FlashShotApp {
                 let _ = self.session.fail(message.clone());
                 self.status = message;
                 log::warn!(target: "flash_shot::capture", "capture_failed error={error}");
-                self.restore_main_window();
+                self.return_to_background();
             }
         }
         cx.notify();
@@ -985,10 +976,11 @@ impl FlashShotApp {
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
         self.recognition_result = None;
+        self.overlay_more_actions = false;
         self.status = format!("Ready - {}", self.capture_shortcut);
         self.close_capture_overlays(cx);
         self.close_manual_scroll_window(cx);
-        self.restore_main_window();
+        self.return_to_background();
         cx.notify();
     }
 
@@ -1661,27 +1653,6 @@ impl FlashShotApp {
         true
     }
 
-    pub(super) fn begin_selection(&mut self, event: &MouseDownEvent, viewport: Bounds<Pixels>) {
-        let Some(transform) = self.preview_transform(viewport) else {
-            return;
-        };
-        let point = view_point(event.position);
-        let physical_point = transform.view_to_pixel(point);
-        self.pending_click_target = physical_point.and_then(|point| {
-            self.inspection_target
-                .filter(|target| target.bounds.contains(point))
-        });
-        if let Some((selection, handle)) = self.selection_drag.selection().and_then(|selection| {
-            transform
-                .resize_handle_at(selection, point, 10.0)
-                .map(|handle| (selection, handle))
-        }) {
-            self.selection_drag.begin_resize(selection, handle);
-        } else if let Some(point) = transform.view_to_physical(point) {
-            self.selection_drag.begin(point);
-        }
-    }
-
     pub(super) fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         // Printable keystrokes belong to the active native text editor, not
         // the annotation shortcut map.
@@ -2074,61 +2045,6 @@ impl FlashShotApp {
         }
     }
 
-    pub(super) fn update_selection(
-        &mut self,
-        event: &MouseMoveEvent,
-        viewport: Bounds<Pixels>,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_hover_pixel(event, viewport, cx);
-        if !event.dragging() {
-            return;
-        }
-        let Some(transform) = self.preview_transform(viewport) else {
-            return;
-        };
-        if let Some(point) = transform.view_to_physical(clamp_to_preview(transform, event.position))
-        {
-            self.selection_drag.update(point);
-            if let Some(selection) = self.selection_drag.selection() {
-                self.status = selection_status(selection);
-            }
-            cx.notify();
-        }
-    }
-
-    fn update_hover_pixel(
-        &mut self,
-        event: &MouseMoveEvent,
-        viewport: Bounds<Pixels>,
-        cx: &mut Context<Self>,
-    ) {
-        let hover_pixel = self
-            .preview_transform(viewport)
-            .and_then(|transform| transform.view_to_pixel(view_point(event.position)));
-        if self.hover_pixel == hover_pixel {
-            return;
-        }
-        self.hover_pixel = hover_pixel;
-        match hover_pixel {
-            Some(point)
-                if self.selection_drag.selection().is_none()
-                    && !self
-                        .inspection_target
-                        .is_some_and(|target| target.bounds.contains(point)) =>
-            {
-                self.request_inspection(point, cx);
-            }
-            None => {
-                self.inspection_target = None;
-                self.inspection_request = None;
-            }
-            _ => {}
-        }
-        self.update_status_for_hover();
-        cx.notify();
-    }
-
     fn update_status_for_hover(&mut self) {
         if let Some((point, color)) = self.hover_pixel.and_then(|point| {
             self.frame
@@ -2158,32 +2074,6 @@ impl FlashShotApp {
         } else if let Some(frame) = self.frame.as_ref() {
             self.status = format!("{} x {} physical pixels", frame.width, frame.height);
         }
-    }
-
-    pub(super) fn finish_selection(
-        &mut self,
-        event: &MouseUpEvent,
-        viewport: Bounds<Pixels>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(transform) = self.preview_transform(viewport) else {
-            return;
-        };
-        if let Some(point) = transform.view_to_physical(clamp_to_preview(transform, event.position))
-        {
-            self.selection_drag.update(point);
-        }
-        let selection = self
-            .selection_drag
-            .selection()
-            .and_then(|selection| resolve_pointer_selection(selection, self.pending_click_target));
-        self.pending_click_target = None;
-        if let Some(selection) = selection {
-            self.selection_drag.select(selection);
-            let _ = self.session.select(selection);
-            self.status = selection_status(selection);
-        }
-        cx.notify();
     }
 
     fn request_inspection(
@@ -2535,7 +2425,7 @@ impl FlashShotApp {
         self.abandon_manual_scroll();
         self.close_manual_scroll_window(cx);
         self.status = "Manual scroll capture cancelled".to_owned();
-        self.restore_main_window();
+        self.return_to_background();
         cx.notify();
     }
 
@@ -2543,7 +2433,7 @@ impl FlashShotApp {
         self.abandon_manual_scroll();
         self.scroll_window = None;
         self.status = "Manual scroll capture cancelled".to_owned();
-        self.restore_main_window();
+        self.return_to_background();
         cx.notify();
     }
 
@@ -3046,7 +2936,7 @@ impl FlashShotApp {
                     }
                     self.notify_user("Flash Shot", "Screenshot saved");
                     self.close_capture_overlays(cx);
-                    self.restore_main_window();
+                    self.return_to_background();
                 }
             }
             SaveOutcome::Cancelled => {
@@ -3061,7 +2951,7 @@ impl FlashShotApp {
                 let _ = self.session.fail(message.clone());
                 self.status = message;
                 self.close_capture_overlays(cx);
-                self.restore_main_window();
+                self.return_to_background();
             }
         }
         cx.notify();
@@ -3109,7 +2999,7 @@ impl FlashShotApp {
                     self.status = "Selection copied to clipboard".to_owned();
                     self.notify_user("Flash Shot", "Screenshot copied to clipboard");
                     self.close_capture_overlays(cx);
-                    self.restore_main_window();
+                    self.return_to_background();
                 }
             }
             Err(error) => {
@@ -3117,15 +3007,10 @@ impl FlashShotApp {
                 let _ = self.session.fail(message.clone());
                 self.status = message;
                 self.close_capture_overlays(cx);
-                self.restore_main_window();
+                self.return_to_background();
             }
         }
         cx.notify();
-    }
-
-    pub(super) fn preview_transform(&self, viewport: Bounds<Pixels>) -> Option<PreviewTransform> {
-        let frame = self.frame.as_ref()?;
-        PreviewTransform::contain(frame.bounds, view_rect(viewport))
     }
 
     fn close_capture_overlays(&mut self, cx: &mut Context<Self>) {
@@ -3143,12 +3028,31 @@ impl FlashShotApp {
         }
     }
 
-    fn restore_main_window(&self) {
+    pub(super) fn show_settings_window(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.main_window_handle
             && let Err(error) = window_visibility::restore(handle)
         {
-            log::warn!(target: "flash_shot::overlay", "main_window_restore_failed error={error}");
+            self.status = format!("Could not open settings: {error}");
+            log::warn!(target: "flash_shot::settings", "settings_window_restore_failed error={error}");
         }
+        cx.notify();
+    }
+
+    pub(crate) fn hide_settings_window(&mut self) {
+        if let Some(handle) = self.main_window_handle
+            && let Err(error) = window_visibility::hide(handle)
+        {
+            log::warn!(target: "flash_shot::settings", "settings_window_hide_failed error={error}");
+        }
+    }
+
+    pub(super) fn toggle_overlay_more_actions(&mut self, cx: &mut Context<Self>) {
+        self.overlay_more_actions = !self.overlay_more_actions;
+        cx.notify();
+    }
+
+    fn return_to_background(&mut self) {
+        self.hide_settings_window();
     }
 }
 
@@ -3291,7 +3195,7 @@ fn open_capture_overlays(
                 app.update(cx, |app, cx| {
                     let _ = app.session.fail(message.clone());
                     app.status = message;
-                    app.restore_main_window();
+                    app.return_to_background();
                     cx.notify();
                 });
                 log::warn!(target: "flash_shot::overlay", "overlay_open_failed error={error}");
@@ -3356,7 +3260,7 @@ fn open_image_overlay(app: gpui::Entity<FlashShotApp>, bounds: PhysicalRect, cx:
             app.update(cx, |app, cx| {
                 let _ = app.session.fail(message.clone());
                 app.status = message;
-                app.restore_main_window();
+                app.return_to_background();
                 cx.notify();
             });
             log::warn!(target: "flash_shot::image", "image_editor_open_failed error={error}");
@@ -3404,7 +3308,7 @@ fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &mut gpui::Ap
                 app.manual_scroll_selection = None;
                 app.manual_scroll_capture_in_flight = false;
                 app.status = format!("Could not open manual scroll controls: {error}");
-                app.restore_main_window();
+                app.return_to_background();
                 cx.notify();
             });
             log::warn!(target: "flash_shot::scroll", "manual_scroll_control_open_failed error={error}");
@@ -3422,6 +3326,7 @@ struct CapturedDesktopPreview {
     capture: crate::platform::capture::VirtualDesktopCapture,
     workspace_preview: super::render_image::CaptureRenderImage,
     displays: Vec<CapturedDisplayPreview>,
+    render_upload_copy_count: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -3467,8 +3372,10 @@ fn capture_virtual_desktop_preview(
     include_cursor: bool,
 ) -> std::io::Result<CapturedDesktopPreview> {
     let display_captures = capture_displays_with_options(CaptureOptions { include_cursor })?;
-    let frame = compose_virtual_desktop(&display_captures)?;
-    let workspace_preview = render_image_from_capture(&frame)?;
+    let frame = match display_captures.as_slice() {
+        [capture] => capture.frame.clone(),
+        _ => compose_virtual_desktop(&display_captures)?,
+    };
     let displays = display_captures
         .into_iter()
         .map(|capture| {
@@ -3480,6 +3387,18 @@ fn capture_virtual_desktop_preview(
             })
         })
         .collect::<std::io::Result<Vec<_>>>()?;
+    let workspace_preview = if displays.len() == 1 {
+        // The main workspace and the only overlay show identical pixels. Reuse
+        // the decoded image instead of allocating and uploading it a second time.
+        super::render_image::CaptureRenderImage {
+            image: displays[0].preview.clone(),
+            upload_bytes: 0,
+        }
+    } else {
+        render_image_from_capture(&frame)?
+    };
+    let render_upload_copy_count =
+        displays.len() as u32 + u32::from(workspace_preview.upload_bytes != 0);
     Ok(CapturedDesktopPreview {
         capture: crate::platform::capture::VirtualDesktopCapture {
             display_count: displays.len(),
@@ -3487,6 +3406,7 @@ fn capture_virtual_desktop_preview(
         },
         workspace_preview,
         displays,
+        render_upload_copy_count,
     })
 }
 
@@ -3969,30 +3889,6 @@ fn next_annotation_counters(document: &AnnotationDocument) -> (u64, u32) {
         .unwrap_or(0)
         .saturating_add(1);
     (next_id, next_sequence)
-}
-
-pub(super) fn view_rect(bounds: Bounds<Pixels>) -> ViewRect {
-    ViewRect {
-        left: f32::from(bounds.origin.x),
-        top: f32::from(bounds.origin.y),
-        width: f32::from(bounds.size.width),
-        height: f32::from(bounds.size.height),
-    }
-}
-
-fn view_point(position: gpui::Point<Pixels>) -> ViewPoint {
-    ViewPoint {
-        x: f32::from(position.x),
-        y: f32::from(position.y),
-    }
-}
-
-fn clamp_to_preview(transform: PreviewTransform, position: gpui::Point<Pixels>) -> ViewPoint {
-    let fitted = transform.fitted_view();
-    ViewPoint {
-        x: f32::from(position.x).clamp(fitted.left, fitted.right()),
-        y: f32::from(position.y).clamp(fitted.top, fitted.bottom()),
-    }
 }
 
 fn selection_status(selection: PhysicalRect) -> String {

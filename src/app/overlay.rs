@@ -28,8 +28,14 @@ const OVERLAY_EDGE_INSET: f32 = 18.0;
 // overlay extends over the full display rather than the working area.
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
 const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
-const OVERLAY_ACTION_BAR_HEIGHT: f32 = 128.0;
 const OVERLAY_ACTION_BAR_GAP: f32 = 12.0;
+const OVERLAY_ACTION_ITEM_GAP: f32 = 8.0;
+const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 34.0;
+const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 4] = [50.0, 50.0, 100.0, 45.0];
+const OVERLAY_MORE_ACTION_WIDTHS: [f32; 12] = [
+    150.0, 125.0, 150.0, 100.0, 50.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
+];
+const OVERLAY_RECOGNITION_ACTION_WIDTHS: [f32; 2] = [60.0, 90.0];
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
 const ANNOTATION_FONT_SIZES: [u32; 4] = [16, 24, 32, 48];
@@ -243,13 +249,21 @@ impl Render for CaptureOverlay {
         let can_undo = app.annotation_history.undo_len() > 0;
         let can_redo = app.annotation_history.redo_len() > 0;
         let status = app.status.clone();
+        let show_more_actions = app.overlay_more_actions;
+        let recognition_result = app.recognition_result.clone();
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
         let transform = self.transform(viewport);
         let selected_on_display =
             selection.and_then(|selection| intersect(selection, display_bounds));
-        let action_position = action_toolbar_position(selected_on_display, transform, viewport);
+        let action_layout = action_toolbar_layout(
+            selected_on_display,
+            transform,
+            viewport,
+            show_more_actions,
+            recognition_result.is_some(),
+        );
         let target_on_display = selection
             .is_none()
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
@@ -1149,16 +1163,18 @@ impl Render for CaptureOverlay {
             .child(
                 div()
                     .absolute()
-                    .when_some(action_position, |actions, position| {
-                        actions.left(px(position.x)).top(px(position.y))
+                    .when_some(action_layout, |actions, layout| {
+                        actions
+                            .left(px(layout.left))
+                            .top(px(layout.top))
+                            .w(px(layout.width))
                     })
-                    .when(action_position.is_none(), |actions| {
+                    .when(action_layout.is_none(), |actions| {
                         actions
                             .right(px(OVERLAY_EDGE_INSET))
                             .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
                     })
                     .flex()
-                    .max_w(px(OVERLAY_ACTION_BAR_WIDTH))
                     .flex_wrap()
                     .justify_end()
                     .gap_2()
@@ -1198,7 +1214,7 @@ impl Render for CaptureOverlay {
                             )
                             .child(
                                 div()
-                                    .id("overlay-save-annotations")
+                                    .id("overlay-more-actions")
                                     .px_3()
                                     .py_2()
                                     .bg(rgba(0x111827E6))
@@ -1208,144 +1224,250 @@ impl Render for CaptureOverlay {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
                                             app.update(cx, |app, cx| {
-                                                app.save_annotation_document(cx)
+                                                app.toggle_overlay_more_actions(cx)
                                             })
                                         });
                                     }))
-                                    .child("Save annotations"),
+                                    .child(if show_more_actions { "Less" } else { "More" }),
                             )
-                            .child(
-                                div()
-                                    .id("overlay-save-editable-project")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.save_editable_project(cx))
-                                        });
-                                    }))
-                                    .child("Save editable"),
-                            )
-                            .child(
-                                div()
-                                    .id("overlay-open-annotations")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.open_annotation_document(cx)
-                                            })
-                                        });
-                                    }))
-                                    .child("Open annotations"),
-                            )
-                            .child(
-                                div()
-                                    .id("overlay-quick-save")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.quick_save_selection(cx))
-                                        });
-                                    }))
-                                    .child("Quick save"),
-                            )
-                            .child(
-                                div()
-                                    .id("overlay-pin")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.pin_selection(cx))
-                                        });
-                                    }))
-                                    .child("Pin"),
-                            )
-                            .child(
-                                div()
-                                    .id("overlay-manual-scroll")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.start_manual_scroll(cx))
-                                        });
-                                    }))
-                                    .child("Scroll"),
-                            )
-                            .child(
-                                div()
-                                    .id("overlay-qr")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.recognize_qr_selection(cx))
-                                        });
-                                    }))
-                                    .child("QR"),
-                            )
-                            .child(
-                                div()
-                                    .id("overlay-ocr")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.recognize_text_selection(cx)
-                                            })
-                                        });
-                                    }))
-                                    .child("OCR"),
-                            )
-                            .child(
-                                div()
-                                    .id("overlay-translate")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.translate_selection(cx))
-                                        });
-                                    }))
-                                    .child("Translate"),
-                            )
+                            .when(show_more_actions, |actions| {
+                                actions
+                                    .child(
+                                        div()
+                                            .id("overlay-save-annotations")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.save_annotation_document(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Save annotations"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-save-editable-project")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.save_editable_project(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Save editable"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-open-annotations")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.open_annotation_document(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Open annotations"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-quick-save")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.quick_save_selection(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Quick save"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-pin")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| app.pin_selection(cx))
+                                                });
+                                            }))
+                                            .child("Pin"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-manual-scroll")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.start_manual_scroll(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Scroll"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-qr")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.recognize_qr_selection(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("QR"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-ocr")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.recognize_text_selection(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("OCR"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-translate")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.translate_selection(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Translate"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-record-area")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.start_region_recording(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Record area"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("overlay-record-window")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.start_selected_window_recording(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Record window"),
+                                    )
+                                    .when_some(recognition_result, |actions, _result| {
+                                        actions
+                                            .child(
+                                                div()
+                                                    .id("overlay-copy-recognition")
+                                                    .px_3()
+                                                    .py_2()
+                                                    .bg(rgba(0x111827E6))
+                                                    .text_color(colors.text)
+                                                    .cursor_pointer()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        let app = this.app.clone();
+                                                        cx.defer(move |cx| {
+                                                            app.update(cx, |app, cx| {
+                                                                app.copy_recognition_result(cx)
+                                                            })
+                                                        });
+                                                    }))
+                                                    .child("Copy text"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("overlay-clear-recognition")
+                                                    .px_3()
+                                                    .py_2()
+                                                    .bg(rgba(0x111827E6))
+                                                    .text_color(colors.text)
+                                                    .cursor_pointer()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        let app = this.app.clone();
+                                                        cx.defer(move |cx| {
+                                                            app.update(cx, |app, cx| {
+                                                                app.clear_recognition_result(cx)
+                                                            })
+                                                        });
+                                                    }))
+                                                    .child("Clear result"),
+                                            )
+                                    })
+                            })
                     })
                     .child(
                         div()
@@ -2127,14 +2249,25 @@ fn visible_selection(
         .or(committed_selection)
 }
 
-fn action_toolbar_position(
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ActionToolbarLayout {
+    left: f32,
+    top: f32,
+    width: f32,
+}
+
+fn action_toolbar_layout(
     selection: Option<PhysicalRect>,
     transform: Option<PreviewTransform>,
     viewport: Bounds<Pixels>,
-) -> Option<ViewPoint> {
+    show_more_actions: bool,
+    has_recognition_result: bool,
+) -> Option<ActionToolbarLayout> {
     let selection = selection?;
     let transform = transform?;
     let viewport = view_rect(viewport);
+    let width = (viewport.width - OVERLAY_EDGE_INSET * 2.0).clamp(1.0, OVERLAY_ACTION_BAR_WIDTH);
+    let height = action_toolbar_height(width, show_more_actions, has_recognition_result);
     let selection_top = transform
         .physical_to_view(PhysicalPoint {
             x: selection.left,
@@ -2153,28 +2286,60 @@ fn action_toolbar_position(
             y: selection.bottom,
         })
         .x;
-    let left_limit =
-        (viewport.right() - OVERLAY_ACTION_BAR_WIDTH - OVERLAY_EDGE_INSET).max(viewport.left);
-    let left = (selection_right - OVERLAY_ACTION_BAR_WIDTH)
-        .clamp(viewport.left + OVERLAY_EDGE_INSET, left_limit);
-    let lowest_top = (viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - OVERLAY_ACTION_BAR_HEIGHT)
+    let left_min = viewport.left + OVERLAY_EDGE_INSET;
+    let left_limit = (viewport.right() - OVERLAY_EDGE_INSET - width).max(left_min);
+    let left = (selection_right - width).clamp(left_min, left_limit);
+    let lowest_top = (viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - height)
         .max(viewport.top + OVERLAY_EDGE_INSET);
     let below = selection_bottom + OVERLAY_ACTION_BAR_GAP;
-    let above = selection_top - OVERLAY_ACTION_BAR_HEIGHT - OVERLAY_ACTION_BAR_GAP;
+    let above = selection_top - height - OVERLAY_ACTION_BAR_GAP;
     let top = if below <= lowest_top {
         below
     } else {
         above.max(viewport.top + OVERLAY_EDGE_INSET).min(lowest_top)
     };
-    Some(ViewPoint { x: left, y: top })
+    Some(ActionToolbarLayout { left, top, width })
+}
+
+fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_result: bool) -> f32 {
+    let mut rows = 1_u32;
+    let mut row_width = 0.0;
+    let more_widths = show_more_actions
+        .then_some(OVERLAY_MORE_ACTION_WIDTHS)
+        .into_iter()
+        .flatten();
+    let recognition_widths = (show_more_actions && has_recognition_result)
+        .then_some(OVERLAY_RECOGNITION_ACTION_WIDTHS)
+        .into_iter()
+        .flatten();
+    for item_width in OVERLAY_PRIMARY_ACTION_WIDTHS
+        .into_iter()
+        .chain(more_widths)
+        .chain(recognition_widths)
+    {
+        let next_width = if row_width == 0.0 {
+            item_width
+        } else {
+            row_width + OVERLAY_ACTION_ITEM_GAP + item_width
+        };
+        if row_width > 0.0 && next_width > width {
+            rows = rows.saturating_add(1);
+            row_width = item_width;
+        } else {
+            row_width = next_width;
+        }
+    }
+    rows as f32 * OVERLAY_ACTION_ITEM_HEIGHT
+        + rows.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, action_toolbar_position, annotation_layer_label,
-        arrow_head_points, intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
-        resize_handle_points, visible_selection,
+        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, action_toolbar_height,
+        action_toolbar_layout, annotation_layer_label, arrow_head_points, intersect,
+        is_text_annotation, magnifier_origin, outline_shape_bounds, resize_handle_points,
+        visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2411,7 +2576,7 @@ mod tests {
     }
 
     #[test]
-    fn action_toolbar_stays_near_the_selection_and_above_the_taskbar_safe_area() {
+    fn compact_action_toolbar_stays_near_the_selection_and_above_the_taskbar_safe_area() {
         let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
         let transform = PreviewTransform::contain(
             PhysicalRect {
@@ -2430,9 +2595,42 @@ mod tests {
         };
 
         assert_eq!(
-            action_toolbar_position(Some(selection), transform, viewport),
-            Some(ViewPoint { x: 580.0, y: 440.0 })
+            action_toolbar_layout(Some(selection), transform, viewport, false, false),
+            Some(ActionToolbarLayout {
+                left: 580.0,
+                top: 534.0,
+                width: 620.0,
+            })
         );
+    }
+
+    #[test]
+    fn expanded_action_toolbar_narrows_and_accounts_for_extra_rows_on_small_overlays() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(360.0), px(720.0)));
+        let transform = PreviewTransform::contain(
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 360,
+                bottom: 720,
+            },
+            super::view_rect(viewport),
+        );
+        let selection = PhysicalRect {
+            left: 20,
+            top: 400,
+            right: 340,
+            bottom: 600,
+        };
+
+        assert_eq!(action_toolbar_height(324.0, false, false), 34.0);
+        assert_eq!(action_toolbar_height(324.0, true, false), 244.0);
+        assert_eq!(action_toolbar_height(324.0, true, true), 244.0);
+        let layout =
+            action_toolbar_layout(Some(selection), transform, viewport, true, false).unwrap();
+        assert_eq!(layout.left, 18.0);
+        assert!((layout.top - 144.0).abs() < 0.01);
+        assert_eq!(layout.width, 324.0);
     }
 
     #[test]
