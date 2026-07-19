@@ -41,6 +41,8 @@ pub struct PerformanceReport {
     pub metrics: BTreeMap<String, MetricSummary>,
     pub passed: bool,
     pub required_build_profile: Option<&'static str>,
+    pub release_gate_applied: bool,
+    pub release_qualified: bool,
 }
 
 impl PerformanceReport {
@@ -67,6 +69,8 @@ impl PerformanceReport {
             "schema_version": 1,
             "test": "recorded_performance_summary",
             "required_build_profile": self.required_build_profile,
+            "release_gate_applied": self.release_gate_applied,
+            "release_qualified": self.release_qualified,
             "passed": self.passed,
             "metrics": metrics,
         }))
@@ -188,10 +192,16 @@ pub fn summarize_samples(
     let passed = metrics
         .values()
         .all(|summary: &MetricSummary| summary.passed);
+    let release_gate_applied = thresholds.require_release_profile
+        && thresholds.startup_p95_ms.is_some()
+        && thresholds.shortcut_to_frame_ready_p95_ms.is_some()
+        && thresholds.shortcut_to_overlay_frame_p95_ms.is_some();
     Ok(PerformanceReport {
         metrics,
         passed,
         required_build_profile: thresholds.require_release_profile.then_some("release"),
+        release_gate_applied,
+        release_qualified: release_gate_applied && passed,
     })
 }
 
@@ -235,6 +245,8 @@ mod tests {
         assert_eq!(report.metrics["shortcut_to_frame_ready"].p95_ms, 95.0);
         assert_eq!(report.metrics["shortcut_to_overlay_frame"].p95_ms, 120.0);
         assert!(!report.passed);
+        assert!(report.release_gate_applied);
+        assert!(!report.release_qualified);
     }
 
     #[test]
@@ -258,6 +270,8 @@ mod tests {
         assert_eq!(report.metrics.len(), 1);
         assert_eq!(report.metrics["shortcut_to_frame_ready"].samples, 1);
         assert!(report.passed);
+        assert!(report.release_gate_applied);
+        assert!(report.release_qualified);
     }
 
     #[test]
@@ -312,5 +326,30 @@ mod tests {
         .unwrap();
         assert_eq!(report.metrics["startup_to_first_frame"].samples, 1);
         assert_eq!(report.required_build_profile, None);
+        assert!(!report.release_gate_applied);
+        assert!(!report.release_qualified);
+    }
+
+    #[test]
+    fn ungated_report_is_not_release_qualified() {
+        let input = r#"{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":42.0}"#;
+        let report = summarize_samples(
+            input,
+            &PerformanceThresholds {
+                minimum_samples: 0,
+                startup_p95_ms: None,
+                shortcut_to_frame_ready_p95_ms: None,
+                shortcut_to_overlay_frame_p95_ms: None,
+                ..PerformanceThresholds::default()
+            },
+        )
+        .unwrap();
+        assert!(report.passed);
+        assert!(!report.release_gate_applied);
+        assert!(!report.release_qualified);
+        let json: serde_json::Value =
+            serde_json::from_str(&report.to_pretty_json().unwrap()).unwrap();
+        assert_eq!(json["release_gate_applied"], false);
+        assert_eq!(json["release_qualified"], false);
     }
 }
