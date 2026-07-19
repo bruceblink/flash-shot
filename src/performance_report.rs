@@ -6,6 +6,7 @@ use std::{collections::BTreeMap, fs, io, path::Path};
 pub struct PerformanceThresholds {
     pub minimum_samples: usize,
     pub since_timestamp_ms: Option<u128>,
+    pub require_release_profile: bool,
     pub startup_p95_ms: Option<u64>,
     pub shortcut_to_frame_ready_p95_ms: Option<u64>,
     pub shortcut_to_overlay_frame_p95_ms: Option<u64>,
@@ -16,6 +17,7 @@ impl Default for PerformanceThresholds {
         Self {
             minimum_samples: 10,
             since_timestamp_ms: None,
+            require_release_profile: true,
             startup_p95_ms: Some(500),
             shortcut_to_frame_ready_p95_ms: Some(100),
             shortcut_to_overlay_frame_p95_ms: Some(100),
@@ -38,6 +40,7 @@ pub struct MetricSummary {
 pub struct PerformanceReport {
     pub metrics: BTreeMap<String, MetricSummary>,
     pub passed: bool,
+    pub required_build_profile: Option<&'static str>,
 }
 
 impl PerformanceReport {
@@ -63,6 +66,7 @@ impl PerformanceReport {
         serde_json::to_string_pretty(&serde_json::json!({
             "schema_version": 1,
             "test": "recorded_performance_summary",
+            "required_build_profile": self.required_build_profile,
             "passed": self.passed,
             "metrics": metrics,
         }))
@@ -101,6 +105,14 @@ pub fn summarize_samples(
                 .and_then(serde_json::Value::as_u64)
                 .is_none_or(|timestamp| u128::from(timestamp) < since)
         }) {
+            continue;
+        }
+        if thresholds.require_release_profile
+            && value
+                .get("build_profile")
+                .and_then(serde_json::Value::as_str)
+                != Some("release")
+        {
             continue;
         }
         match value.get("type").and_then(serde_json::Value::as_str) {
@@ -176,7 +188,11 @@ pub fn summarize_samples(
     let passed = metrics
         .values()
         .all(|summary: &MetricSummary| summary.passed);
-    Ok(PerformanceReport { metrics, passed })
+    Ok(PerformanceReport {
+        metrics,
+        passed,
+        required_build_profile: thresholds.require_release_profile.then_some("release"),
+    })
 }
 
 fn finite_number(value: Option<&serde_json::Value>) -> Option<f64> {
@@ -197,13 +213,13 @@ mod tests {
     #[test]
     fn summarizes_duration_and_capture_pipeline_samples() {
         let input = concat!(
-            r#"{"type":"duration","metric":"startup_to_first_frame","value":300.0}"#,
+            r#"{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":300.0}"#,
             "\n",
-            r#"{"type":"duration","metric":"startup_to_first_frame","value":450.0}"#,
+            r#"{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":450.0}"#,
             "\n",
-            r#"{"type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":80.0,"shortcut_to_overlay_frame":90.0}}"#,
+            r#"{"build_profile":"release","type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":80.0,"shortcut_to_overlay_frame":90.0}}"#,
             "\n",
-            r#"{"type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":95.0,"shortcut_to_overlay_frame":120.0}}"#,
+            r#"{"build_profile":"release","type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":95.0,"shortcut_to_overlay_frame":120.0}}"#,
         );
         let report = summarize_samples(
             input,
@@ -224,11 +240,11 @@ mod tests {
     #[test]
     fn ignores_unrelated_and_invalid_measurements() {
         let input = concat!(
-            r#"{"type":"duration","metric":"other","value":4.0}"#,
+            r#"{"build_profile":"release","type":"duration","metric":"other","value":4.0}"#,
             "\n",
-            r#"{"type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":-1.0}}"#,
+            r#"{"build_profile":"release","type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":-1.0}}"#,
             "\n",
-            r#"{"type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":10.0}}"#,
+            r#"{"build_profile":"release","type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":10.0}}"#,
         );
         let report = summarize_samples(
             input,
@@ -246,7 +262,7 @@ mod tests {
 
     #[test]
     fn requires_enough_samples_for_a_gated_metric() {
-        let input = r#"{"type":"duration","metric":"startup_to_first_frame","value":42.0}"#;
+        let input = r#"{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":42.0}"#;
         let error = summarize_samples(input, &PerformanceThresholds::default()).unwrap_err();
         assert!(error.to_string().contains("fewer than 10 samples"));
     }
@@ -256,11 +272,11 @@ mod tests {
         let mut input = String::new();
         for value in 1..=10 {
             input.push_str(&format!(
-                r#"{{"type":"duration","metric":"startup_to_first_frame","value":{value}}}"#
+                r#"{{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":{value}}}"#
             ));
             input.push('\n');
             input.push_str(&format!(
-                r#"{{"type":"capture_pipeline","latency_ms":{{"shortcut_to_frame_ready":{value},"shortcut_to_overlay_frame":{value}}}}}"#
+                r#"{{"build_profile":"release","type":"capture_pipeline","latency_ms":{{"shortcut_to_frame_ready":{value},"shortcut_to_overlay_frame":{value}}}}}"#
             ));
             input.push('\n');
         }
@@ -269,5 +285,32 @@ mod tests {
 
         assert_eq!(report.metrics["startup_to_first_frame"].p95_ms, 10.0);
         assert!(report.passed);
+    }
+
+    #[test]
+    fn release_gate_excludes_debug_and_legacy_samples() {
+        let input = concat!(
+            r#"{"type":"duration","metric":"startup_to_first_frame","value":1.0}"#,
+            "\n",
+            r#"{"build_profile":"debug","type":"duration","metric":"startup_to_first_frame","value":1.0}"#,
+        );
+        let error = summarize_samples(input, &PerformanceThresholds::default()).unwrap_err();
+        assert!(error.to_string().contains("fewer than 10 samples"));
+    }
+
+    #[test]
+    fn exploratory_report_can_include_nonrelease_samples() {
+        let input = r#"{"build_profile":"debug","type":"duration","metric":"startup_to_first_frame","value":42.0}"#;
+        let report = summarize_samples(
+            input,
+            &PerformanceThresholds {
+                minimum_samples: 0,
+                require_release_profile: false,
+                ..PerformanceThresholds::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(report.metrics["startup_to_first_frame"].samples, 1);
+        assert_eq!(report.required_build_profile, None);
     }
 }

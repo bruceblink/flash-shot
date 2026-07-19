@@ -56,10 +56,12 @@ fn parse_args(
             }
             "--minimum-samples" => thresholds.minimum_samples = parse_usize(value()?, &argument)?,
             "--since-ms" => thresholds.since_timestamp_ms = Some(parse_u128(value()?, &argument)?),
+            "--include-nonrelease" => thresholds.require_release_profile = false,
             "--no-gate" => {
                 thresholds = PerformanceThresholds {
                     minimum_samples: 0,
                     since_timestamp_ms: thresholds.since_timestamp_ms,
+                    require_release_profile: thresholds.require_release_profile,
                     startup_p95_ms: None,
                     shortcut_to_frame_ready_p95_ms: None,
                     shortcut_to_overlay_frame_p95_ms: None,
@@ -131,5 +133,16 @@ mod tests {
     fn rejects_an_unknown_option() {
         let error = parse_args(["--wat".to_owned()]).unwrap_err();
         assert!(error.to_string().contains("unknown argument"));
+    }
+
+    #[test]
+    fn includes_nonrelease_samples_only_when_requested() {
+        let (_, thresholds, _) = parse_args([
+            "--input".to_owned(),
+            "metrics.jsonl".to_owned(),
+            "--include-nonrelease".to_owned(),
+        ])
+        .unwrap();
+        assert!(!thresholds.require_release_profile);
     }
 }

@@ -11,6 +11,15 @@ use std::{
 
 const REPORT_FILE: &str = "performance.jsonl";
 const MAX_SAMPLES: usize = 500;
+const SCHEMA_VERSION: u32 = 2;
+
+pub const fn build_profile() -> &'static str {
+    if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CapturePipelineSample {
@@ -44,8 +53,9 @@ impl PerformanceRecorder {
 
     pub fn record_duration(&self, metric: &'static str, duration: Duration) {
         let entry = serde_json::json!({
-            "schema_version": 1,
+            "schema_version": SCHEMA_VERSION,
             "timestamp_ms": unix_timestamp_ms(),
+            "build_profile": build_profile(),
             "type": "duration",
             "metric": metric,
             "unit": "ms",
@@ -61,8 +71,9 @@ impl PerformanceRecorder {
 
     pub fn record_capture_pipeline(&self, sample: CapturePipelineSample) {
         let entry = serde_json::json!({
-            "schema_version": 1,
+            "schema_version": SCHEMA_VERSION,
             "timestamp_ms": unix_timestamp_ms(),
+            "build_profile": build_profile(),
             "type": "capture_pipeline",
             "latency_ms": {
                 "shortcut_to_frame_ready": duration_ms(sample.shortcut_to_frame_ready),
@@ -151,7 +162,9 @@ fn unix_timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CapturePipelineSample, MAX_SAMPLES, PerformanceRecorder, REPORT_FILE};
+    use super::{
+        CapturePipelineSample, MAX_SAMPLES, PerformanceRecorder, REPORT_FILE, build_profile,
+    };
     use std::{fs, time::Duration};
 
     fn test_directory(name: &str) -> std::path::PathBuf {
@@ -171,7 +184,8 @@ mod tests {
 
         let contents = fs::read_to_string(directory.join(REPORT_FILE)).unwrap();
         let value: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
-        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["schema_version"], 2);
+        assert_eq!(value["build_profile"], build_profile());
         assert_eq!(value["type"], "duration");
         assert_eq!(value["metric"], "startup_to_first_frame");
         assert_eq!(value["unit"], "ms");
@@ -220,6 +234,7 @@ mod tests {
         let contents = fs::read_to_string(directory.join(REPORT_FILE)).unwrap();
         let value: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
         assert_eq!(value["type"], "capture_pipeline");
+        assert_eq!(value["build_profile"], build_profile());
         assert_eq!(value["latency_ms"]["shortcut_to_frame_ready"], 18.0);
         assert_eq!(value["latency_ms"]["shortcut_to_overlay_frame"], 27.0);
         assert_eq!(value["latency_ms"]["platform_capture"], 11.0);

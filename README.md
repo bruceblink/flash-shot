@@ -175,9 +175,10 @@ run and enforce the default p95 thresholds with:
 cargo run --release --bin performance-report -- --input "<application data directory>\metrics\performance.jsonl" --output target/performance-summary.json
 ```
 
-The command exits with status `2` when a threshold fails, and with status `1` when samples
-are malformed or insufficient. Use `--no-gate` only to inspect an incomplete or exploratory
-sample set.
+The command accepts only Release-profile samples by default, so Debug runs and legacy unmarked
+records cannot affect a release p95 decision. It exits with status `2` when a threshold fails,
+and with status `1` when samples are malformed or insufficient. Use `--no-gate` only to inspect
+an incomplete sample set; add `--include-nonrelease` only for exploratory comparisons.
 
 ### Documentation
 
