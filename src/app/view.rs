@@ -433,22 +433,50 @@ impl Render for FlashShotApp {
                                         .py_1()
                                         .border_1()
                                         .border_color(colors.border)
-                                        .text_xs()
-                                        .text_color(colors.muted)
-                                        .cursor_pointer()
-                                        .when(is_idle, |item| {
-                                            let path = entry.path.clone();
-                                            item.on_click(cx.listener(move |this, _, _, cx| {
-                                                this.open_history_image(path.clone(), cx)
-                                            }))
-                                        })
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
                                         .child(
-                                            entry
-                                                .path
-                                                .file_name()
-                                                .and_then(|name| name.to_str())
-                                                .unwrap_or("Screenshot")
-                                                .to_owned(),
+                                            div()
+                                                .id(format!("open-history-{}", entry.created_at_ms))
+                                                .text_xs()
+                                                .text_color(colors.muted)
+                                                .when(is_idle, |item| {
+                                                    let path = entry.path.clone();
+                                                    item.cursor_pointer().on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            this.open_history_image(
+                                                                path.clone(),
+                                                                cx,
+                                                            )
+                                                        },
+                                                    ))
+                                                })
+                                                .child(
+                                                    entry
+                                                        .path
+                                                        .file_name()
+                                                        .and_then(|name| name.to_str())
+                                                        .unwrap_or("Screenshot")
+                                                        .to_owned(),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .id(format!(
+                                                    "remove-history-{}",
+                                                    entry.created_at_ms
+                                                ))
+                                                .text_xs()
+                                                .text_color(colors.muted)
+                                                .cursor_pointer()
+                                                .on_click({
+                                                    let path = entry.path.clone();
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        this.remove_history_image(path.clone(), cx)
+                                                    })
+                                                })
+                                                .child("Remove"),
                                         )
                                 })),
                         ),

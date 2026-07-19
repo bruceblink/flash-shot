@@ -107,6 +107,37 @@ impl ScreenshotHistory {
         self.write_index()
     }
 
+    /// Removes one managed screenshot and its index entry. Callers cannot use
+    /// this history store to delete files outside its private root directory.
+    pub fn remove(&mut self, path: impl AsRef<std::path::Path>) -> io::Result<bool> {
+        let path = path.as_ref();
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| entry.path == path)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "screenshot is not managed by history",
+                )
+            })?;
+        let entry = self.entries[index].clone();
+        if !entry.path.starts_with(&self.root) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "history only manages files inside its own directory",
+            ));
+        }
+        let removed_file = match fs::remove_file(&entry.path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error),
+        };
+        self.entries.remove(index);
+        self.write_index()?;
+        Ok(removed_file)
+    }
+
     fn load(&mut self) -> io::Result<()> {
         let path = self.root.join(INDEX_FILE);
         let contents = match fs::read_to_string(path) {
@@ -232,5 +263,47 @@ mod tests {
         assert!(!image.exists());
         assert!(root.join("history.json").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn remove_deletes_one_managed_file_and_keeps_the_other_entries() {
+        let root = directory("remove");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.png");
+        let second = root.join("two.png");
+        fs::write(&first, b"one").unwrap();
+        fs::write(&second, b"two").unwrap();
+        let mut history = ScreenshotHistory::open(&root).unwrap();
+        history.record(first.clone()).unwrap();
+        history.record(second.clone()).unwrap();
+
+        assert!(history.remove(first.canonicalize().unwrap()).unwrap());
+        assert!(!first.exists());
+        assert!(second.exists());
+        assert_eq!(history.entries().len(), 1);
+        assert_eq!(history.entries()[0].path, second.canonicalize().unwrap());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn remove_rejects_unmanaged_paths_without_deleting_them() {
+        let root = directory("remove-unmanaged");
+        let outside = directory("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let managed = root.join("one.png");
+        let unmanaged = outside.join("other.png");
+        fs::write(&managed, b"managed").unwrap();
+        fs::write(&unmanaged, b"unmanaged").unwrap();
+        let mut history = ScreenshotHistory::open(&root).unwrap();
+        history.record(managed).unwrap();
+
+        let error = history.remove(&unmanaged).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(unmanaged.exists());
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 }

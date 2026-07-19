@@ -3078,6 +3078,20 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(super) fn remove_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        match self.history.remove(&path) {
+            Ok(true) => self.status = format!("Removed {} from screenshot history", path.display()),
+            Ok(false) => {
+                self.status = format!("Removed missing {} from screenshot history", path.display())
+            }
+            Err(error) => {
+                self.status = format!("Could not remove screenshot history item: {error}");
+                log::warn!(target: "flash_shot::history", "history_remove_failed path={} error={error}", path.display());
+            }
+        }
+        cx.notify();
+    }
+
     fn finish_copy(
         &mut self,
         result: std::io::Result<()>,
