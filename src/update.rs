@@ -86,7 +86,6 @@ fn release_version_from_manifest(value: serde_json::Value) -> io::Result<String>
             io::Error::new(io::ErrorKind::InvalidData, "update manifest has no version")
         })?;
     parse_version(version)?;
-    let asset_prefix = format!("FlashShot-{version}-windows-");
     let assets = value
         .get("assets")
         .and_then(serde_json::Value::as_array)
@@ -98,10 +97,7 @@ fn release_version_from_manifest(value: serde_json::Value) -> io::Result<String>
         !asset
             .get("name")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|name| {
-                name.starts_with(&asset_prefix)
-                    && (name.ends_with(".zip") || name.ends_with(".exe"))
-            })
+            .is_some_and(|name| valid_asset_name(name, version))
             || asset
                 .get("sha256")
                 .and_then(serde_json::Value::as_str)
@@ -119,6 +115,24 @@ fn release_version_from_manifest(value: serde_json::Value) -> io::Result<String>
         ));
     }
     Ok(version.to_owned())
+}
+
+fn valid_asset_name(name: &str, version: &str) -> bool {
+    let prefix = format!("FlashShot-{version}-windows-");
+    let Some(kind) = name.strip_prefix(&prefix) else {
+        return false;
+    };
+
+    if kind == "setup.exe" {
+        return true;
+    }
+    let Some(architecture) = kind.strip_suffix(".zip") else {
+        return false;
+    };
+    !architecture.is_empty()
+        && architecture
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 fn compare_versions(left: &str, right: &str) -> io::Result<Ordering> {
@@ -199,6 +213,10 @@ mod tests {
         mismatched_asset["assets"][0]["name"] =
             serde_json::json!("FlashShot-1.2.2-windows-x86_64.zip");
         assert!(release_version_from_manifest(mismatched_asset).is_err());
+        let mut unexpected_asset = manifest("1.2.3");
+        unexpected_asset["assets"][0]["name"] =
+            serde_json::json!("FlashShot-1.2.3-windows-x86_64.exe");
+        assert!(release_version_from_manifest(unexpected_asset).is_err());
     }
 
     #[test]

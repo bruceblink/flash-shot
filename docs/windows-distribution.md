@@ -61,7 +61,7 @@ After building the ZIP and/or setup executable, generate a machine-readable mani
 .\scripts\release-manifest.ps1 -AssetDirectory dist
 ```
 
-The generated `release-manifest.json` records the Cargo version, Windows platform, asset names, lengths, and SHA-256 values. Before uploading assets, re-verify the unchanged directory:
+The generated `release-manifest.json` records the Cargo version, Windows platform, asset names, lengths, and SHA-256 values. Supported asset names are `FlashShot-<version>-windows-<architecture>.zip` for a portable package and `FlashShot-<version>-windows-setup.exe` for the installer. Before uploading assets, re-verify the unchanged directory:
 
 ```powershell
 .\scripts\release-manifest.ps1 -AssetDirectory dist -VerifyOnly

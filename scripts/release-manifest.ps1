@@ -35,8 +35,11 @@ if ($assets.Count -eq 0) {
 }
 
 $records = foreach ($asset in $assets) {
-    if ($asset.Name -notmatch "^FlashShot-$([regex]::Escape($package.version))-windows-(?<kind>.+)$") {
-        throw "Release asset does not include Cargo version $($package.version): $($asset.Name)"
+    $version = [regex]::Escape($package.version)
+    $portablePattern = "^FlashShot-$version-windows-[A-Za-z0-9_]+\.zip$"
+    $installerPattern = "^FlashShot-$version-windows-setup\.exe$"
+    if ($asset.Name -notmatch $portablePattern -and $asset.Name -notmatch $installerPattern) {
+        throw "Release asset does not use a supported Flash Shot artifact name: $($asset.Name)"
     }
     $checksumPath = "$($asset.FullName).sha256"
     if (-not (Test-Path -LiteralPath $checksumPath -PathType Leaf)) {

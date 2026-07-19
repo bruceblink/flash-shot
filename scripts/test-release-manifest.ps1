@@ -25,6 +25,23 @@ try {
     if (-not $failed) {
         throw "Release manifest verification accepted a changed checksum."
     }
+
+    "$hash  $([IO.Path]::GetFileName($asset))" | Set-Content -LiteralPath "$asset.sha256" -Encoding ascii
+    $unexpected = Join-Path $fixture "FlashShot-0.1.0-windows-x86_64.exe"
+    [IO.File]::WriteAllText($unexpected, "unexpected release asset")
+    $unexpectedHash = (Get-FileHash -LiteralPath $unexpected -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$unexpectedHash  $([IO.Path]::GetFileName($unexpected))" | Set-Content -LiteralPath "$unexpected.sha256" -Encoding ascii
+    $failed = $false
+    try {
+        & (Join-Path $PSScriptRoot "release-manifest.ps1") -AssetDirectory "target\release-manifest-fixture"
+        $failed = $LASTEXITCODE -ne 0
+    }
+    catch {
+        $failed = $true
+    }
+    if (-not $failed) {
+        throw "Release manifest accepted an unsupported artifact name."
+    }
 }
 finally {
     if (Test-Path -LiteralPath $fixture) {
