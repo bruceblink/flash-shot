@@ -195,8 +195,17 @@ impl Render for CaptureOverlay {
             .as_ref()
             .and_then(|document| app.annotation_editor.preview(document.canvas_bounds()));
         let text_edit = app.text_edit().cloned();
+        let text_edit_annotation = app.text_edit_annotation();
         let selected_annotation = app.selected_annotation;
         let can_delete = selected_annotation.is_some();
+        let can_edit_text = selected_annotation
+            .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
+            .is_some_and(|annotation| {
+                matches!(
+                    annotation.kind,
+                    AnnotationKind::Text { .. } | AnnotationKind::Watermark { .. }
+                )
+            });
         let selected_tool = app.annotation_tool;
         let can_rotate = selected_annotation
             .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
@@ -298,11 +307,20 @@ impl Render for CaptureOverlay {
                             annotations,
                             annotation_preview,
                             selected_annotation,
+                            text_edit_annotation,
                             text_edit,
                         )
                     },
                     move |_bounds,
-                          (_, transform, annotations, preview, selected_annotation, text_edit),
+                          (
+                        _,
+                        transform,
+                        annotations,
+                        preview,
+                        selected_annotation,
+                        text_edit_annotation,
+                        text_edit,
+                    ),
                           window,
                           cx| {
                         paint_annotations(
@@ -310,7 +328,10 @@ impl Render for CaptureOverlay {
                             transform,
                             &annotations,
                             preview.as_ref(),
-                            selected_annotation,
+                            AnnotationPaintState {
+                                selected: selected_annotation,
+                                hidden: text_edit_annotation,
+                            },
                             colors,
                             cx,
                         );
@@ -458,6 +479,26 @@ impl Render for CaptureOverlay {
                                     });
                                 }))
                                 .child("Delete"),
+                        )
+                    })
+                    .when(can_edit_text, |tools| {
+                        tools.child(
+                            div()
+                                .id("overlay-edit-text")
+                                .px_3()
+                                .py_2()
+                                .bg(colors.panel)
+                                .text_color(colors.text)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let app = this.app.clone();
+                                    cx.defer(move |cx| {
+                                        app.update(cx, |app, cx| {
+                                            app.edit_selected_text_annotation(cx);
+                                        });
+                                    });
+                                }))
+                                .child("Edit text"),
                         )
                     })
                     .when_some(selected_number, |tools, value| {
@@ -1424,12 +1465,18 @@ fn magnifier_origin(view_center: ViewPoint, viewport: Bounds<Pixels>, grid_size:
     }
 }
 
+#[derive(Clone, Copy)]
+struct AnnotationPaintState {
+    selected: Option<AnnotationId>,
+    hidden: Option<AnnotationId>,
+}
+
 fn paint_annotations(
     window: &mut Window,
     transform: Option<PreviewTransform>,
     annotations: &[Annotation],
     preview: Option<&Annotation>,
-    selected_annotation: Option<AnnotationId>,
+    state: AnnotationPaintState,
     colors: ThemeColors,
     cx: &mut gpui::App,
 ) {
@@ -1438,7 +1485,10 @@ fn paint_annotations(
     };
     for annotation in annotations
         .iter()
-        .filter(|annotation| Some(annotation.id) != preview.map(|preview| preview.id))
+        .filter(|annotation| {
+            Some(annotation.id) != preview.map(|preview| preview.id)
+                && Some(annotation.id) != state.hidden
+        })
         .chain(preview)
     {
         let color = rgba(annotation.style.stroke_rgba).into();
@@ -1534,7 +1584,7 @@ fn paint_annotations(
                 annotation.style.stroke_width,
             ),
         }
-        if Some(annotation.id) == selected_annotation {
+        if Some(annotation.id) == state.selected {
             paint_outline(window, transform, annotation.bounds(), colors.success, 1);
             paint_resize_handles(window, transform, annotation.bounds(), colors.success);
         }

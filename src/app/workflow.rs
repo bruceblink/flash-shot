@@ -648,6 +648,7 @@ impl FlashShotApp {
                     self.annotation_editor = Default::default();
                     self.annotation_tool = None;
                     self.text_edit = None;
+                    self.text_edit_annotation = None;
                     self.selected_annotation = None;
                     self.next_annotation_id = next_annotation_id;
                     self.next_sequence_number = next_sequence_number;
@@ -930,6 +931,7 @@ impl FlashShotApp {
                 self.annotation_editor = Default::default();
                 self.annotation_tool = None;
                 self.text_edit = None;
+                self.text_edit_annotation = None;
                 self.next_annotation_id = 1;
                 self.next_sequence_number = 1;
                 self.frame = Some(capture.capture.frame);
@@ -971,6 +973,7 @@ impl FlashShotApp {
         self.annotation_editor = Default::default();
         self.annotation_tool = None;
         self.text_edit = None;
+        self.text_edit_annotation = None;
         self.selected_annotation = None;
         self.preview = None;
         self.selection_drag.clear();
@@ -1002,6 +1005,7 @@ impl FlashShotApp {
         self.annotation_editor = Default::default();
         self.annotation_tool = None;
         self.text_edit = None;
+        self.text_edit_annotation = None;
         self.preview = None;
         self.selection_drag.clear();
         self.hover_pixel = None;
@@ -1132,7 +1136,7 @@ impl FlashShotApp {
         let Some(frame) = self.frame.as_ref() else {
             return;
         };
-        if self.annotation_tool == Some(AnnotationTool::Text) && self.text_edit.is_some() {
+        if self.text_edit.is_some() {
             return;
         }
         if self.annotation_tool.is_some() {
@@ -1349,6 +1353,7 @@ impl FlashShotApp {
     pub(super) fn select_selection_tool(&mut self, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.text_edit = None;
+        self.text_edit_annotation = None;
         self.annotation_tool = None;
         self.selected_annotation = None;
         self.status = "Selection tool selected".to_owned();
@@ -1358,6 +1363,7 @@ impl FlashShotApp {
     fn select_annotation_tool(&mut self, tool: AnnotationTool, cx: &mut Context<Self>) {
         self.annotation_editor.cancel();
         self.text_edit = None;
+        self.text_edit_annotation = None;
         self.annotation_tool = Some(tool);
         self.selected_annotation = None;
         self.status = tool_selected_status(tool).to_owned();
@@ -1373,6 +1379,7 @@ impl FlashShotApp {
         let id = AnnotationId::new(self.next_annotation_id);
         if matches!(tool, AnnotationTool::Text | AnnotationTool::Watermark) {
             self.annotation_editor.cancel();
+            self.text_edit_annotation = None;
             self.text_edit = Some(if tool == AnnotationTool::Watermark {
                 super::TextEdit::with_content(
                     point,
@@ -1462,9 +1469,31 @@ impl FlashShotApp {
         let Some(edit) = self.text_edit.take() else {
             return false;
         };
-        let Some(document) = self.annotation_document.as_ref() else {
+        let target = self.text_edit_annotation.take();
+        let Some(document) = self.annotation_document.as_mut() else {
             return false;
         };
+        if let Some(id) = target {
+            let Some(existing) = document.annotation(id).cloned() else {
+                self.status = "Text annotation no longer exists".to_owned();
+                cx.notify();
+                return true;
+            };
+            let Some(replacement) = text_annotation_with_content(existing, edit.content) else {
+                self.status = "Selected annotation cannot be edited as text".to_owned();
+                cx.notify();
+                return true;
+            };
+            match self
+                .annotation_history
+                .apply(document, AnnotationCommand::Replace(replacement))
+            {
+                Ok(()) => self.status = "Text annotation updated".to_owned(),
+                Err(error) => self.status = error.to_string(),
+            }
+            cx.notify();
+            return true;
+        }
         let id = AnnotationId::new(self.next_annotation_id);
         let started = if self.annotation_tool == Some(AnnotationTool::Watermark) {
             self.annotation_editor.begin_watermark(
@@ -1497,6 +1526,7 @@ impl FlashShotApp {
         if self.text_edit.take().is_none() {
             return false;
         }
+        self.text_edit_annotation = None;
         self.status = "Text cancelled".to_owned();
         cx.notify();
         true
@@ -1504,6 +1534,36 @@ impl FlashShotApp {
 
     pub(super) fn text_edit(&self) -> Option<&super::TextEdit> {
         self.text_edit.as_ref()
+    }
+
+    pub(super) fn text_edit_annotation(&self) -> Option<AnnotationId> {
+        self.text_edit_annotation
+    }
+
+    pub(super) fn edit_selected_text_annotation(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self.selected_annotation else {
+            return false;
+        };
+        let Some(annotation) = self
+            .annotation_document
+            .as_ref()
+            .and_then(|document| document.annotation(id))
+        else {
+            self.selected_annotation = None;
+            return false;
+        };
+        let (origin, content) = match &annotation.kind {
+            AnnotationKind::Text { origin, content }
+            | AnnotationKind::Watermark { origin, content } => (*origin, content.clone()),
+            _ => return false,
+        };
+        self.annotation_editor.cancel();
+        self.annotation_tool = None;
+        self.text_edit = Some(super::TextEdit::with_content(origin, content, true));
+        self.text_edit_annotation = Some(id);
+        self.status = "Edit text, then press Enter".to_owned();
+        cx.notify();
+        true
     }
 
     pub(super) fn replace_text_edit(
@@ -2440,6 +2500,7 @@ impl FlashShotApp {
             self.annotation_editor = Default::default();
             self.annotation_tool = None;
             self.text_edit = None;
+            self.text_edit_annotation = None;
             self.selected_annotation = None;
             self.selection_drag.select(bounds);
             self.manual_scroll_selection = None;
@@ -2929,6 +2990,7 @@ impl FlashShotApp {
                             this.annotation_editor = Default::default();
                             this.annotation_tool = None;
                             this.text_edit = None;
+                            this.text_edit_annotation = None;
                             this.selected_annotation = None;
                             this.next_annotation_id = next_id;
                             this.next_sequence_number = next_sequence;
@@ -3976,6 +4038,19 @@ fn style_for_tool(
     }
 }
 
+fn text_annotation_with_content(annotation: Annotation, content: String) -> Option<Annotation> {
+    let kind = match annotation.kind {
+        AnnotationKind::Text { origin, .. } => AnnotationKind::Text { origin, content },
+        AnnotationKind::Watermark { origin, .. } => AnnotationKind::Watermark { origin, content },
+        _ => return None,
+    };
+    Some(Annotation {
+        id: annotation.id,
+        kind,
+        style: annotation.style,
+    })
+}
+
 fn intersect_rect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
     let intersection = PhysicalRect {
         left: left.left.max(right.left),
@@ -4171,7 +4246,7 @@ mod tests {
         recording_audio_selection_label, recording_display_selection_label, recording_target_label,
         resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
         save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-        tool_selected_status, with_alpha,
+        text_annotation_with_content, tool_selected_status, with_alpha,
     };
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use crate::{
@@ -4488,6 +4563,70 @@ mod tests {
         assert_eq!(
             annotation_cancelled_status(Some(AnnotationTool::Watermark)),
             "Watermark cancelled"
+        );
+    }
+
+    #[test]
+    fn text_edit_replaces_content_without_changing_annotation_identity_or_style() {
+        let style = AnnotationStyle {
+            stroke_rgba: 0xFFCC00FF,
+            fill_rgba: None,
+            stroke_width: 6,
+        };
+        let text = Annotation {
+            id: AnnotationId::new(7),
+            kind: AnnotationKind::Text {
+                origin: PhysicalPoint { x: 12, y: 16 },
+                content: "Before".to_owned(),
+            },
+            style,
+        };
+        let watermark = Annotation {
+            id: AnnotationId::new(8),
+            kind: AnnotationKind::Watermark {
+                origin: PhysicalPoint { x: 20, y: 24 },
+                content: "Old mark".to_owned(),
+            },
+            style,
+        };
+
+        assert_eq!(
+            text_annotation_with_content(text.clone(), "After".to_owned()).unwrap(),
+            Annotation {
+                id: text.id,
+                kind: AnnotationKind::Text {
+                    origin: PhysicalPoint { x: 12, y: 16 },
+                    content: "After".to_owned(),
+                },
+                style,
+            }
+        );
+        assert_eq!(
+            text_annotation_with_content(watermark, "New mark".to_owned())
+                .unwrap()
+                .kind,
+            AnnotationKind::Watermark {
+                origin: PhysicalPoint { x: 20, y: 24 },
+                content: "New mark".to_owned(),
+            }
+        );
+        assert!(
+            text_annotation_with_content(
+                Annotation {
+                    id: AnnotationId::new(9),
+                    kind: AnnotationKind::Rectangle {
+                        bounds: PhysicalRect {
+                            left: 0,
+                            top: 0,
+                            right: 10,
+                            bottom: 10,
+                        },
+                    },
+                    style,
+                },
+                "not text".to_owned(),
+            )
+            .is_none()
         );
     }
 
