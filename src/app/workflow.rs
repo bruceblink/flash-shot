@@ -832,6 +832,7 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        self.set_tray_capture_cursor_enabled(self.include_cursor);
         self.status = if self.include_cursor {
             "Capture will include the system cursor".to_owned()
         } else {

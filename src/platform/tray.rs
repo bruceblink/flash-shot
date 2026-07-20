@@ -12,6 +12,7 @@ pub enum TrayEvent {
     ToggleDisplayRecordingRequested,
     ToggleRecordingPauseRequested,
     ToggleAutoStartRequested,
+    ToggleCaptureCursorRequested,
     OpenHistoryDirectoryRequested,
     OpenImageRequested,
     HistoryRequested,
@@ -135,6 +136,11 @@ impl TrayService {
     pub fn set_auto_start_state(&self, state: TrayAutoStartState) {
         self.listener.set_auto_start_state(state);
     }
+
+    /// Updates the cursor check mark shown the next time the user opens the tray menu.
+    pub fn set_capture_cursor_enabled(&self, enabled: bool) {
+        self.listener.set_capture_cursor_enabled(enabled);
+    }
 }
 
 #[cfg(windows)]
@@ -163,11 +169,11 @@ mod platform {
             WindowsAndMessaging::{
                 AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
                 DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW,
-                GetWindowLongPtrW, IDI_APPLICATION, LoadIconW, MF_GRAYED, MF_SEPARATOR, MF_STRING,
-                MSG, PostMessageW, PostThreadMessageW, RegisterClassW, SetForegroundWindow,
-                SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-                TranslateMessage, WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL, WM_QUIT,
-                WM_RBUTTONUP, WNDCLASSW,
+                GetWindowLongPtrW, IDI_APPLICATION, LoadIconW, MF_CHECKED, MF_GRAYED, MF_SEPARATOR,
+                MF_STRING, MSG, PostMessageW, PostThreadMessageW, RegisterClassW,
+                SetForegroundWindow, SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+                TrackPopupMenu, TranslateMessage, WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL,
+                WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
             },
         },
     };
@@ -184,11 +190,12 @@ mod platform {
     const MENU_TOGGLE_DISPLAY_RECORDING: usize = 7;
     const MENU_TOGGLE_RECORDING_PAUSE: usize = 8;
     const MENU_TOGGLE_AUTO_START: usize = 9;
-    const MENU_OPEN_HISTORY_DIRECTORY: usize = 10;
-    const MENU_OPEN_IMAGE: usize = 11;
-    const MENU_HISTORY: usize = 12;
-    const MENU_SETTINGS: usize = 13;
-    const MENU_QUIT: usize = 14;
+    const MENU_TOGGLE_CAPTURE_CURSOR: usize = 10;
+    const MENU_OPEN_HISTORY_DIRECTORY: usize = 11;
+    const MENU_OPEN_IMAGE: usize = 12;
+    const MENU_HISTORY: usize = 13;
+    const MENU_SETTINGS: usize = 14;
+    const MENU_QUIT: usize = 15;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -197,6 +204,7 @@ mod platform {
         commands: Arc<Mutex<Vec<TrayCommand>>>,
         recording_state: Arc<AtomicU8>,
         auto_start_state: Arc<AtomicU8>,
+        capture_cursor_enabled: Arc<AtomicBool>,
         active: Arc<AtomicBool>,
     }
 
@@ -208,6 +216,7 @@ mod platform {
         events: async_channel::Sender<TrayEvent>,
         recording_state: Arc<AtomicU8>,
         auto_start_state: Arc<AtomicU8>,
+        capture_cursor_enabled: Arc<AtomicBool>,
     }
 
     impl TrayListener {
@@ -220,6 +229,8 @@ mod platform {
             let thread_recording_state = recording_state.clone();
             let auto_start_state = Arc::new(AtomicU8::new(TrayAutoStartState::Disabled.as_u8()));
             let thread_auto_start_state = auto_start_state.clone();
+            let capture_cursor_enabled = Arc::new(AtomicBool::new(false));
+            let thread_capture_cursor_enabled = capture_cursor_enabled.clone();
             let active = Arc::new(AtomicBool::new(false));
             let thread_active = active.clone();
             let thread = thread::Builder::new()
@@ -231,6 +242,7 @@ mod platform {
                         thread_commands,
                         thread_recording_state,
                         thread_auto_start_state,
+                        thread_capture_cursor_enabled,
                         thread_active,
                     )
                 })?;
@@ -242,6 +254,7 @@ mod platform {
                         commands,
                         recording_state,
                         auto_start_state,
+                        capture_cursor_enabled,
                         active,
                     },
                     event_rx,
@@ -291,6 +304,12 @@ mod platform {
             self.auto_start_state
                 .store(state.as_u8(), Ordering::Release);
         }
+
+        /// Shares the persisted cursor preference with the tray thread without blocking UI work.
+        pub fn set_capture_cursor_enabled(&self, enabled: bool) {
+            self.capture_cursor_enabled
+                .store(enabled, Ordering::Release);
+        }
     }
 
     impl Drop for TrayListener {
@@ -311,12 +330,14 @@ mod platform {
         commands: Arc<Mutex<Vec<TrayCommand>>>,
         recording_state: Arc<AtomicU8>,
         auto_start_state: Arc<AtomicU8>,
+        capture_cursor_enabled: Arc<AtomicBool>,
         active: Arc<AtomicBool>,
     ) {
         let context = Box::new(TrayWindowContext {
             events,
             recording_state,
             auto_start_state,
+            capture_cursor_enabled,
         });
         let result = unsafe { create_tray(&context) };
         let (window, mut icon) = match result {
@@ -475,6 +496,7 @@ mod platform {
                 window,
                 TrayRecordingState::from_u8(context.recording_state.load(Ordering::Acquire)),
                 TrayAutoStartState::from_u8(context.auto_start_state.load(Ordering::Acquire)),
+                context.capture_cursor_enabled.load(Ordering::Acquire),
             )
         {
             let _ = context.events.try_send(event);
@@ -492,6 +514,7 @@ mod platform {
         window: HWND,
         recording_state: TrayRecordingState,
         auto_start_state: TrayAutoStartState,
+        capture_cursor_enabled: bool,
     ) -> Option<TrayEvent> {
         // SAFETY: menu is owned here and destroyed before return.
         let menu = unsafe { CreatePopupMenu() };
@@ -509,6 +532,7 @@ mod platform {
         let toggle_recording_pause = recording_pause_menu_presentation(recording_state).map(wide);
         let (auto_start_label, auto_start_enabled) = auto_start_menu_presentation(auto_start_state);
         let toggle_auto_start = wide(auto_start_label);
+        let capture_cursor = wide("Include cursor in captures");
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
@@ -574,6 +598,17 @@ mod platform {
             AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
             AppendMenuW(
                 menu,
+                MF_STRING
+                    | if capture_cursor_enabled {
+                        MF_CHECKED
+                    } else {
+                        0
+                    },
+                MENU_TOGGLE_CAPTURE_CURSOR,
+                capture_cursor.as_ptr(),
+            );
+            AppendMenuW(
+                menu,
                 if auto_start_enabled {
                     MF_STRING
                 } else {
@@ -622,6 +657,7 @@ mod platform {
             MENU_TOGGLE_DISPLAY_RECORDING => Some(TrayEvent::ToggleDisplayRecordingRequested),
             MENU_TOGGLE_RECORDING_PAUSE => Some(TrayEvent::ToggleRecordingPauseRequested),
             MENU_TOGGLE_AUTO_START => Some(TrayEvent::ToggleAutoStartRequested),
+            MENU_TOGGLE_CAPTURE_CURSOR => Some(TrayEvent::ToggleCaptureCursorRequested),
             MENU_OPEN_HISTORY_DIRECTORY => Some(TrayEvent::OpenHistoryDirectoryRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
@@ -799,8 +835,19 @@ mod tests {
         use super::{TrayEvent, platform::tray_event_for_command};
 
         assert_eq!(
-            tray_event_for_command(10),
+            tray_event_for_command(11),
             Some(TrayEvent::OpenHistoryDirectoryRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cursor_menu_item_dispatches_the_persisted_capture_preference_toggle() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(10),
+            Some(TrayEvent::ToggleCaptureCursorRequested)
         );
     }
 

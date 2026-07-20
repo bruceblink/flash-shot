@@ -193,6 +193,13 @@ impl FlashShotApp {
         }
     }
 
+    /// Mirrors the saved cursor preference into the tray check mark for capture commands.
+    pub(super) fn set_tray_capture_cursor_enabled(&self, enabled: bool) {
+        if let Some(tray) = self._tray.as_ref() {
+            tray.set_capture_cursor_enabled(enabled);
+        }
+    }
+
     pub fn new(
         performance: PerformanceRecorder,
         history: ScreenshotHistory,
@@ -274,6 +281,9 @@ impl FlashShotApp {
                 }
             };
             tray.set_auto_start_state(state);
+        }
+        if let Some(tray) = tray.as_ref() {
+            tray.set_capture_cursor_enabled(settings.include_cursor);
         }
 
         Self {
@@ -383,6 +393,9 @@ impl FlashShotApp {
                         }
                         TrayEvent::ToggleAutoStartRequested => {
                             this.update(&mut cx, |this, cx| this.toggle_auto_start(cx));
+                        }
+                        TrayEvent::ToggleCaptureCursorRequested => {
+                            this.update(&mut cx, |this, cx| this.toggle_capture_cursor(cx));
                         }
                         TrayEvent::OpenHistoryDirectoryRequested => {
                             this.update(&mut cx, |this, cx| this.open_history_directory(cx));
