@@ -469,6 +469,11 @@ impl FlashShotApp {
         let paused = !self.recording_paused;
         match control.set_paused(paused) {
             Ok(()) => {
+                self.set_tray_recording_state(if paused {
+                    crate::platform::tray::TrayRecordingState::Pausing
+                } else {
+                    crate::platform::tray::TrayRecordingState::Resuming
+                });
                 self.status = if paused {
                     "Pausing screen recording...".to_owned()
                 } else {
@@ -529,10 +534,12 @@ impl FlashShotApp {
             }
             RecordingEvent::Paused => {
                 self.recording_paused = true;
+                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Paused);
                 self.status = format!("{target} recording paused");
             }
             RecordingEvent::Resumed => {
                 self.recording_paused = false;
+                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Recording);
                 self.status = format!("Recording {target}...");
             }
             RecordingEvent::Progress(progress) => {

@@ -10,6 +10,7 @@ pub enum TrayEvent {
     FullScreenCopyRequested,
     DelayedCaptureRequested(u8),
     ToggleDisplayRecordingRequested,
+    ToggleRecordingPauseRequested,
     OpenHistoryDirectoryRequested,
     OpenImageRequested,
     HistoryRequested,
@@ -28,6 +29,9 @@ pub enum TrayRecordingState {
     Starting,
     Recording,
     Stopping,
+    Paused,
+    Pausing,
+    Resuming,
 }
 
 impl TrayRecordingState {
@@ -38,6 +42,9 @@ impl TrayRecordingState {
             Self::Starting => 1,
             Self::Recording => 2,
             Self::Stopping => 3,
+            Self::Paused => 4,
+            Self::Pausing => 5,
+            Self::Resuming => 6,
         }
     }
 
@@ -47,6 +54,9 @@ impl TrayRecordingState {
             1 => Self::Starting,
             2 => Self::Recording,
             3 => Self::Stopping,
+            4 => Self::Paused,
+            5 => Self::Pausing,
+            6 => Self::Resuming,
             _ => Self::Idle,
         }
     }
@@ -136,11 +146,12 @@ mod platform {
     const MENU_DELAYED_CAPTURE_5_SECONDS: usize = 5;
     const MENU_DELAYED_CAPTURE_10_SECONDS: usize = 6;
     const MENU_TOGGLE_DISPLAY_RECORDING: usize = 7;
-    const MENU_OPEN_HISTORY_DIRECTORY: usize = 8;
-    const MENU_OPEN_IMAGE: usize = 9;
-    const MENU_HISTORY: usize = 10;
-    const MENU_SETTINGS: usize = 11;
-    const MENU_QUIT: usize = 12;
+    const MENU_TOGGLE_RECORDING_PAUSE: usize = 8;
+    const MENU_OPEN_HISTORY_DIRECTORY: usize = 9;
+    const MENU_OPEN_IMAGE: usize = 10;
+    const MENU_HISTORY: usize = 11;
+    const MENU_SETTINGS: usize = 12;
+    const MENU_QUIT: usize = 13;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -439,6 +450,7 @@ mod platform {
         let delayed_capture_10_seconds = wide("Capture in 10 seconds");
         let (recording_label, recording_enabled) = recording_menu_presentation(recording_state);
         let toggle_display_recording = wide(recording_label);
+        let toggle_recording_pause = recording_pause_menu_presentation(recording_state).map(wide);
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
@@ -486,6 +498,14 @@ mod platform {
                 MENU_TOGGLE_DISPLAY_RECORDING,
                 toggle_display_recording.as_ptr(),
             );
+            if let Some(toggle_recording_pause) = toggle_recording_pause.as_ref() {
+                AppendMenuW(
+                    menu,
+                    MF_STRING,
+                    MENU_TOGGLE_RECORDING_PAUSE,
+                    toggle_recording_pause.as_ptr(),
+                );
+            }
             AppendMenuW(
                 menu,
                 MF_STRING,
@@ -532,6 +552,7 @@ mod platform {
             MENU_DELAYED_CAPTURE_5_SECONDS => Some(TrayEvent::DelayedCaptureRequested(5)),
             MENU_DELAYED_CAPTURE_10_SECONDS => Some(TrayEvent::DelayedCaptureRequested(10)),
             MENU_TOGGLE_DISPLAY_RECORDING => Some(TrayEvent::ToggleDisplayRecordingRequested),
+            MENU_TOGGLE_RECORDING_PAUSE => Some(TrayEvent::ToggleRecordingPauseRequested),
             MENU_OPEN_HISTORY_DIRECTORY => Some(TrayEvent::OpenHistoryDirectoryRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
@@ -548,6 +569,24 @@ mod platform {
             TrayRecordingState::Starting => ("Starting display recording...", false),
             TrayRecordingState::Recording => ("Stop display recording", true),
             TrayRecordingState::Stopping => ("Stopping display recording...", false),
+            TrayRecordingState::Paused => ("Stop display recording", true),
+            TrayRecordingState::Pausing => ("Pausing display recording...", false),
+            TrayRecordingState::Resuming => ("Resuming display recording...", false),
+        }
+    }
+
+    /// Exposes pause controls only while FFmpeg has an active recording process to control.
+    pub(super) fn recording_pause_menu_presentation(
+        state: TrayRecordingState,
+    ) -> Option<&'static str> {
+        match state {
+            TrayRecordingState::Recording => Some("Pause display recording"),
+            TrayRecordingState::Paused => Some("Resume display recording"),
+            TrayRecordingState::Idle
+            | TrayRecordingState::Starting
+            | TrayRecordingState::Stopping
+            | TrayRecordingState::Pausing
+            | TrayRecordingState::Resuming => None,
         }
     }
 
@@ -678,7 +717,7 @@ mod tests {
         use super::{TrayEvent, platform::tray_event_for_command};
 
         assert_eq!(
-            tray_event_for_command(8),
+            tray_event_for_command(9),
             Some(TrayEvent::OpenHistoryDirectoryRequested)
         );
     }
@@ -696,8 +735,22 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn pause_menu_item_dispatches_the_pause_toggle_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(8),
+            Some(TrayEvent::ToggleRecordingPauseRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn recording_menu_labels_prevent_conflicting_lifecycle_operations() {
-        use super::{TrayRecordingState, platform::recording_menu_presentation};
+        use super::{
+            TrayRecordingState,
+            platform::{recording_menu_presentation, recording_pause_menu_presentation},
+        };
 
         assert_eq!(
             recording_menu_presentation(TrayRecordingState::Idle),
@@ -714,6 +767,30 @@ mod tests {
         assert_eq!(
             recording_menu_presentation(TrayRecordingState::Stopping),
             ("Stopping display recording...", false)
+        );
+        assert_eq!(
+            recording_menu_presentation(TrayRecordingState::Paused),
+            ("Stop display recording", true)
+        );
+        assert_eq!(
+            recording_menu_presentation(TrayRecordingState::Pausing),
+            ("Pausing display recording...", false)
+        );
+        assert_eq!(
+            recording_menu_presentation(TrayRecordingState::Resuming),
+            ("Resuming display recording...", false)
+        );
+        assert_eq!(
+            recording_pause_menu_presentation(TrayRecordingState::Recording),
+            Some("Pause display recording")
+        );
+        assert_eq!(
+            recording_pause_menu_presentation(TrayRecordingState::Paused),
+            Some("Resume display recording")
+        );
+        assert_eq!(
+            recording_pause_menu_presentation(TrayRecordingState::Pausing),
+            None
         );
     }
 }

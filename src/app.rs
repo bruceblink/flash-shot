@@ -352,6 +352,9 @@ impl FlashShotApp {
                         TrayEvent::ToggleDisplayRecordingRequested => {
                             this.update(&mut cx, |this, cx| this.toggle_display_recording(cx));
                         }
+                        TrayEvent::ToggleRecordingPauseRequested => {
+                            this.update(&mut cx, |this, cx| this.toggle_recording_pause(cx));
+                        }
                         TrayEvent::OpenHistoryDirectoryRequested => {
                             this.update(&mut cx, |this, cx| this.open_history_directory(cx));
                         }
