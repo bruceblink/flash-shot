@@ -171,8 +171,8 @@ mod platform {
             WindowsAndMessaging::{
                 AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
                 DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW,
-                GetWindowLongPtrW, IDI_APPLICATION, LoadIconW, MF_CHECKED, MF_GRAYED, MF_SEPARATOR,
-                MF_STRING, MSG, PostMessageW, PostThreadMessageW, RegisterClassW,
+                GetWindowLongPtrW, IDI_APPLICATION, LoadIconW, MF_CHECKED, MF_GRAYED, MF_POPUP,
+                MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostThreadMessageW, RegisterClassW,
                 SetForegroundWindow, SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON,
                 TrackPopupMenu, TranslateMessage, WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL,
                 WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
@@ -525,6 +525,23 @@ mod platform {
         if menu.is_null() {
             return None;
         }
+        // The root owns its submenus, so destroying it below releases the entire menu tree.
+        let capture_menu = unsafe { CreatePopupMenu() };
+        let recording_menu = unsafe { CreatePopupMenu() };
+        let files_menu = unsafe { CreatePopupMenu() };
+        let system_menu = unsafe { CreatePopupMenu() };
+        if capture_menu.is_null()
+            || recording_menu.is_null()
+            || files_menu.is_null()
+            || system_menu.is_null()
+        {
+            unsafe { DestroyMenu(menu) };
+            return None;
+        }
+        let capture_group = wide("Capture");
+        let recording_group = wide("Recording");
+        let files_group = wide("Files");
+        let system_group = wide("System");
         let capture = wide("Capture");
         let full_screen_capture = wide("Capture full screen");
         let full_screen_copy = wide("Copy full screen to clipboard");
@@ -545,39 +562,39 @@ mod platform {
         let check_updates = wide("Check for updates");
         let quit = wide("Quit Flash Shot");
         unsafe {
-            AppendMenuW(menu, MF_STRING, MENU_CAPTURE, capture.as_ptr());
+            AppendMenuW(capture_menu, MF_STRING, MENU_CAPTURE, capture.as_ptr());
             AppendMenuW(
-                menu,
+                capture_menu,
                 MF_STRING,
                 MENU_FULL_SCREEN_CAPTURE,
                 full_screen_capture.as_ptr(),
             );
             AppendMenuW(
-                menu,
+                capture_menu,
                 MF_STRING,
                 MENU_FULL_SCREEN_COPY,
                 full_screen_copy.as_ptr(),
             );
             AppendMenuW(
-                menu,
+                capture_menu,
                 MF_STRING,
                 MENU_DELAYED_CAPTURE_3_SECONDS,
                 delayed_capture_3_seconds.as_ptr(),
             );
             AppendMenuW(
-                menu,
+                capture_menu,
                 MF_STRING,
                 MENU_DELAYED_CAPTURE_5_SECONDS,
                 delayed_capture_5_seconds.as_ptr(),
             );
             AppendMenuW(
-                menu,
+                capture_menu,
                 MF_STRING,
                 MENU_DELAYED_CAPTURE_10_SECONDS,
                 delayed_capture_10_seconds.as_ptr(),
             );
             AppendMenuW(
-                menu,
+                recording_menu,
                 if recording_enabled {
                     MF_STRING
                 } else {
@@ -588,23 +605,42 @@ mod platform {
             );
             if let Some(toggle_recording_pause) = toggle_recording_pause.as_ref() {
                 AppendMenuW(
-                    menu,
+                    recording_menu,
                     MF_STRING,
                     MENU_TOGGLE_RECORDING_PAUSE,
                     toggle_recording_pause.as_ptr(),
                 );
             }
             AppendMenuW(
-                menu,
+                files_menu,
                 MF_STRING,
                 MENU_OPEN_HISTORY_DIRECTORY,
                 open_history_directory.as_ptr(),
             );
-            AppendMenuW(menu, MF_STRING, MENU_OPEN_IMAGE, open_image.as_ptr());
-            AppendMenuW(menu, MF_STRING, MENU_OPEN_PROJECT, open_project.as_ptr());
-            AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
+            AppendMenuW(files_menu, MF_STRING, MENU_OPEN_IMAGE, open_image.as_ptr());
+            AppendMenuW(
+                files_menu,
+                MF_STRING,
+                MENU_OPEN_PROJECT,
+                open_project.as_ptr(),
+            );
+            AppendMenuW(files_menu, MF_STRING, MENU_HISTORY, history.as_ptr());
             AppendMenuW(
                 menu,
+                MF_POPUP,
+                capture_menu as usize,
+                capture_group.as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                recording_menu as usize,
+                recording_group.as_ptr(),
+            );
+            AppendMenuW(menu, MF_POPUP, files_menu as usize, files_group.as_ptr());
+            AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
+            AppendMenuW(
+                system_menu,
                 MF_STRING
                     | if capture_cursor_enabled {
                         MF_CHECKED
@@ -615,7 +651,7 @@ mod platform {
                 capture_cursor.as_ptr(),
             );
             AppendMenuW(
-                menu,
+                system_menu,
                 if auto_start_enabled {
                     MF_STRING
                 } else {
@@ -624,9 +660,14 @@ mod platform {
                 MENU_TOGGLE_AUTO_START,
                 toggle_auto_start.as_ptr(),
             );
-            AppendMenuW(menu, MF_STRING, MENU_HISTORY, history.as_ptr());
-            AppendMenuW(menu, MF_STRING, MENU_SETTINGS, settings.as_ptr());
-            AppendMenuW(menu, MF_STRING, MENU_CHECK_UPDATES, check_updates.as_ptr());
+            AppendMenuW(system_menu, MF_STRING, MENU_SETTINGS, settings.as_ptr());
+            AppendMenuW(
+                system_menu,
+                MF_STRING,
+                MENU_CHECK_UPDATES,
+                check_updates.as_ptr(),
+            );
+            AppendMenuW(menu, MF_POPUP, system_menu as usize, system_group.as_ptr());
             AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
             AppendMenuW(menu, MF_STRING, MENU_QUIT, quit.as_ptr());
             SetForegroundWindow(window);
