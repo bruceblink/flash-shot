@@ -137,16 +137,19 @@ impl FlashShotApp {
         match SystemAutoStart.set_enabled(&executable, requested) {
             Ok(AutoStartState::Enabled) => {
                 self.auto_start_enabled = true;
+                self.set_tray_auto_start_state(AutoStartState::Enabled);
                 self.status = "Launch at sign-in enabled".to_owned();
                 self.notify_user("Flash Shot", "Launch at sign-in enabled");
             }
             Ok(AutoStartState::Disabled) => {
                 self.auto_start_enabled = false;
+                self.set_tray_auto_start_state(AutoStartState::Disabled);
                 self.status = "Launch at sign-in disabled".to_owned();
                 self.notify_user("Flash Shot", "Launch at sign-in disabled");
             }
             Ok(AutoStartState::ManagedByAnotherExecutable) => {
                 self.auto_start_enabled = false;
+                self.set_tray_auto_start_state(AutoStartState::ManagedByAnotherExecutable);
                 self.status =
                     "Launch at sign-in is managed by a different Flash Shot executable".to_owned();
             }

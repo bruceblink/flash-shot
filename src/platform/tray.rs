@@ -11,6 +11,7 @@ pub enum TrayEvent {
     DelayedCaptureRequested(u8),
     ToggleDisplayRecordingRequested,
     ToggleRecordingPauseRequested,
+    ToggleAutoStartRequested,
     OpenHistoryDirectoryRequested,
     OpenImageRequested,
     HistoryRequested,
@@ -32,6 +33,36 @@ pub enum TrayRecordingState {
     Paused,
     Pausing,
     Resuming,
+}
+
+/// The ownership state for the current user's Windows sign-in launch entry.
+///
+/// A different Flash Shot executable owns its entry, so the tray deliberately exposes it as
+/// informational instead of allowing this instance to replace or remove it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TrayAutoStartState {
+    #[default]
+    Disabled,
+    Enabled,
+    ManagedByAnotherExecutable,
+}
+
+impl TrayAutoStartState {
+    const fn as_u8(self) -> u8 {
+        match self {
+            Self::Disabled => 0,
+            Self::Enabled => 1,
+            Self::ManagedByAnotherExecutable => 2,
+        }
+    }
+
+    const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Enabled,
+            2 => Self::ManagedByAnotherExecutable,
+            _ => Self::Disabled,
+        }
+    }
 }
 
 impl TrayRecordingState {
@@ -99,11 +130,16 @@ impl TrayService {
     pub fn set_recording_state(&self, state: TrayRecordingState) {
         self.listener.set_recording_state(state);
     }
+
+    /// Updates the ownership-aware sign-in command shown the next time the tray menu opens.
+    pub fn set_auto_start_state(&self, state: TrayAutoStartState) {
+        self.listener.set_auto_start_state(state);
+    }
 }
 
 #[cfg(windows)]
 mod platform {
-    use super::{TrayEvent, TrayNotification, TrayRecordingState};
+    use super::{TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState};
     use async_channel::Receiver;
     use std::{
         io,
@@ -147,11 +183,12 @@ mod platform {
     const MENU_DELAYED_CAPTURE_10_SECONDS: usize = 6;
     const MENU_TOGGLE_DISPLAY_RECORDING: usize = 7;
     const MENU_TOGGLE_RECORDING_PAUSE: usize = 8;
-    const MENU_OPEN_HISTORY_DIRECTORY: usize = 9;
-    const MENU_OPEN_IMAGE: usize = 10;
-    const MENU_HISTORY: usize = 11;
-    const MENU_SETTINGS: usize = 12;
-    const MENU_QUIT: usize = 13;
+    const MENU_TOGGLE_AUTO_START: usize = 9;
+    const MENU_OPEN_HISTORY_DIRECTORY: usize = 10;
+    const MENU_OPEN_IMAGE: usize = 11;
+    const MENU_HISTORY: usize = 12;
+    const MENU_SETTINGS: usize = 13;
+    const MENU_QUIT: usize = 14;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -159,6 +196,7 @@ mod platform {
         thread: Option<JoinHandle<()>>,
         commands: Arc<Mutex<Vec<TrayCommand>>>,
         recording_state: Arc<AtomicU8>,
+        auto_start_state: Arc<AtomicU8>,
         active: Arc<AtomicBool>,
     }
 
@@ -169,6 +207,7 @@ mod platform {
     struct TrayWindowContext {
         events: async_channel::Sender<TrayEvent>,
         recording_state: Arc<AtomicU8>,
+        auto_start_state: Arc<AtomicU8>,
     }
 
     impl TrayListener {
@@ -179,6 +218,8 @@ mod platform {
             let thread_commands = commands.clone();
             let recording_state = Arc::new(AtomicU8::new(TrayRecordingState::Idle.as_u8()));
             let thread_recording_state = recording_state.clone();
+            let auto_start_state = Arc::new(AtomicU8::new(TrayAutoStartState::Disabled.as_u8()));
+            let thread_auto_start_state = auto_start_state.clone();
             let active = Arc::new(AtomicBool::new(false));
             let thread_active = active.clone();
             let thread = thread::Builder::new()
@@ -189,6 +230,7 @@ mod platform {
                         ready_tx,
                         thread_commands,
                         thread_recording_state,
+                        thread_auto_start_state,
                         thread_active,
                     )
                 })?;
@@ -199,6 +241,7 @@ mod platform {
                         thread: Some(thread),
                         commands,
                         recording_state,
+                        auto_start_state,
                         active,
                     },
                     event_rx,
@@ -242,6 +285,12 @@ mod platform {
         pub fn set_recording_state(&self, state: TrayRecordingState) {
             self.recording_state.store(state.as_u8(), Ordering::Release);
         }
+
+        /// Shares the latest sign-in entry ownership with the tray thread without blocking UI work.
+        pub fn set_auto_start_state(&self, state: TrayAutoStartState) {
+            self.auto_start_state
+                .store(state.as_u8(), Ordering::Release);
+        }
     }
 
     impl Drop for TrayListener {
@@ -261,11 +310,13 @@ mod platform {
         ready: SyncSender<io::Result<u32>>,
         commands: Arc<Mutex<Vec<TrayCommand>>>,
         recording_state: Arc<AtomicU8>,
+        auto_start_state: Arc<AtomicU8>,
         active: Arc<AtomicBool>,
     ) {
         let context = Box::new(TrayWindowContext {
             events,
             recording_state,
+            auto_start_state,
         });
         let result = unsafe { create_tray(&context) };
         let (window, mut icon) = match result {
@@ -423,6 +474,7 @@ mod platform {
             && let Some(event) = show_menu(
                 window,
                 TrayRecordingState::from_u8(context.recording_state.load(Ordering::Acquire)),
+                TrayAutoStartState::from_u8(context.auto_start_state.load(Ordering::Acquire)),
             )
         {
             let _ = context.events.try_send(event);
@@ -436,7 +488,11 @@ mod platform {
     }
 
     /// Builds a popup menu that labels and enables the recording command for its current state.
-    fn show_menu(window: HWND, recording_state: TrayRecordingState) -> Option<TrayEvent> {
+    fn show_menu(
+        window: HWND,
+        recording_state: TrayRecordingState,
+        auto_start_state: TrayAutoStartState,
+    ) -> Option<TrayEvent> {
         // SAFETY: menu is owned here and destroyed before return.
         let menu = unsafe { CreatePopupMenu() };
         if menu.is_null() {
@@ -451,6 +507,8 @@ mod platform {
         let (recording_label, recording_enabled) = recording_menu_presentation(recording_state);
         let toggle_display_recording = wide(recording_label);
         let toggle_recording_pause = recording_pause_menu_presentation(recording_state).map(wide);
+        let (auto_start_label, auto_start_enabled) = auto_start_menu_presentation(auto_start_state);
+        let toggle_auto_start = wide(auto_start_label);
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
@@ -514,6 +572,16 @@ mod platform {
             );
             AppendMenuW(menu, MF_STRING, MENU_OPEN_IMAGE, open_image.as_ptr());
             AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
+            AppendMenuW(
+                menu,
+                if auto_start_enabled {
+                    MF_STRING
+                } else {
+                    MF_STRING | MF_GRAYED
+                },
+                MENU_TOGGLE_AUTO_START,
+                toggle_auto_start.as_ptr(),
+            );
             AppendMenuW(menu, MF_STRING, MENU_HISTORY, history.as_ptr());
             AppendMenuW(menu, MF_STRING, MENU_SETTINGS, settings.as_ptr());
             AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
@@ -553,6 +621,7 @@ mod platform {
             MENU_DELAYED_CAPTURE_10_SECONDS => Some(TrayEvent::DelayedCaptureRequested(10)),
             MENU_TOGGLE_DISPLAY_RECORDING => Some(TrayEvent::ToggleDisplayRecordingRequested),
             MENU_TOGGLE_RECORDING_PAUSE => Some(TrayEvent::ToggleRecordingPauseRequested),
+            MENU_TOGGLE_AUTO_START => Some(TrayEvent::ToggleAutoStartRequested),
             MENU_OPEN_HISTORY_DIRECTORY => Some(TrayEvent::OpenHistoryDirectoryRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
@@ -590,6 +659,17 @@ mod platform {
         }
     }
 
+    /// Returns a safe sign-in command label, preserving an entry owned by another executable.
+    pub(super) fn auto_start_menu_presentation(state: TrayAutoStartState) -> (&'static str, bool) {
+        match state {
+            TrayAutoStartState::Disabled => ("Start with Windows", true),
+            TrayAutoStartState::Enabled => ("Stop starting with Windows", true),
+            TrayAutoStartState::ManagedByAnotherExecutable => {
+                ("Start with Windows managed by another install", false)
+            }
+        }
+    }
+
     unsafe fn remove_tray(window: HWND, icon: &NOTIFYICONDATAW) {
         unsafe {
             Shell_NotifyIconW(NIM_DELETE, icon);
@@ -612,7 +692,7 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::{TrayEvent, TrayNotification, TrayRecordingState};
+    use super::{TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState};
     use async_channel::Receiver;
     use std::io;
 
@@ -638,6 +718,8 @@ mod platform {
         }
 
         pub fn set_recording_state(&self, _state: TrayRecordingState) {}
+
+        pub fn set_auto_start_state(&self, _state: TrayAutoStartState) {}
     }
 }
 
@@ -717,8 +799,19 @@ mod tests {
         use super::{TrayEvent, platform::tray_event_for_command};
 
         assert_eq!(
-            tray_event_for_command(9),
+            tray_event_for_command(10),
             Some(TrayEvent::OpenHistoryDirectoryRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn auto_start_menu_item_dispatches_the_ownership_aware_toggle_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(9),
+            Some(TrayEvent::ToggleAutoStartRequested)
         );
     }
 
@@ -748,8 +841,11 @@ mod tests {
     #[test]
     fn recording_menu_labels_prevent_conflicting_lifecycle_operations() {
         use super::{
-            TrayRecordingState,
-            platform::{recording_menu_presentation, recording_pause_menu_presentation},
+            TrayAutoStartState, TrayRecordingState,
+            platform::{
+                auto_start_menu_presentation, recording_menu_presentation,
+                recording_pause_menu_presentation,
+            },
         };
 
         assert_eq!(
@@ -791,6 +887,18 @@ mod tests {
         assert_eq!(
             recording_pause_menu_presentation(TrayRecordingState::Pausing),
             None
+        );
+        assert_eq!(
+            auto_start_menu_presentation(TrayAutoStartState::Disabled),
+            ("Start with Windows", true)
+        );
+        assert_eq!(
+            auto_start_menu_presentation(TrayAutoStartState::Enabled),
+            ("Stop starting with Windows", true)
+        );
+        assert_eq!(
+            auto_start_menu_presentation(TrayAutoStartState::ManagedByAnotherExecutable),
+            ("Start with Windows managed by another install", false)
         );
     }
 }

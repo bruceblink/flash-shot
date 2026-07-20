@@ -30,7 +30,7 @@ use crate::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::CaptureFrame,
         shortcut::{CaptureShortcut, GlobalShortcutService, ShortcutEvent},
-        tray::{TrayEvent, TrayNotification, TrayRecordingState, TrayService},
+        tray::{TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState, TrayService},
         window_inspector::InspectionTarget,
     },
     settings::UserSettings,
@@ -179,6 +179,20 @@ impl FlashShotApp {
         }
     }
 
+    /// Mirrors Windows sign-in ownership into the tray so unsafe entry replacement is impossible.
+    pub(super) fn set_tray_auto_start_state(&self, state: AutoStartState) {
+        let state = match state {
+            AutoStartState::Enabled => TrayAutoStartState::Enabled,
+            AutoStartState::Disabled => TrayAutoStartState::Disabled,
+            AutoStartState::ManagedByAnotherExecutable => {
+                TrayAutoStartState::ManagedByAnotherExecutable
+            }
+        };
+        if let Some(tray) = self._tray.as_ref() {
+            tray.set_auto_start_state(state);
+        }
+    }
+
     pub fn new(
         performance: PerformanceRecorder,
         history: ScreenshotHistory,
@@ -249,6 +263,18 @@ impl FlashShotApp {
             }
             None => false,
         };
+        if let (Some(tray), Ok(executable)) = (tray.as_ref(), std::env::current_exe())
+            && let Ok(state) = SystemAutoStart.state(&executable)
+        {
+            let state = match state {
+                AutoStartState::Enabled => TrayAutoStartState::Enabled,
+                AutoStartState::Disabled => TrayAutoStartState::Disabled,
+                AutoStartState::ManagedByAnotherExecutable => {
+                    TrayAutoStartState::ManagedByAnotherExecutable
+                }
+            };
+            tray.set_auto_start_state(state);
+        }
 
         Self {
             colors: ThemeColors::default(),
@@ -354,6 +380,9 @@ impl FlashShotApp {
                         }
                         TrayEvent::ToggleRecordingPauseRequested => {
                             this.update(&mut cx, |this, cx| this.toggle_recording_pause(cx));
+                        }
+                        TrayEvent::ToggleAutoStartRequested => {
+                            this.update(&mut cx, |this, cx| this.toggle_auto_start(cx));
                         }
                         TrayEvent::OpenHistoryDirectoryRequested => {
                             this.update(&mut cx, |this, cx| this.open_history_directory(cx));
