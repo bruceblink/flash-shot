@@ -9,6 +9,7 @@ pub enum TrayEvent {
     FullScreenCaptureRequested,
     FullScreenCopyRequested,
     FullScreenSaveRequested,
+    PinClipboardImageRequested,
     DelayedCaptureRequested(u8),
     ToggleDisplayRecordingRequested,
     ToggleRecordingPauseRequested,
@@ -202,6 +203,7 @@ mod platform {
     const MENU_OPEN_PROJECT: usize = 16;
     const MENU_CHECK_UPDATES: usize = 17;
     const MENU_FULL_SCREEN_SAVE: usize = 18;
+    const MENU_PIN_CLIPBOARD_IMAGE: usize = 19;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -557,6 +559,7 @@ mod platform {
         let (auto_start_label, auto_start_enabled) = auto_start_menu_presentation(auto_start_state);
         let toggle_auto_start = wide(auto_start_label);
         let capture_cursor = wide("Include cursor in captures");
+        let pin_clipboard_image = wide("Pin clipboard image");
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
         let open_project = wide("Open editable project");
@@ -620,6 +623,12 @@ mod platform {
                     toggle_recording_pause.as_ptr(),
                 );
             }
+            AppendMenuW(
+                files_menu,
+                MF_STRING,
+                MENU_PIN_CLIPBOARD_IMAGE,
+                pin_clipboard_image.as_ptr(),
+            );
             AppendMenuW(
                 files_menu,
                 MF_STRING,
@@ -710,6 +719,7 @@ mod platform {
             MENU_FULL_SCREEN_CAPTURE => Some(TrayEvent::FullScreenCaptureRequested),
             MENU_FULL_SCREEN_COPY => Some(TrayEvent::FullScreenCopyRequested),
             MENU_FULL_SCREEN_SAVE => Some(TrayEvent::FullScreenSaveRequested),
+            MENU_PIN_CLIPBOARD_IMAGE => Some(TrayEvent::PinClipboardImageRequested),
             MENU_DELAYED_CAPTURE_3_SECONDS => Some(TrayEvent::DelayedCaptureRequested(3)),
             MENU_DELAYED_CAPTURE_5_SECONDS => Some(TrayEvent::DelayedCaptureRequested(5)),
             MENU_DELAYED_CAPTURE_10_SECONDS => Some(TrayEvent::DelayedCaptureRequested(10)),
@@ -900,6 +910,17 @@ mod tests {
         assert_eq!(
             tray_event_for_command(18),
             Some(TrayEvent::FullScreenSaveRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn clipboard_pin_menu_item_dispatches_the_pin_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(19),
+            Some(TrayEvent::PinClipboardImageRequested)
         );
     }
 

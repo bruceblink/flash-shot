@@ -76,6 +76,7 @@ pub struct FlashShotApp {
     delayed_capture_remaining_seconds: Option<u8>,
     full_screen_copy_generation: Option<u64>,
     full_screen_save_generation: Option<u64>,
+    clipboard_pin_generation: Option<u64>,
     include_cursor: bool,
     recognition_result: Option<RecognitionResult>,
     overlay_more_actions: bool,
@@ -326,6 +327,7 @@ impl FlashShotApp {
             delayed_capture_remaining_seconds: None,
             full_screen_copy_generation: None,
             full_screen_save_generation: None,
+            clipboard_pin_generation: None,
             include_cursor: settings.include_cursor,
             recognition_result: None,
             overlay_more_actions: false,
@@ -384,6 +386,9 @@ impl FlashShotApp {
                         }
                         TrayEvent::FullScreenSaveRequested => {
                             this.update(&mut cx, |this, cx| this.quick_save_full_screen(cx));
+                        }
+                        TrayEvent::PinClipboardImageRequested => {
+                            this.update(&mut cx, |this, cx| this.pin_clipboard_image(cx));
                         }
                         TrayEvent::DelayedCaptureRequested(seconds) => {
                             this.update(&mut cx, |this, cx| {

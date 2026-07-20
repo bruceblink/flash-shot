@@ -22,6 +22,59 @@ impl ClipboardService for SystemClipboard {
     }
 }
 
+impl SystemClipboard {
+    /// Reads the current image clipboard payload into the capture frame used by editing and pinning.
+    pub fn read_image(&self) -> io::Result<CaptureFrame> {
+        platform::read_image()
+    }
+}
+
+/// Converts decoded RGBA clipboard pixels into the app's immutable BGRA frame representation.
+fn frame_from_rgba(width: usize, height: usize, rgba: &[u8]) -> io::Result<CaptureFrame> {
+    let width_u32 = u32::try_from(width)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "clipboard image is too wide"))?;
+    let height_u32 = u32::try_from(height)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "clipboard image is too tall"))?;
+    let right = i32::try_from(width)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "clipboard image is too wide"))?;
+    let bottom = i32::try_from(height)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "clipboard image is too tall"))?;
+    let stride = width.checked_mul(4).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "clipboard image size overflow")
+    })?;
+    let expected = stride.checked_mul(height).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "clipboard image size overflow")
+    })?;
+    if width == 0 || height == 0 || rgba.len() != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard image pixels do not match its dimensions",
+        ));
+    }
+
+    let mut bgra = Vec::with_capacity(expected);
+    for pixel in rgba.chunks_exact(4) {
+        bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+    }
+    let frame = CaptureFrame {
+        bounds: crate::domain::geometry::PhysicalRect {
+            left: 0,
+            top: 0,
+            right,
+            bottom,
+        },
+        width: width_u32,
+        height: height_u32,
+        stride,
+        format: crate::platform::capture::PixelFormat::Bgra8,
+        pixels: bgra.into(),
+        capture_duration: std::time::Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    frame.validate()?;
+    Ok(frame)
+}
+
 fn encode_dib(frame: &CaptureFrame) -> io::Result<Vec<u8>> {
     frame.validate()?;
     let header_size = 40_usize;
@@ -59,7 +112,7 @@ fn write_i32(target: &mut [u8], offset: usize, value: i32) {
 
 #[cfg(windows)]
 mod platform {
-    use super::{CaptureFrame, encode_dib};
+    use super::{CaptureFrame, encode_dib, frame_from_rgba};
     use std::{io, ptr, thread, time::Duration};
     use windows_sys::Win32::{
         Foundation::{GlobalFree, HANDLE, HGLOBAL},
@@ -74,6 +127,28 @@ mod platform {
     };
 
     const OPEN_ATTEMPTS: usize = 8;
+
+    pub fn read_image() -> io::Result<CaptureFrame> {
+        let mut last_error = None;
+        for attempt in 0..OPEN_ATTEMPTS {
+            match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_image()) {
+                Ok(image) => {
+                    return frame_from_rgba(image.width, image.height, image.bytes.as_ref());
+                }
+                Err(error) => last_error = Some(error),
+            }
+            if attempt + 1 < OPEN_ATTEMPTS {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+        Err(clipboard_error(
+            last_error.expect("clipboard read attempted"),
+        ))
+    }
+
+    fn clipboard_error(error: arboard::Error) -> io::Error {
+        io::Error::other(format!("could not read clipboard image: {error}"))
+    }
 
     pub fn copy_image(frame: &CaptureFrame) -> io::Result<()> {
         let png = frame.encode_png()?;
@@ -203,6 +278,13 @@ mod platform {
         ))
     }
 
+    pub fn read_image() -> io::Result<CaptureFrame> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "image clipboard is currently Windows-only",
+        ))
+    }
+
     pub fn copy_text(_text: &str) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -213,9 +295,9 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::encode_dib;
     #[cfg(windows)]
     use super::platform::utf16_bytes;
+    use super::{encode_dib, frame_from_rgba};
     use crate::{
         domain::geometry::PhysicalRect,
         platform::capture::{CaptureFrame, PixelFormat},
@@ -247,6 +329,23 @@ mod tests {
         assert_eq!(&dib[8..12], &2_i32.to_le_bytes());
         assert_eq!(&dib[40..44], &[4, 5, 6, 255]);
         assert_eq!(&dib[44..48], &[1, 2, 3, 255]);
+    }
+
+    #[test]
+    fn clipboard_rgba_pixels_convert_to_a_valid_bgra_frame() {
+        let frame = frame_from_rgba(2, 1, &[3, 2, 1, 255, 6, 5, 4, 128]).unwrap();
+
+        assert_eq!((frame.width, frame.height, frame.stride), (2, 1, 8));
+        assert_eq!(frame.bounds.right, 2);
+        assert_eq!(frame.bounds.bottom, 1);
+        assert_eq!(frame.pixels.as_ref(), &[1, 2, 3, 255, 4, 5, 6, 128]);
+    }
+
+    #[test]
+    fn clipboard_image_conversion_rejects_truncated_pixels() {
+        let error = frame_from_rgba(2, 1, &[0; 4]).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[cfg(windows)]

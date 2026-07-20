@@ -893,6 +893,7 @@ impl FlashShotApp {
     pub(super) fn copy_full_screen(&mut self, cx: &mut Context<Self>) {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
+            || self.clipboard_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -931,6 +932,7 @@ impl FlashShotApp {
     pub(super) fn quick_save_full_screen(&mut self, cx: &mut Context<Self>) {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
+            || self.clipboard_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -969,7 +971,9 @@ impl FlashShotApp {
         preselect_full_screen: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.full_screen_copy_generation.is_some() || self.full_screen_save_generation.is_some()
+        if self.full_screen_copy_generation.is_some()
+            || self.full_screen_save_generation.is_some()
+            || self.clipboard_pin_generation.is_some()
         {
             return;
         }
@@ -1223,6 +1227,7 @@ impl FlashShotApp {
         self.delayed_capture_remaining_seconds = None;
         self.full_screen_copy_generation = None;
         self.full_screen_save_generation = None;
+        self.clipboard_pin_generation = None;
         self.frame = None;
         self.annotation_document = None;
         self.annotation_history = Default::default();
@@ -2465,10 +2470,94 @@ impl FlashShotApp {
                 return;
             }
         };
+        self.open_pinned_frame(
+            pinned_frame,
+            "Selection pinned in an always-on-top window",
+            None,
+            cx,
+        );
+    }
+
+    /// Reads the current clipboard image away from the UI thread and pins only the latest request.
+    pub(super) fn pin_clipboard_image(&mut self, cx: &mut Context<Self>) {
+        if self.clipboard_pin_generation.is_some()
+            || self.full_screen_copy_generation.is_some()
+            || self.full_screen_save_generation.is_some()
+            || self.delayed_capture_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.clipboard_pin_generation = Some(generation);
+        self.status = "Reading clipboard image...".to_owned();
+        self.hide_settings_window();
+        cx.notify();
+
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { SystemClipboard.read_image() })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_pin_clipboard_image(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_pin_clipboard_image(
+        &mut self,
+        result: std::io::Result<CaptureFrame>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self.clipboard_pin_generation != Some(generation) {
+            return;
+        }
+        self.clipboard_pin_generation = None;
+        if !is_current_operation(self.operation_generation, generation)
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        match result {
+            Ok(frame) => self.open_pinned_frame(
+                frame,
+                "Clipboard image pinned in an always-on-top window",
+                Some("Could not pin clipboard image"),
+                cx,
+            ),
+            Err(error) => {
+                self.status = format!("Could not pin clipboard image: {error}");
+                log::warn!(target: "flash_shot::pinned", "clipboard_pin_failed error={error}");
+                self.notify_user("Flash Shot", "Could not pin clipboard image");
+                cx.notify();
+            }
+        }
+    }
+
+    /// Opens one reusable always-on-top image window from an already decoded frame.
+    fn open_pinned_frame(
+        &mut self,
+        pinned_frame: CaptureFrame,
+        success_status: &'static str,
+        failure_notification: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) {
         let pinned = match render_image_from_capture(&pinned_frame) {
             Ok(image) => image,
             Err(error) => {
-                self.status = format!("Could not render pinned selection: {error}");
+                self.status = format!("Could not render pinned image: {error}");
+                if let Some(message) = failure_notification {
+                    self.notify_user("Flash Shot", message);
+                }
                 cx.notify();
                 return;
             }
@@ -2496,11 +2585,14 @@ impl FlashShotApp {
             },
         ) {
             Ok(_) => {
-                self.status = "Selection pinned in an always-on-top window".to_owned();
+                self.status = success_status.to_owned();
             }
             Err(error) => {
                 self.status = format!("Could not open pinned window: {error}");
                 log::warn!(target: "flash_shot::pinned", "pinned_window_open_failed error={error}");
+                if let Some(message) = failure_notification {
+                    self.notify_user("Flash Shot", message);
+                }
             }
         }
         cx.notify();
