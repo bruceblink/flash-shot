@@ -74,6 +74,25 @@ impl FlashShotApp {
                 return;
             }
         };
+        if !self.settings.capture_shortcut_enabled {
+            let previous_label = self.capture_shortcut.clone();
+            let previous_preference = self.settings.capture_shortcut.clone();
+            self.capture_shortcut = shortcut.to_string();
+            self.settings.capture_shortcut = Some(self.capture_shortcut.clone());
+            self.status = match self.settings.save(&self.settings_path) {
+                Ok(()) => format!(
+                    "Capture shortcut changed to {}; global shortcut remains disabled",
+                    self.capture_shortcut
+                ),
+                Err(error) => {
+                    self.capture_shortcut = previous_label;
+                    self.settings.capture_shortcut = previous_preference;
+                    format!("Could not save shortcut preference: {error}")
+                }
+            };
+            cx.notify();
+            return;
+        }
         let previous_label = self.capture_shortcut.clone();
         let previous_preference = self.settings.capture_shortcut.clone();
         let previous_service = self._shortcut.take();
@@ -85,12 +104,15 @@ impl FlashShotApp {
             }
             Err(error) => {
                 self.restore_capture_shortcut(&previous_label, cx);
+                self.capture_shortcut_enabled = self._shortcut.is_some();
+                self.set_tray_capture_shortcut_enabled(self.capture_shortcut_enabled);
                 self.status = format!("Could not register {preset}: {error}");
                 cx.notify();
                 return;
             }
         };
         self._shortcut = Some(replacement);
+        self.capture_shortcut_enabled = true;
         self.capture_shortcut = shortcut.to_string();
         self.settings.capture_shortcut = Some(self.capture_shortcut.clone());
         match self.settings.save(&self.settings_path) {
@@ -101,11 +123,13 @@ impl FlashShotApp {
                 let replacement = self._shortcut.take();
                 drop(replacement);
                 self.restore_capture_shortcut(&previous_label, cx);
+                self.capture_shortcut_enabled = self._shortcut.is_some();
                 self.capture_shortcut = previous_label;
                 self.settings.capture_shortcut = previous_preference;
                 self.status = format!("Could not save shortcut preference: {error}");
             }
         }
+        self.set_tray_capture_shortcut_enabled(self.capture_shortcut_enabled);
         cx.notify();
     }
 
@@ -122,6 +146,58 @@ impl FlashShotApp {
                 log::warn!(target: "flash_shot::shortcut", "capture_hotkey_restore_failed shortcut={label} error={error}");
             }
         }
+    }
+
+    /// Applies and persists the hotkey switch while preserving its configured key combination.
+    pub(super) fn toggle_capture_shortcut(&mut self, cx: &mut Context<Self>) {
+        if self.capture_shortcut_enabled {
+            self.settings.capture_shortcut_enabled = false;
+            if let Err(error) = self.settings.save(&self.settings_path) {
+                self.settings.capture_shortcut_enabled = true;
+                self.status = format!("Could not disable global shortcut: {error}");
+                cx.notify();
+                return;
+            }
+            drop(self._shortcut.take());
+            self.capture_shortcut_enabled = false;
+            self.set_tray_capture_shortcut_enabled(false);
+            self.status = "Global capture shortcut disabled".to_owned();
+            self.notify_user("Flash Shot", "Global capture shortcut disabled");
+            cx.notify();
+            return;
+        }
+
+        let shortcut = match self.capture_shortcut.parse() {
+            Ok(shortcut) => shortcut,
+            Err(error) => {
+                self.status = format!("Could not enable global shortcut: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        let (service, events) = match GlobalShortcutService::register_capture(shortcut) {
+            Ok(registered) => registered,
+            Err(error) => {
+                self.status = format!("Could not register {}: {error}", self.capture_shortcut);
+                cx.notify();
+                return;
+            }
+        };
+        self.settings.capture_shortcut_enabled = true;
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            drop(service);
+            self.settings.capture_shortcut_enabled = false;
+            self.status = format!("Could not save global shortcut preference: {error}");
+            cx.notify();
+            return;
+        }
+        Self::listen_for_shortcut(events, cx);
+        self._shortcut = Some(service);
+        self.capture_shortcut_enabled = true;
+        self.set_tray_capture_shortcut_enabled(true);
+        self.status = format!("Global capture shortcut enabled: {}", self.capture_shortcut);
+        self.notify_user("Flash Shot", "Global capture shortcut enabled");
+        cx.notify();
     }
 
     pub(super) fn toggle_auto_start(&mut self, cx: &mut Context<Self>) {
@@ -1248,7 +1324,11 @@ impl FlashShotApp {
         self.recognition_result = None;
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
-        self.status = format!("Ready - {}", self.capture_shortcut);
+        self.status = if self.capture_shortcut_enabled {
+            format!("Ready - {}", self.capture_shortcut)
+        } else {
+            "Ready - global shortcut disabled".to_owned()
+        };
         self.close_capture_overlays(cx);
         self.close_manual_scroll_window(cx);
         self.return_to_background();

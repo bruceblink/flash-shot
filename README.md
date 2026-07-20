@@ -144,6 +144,8 @@ The `Display` control cycles recordable monitors in primary-first order. Both di
 
 The capture shortcut defaults to `Ctrl+Shift+Print Screen`. Set `FLASH_SHOT_CAPTURE_HOTKEY` before launch to use a different safe global combination, for example `Ctrl+Alt+S`, `Shift+F12`, or `Ctrl+PrintScreen`. It must include `Ctrl`, `Alt`, or `Shift`, plus one letter, `F1` through `F24`, or `PrintScreen`; invalid values fall back to the default.
 
+The global capture shortcut can be disabled from the tray `System` menu or Capture settings without changing its configured key combination. The preference persists across restarts, while the tray capture commands remain available.
+
 `Start with Windows` configures only the current user's sign-in entry. It does not require elevation, and it never removes a `Flash Shot` startup entry that points to a different executable.
 
 Use `Files > Pin clipboard image` from the tray menu to turn the current Windows clipboard image into an always-on-top reference without opening the settings window or starting a new capture.

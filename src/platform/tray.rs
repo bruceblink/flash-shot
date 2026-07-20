@@ -15,6 +15,7 @@ pub enum TrayEvent {
     ToggleRecordingPauseRequested,
     ToggleAutoStartRequested,
     ToggleCaptureCursorRequested,
+    ToggleCaptureShortcutRequested,
     OpenHistoryDirectoryRequested,
     OpenImageRequested,
     OpenProjectRequested,
@@ -145,6 +146,11 @@ impl TrayService {
     pub fn set_capture_cursor_enabled(&self, enabled: bool) {
         self.listener.set_capture_cursor_enabled(enabled);
     }
+
+    /// Updates the hotkey check mark shown the next time the user opens the tray menu.
+    pub fn set_capture_shortcut_enabled(&self, enabled: bool) {
+        self.listener.set_capture_shortcut_enabled(enabled);
+    }
 }
 
 #[cfg(windows)]
@@ -204,15 +210,14 @@ mod platform {
     const MENU_CHECK_UPDATES: usize = 17;
     const MENU_FULL_SCREEN_SAVE: usize = 18;
     const MENU_PIN_CLIPBOARD_IMAGE: usize = 19;
+    const MENU_TOGGLE_CAPTURE_SHORTCUT: usize = 20;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
         thread_id: u32,
         thread: Option<JoinHandle<()>>,
         commands: Arc<Mutex<Vec<TrayCommand>>>,
-        recording_state: Arc<AtomicU8>,
-        auto_start_state: Arc<AtomicU8>,
-        capture_cursor_enabled: Arc<AtomicBool>,
+        menu_state: TrayMenuState,
         active: Arc<AtomicBool>,
     }
 
@@ -220,11 +225,17 @@ mod platform {
         Notify(TrayNotification),
     }
 
-    struct TrayWindowContext {
-        events: async_channel::Sender<TrayEvent>,
+    #[derive(Clone)]
+    struct TrayMenuState {
         recording_state: Arc<AtomicU8>,
         auto_start_state: Arc<AtomicU8>,
         capture_cursor_enabled: Arc<AtomicBool>,
+        capture_shortcut_enabled: Arc<AtomicBool>,
+    }
+
+    struct TrayWindowContext {
+        events: async_channel::Sender<TrayEvent>,
+        menu_state: TrayMenuState,
     }
 
     impl TrayListener {
@@ -233,12 +244,13 @@ mod platform {
             let (ready_tx, ready_rx) = mpsc::sync_channel(1);
             let commands = Arc::new(Mutex::new(Vec::new()));
             let thread_commands = commands.clone();
-            let recording_state = Arc::new(AtomicU8::new(TrayRecordingState::Idle.as_u8()));
-            let thread_recording_state = recording_state.clone();
-            let auto_start_state = Arc::new(AtomicU8::new(TrayAutoStartState::Disabled.as_u8()));
-            let thread_auto_start_state = auto_start_state.clone();
-            let capture_cursor_enabled = Arc::new(AtomicBool::new(false));
-            let thread_capture_cursor_enabled = capture_cursor_enabled.clone();
+            let menu_state = TrayMenuState {
+                recording_state: Arc::new(AtomicU8::new(TrayRecordingState::Idle.as_u8())),
+                auto_start_state: Arc::new(AtomicU8::new(TrayAutoStartState::Disabled.as_u8())),
+                capture_cursor_enabled: Arc::new(AtomicBool::new(false)),
+                capture_shortcut_enabled: Arc::new(AtomicBool::new(true)),
+            };
+            let thread_menu_state = menu_state.clone();
             let active = Arc::new(AtomicBool::new(false));
             let thread_active = active.clone();
             let thread = thread::Builder::new()
@@ -248,9 +260,7 @@ mod platform {
                         event_tx,
                         ready_tx,
                         thread_commands,
-                        thread_recording_state,
-                        thread_auto_start_state,
-                        thread_capture_cursor_enabled,
+                        thread_menu_state,
                         thread_active,
                     )
                 })?;
@@ -260,9 +270,7 @@ mod platform {
                         thread_id,
                         thread: Some(thread),
                         commands,
-                        recording_state,
-                        auto_start_state,
-                        capture_cursor_enabled,
+                        menu_state,
                         active,
                     },
                     event_rx,
@@ -304,18 +312,29 @@ mod platform {
 
         /// Shares the application recording state with the tray thread without blocking UI work.
         pub fn set_recording_state(&self, state: TrayRecordingState) {
-            self.recording_state.store(state.as_u8(), Ordering::Release);
+            self.menu_state
+                .recording_state
+                .store(state.as_u8(), Ordering::Release);
         }
 
         /// Shares the latest sign-in entry ownership with the tray thread without blocking UI work.
         pub fn set_auto_start_state(&self, state: TrayAutoStartState) {
-            self.auto_start_state
+            self.menu_state
+                .auto_start_state
                 .store(state.as_u8(), Ordering::Release);
         }
 
         /// Shares the persisted cursor preference with the tray thread without blocking UI work.
         pub fn set_capture_cursor_enabled(&self, enabled: bool) {
-            self.capture_cursor_enabled
+            self.menu_state
+                .capture_cursor_enabled
+                .store(enabled, Ordering::Release);
+        }
+
+        /// Shares the live hotkey state with the tray thread without blocking UI work.
+        pub fn set_capture_shortcut_enabled(&self, enabled: bool) {
+            self.menu_state
+                .capture_shortcut_enabled
                 .store(enabled, Ordering::Release);
         }
     }
@@ -336,17 +355,10 @@ mod platform {
         events: async_channel::Sender<TrayEvent>,
         ready: SyncSender<io::Result<u32>>,
         commands: Arc<Mutex<Vec<TrayCommand>>>,
-        recording_state: Arc<AtomicU8>,
-        auto_start_state: Arc<AtomicU8>,
-        capture_cursor_enabled: Arc<AtomicBool>,
+        menu_state: TrayMenuState,
         active: Arc<AtomicBool>,
     ) {
-        let context = Box::new(TrayWindowContext {
-            events,
-            recording_state,
-            auto_start_state,
-            capture_cursor_enabled,
-        });
+        let context = Box::new(TrayWindowContext { events, menu_state });
         let result = unsafe { create_tray(&context) };
         let (window, mut icon) = match result {
             Ok(value) => value,
@@ -502,9 +514,20 @@ mod platform {
         if tray_menu_requested(message)
             && let Some(event) = show_menu(
                 window,
-                TrayRecordingState::from_u8(context.recording_state.load(Ordering::Acquire)),
-                TrayAutoStartState::from_u8(context.auto_start_state.load(Ordering::Acquire)),
-                context.capture_cursor_enabled.load(Ordering::Acquire),
+                TrayRecordingState::from_u8(
+                    context.menu_state.recording_state.load(Ordering::Acquire),
+                ),
+                TrayAutoStartState::from_u8(
+                    context.menu_state.auto_start_state.load(Ordering::Acquire),
+                ),
+                context
+                    .menu_state
+                    .capture_cursor_enabled
+                    .load(Ordering::Acquire),
+                context
+                    .menu_state
+                    .capture_shortcut_enabled
+                    .load(Ordering::Acquire),
             )
         {
             let _ = context.events.try_send(event);
@@ -523,6 +546,7 @@ mod platform {
         recording_state: TrayRecordingState,
         auto_start_state: TrayAutoStartState,
         capture_cursor_enabled: bool,
+        capture_shortcut_enabled: bool,
     ) -> Option<TrayEvent> {
         // SAFETY: menu is owned here and destroyed before return.
         let menu = unsafe { CreatePopupMenu() };
@@ -559,6 +583,7 @@ mod platform {
         let (auto_start_label, auto_start_enabled) = auto_start_menu_presentation(auto_start_state);
         let toggle_auto_start = wide(auto_start_label);
         let capture_cursor = wide("Include cursor in captures");
+        let capture_shortcut = wide("Enable global capture shortcut");
         let pin_clipboard_image = wide("Pin clipboard image");
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
@@ -660,6 +685,17 @@ mod platform {
             AppendMenuW(
                 system_menu,
                 MF_STRING
+                    | if capture_shortcut_enabled {
+                        MF_CHECKED
+                    } else {
+                        0
+                    },
+                MENU_TOGGLE_CAPTURE_SHORTCUT,
+                capture_shortcut.as_ptr(),
+            );
+            AppendMenuW(
+                system_menu,
+                MF_STRING
                     | if capture_cursor_enabled {
                         MF_CHECKED
                     } else {
@@ -727,6 +763,7 @@ mod platform {
             MENU_TOGGLE_RECORDING_PAUSE => Some(TrayEvent::ToggleRecordingPauseRequested),
             MENU_TOGGLE_AUTO_START => Some(TrayEvent::ToggleAutoStartRequested),
             MENU_TOGGLE_CAPTURE_CURSOR => Some(TrayEvent::ToggleCaptureCursorRequested),
+            MENU_TOGGLE_CAPTURE_SHORTCUT => Some(TrayEvent::ToggleCaptureShortcutRequested),
             MENU_OPEN_HISTORY_DIRECTORY => Some(TrayEvent::OpenHistoryDirectoryRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
             MENU_OPEN_PROJECT => Some(TrayEvent::OpenProjectRequested),
@@ -829,6 +866,8 @@ mod platform {
         pub fn set_auto_start_state(&self, _state: TrayAutoStartState) {}
 
         pub fn set_capture_cursor_enabled(&self, _enabled: bool) {}
+
+        pub fn set_capture_shortcut_enabled(&self, _enabled: bool) {}
     }
 }
 
@@ -943,6 +982,17 @@ mod tests {
         assert_eq!(
             tray_event_for_command(10),
             Some(TrayEvent::ToggleCaptureCursorRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shortcut_menu_item_dispatches_the_persisted_hotkey_toggle() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(20),
+            Some(TrayEvent::ToggleCaptureShortcutRequested)
         );
     }
 

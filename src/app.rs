@@ -87,6 +87,7 @@ pub struct FlashShotApp {
     settings_window_handle: Option<isize>,
     focus_handle: FocusHandle,
     capture_shortcut: String,
+    capture_shortcut_enabled: bool,
     settings_section: SettingsSection,
     settings: UserSettings,
     settings_path: PathBuf,
@@ -202,6 +203,13 @@ impl FlashShotApp {
         }
     }
 
+    /// Mirrors the live global-hotkey registration into the native tray check mark.
+    pub(super) fn set_tray_capture_shortcut_enabled(&self, enabled: bool) {
+        if let Some(tray) = self._tray.as_ref() {
+            tray.set_capture_shortcut_enabled(enabled);
+        }
+    }
+
     pub fn new(
         performance: PerformanceRecorder,
         history: ScreenshotHistory,
@@ -233,20 +241,27 @@ impl FlashShotApp {
             }
         };
         let capture_shortcut_label = capture_shortcut.to_string();
-        let shortcut = match GlobalShortcutService::register_capture(capture_shortcut) {
-            Ok((service, events)) => {
-                Self::listen_for_shortcut(events, cx);
-                Some(service)
+        let shortcut = if settings.capture_shortcut_enabled {
+            match GlobalShortcutService::register_capture(capture_shortcut) {
+                Ok((service, events)) => {
+                    Self::listen_for_shortcut(events, cx);
+                    Some(service)
+                }
+                Err(error) => {
+                    log::warn!(target: "flash_shot::shortcut", "capture_hotkey_unavailable error={error}");
+                    None
+                }
             }
-            Err(error) => {
-                log::warn!(target: "flash_shot::shortcut", "capture_hotkey_unavailable error={error}");
-                None
-            }
-        };
-        let status = if shortcut.is_some() {
-            format!("Ready - {capture_shortcut_label}")
         } else {
+            None
+        };
+        let capture_shortcut_enabled = shortcut.is_some();
+        let status = if capture_shortcut_enabled {
+            format!("Ready - {capture_shortcut_label}")
+        } else if settings.capture_shortcut_enabled {
             "Ready - global shortcut unavailable".to_owned()
+        } else {
+            "Ready - global shortcut disabled".to_owned()
         };
         let tray = match TrayService::start() {
             Ok((service, events)) => {
@@ -286,6 +301,7 @@ impl FlashShotApp {
         }
         if let Some(tray) = tray.as_ref() {
             tray.set_capture_cursor_enabled(settings.include_cursor);
+            tray.set_capture_shortcut_enabled(capture_shortcut_enabled);
         }
 
         Self {
@@ -338,6 +354,7 @@ impl FlashShotApp {
             settings_window_handle: None,
             focus_handle: cx.focus_handle(),
             capture_shortcut: capture_shortcut_label,
+            capture_shortcut_enabled,
             settings_section: SettingsSection::default(),
             settings,
             settings_path,
@@ -406,6 +423,9 @@ impl FlashShotApp {
                         }
                         TrayEvent::ToggleCaptureCursorRequested => {
                             this.update(&mut cx, |this, cx| this.toggle_capture_cursor(cx));
+                        }
+                        TrayEvent::ToggleCaptureShortcutRequested => {
+                            this.update(&mut cx, |this, cx| this.toggle_capture_shortcut(cx));
                         }
                         TrayEvent::OpenHistoryDirectoryRequested => {
                             this.update(&mut cx, |this, cx| this.open_history_directory(cx));

@@ -162,6 +162,16 @@ fn capture_settings(
                         .child(app_state.capture_shortcut.clone()),
                 ),
         )
+        .child(settings_row("Global shortcut").child(settings_toggle(
+            "settings-shortcut-enabled",
+            app_state.capture_shortcut_enabled,
+            colors,
+            is_idle,
+            {
+                let app = app.clone();
+                move |_, _, cx| app.update(cx, |this, cx| this.toggle_capture_shortcut(cx))
+            },
+        )))
         .child(settings_row("Include cursor").child(settings_toggle(
             "settings-cursor",
             app_state.include_cursor,

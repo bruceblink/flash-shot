@@ -14,6 +14,7 @@ pub const DEFAULT_HISTORY_LIMIT: u16 = 30;
 pub struct UserSettings {
     version: u8,
     pub capture_shortcut: Option<String>,
+    pub capture_shortcut_enabled: bool,
     pub include_cursor: bool,
     pub capture_delay_seconds: u8,
     pub history_limit: u16,
@@ -24,6 +25,7 @@ impl Default for UserSettings {
         Self {
             version: SETTINGS_VERSION,
             capture_shortcut: None,
+            capture_shortcut_enabled: true,
             include_cursor: false,
             capture_delay_seconds: 0,
             history_limit: DEFAULT_HISTORY_LIMIT,
@@ -103,6 +105,7 @@ mod tests {
         let (settings, _) = UserSettings::load(&directory).unwrap();
 
         assert_eq!(settings.capture_shortcut, None);
+        assert!(settings.capture_shortcut_enabled);
         assert!(!settings.include_cursor);
         assert_eq!(settings.capture_delay_seconds, 0);
         assert_eq!(settings.history_limit, DEFAULT_HISTORY_LIMIT);
@@ -114,6 +117,7 @@ mod tests {
         let directory = directory("round-trip");
         let (mut settings, path) = UserSettings::load(&directory).unwrap();
         settings.capture_shortcut = Some("Ctrl+Alt+S".to_owned());
+        settings.capture_shortcut_enabled = false;
         settings.include_cursor = true;
         settings.capture_delay_seconds = 5;
         settings.history_limit = 100;
@@ -121,6 +125,7 @@ mod tests {
 
         let (reopened, _) = UserSettings::load(&directory).unwrap();
         assert_eq!(reopened.capture_shortcut.as_deref(), Some("Ctrl+Alt+S"));
+        assert!(!reopened.capture_shortcut_enabled);
         assert!(reopened.include_cursor);
         assert_eq!(reopened.capture_delay_seconds, 5);
         assert_eq!(reopened.history_limit, 100);
@@ -153,6 +158,18 @@ mod tests {
         let (settings, _) = UserSettings::load(&directory).unwrap();
 
         assert_eq!(settings.capture_delay_seconds, 0);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn legacy_settings_keep_the_global_shortcut_enabled() {
+        let directory = directory("legacy-shortcut");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("settings.json"), r#"{"version":1}"#).unwrap();
+
+        let (settings, _) = UserSettings::load(&directory).unwrap();
+
+        assert!(settings.capture_shortcut_enabled);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
