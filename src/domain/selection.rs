@@ -171,6 +171,8 @@ pub struct SelectionDrag {
     anchor: Option<PhysicalPoint>,
     current: Option<PhysicalPoint>,
     dragging: bool,
+    move_origin: Option<PhysicalPoint>,
+    move_selection: Option<PhysicalRect>,
 }
 
 impl SelectionDrag {
@@ -184,16 +186,20 @@ impl SelectionDrag {
             y: selection.bottom,
         });
         self.dragging = false;
+        self.move_origin = None;
+        self.move_selection = None;
     }
 
     pub fn begin(&mut self, point: PhysicalPoint) {
         self.anchor = Some(point);
         self.current = Some(point);
         self.dragging = true;
+        self.move_origin = None;
+        self.move_selection = None;
     }
 
     pub fn update(&mut self, point: PhysicalPoint) {
-        if self.anchor.is_some() {
+        if self.move_origin.is_none() && self.anchor.is_some() {
             self.current = Some(point);
         }
     }
@@ -244,6 +250,49 @@ impl SelectionDrag {
         self.anchor = Some(anchor);
         self.current = Some(current);
         self.dragging = true;
+        self.move_origin = None;
+        self.move_selection = None;
+    }
+
+    /// Starts moving a committed selection while preserving the pointer's grab offset.
+    pub fn begin_move(&mut self, selection: PhysicalRect, point: PhysicalPoint) {
+        self.select(selection);
+        self.dragging = true;
+        self.move_origin = Some(point);
+        self.move_selection = Some(selection);
+    }
+
+    /// Moves the grabbed selection as one rectangle and clamps it inside the captured desktop.
+    pub fn update_move(
+        &mut self,
+        point: PhysicalPoint,
+        image_bounds: PhysicalRect,
+    ) -> Option<PhysicalRect> {
+        let origin = self.move_origin?;
+        let selection = self.move_selection?;
+        let delta_x = point.x.saturating_sub(origin.x).clamp(
+            image_bounds.left.saturating_sub(selection.left),
+            image_bounds.right.saturating_sub(selection.right),
+        );
+        let delta_y = point.y.saturating_sub(origin.y).clamp(
+            image_bounds.top.saturating_sub(selection.top),
+            image_bounds.bottom.saturating_sub(selection.bottom),
+        );
+        let moved = PhysicalRect {
+            left: selection.left.saturating_add(delta_x),
+            top: selection.top.saturating_add(delta_y),
+            right: selection.right.saturating_add(delta_x),
+            bottom: selection.bottom.saturating_add(delta_y),
+        };
+        self.anchor = Some(PhysicalPoint {
+            x: moved.left,
+            y: moved.top,
+        });
+        self.current = Some(PhysicalPoint {
+            x: moved.right,
+            y: moved.bottom,
+        });
+        Some(moved)
     }
 
     pub fn nudge(
@@ -276,11 +325,17 @@ impl SelectionDrag {
             y: moved.bottom,
         });
         self.dragging = false;
+        self.move_origin = None;
+        self.move_selection = None;
         Some(moved)
     }
 
     pub const fn is_dragging(&self) -> bool {
         self.dragging
+    }
+
+    pub const fn is_moving(&self) -> bool {
+        self.move_origin.is_some()
     }
 
     pub fn selection(self) -> Option<PhysicalRect> {
@@ -487,6 +542,40 @@ mod tests {
                 bottom: 280,
             })
         );
+    }
+
+    #[test]
+    fn pointer_move_preserves_size_and_grab_offset_with_edge_clamping() {
+        let selection = PhysicalRect {
+            left: -1500,
+            top: 100,
+            right: -900,
+            bottom: 500,
+        };
+        let mut drag = SelectionDrag::default();
+        drag.begin_move(selection, PhysicalPoint { x: -1200, y: 300 });
+
+        assert!(drag.is_moving());
+        assert_eq!(
+            drag.update_move(PhysicalPoint { x: -1000, y: 450 }, image_bounds()),
+            Some(PhysicalRect {
+                left: -1300,
+                top: 250,
+                right: -700,
+                bottom: 650,
+            })
+        );
+        assert_eq!(
+            drag.update_move(PhysicalPoint { x: 1000, y: 2000 }, image_bounds()),
+            Some(PhysicalRect {
+                left: -600,
+                top: 680,
+                right: 0,
+                bottom: 1080,
+            })
+        );
+        drag.select(drag.selection().unwrap());
+        assert!(!drag.is_moving());
     }
 
     #[test]

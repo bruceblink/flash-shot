@@ -1325,7 +1325,16 @@ impl FlashShotApp {
             .inspection_target
             .filter(|target| target.bounds.contains(point));
         if let Some((selection, handle)) = self.selection_drag.selection().zip(resize_handle) {
+            self.pending_click_target = None;
             self.selection_drag.begin_resize(selection, handle);
+        } else if let Some(selection) = self
+            .selection_drag
+            .selection()
+            .filter(|selection| selection.contains(point))
+        {
+            self.pending_click_target = None;
+            self.selection_drag.begin_move(selection, point);
+            self.status = "Moving selection...".to_owned();
         } else {
             self.selection_drag.begin(point);
         }
@@ -1362,9 +1371,16 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
-        self.selection_drag
-            .update(clamp_physical_point(point, frame.bounds));
-        if let Some(selection) = self.selection_drag.selection() {
+        if self.selection_drag.is_moving() {
+            self.selection_drag.update_move(point, frame.bounds);
+            self.status = "Moving selection...".to_owned();
+        } else {
+            self.selection_drag
+                .update(clamp_physical_point(point, frame.bounds));
+        }
+        if let Some(selection) = self.selection_drag.selection()
+            && !self.selection_drag.is_moving()
+        {
             self.status = selection_status(selection);
         }
         cx.notify();
@@ -1419,8 +1435,12 @@ impl FlashShotApp {
             self.finish_annotation(cx);
             return;
         }
-        self.selection_drag
-            .update(clamp_physical_point(point, frame.bounds));
+        if self.selection_drag.is_moving() {
+            self.selection_drag.update_move(point, frame.bounds);
+        } else {
+            self.selection_drag
+                .update(clamp_physical_point(point, frame.bounds));
+        }
         let selection = self
             .selection_drag
             .selection()

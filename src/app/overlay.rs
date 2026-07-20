@@ -44,6 +44,14 @@ const MAGNIFIER_RADIUS: i32 = 4;
 const MAGNIFIER_CELL_SIZE: f32 = 12.0;
 const MAGNIFIER_GAP: f32 = 18.0;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionCursor {
+    Crosshair,
+    Move,
+    ResizeNwse,
+    ResizeNesw,
+}
+
 pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
     display: DisplayInfo,
@@ -270,6 +278,13 @@ impl Render for CaptureOverlay {
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
             .flatten();
         let can_export = selection.is_some();
+        let selection_cursor = selection_cursor(
+            selection,
+            transform,
+            view_point(window.mouse_position()),
+            selected_tool.is_some(),
+            app.selection_drag.is_moving(),
+        );
         if text_edit.is_some() {
             window.handle_input(
                 &self.focus_handle,
@@ -297,6 +312,15 @@ impl Render for CaptureOverlay {
                     .right_0()
                     .bottom_0()
                     .cursor_crosshair()
+                    .when(selection_cursor == SelectionCursor::Move, |overlay| {
+                        overlay.cursor_move()
+                    })
+                    .when(selection_cursor == SelectionCursor::ResizeNwse, |overlay| {
+                        overlay.cursor_nwse_resize()
+                    })
+                    .when(selection_cursor == SelectionCursor::ResizeNesw, |overlay| {
+                        overlay.cursor_nesw_resize()
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event, window, cx| {
@@ -2375,13 +2399,48 @@ fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_re
         + rows.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
 }
 
+/// Chooses pointer feedback without letting selection movement override an active drawing tool.
+fn selection_cursor(
+    selection: Option<PhysicalRect>,
+    transform: Option<PreviewTransform>,
+    pointer: ViewPoint,
+    annotation_tool_active: bool,
+    moving: bool,
+) -> SelectionCursor {
+    if annotation_tool_active {
+        return SelectionCursor::Crosshair;
+    }
+    if moving {
+        return SelectionCursor::Move;
+    }
+    let Some((selection, transform)) = selection.zip(transform) else {
+        return SelectionCursor::Crosshair;
+    };
+    if let Some(handle) = transform.resize_handle_at(selection, pointer, 10.0) {
+        return match handle {
+            crate::domain::selection::ResizeHandle::TopLeft
+            | crate::domain::selection::ResizeHandle::BottomRight => SelectionCursor::ResizeNwse,
+            crate::domain::selection::ResizeHandle::TopRight
+            | crate::domain::selection::ResizeHandle::BottomLeft => SelectionCursor::ResizeNesw,
+        };
+    }
+    if transform
+        .view_to_physical(pointer)
+        .is_some_and(|point| selection.contains(point))
+    {
+        SelectionCursor::Move
+    } else {
+        SelectionCursor::Crosshair
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, action_toolbar_height,
-        action_toolbar_layout, annotation_layer_label, arrow_head_points, intersect,
-        is_text_annotation, magnifier_origin, outline_shape_bounds, resize_handle_points,
-        visible_selection,
+        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, SelectionCursor,
+        action_toolbar_height, action_toolbar_layout, annotation_layer_label, arrow_head_points,
+        intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
+        resize_handle_points, selection_cursor, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2600,6 +2659,73 @@ mod tests {
 
         assert!(drag.is_dragging());
         assert_eq!(visible_selection(drag, Some(committed)), Some(current));
+    }
+
+    #[test]
+    fn committed_selection_uses_move_cursor_inside_and_resize_cursor_at_corners() {
+        let image = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1000,
+            bottom: 500,
+        };
+        let selection = PhysicalRect {
+            left: 200,
+            top: 100,
+            right: 800,
+            bottom: 400,
+        };
+        let transform = PreviewTransform::contain(
+            image,
+            crate::domain::selection::ViewRect {
+                left: 0.0,
+                top: 0.0,
+                width: 1000.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            selection_cursor(
+                Some(selection),
+                Some(transform),
+                ViewPoint { x: 500.0, y: 250.0 },
+                false,
+                false,
+            ),
+            SelectionCursor::Move
+        );
+        assert_eq!(
+            selection_cursor(
+                Some(selection),
+                Some(transform),
+                ViewPoint { x: 200.0, y: 100.0 },
+                false,
+                false,
+            ),
+            SelectionCursor::ResizeNwse
+        );
+        assert_eq!(
+            selection_cursor(
+                Some(selection),
+                Some(transform),
+                ViewPoint { x: 100.0, y: 50.0 },
+                false,
+                false,
+            ),
+            SelectionCursor::Crosshair
+        );
+        assert_eq!(
+            selection_cursor(
+                Some(selection),
+                Some(transform),
+                ViewPoint { x: 500.0, y: 250.0 },
+                true,
+                false,
+            ),
+            SelectionCursor::Crosshair
+        );
     }
 
     #[test]
