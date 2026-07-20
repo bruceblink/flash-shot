@@ -8,6 +8,7 @@ pub enum TrayEvent {
     CaptureRequested,
     FullScreenCaptureRequested,
     FullScreenCopyRequested,
+    FullScreenSaveRequested,
     DelayedCaptureRequested(u8),
     ToggleDisplayRecordingRequested,
     ToggleRecordingPauseRequested,
@@ -200,6 +201,7 @@ mod platform {
     const MENU_QUIT: usize = 15;
     const MENU_OPEN_PROJECT: usize = 16;
     const MENU_CHECK_UPDATES: usize = 17;
+    const MENU_FULL_SCREEN_SAVE: usize = 18;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -545,6 +547,7 @@ mod platform {
         let capture = wide("Capture");
         let full_screen_capture = wide("Capture full screen");
         let full_screen_copy = wide("Copy full screen to clipboard");
+        let full_screen_save = wide("Save full screen");
         let delayed_capture_3_seconds = wide("Capture in 3 seconds");
         let delayed_capture_5_seconds = wide("Capture in 5 seconds");
         let delayed_capture_10_seconds = wide("Capture in 10 seconds");
@@ -574,6 +577,12 @@ mod platform {
                 MF_STRING,
                 MENU_FULL_SCREEN_COPY,
                 full_screen_copy.as_ptr(),
+            );
+            AppendMenuW(
+                capture_menu,
+                MF_STRING,
+                MENU_FULL_SCREEN_SAVE,
+                full_screen_save.as_ptr(),
             );
             AppendMenuW(
                 capture_menu,
@@ -700,6 +709,7 @@ mod platform {
             MENU_CAPTURE => Some(TrayEvent::CaptureRequested),
             MENU_FULL_SCREEN_CAPTURE => Some(TrayEvent::FullScreenCaptureRequested),
             MENU_FULL_SCREEN_COPY => Some(TrayEvent::FullScreenCopyRequested),
+            MENU_FULL_SCREEN_SAVE => Some(TrayEvent::FullScreenSaveRequested),
             MENU_DELAYED_CAPTURE_3_SECONDS => Some(TrayEvent::DelayedCaptureRequested(3)),
             MENU_DELAYED_CAPTURE_5_SECONDS => Some(TrayEvent::DelayedCaptureRequested(5)),
             MENU_DELAYED_CAPTURE_10_SECONDS => Some(TrayEvent::DelayedCaptureRequested(10)),
@@ -807,6 +817,8 @@ mod platform {
         pub fn set_recording_state(&self, _state: TrayRecordingState) {}
 
         pub fn set_auto_start_state(&self, _state: TrayAutoStartState) {}
+
+        pub fn set_capture_cursor_enabled(&self, _enabled: bool) {}
     }
 }
 
@@ -877,6 +889,17 @@ mod tests {
         assert_eq!(
             tray_event_for_command(3),
             Some(TrayEvent::FullScreenCopyRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn full_screen_save_menu_item_dispatches_the_managed_save_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(18),
+            Some(TrayEvent::FullScreenSaveRequested)
         );
     }
 

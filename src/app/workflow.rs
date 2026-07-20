@@ -892,6 +892,7 @@ impl FlashShotApp {
 
     pub(super) fn copy_full_screen(&mut self, cx: &mut Context<Self>) {
         if self.full_screen_copy_generation.is_some()
+            || self.full_screen_save_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -924,13 +925,52 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Captures the virtual desktop and saves it through the managed screenshot-history path.
+    ///
+    /// This has no overlay or selection: it is the tray equivalent of a one-step full-screen save.
+    pub(super) fn quick_save_full_screen(&mut self, cx: &mut Context<Self>) {
+        if self.full_screen_copy_generation.is_some()
+            || self.full_screen_save_generation.is_some()
+            || self.delayed_capture_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        let generation = self.operation_generation;
+        self.full_screen_save_generation = Some(generation);
+        self.status = "Capturing full screen to save...".to_owned();
+        self.hide_settings_window();
+        cx.notify();
+
+        let include_cursor = self.include_cursor;
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let frame = capture_virtual_desktop_frame(include_cursor)?;
+                        quick_save_full_screen_frame(&frame)
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_full_screen_save(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn start_capture_with_options(
         &mut self,
         delay_seconds: u8,
         preselect_full_screen: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.full_screen_copy_generation.is_some() {
+        if self.full_screen_copy_generation.is_some() || self.full_screen_save_generation.is_some()
+        {
             return;
         }
         if self.delayed_capture_generation.is_some() {
@@ -1182,6 +1222,7 @@ impl FlashShotApp {
         self.delayed_capture_generation = None;
         self.delayed_capture_remaining_seconds = None;
         self.full_screen_copy_generation = None;
+        self.full_screen_save_generation = None;
         self.frame = None;
         self.annotation_document = None;
         self.annotation_history = Default::default();
@@ -3266,6 +3307,40 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Finishes a tray full-screen save, recording the managed file only after it was written.
+    fn finish_full_screen_save(
+        &mut self,
+        result: std::io::Result<PathBuf>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self.full_screen_save_generation != Some(generation)
+            || !is_current_operation(self.operation_generation, generation)
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        self.full_screen_save_generation = None;
+        match result {
+            Ok(path) => {
+                let history_status = self.history.record(path.clone()).err().map(|error| {
+                    log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
+                    format!("; history unavailable: {error}")
+                });
+                self.status = format!("Full screen saved to {}", path.display());
+                if let Some(history_status) = history_status {
+                    self.status.push_str(&history_status);
+                }
+                self.notify_user("Flash Shot", "Full screen saved");
+            }
+            Err(error) => {
+                self.status = format!("Could not save full screen: {error}");
+                log::warn!(target: "flash_shot::capture", "full_screen_save_failed error={error}");
+            }
+        }
+        cx.notify();
+    }
+
     fn close_capture_overlays(&mut self, cx: &mut Context<Self>) {
         let windows = std::mem::take(&mut self.overlay_windows);
         if !windows.is_empty() {
@@ -3811,6 +3886,26 @@ fn quick_save_annotated_frame_selection(
         &directory,
         unix_timestamp_ms(),
     )
+}
+
+/// Writes an unannotated full-screen frame to the same managed directory as quick-saved selections.
+fn quick_save_full_screen_frame(frame: &CaptureFrame) -> std::io::Result<PathBuf> {
+    let directory = quick_save_directory()?;
+    quick_save_full_screen_frame_in(frame, &directory, unix_timestamp_ms())
+}
+
+/// Saves a full capture using the caller-provided directory and timestamp.
+///
+/// Keeping the path policy here lets the tray command share the collision-safe quick-save naming
+/// scheme and allows the PNG output to be verified without depending on a user's Pictures folder.
+fn quick_save_full_screen_frame_in(
+    frame: &CaptureFrame,
+    directory: &Path,
+    timestamp_ms: u128,
+) -> std::io::Result<PathBuf> {
+    let path = next_quick_save_path(directory, timestamp_ms, Path::exists);
+    frame.save_png(path.clone())?;
+    Ok(path)
 }
 
 fn quick_save_annotated_frame_selection_in(
@@ -4466,11 +4561,11 @@ mod tests {
         next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix,
         next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
         open_image_project, pinned_size, png_path, project_image_path,
-        quick_save_annotated_frame_selection_in, recording_audio_selection_label,
-        recording_display_selection_label, recording_target_label, resolve_pointer_selection,
-        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
-        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-        tool_selected_status, with_alpha,
+        quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
+        recording_audio_selection_label, recording_display_selection_label, recording_target_label,
+        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
+        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+        text_annotation_with_content, tool_selected_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -5631,6 +5726,41 @@ mod tests {
         let info = reader.next_frame(&mut output).unwrap();
         assert_eq!((info.width, info.height), (1, 1));
         assert_eq!(&output[..info.buffer_size()], &[6, 5, 4, 255]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn full_screen_quick_save_writes_the_entire_png_with_the_managed_name() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-full-screen-quick-save-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: -1,
+                top: 4,
+                right: 1,
+                bottom: 5,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([1, 2, 3, 255, 4, 5, 6, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        let path = quick_save_full_screen_frame_in(&frame, &directory, 1_725_000_000_123).unwrap();
+
+        assert_eq!(path, directory.join("FlashShot-1725000000123.png"));
+        let decoder = png::Decoder::new(BufReader::new(std::fs::File::open(&path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut output = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut output).unwrap();
+        assert_eq!((info.width, info.height), (2, 1));
+        assert_eq!(&output[..info.buffer_size()], &[3, 2, 1, 255, 6, 5, 4, 255]);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
