@@ -30,7 +30,7 @@ use crate::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::CaptureFrame,
         shortcut::{CaptureShortcut, GlobalShortcutService, ShortcutEvent},
-        tray::{TrayEvent, TrayNotification, TrayService},
+        tray::{TrayEvent, TrayNotification, TrayRecordingState, TrayService},
         window_inspector::InspectionTarget,
     },
     settings::UserSettings,
@@ -166,6 +166,16 @@ impl FlashShotApp {
         };
         if let Err(error) = tray.notify(TrayNotification::new(title, body)) {
             log::warn!(target: "flash_shot::tray", "user_notification_failed error={error}");
+        }
+    }
+
+    /// Mirrors the recording lifecycle into the independent Windows tray thread.
+    ///
+    /// A missing tray is harmless: recording continues, while notification-area commands remain
+    /// unavailable on platforms that do not support them.
+    pub(super) fn set_tray_recording_state(&self, state: TrayRecordingState) {
+        if let Some(tray) = self._tray.as_ref() {
+            tray.set_recording_state(state);
         }
     }
 

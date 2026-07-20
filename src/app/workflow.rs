@@ -222,7 +222,12 @@ impl FlashShotApp {
     pub(super) fn toggle_display_recording(&mut self, cx: &mut Context<Self>) {
         if let Some(control) = self.recording_control.as_ref() {
             match control.request_stop() {
-                Ok(()) => self.status = "Stopping screen recording...".to_owned(),
+                Ok(()) => {
+                    self.status = "Stopping screen recording...".to_owned();
+                    self.set_tray_recording_state(
+                        crate::platform::tray::TrayRecordingState::Stopping,
+                    );
+                }
                 Err(error) => self.status = format!("Could not stop screen recording: {error}"),
             }
             cx.notify();
@@ -239,6 +244,7 @@ impl FlashShotApp {
             return;
         }
         self.recording_start_in_flight = true;
+        self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
         self.status = "Discovering FFmpeg and preparing display recording...".to_owned();
         self.start_recording_request(
             None,
@@ -258,6 +264,7 @@ impl FlashShotApp {
             return;
         }
         self.recording_start_in_flight = true;
+        self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
         self.status = "Preparing region recording...".to_owned();
         self.close_capture_overlays(cx);
         let _ = self.session.cancel();
@@ -290,6 +297,7 @@ impl FlashShotApp {
             y: selection.top + selection.height() as i32 / 2,
         };
         self.recording_start_in_flight = true;
+        self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
         self.status = "Looking up selected window for recording...".to_owned();
         self.close_capture_overlays(cx);
         let _ = self.session.cancel();
@@ -482,6 +490,7 @@ impl FlashShotApp {
                 let events = control.events();
                 let target = recording_target_label(control.target());
                 self.recording_control = Some(control);
+                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Starting {target} recording...");
@@ -498,7 +507,10 @@ impl FlashShotApp {
                 })
                 .detach();
             }
-            Err(error) => self.status = format!("Could not start screen recording: {error}"),
+            Err(error) => {
+                self.status = format!("Could not start screen recording: {error}");
+                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
+            }
         }
         self.recording_start_in_flight = false;
         cx.notify();
@@ -511,7 +523,10 @@ impl FlashShotApp {
             .map(|control| recording_target_label(control.target()))
             .unwrap_or("screen");
         match event {
-            RecordingEvent::Started => self.status = format!("Recording {target}..."),
+            RecordingEvent::Started => {
+                self.status = format!("Recording {target}...");
+                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Recording);
+            }
             RecordingEvent::Paused => {
                 self.recording_paused = true;
                 self.status = format!("{target} recording paused");
@@ -526,6 +541,7 @@ impl FlashShotApp {
             }
             RecordingEvent::Finished { output } => {
                 self.recording_control = None;
+                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording saved to {}", output.display());
@@ -533,6 +549,7 @@ impl FlashShotApp {
             }
             RecordingEvent::Failed { message } => {
                 self.recording_control = None;
+                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording failed: {message}");

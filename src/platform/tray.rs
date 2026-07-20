@@ -17,6 +17,41 @@ pub enum TrayEvent {
     QuitRequested,
 }
 
+/// The recording lifecycle that determines the tray menu's available command.
+///
+/// The UI updates this value as FFmpeg changes state; the tray thread reads it only when it opens
+/// a menu, keeping the displayed action aligned with the currently safe operation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TrayRecordingState {
+    #[default]
+    Idle,
+    Starting,
+    Recording,
+    Stopping,
+}
+
+impl TrayRecordingState {
+    /// Converts the lifecycle state to the compact value shared with the Windows tray thread.
+    const fn as_u8(self) -> u8 {
+        match self {
+            Self::Idle => 0,
+            Self::Starting => 1,
+            Self::Recording => 2,
+            Self::Stopping => 3,
+        }
+    }
+
+    /// Restores a shared tray-state value, treating unknown values as the safe idle state.
+    const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Starting,
+            2 => Self::Recording,
+            3 => Self::Stopping,
+            _ => Self::Idle,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrayNotification {
     pub title: String,
@@ -49,11 +84,16 @@ impl TrayService {
     pub fn notify(&self, notification: TrayNotification) -> io::Result<()> {
         self.listener.notify(notification)
     }
+
+    /// Updates the recording command shown the next time the user opens the tray menu.
+    pub fn set_recording_state(&self, state: TrayRecordingState) {
+        self.listener.set_recording_state(state);
+    }
 }
 
 #[cfg(windows)]
 mod platform {
-    use super::{TrayEvent, TrayNotification};
+    use super::{TrayEvent, TrayNotification, TrayRecordingState};
     use async_channel::Receiver;
     use std::{
         io,
@@ -61,7 +101,7 @@ mod platform {
         ptr,
         sync::{
             Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU8, Ordering},
             mpsc::{self, SyncSender},
         },
         thread::{self, JoinHandle},
@@ -77,8 +117,8 @@ mod platform {
             WindowsAndMessaging::{
                 AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
                 DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW,
-                GetWindowLongPtrW, IDI_APPLICATION, LoadIconW, MF_SEPARATOR, MF_STRING, MSG,
-                PostMessageW, PostThreadMessageW, RegisterClassW, SetForegroundWindow,
+                GetWindowLongPtrW, IDI_APPLICATION, LoadIconW, MF_GRAYED, MF_SEPARATOR, MF_STRING,
+                MSG, PostMessageW, PostThreadMessageW, RegisterClassW, SetForegroundWindow,
                 SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
                 TranslateMessage, WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL, WM_QUIT,
                 WM_RBUTTONUP, WNDCLASSW,
@@ -107,6 +147,7 @@ mod platform {
         thread_id: u32,
         thread: Option<JoinHandle<()>>,
         commands: Arc<Mutex<Vec<TrayCommand>>>,
+        recording_state: Arc<AtomicU8>,
         active: Arc<AtomicBool>,
     }
 
@@ -116,6 +157,7 @@ mod platform {
 
     struct TrayWindowContext {
         events: async_channel::Sender<TrayEvent>,
+        recording_state: Arc<AtomicU8>,
     }
 
     impl TrayListener {
@@ -124,17 +166,28 @@ mod platform {
             let (ready_tx, ready_rx) = mpsc::sync_channel(1);
             let commands = Arc::new(Mutex::new(Vec::new()));
             let thread_commands = commands.clone();
+            let recording_state = Arc::new(AtomicU8::new(TrayRecordingState::Idle.as_u8()));
+            let thread_recording_state = recording_state.clone();
             let active = Arc::new(AtomicBool::new(false));
             let thread_active = active.clone();
             let thread = thread::Builder::new()
                 .name("flash-shot-tray".to_owned())
-                .spawn(move || message_loop(event_tx, ready_tx, thread_commands, thread_active))?;
+                .spawn(move || {
+                    message_loop(
+                        event_tx,
+                        ready_tx,
+                        thread_commands,
+                        thread_recording_state,
+                        thread_active,
+                    )
+                })?;
             match ready_rx.recv() {
                 Ok(Ok(thread_id)) => Ok((
                     Self {
                         thread_id,
                         thread: Some(thread),
                         commands,
+                        recording_state,
                         active,
                     },
                     event_rx,
@@ -173,6 +226,11 @@ mod platform {
             }
             Ok(())
         }
+
+        /// Shares the application recording state with the tray thread without blocking UI work.
+        pub fn set_recording_state(&self, state: TrayRecordingState) {
+            self.recording_state.store(state.as_u8(), Ordering::Release);
+        }
     }
 
     impl Drop for TrayListener {
@@ -191,9 +249,13 @@ mod platform {
         events: async_channel::Sender<TrayEvent>,
         ready: SyncSender<io::Result<u32>>,
         commands: Arc<Mutex<Vec<TrayCommand>>>,
+        recording_state: Arc<AtomicU8>,
         active: Arc<AtomicBool>,
     ) {
-        let context = Box::new(TrayWindowContext { events });
+        let context = Box::new(TrayWindowContext {
+            events,
+            recording_state,
+        });
         let result = unsafe { create_tray(&context) };
         let (window, mut icon) = match result {
             Ok(value) => value,
@@ -336,7 +398,7 @@ mod platform {
             let context =
                 unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *const TrayWindowContext;
             if let Some(context) = unsafe { context.as_ref() } {
-                handle_tray_message(window, lparam as u32, &context.events);
+                handle_tray_message(window, lparam as u32, context);
             }
             return 0;
         }
@@ -344,11 +406,15 @@ mod platform {
         unsafe { DefWindowProcW(window, message, wparam, lparam) }
     }
 
-    fn handle_tray_message(window: HWND, message: u32, events: &async_channel::Sender<TrayEvent>) {
+    /// Opens the native popup for a shell click and forwards its selected command to GPUI.
+    fn handle_tray_message(window: HWND, message: u32, context: &TrayWindowContext) {
         if tray_menu_requested(message)
-            && let Some(event) = show_menu(window)
+            && let Some(event) = show_menu(
+                window,
+                TrayRecordingState::from_u8(context.recording_state.load(Ordering::Acquire)),
+            )
         {
-            let _ = events.try_send(event);
+            let _ = context.events.try_send(event);
         }
     }
 
@@ -358,7 +424,8 @@ mod platform {
         matches!(message, WM_LBUTTONUP | WM_RBUTTONUP | WM_CONTEXTMENU)
     }
 
-    fn show_menu(window: HWND) -> Option<TrayEvent> {
+    /// Builds a popup menu that labels and enables the recording command for its current state.
+    fn show_menu(window: HWND, recording_state: TrayRecordingState) -> Option<TrayEvent> {
         // SAFETY: menu is owned here and destroyed before return.
         let menu = unsafe { CreatePopupMenu() };
         if menu.is_null() {
@@ -370,7 +437,8 @@ mod platform {
         let delayed_capture_3_seconds = wide("Capture in 3 seconds");
         let delayed_capture_5_seconds = wide("Capture in 5 seconds");
         let delayed_capture_10_seconds = wide("Capture in 10 seconds");
-        let toggle_display_recording = wide("Start or stop display recording");
+        let (recording_label, recording_enabled) = recording_menu_presentation(recording_state);
+        let toggle_display_recording = wide(recording_label);
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
         let history = wide("Screenshot history");
@@ -410,7 +478,11 @@ mod platform {
             );
             AppendMenuW(
                 menu,
-                MF_STRING,
+                if recording_enabled {
+                    MF_STRING
+                } else {
+                    MF_STRING | MF_GRAYED
+                },
                 MENU_TOGGLE_DISPLAY_RECORDING,
                 toggle_display_recording.as_ptr(),
             );
@@ -469,6 +541,16 @@ mod platform {
         }
     }
 
+    /// Returns the recording menu text and whether it can be invoked for each lifecycle state.
+    pub(super) fn recording_menu_presentation(state: TrayRecordingState) -> (&'static str, bool) {
+        match state {
+            TrayRecordingState::Idle => ("Start display recording", true),
+            TrayRecordingState::Starting => ("Starting display recording...", false),
+            TrayRecordingState::Recording => ("Stop display recording", true),
+            TrayRecordingState::Stopping => ("Stopping display recording...", false),
+        }
+    }
+
     unsafe fn remove_tray(window: HWND, icon: &NOTIFYICONDATAW) {
         unsafe {
             Shell_NotifyIconW(NIM_DELETE, icon);
@@ -491,7 +573,7 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::{TrayEvent, TrayNotification};
+    use super::{TrayEvent, TrayNotification, TrayRecordingState};
     use async_channel::Receiver;
     use std::io;
 
@@ -515,6 +597,8 @@ mod platform {
                 "tray notifications are currently Windows-only",
             ))
         }
+
+        pub fn set_recording_state(&self, _state: TrayRecordingState) {}
     }
 }
 
@@ -607,6 +691,29 @@ mod tests {
         assert_eq!(
             tray_event_for_command(7),
             Some(TrayEvent::ToggleDisplayRecordingRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recording_menu_labels_prevent_conflicting_lifecycle_operations() {
+        use super::{TrayRecordingState, platform::recording_menu_presentation};
+
+        assert_eq!(
+            recording_menu_presentation(TrayRecordingState::Idle),
+            ("Start display recording", true)
+        );
+        assert_eq!(
+            recording_menu_presentation(TrayRecordingState::Starting),
+            ("Starting display recording...", false)
+        );
+        assert_eq!(
+            recording_menu_presentation(TrayRecordingState::Recording),
+            ("Stop display recording", true)
+        );
+        assert_eq!(
+            recording_menu_presentation(TrayRecordingState::Stopping),
+            ("Stopping display recording...", false)
         );
     }
 }
