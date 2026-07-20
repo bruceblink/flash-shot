@@ -403,6 +403,9 @@ impl FlashShotApp {
                         TrayEvent::OpenImageRequested => {
                             this.update(&mut cx, |this, cx| this.open_image(cx));
                         }
+                        TrayEvent::OpenProjectRequested => {
+                            this.update(&mut cx, |this, cx| this.open_editable_project(cx));
+                        }
                         TrayEvent::HistoryRequested => {
                             this.update(&mut cx, |this, cx| this.show_history_window(cx));
                         }

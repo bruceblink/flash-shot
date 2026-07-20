@@ -15,6 +15,7 @@ pub enum TrayEvent {
     ToggleCaptureCursorRequested,
     OpenHistoryDirectoryRequested,
     OpenImageRequested,
+    OpenProjectRequested,
     HistoryRequested,
     SettingsRequested,
     QuitRequested,
@@ -196,6 +197,7 @@ mod platform {
     const MENU_HISTORY: usize = 13;
     const MENU_SETTINGS: usize = 14;
     const MENU_QUIT: usize = 15;
+    const MENU_OPEN_PROJECT: usize = 16;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -535,6 +537,7 @@ mod platform {
         let capture_cursor = wide("Include cursor in captures");
         let open_history_directory = wide("Open screenshot folder");
         let open_image = wide("Open image");
+        let open_project = wide("Open editable project");
         let history = wide("Screenshot history");
         let settings = wide("Settings");
         let quit = wide("Quit Flash Shot");
@@ -595,6 +598,7 @@ mod platform {
                 open_history_directory.as_ptr(),
             );
             AppendMenuW(menu, MF_STRING, MENU_OPEN_IMAGE, open_image.as_ptr());
+            AppendMenuW(menu, MF_STRING, MENU_OPEN_PROJECT, open_project.as_ptr());
             AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
             AppendMenuW(
                 menu,
@@ -660,6 +664,7 @@ mod platform {
             MENU_TOGGLE_CAPTURE_CURSOR => Some(TrayEvent::ToggleCaptureCursorRequested),
             MENU_OPEN_HISTORY_DIRECTORY => Some(TrayEvent::OpenHistoryDirectoryRequested),
             MENU_OPEN_IMAGE => Some(TrayEvent::OpenImageRequested),
+            MENU_OPEN_PROJECT => Some(TrayEvent::OpenProjectRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
             MENU_SETTINGS => Some(TrayEvent::SettingsRequested),
             MENU_QUIT => Some(TrayEvent::QuitRequested),
@@ -848,6 +853,17 @@ mod tests {
         assert_eq!(
             tray_event_for_command(10),
             Some(TrayEvent::ToggleCaptureCursorRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn project_menu_item_dispatches_the_editable_project_loader() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(16),
+            Some(TrayEvent::OpenProjectRequested)
         );
     }
 
