@@ -157,7 +157,10 @@ mod platform {
             unsafe { control.CurrentBoundingRectangle() }?
         };
         let bounds = physical_rect(bounds);
-        Ok((bounds.width() > 0 && bounds.height() > 0).then_some(bounds))
+        // UI Automation can report a descendant bounding rectangle that no longer matches the
+        // queried point after a live window changes. Returning it would make callers highlight a
+        // different control, so fall back to the verified top-level window in that case.
+        Ok((bounds.width() > 0 && bounds.height() > 0 && bounds.contains(point)).then_some(bounds))
     }
 
     fn deepest_control_at(
