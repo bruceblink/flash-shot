@@ -412,6 +412,9 @@ impl FlashShotApp {
                         TrayEvent::SettingsRequested => {
                             this.update(&mut cx, |this, cx| this.show_settings_window(cx));
                         }
+                        TrayEvent::CheckUpdatesRequested => {
+                            this.update(&mut cx, |this, cx| this.check_for_updates(cx));
+                        }
                         TrayEvent::QuitRequested => {
                             cx.update(|cx| cx.quit());
                             break;

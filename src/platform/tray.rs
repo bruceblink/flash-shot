@@ -18,6 +18,7 @@ pub enum TrayEvent {
     OpenProjectRequested,
     HistoryRequested,
     SettingsRequested,
+    CheckUpdatesRequested,
     QuitRequested,
 }
 
@@ -198,6 +199,7 @@ mod platform {
     const MENU_SETTINGS: usize = 14;
     const MENU_QUIT: usize = 15;
     const MENU_OPEN_PROJECT: usize = 16;
+    const MENU_CHECK_UPDATES: usize = 17;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -540,6 +542,7 @@ mod platform {
         let open_project = wide("Open editable project");
         let history = wide("Screenshot history");
         let settings = wide("Settings");
+        let check_updates = wide("Check for updates");
         let quit = wide("Quit Flash Shot");
         unsafe {
             AppendMenuW(menu, MF_STRING, MENU_CAPTURE, capture.as_ptr());
@@ -623,6 +626,7 @@ mod platform {
             );
             AppendMenuW(menu, MF_STRING, MENU_HISTORY, history.as_ptr());
             AppendMenuW(menu, MF_STRING, MENU_SETTINGS, settings.as_ptr());
+            AppendMenuW(menu, MF_STRING, MENU_CHECK_UPDATES, check_updates.as_ptr());
             AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
             AppendMenuW(menu, MF_STRING, MENU_QUIT, quit.as_ptr());
             SetForegroundWindow(window);
@@ -667,6 +671,7 @@ mod platform {
             MENU_OPEN_PROJECT => Some(TrayEvent::OpenProjectRequested),
             MENU_HISTORY => Some(TrayEvent::HistoryRequested),
             MENU_SETTINGS => Some(TrayEvent::SettingsRequested),
+            MENU_CHECK_UPDATES => Some(TrayEvent::CheckUpdatesRequested),
             MENU_QUIT => Some(TrayEvent::QuitRequested),
             _ => None,
         }
@@ -864,6 +869,17 @@ mod tests {
         assert_eq!(
             tray_event_for_command(16),
             Some(TrayEvent::OpenProjectRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_menu_item_dispatches_only_an_explicit_update_check() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(17),
+            Some(TrayEvent::CheckUpdatesRequested)
         );
     }
 
