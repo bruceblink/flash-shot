@@ -23,3 +23,4 @@ jobs:
       - run: .\scripts\test-release-manifest.ps1
       - run: .\scripts\test-release-tag.ps1
       - run: .\scripts\test-verify-release-assets.ps1
+      - run: .\scripts\test-verify-github-release.ps1

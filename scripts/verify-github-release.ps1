@@ -2,7 +2,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Tag,
     [string]$Repository = "bruceblink/flash-shot",
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [switch]$RequireDraft,
+    [switch]$SkipStartupSmoke
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,9 +25,12 @@ if ($null -eq (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw "GitHub CLI is required to download release assets."
 }
 
-$release = & gh release view $Tag --repo $Repository --json assets | ConvertFrom-Json
+$release = & gh release view $Tag --repo $Repository --json assets,isDraft | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) {
     throw "Could not inspect GitHub release assets for $Tag."
+}
+if ($RequireDraft -and -not [bool]$release.isDraft) {
+    throw "GitHub release $Tag is already published; run the publishing gate only against a draft release."
 }
 $assetNames = @($release.assets | ForEach-Object name)
 $uniqueAssetNames = @($assetNames | Sort-Object -Unique)
@@ -64,7 +69,13 @@ try {
         throw "Could not download GitHub release assets for $Tag."
     }
 
-    & (Join-Path $PSScriptRoot "verify-release-assets.ps1") -AssetDirectory $destination
+    $verifyAssets = Join-Path $PSScriptRoot "verify-release-assets.ps1"
+    if ($SkipStartupSmoke) {
+        & $verifyAssets -AssetDirectory $destination -SkipStartupSmoke
+    }
+    else {
+        & $verifyAssets -AssetDirectory $destination
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Downloaded GitHub release asset verification failed with exit code $LASTEXITCODE."
     }
