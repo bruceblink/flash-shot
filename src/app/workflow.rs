@@ -2098,6 +2098,20 @@ impl FlashShotApp {
                     false
                 }
             }
+            KeyboardCommand::CopyColor => {
+                if hovered_color(
+                    self.frame.as_ref(),
+                    self.hover_pixel,
+                    ColorFormat::from_setting(self.settings.color_format),
+                )
+                .is_some()
+                {
+                    self.copy_hover_color(cx);
+                    true
+                } else {
+                    false
+                }
+            }
             KeyboardCommand::Nudge(delta_x, delta_y) => {
                 self.nudge_selected_annotation(delta_x, delta_y, cx)
                     || self.nudge_selection(delta_x, delta_y, cx)
@@ -4719,6 +4733,7 @@ enum KeyboardCommand {
     Cancel,
     Copy,
     QuickSave,
+    CopyColor,
     Nudge(i32, i32),
     SelectTool(Option<AnnotationTool>),
 }
@@ -4795,6 +4810,7 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
     match keystroke.key.as_str() {
         "a" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Arrow))),
         "b" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Blur))),
+        "c" => Some(KeyboardCommand::CopyColor),
         "e" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Ellipse))),
         "h" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Highlight))),
         "l" => Some(KeyboardCommand::SelectTool(Some(AnnotationTool::Line))),
@@ -5101,6 +5117,11 @@ mod tests {
             keyboard_command(&Keystroke::parse("shift-enter").unwrap()),
             Some(KeyboardCommand::QuickSave)
         );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("c").unwrap()),
+            Some(KeyboardCommand::CopyColor)
+        );
+        assert_eq!(keyboard_command(&Keystroke::parse("ctrl-c").unwrap()), None);
         assert_eq!(
             keyboard_command(&Keystroke::parse("escape").unwrap()),
             Some(KeyboardCommand::Cancel)
