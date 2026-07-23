@@ -75,9 +75,6 @@ pub fn run(
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
-            window.on_next_frame(move |_, _| {
-                startup_performance.record_duration("startup_to_first_frame", started_at.elapsed());
-            });
             let app =
                 cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx));
             if let Ok(handle) = window.window_handle()
@@ -87,6 +84,10 @@ pub fn run(
                     app.set_settings_window_handle(handle.hwnd.get())
                 });
             }
+            // Flash Shot starts as a tray service with its settings window hidden.
+            // Measuring readiness after the app installs its shortcut and tray is
+            // meaningful here; a hidden settings window may never paint a frame.
+            startup_performance.record_duration("startup_to_service_ready", started_at.elapsed());
             // The settings surface is an on-demand control panel, not the
             // application's lifetime. Closing it returns Flash Shot to the tray.
             let close_app = app.clone();

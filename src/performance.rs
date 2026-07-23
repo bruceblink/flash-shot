@@ -180,14 +180,14 @@ mod tests {
         let directory = test_directory("json");
         let recorder = PerformanceRecorder::new(&directory).unwrap();
 
-        recorder.record_duration("startup_to_first_frame", Duration::from_millis(42));
+        recorder.record_duration("startup_to_service_ready", Duration::from_millis(42));
 
         let contents = fs::read_to_string(directory.join(REPORT_FILE)).unwrap();
         let value: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
         assert_eq!(value["schema_version"], 2);
         assert_eq!(value["build_profile"], build_profile());
         assert_eq!(value["type"], "duration");
-        assert_eq!(value["metric"], "startup_to_first_frame");
+        assert_eq!(value["metric"], "startup_to_service_ready");
         assert_eq!(value["unit"], "ms");
         assert_eq!(value["value"], 42.0);
         fs::remove_dir_all(directory).unwrap();

@@ -127,7 +127,7 @@ pub fn summarize_samples(
                 let Some(value) = finite_number(value.get("value")) else {
                     continue;
                 };
-                if metric == "startup_to_first_frame" {
+                if metric == "startup_to_service_ready" {
                     samples.entry(metric.to_owned()).or_default().push(value);
                 }
             }
@@ -146,7 +146,7 @@ pub fn summarize_samples(
     }
 
     let required_metrics = [
-        ("startup_to_first_frame", thresholds.startup_p95_ms),
+        ("startup_to_service_ready", thresholds.startup_p95_ms),
         (
             "shortcut_to_frame_ready",
             thresholds.shortcut_to_frame_ready_p95_ms,
@@ -223,9 +223,9 @@ mod tests {
     #[test]
     fn summarizes_duration_and_capture_pipeline_samples() {
         let input = concat!(
-            r#"{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":300.0}"#,
+            r#"{"build_profile":"release","type":"duration","metric":"startup_to_service_ready","value":300.0}"#,
             "\n",
-            r#"{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":450.0}"#,
+            r#"{"build_profile":"release","type":"duration","metric":"startup_to_service_ready","value":450.0}"#,
             "\n",
             r#"{"build_profile":"release","type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":80.0,"shortcut_to_overlay_frame":90.0}}"#,
             "\n",
@@ -240,8 +240,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(report.metrics["startup_to_first_frame"].samples, 2);
-        assert_eq!(report.metrics["startup_to_first_frame"].p95_ms, 450.0);
+        assert_eq!(report.metrics["startup_to_service_ready"].samples, 2);
+        assert_eq!(report.metrics["startup_to_service_ready"].p95_ms, 450.0);
         assert_eq!(report.metrics["shortcut_to_frame_ready"].p95_ms, 95.0);
         assert_eq!(report.metrics["shortcut_to_overlay_frame"].p95_ms, 120.0);
         assert!(!report.passed);
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn requires_enough_samples_for_a_gated_metric() {
-        let input = r#"{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":42.0}"#;
+        let input = r#"{"build_profile":"release","type":"duration","metric":"startup_to_service_ready","value":42.0}"#;
         let error = summarize_samples(input, &PerformanceThresholds::default()).unwrap_err();
         assert!(error.to_string().contains("fewer than 10 samples"));
     }
@@ -286,7 +286,7 @@ mod tests {
         let mut input = String::new();
         for value in 1..=10 {
             input.push_str(&format!(
-                r#"{{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":{value}}}"#
+                r#"{{"build_profile":"release","type":"duration","metric":"startup_to_service_ready","value":{value}}}"#
             ));
             input.push('\n');
             input.push_str(&format!(
@@ -297,16 +297,16 @@ mod tests {
 
         let report = summarize_samples(&input, &PerformanceThresholds::default()).unwrap();
 
-        assert_eq!(report.metrics["startup_to_first_frame"].p95_ms, 10.0);
+        assert_eq!(report.metrics["startup_to_service_ready"].p95_ms, 10.0);
         assert!(report.passed);
     }
 
     #[test]
     fn release_gate_excludes_debug_and_legacy_samples() {
         let input = concat!(
-            r#"{"type":"duration","metric":"startup_to_first_frame","value":1.0}"#,
+            r#"{"type":"duration","metric":"startup_to_service_ready","value":1.0}"#,
             "\n",
-            r#"{"build_profile":"debug","type":"duration","metric":"startup_to_first_frame","value":1.0}"#,
+            r#"{"build_profile":"debug","type":"duration","metric":"startup_to_service_ready","value":1.0}"#,
         );
         let error = summarize_samples(input, &PerformanceThresholds::default()).unwrap_err();
         assert!(error.to_string().contains("fewer than 10 samples"));
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn exploratory_report_can_include_nonrelease_samples() {
-        let input = r#"{"build_profile":"debug","type":"duration","metric":"startup_to_first_frame","value":42.0}"#;
+        let input = r#"{"build_profile":"debug","type":"duration","metric":"startup_to_service_ready","value":42.0}"#;
         let report = summarize_samples(
             input,
             &PerformanceThresholds {
@@ -324,7 +324,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(report.metrics["startup_to_first_frame"].samples, 1);
+        assert_eq!(report.metrics["startup_to_service_ready"].samples, 1);
         assert_eq!(report.required_build_profile, None);
         assert!(!report.release_gate_applied);
         assert!(!report.release_qualified);
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn ungated_report_is_not_release_qualified() {
-        let input = r#"{"build_profile":"release","type":"duration","metric":"startup_to_first_frame","value":42.0}"#;
+        let input = r#"{"build_profile":"release","type":"duration","metric":"startup_to_service_ready","value":42.0}"#;
         let report = summarize_samples(
             input,
             &PerformanceThresholds {

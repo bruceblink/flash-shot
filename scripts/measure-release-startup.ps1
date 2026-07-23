@@ -70,7 +70,7 @@ for ($iteration = 1; $iteration -le $Iterations; $iteration++) {
     }
     $sample = Get-Content -LiteralPath $metrics | Select-Object -Last 1 | ConvertFrom-Json
     if ($sample.schema_version -ne 2 -or $sample.build_profile -ne "release" -or
-        $sample.type -ne "duration" -or $sample.metric -ne "startup_to_first_frame" -or
+        $sample.type -ne "duration" -or $sample.metric -ne "startup_to_service_ready" -or
         $sample.timestamp_ms -lt $startedAtMs) {
         throw "Release startup iteration $iteration did not append a current Release startup sample."
     }
