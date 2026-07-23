@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use gpui::{FocusHandle, Focusable, Render, Window, WindowControlArea, div, img, prelude::*, px};
+use gpui::{
+    FocusHandle, Focusable, KeyDownEvent, Render, Window, WindowControlArea, div, img, prelude::*,
+    px,
+};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::{
@@ -46,6 +49,11 @@ impl PinnedImage {
         };
         cx.notify();
     }
+
+    /// Closes this independent pinned window without affecting the capture service.
+    fn close(&mut self, window: &mut Window) {
+        window.remove_window();
+    }
 }
 
 fn copy_pinned_image(
@@ -77,6 +85,11 @@ impl Render for PinnedImage {
         div()
             .size_full()
             .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, _| {
+                if pinned_close_key(&event.keystroke.key) {
+                    this.close(window);
+                }
+            }))
             .bg(colors.background)
             .border_1()
             .border_color(colors.border)
@@ -109,7 +122,8 @@ impl Render for PinnedImage {
                                     .px_2()
                                     .text_color(colors.text)
                                     .cursor_pointer()
-                                    .on_click(cx.listener(|_, _, window, _| window.remove_window()))
+                                    .window_control_area(WindowControlArea::Close)
+                                    .on_click(cx.listener(|this, _, window, _| this.close(window)))
                                     .child("Close"),
                             ),
                     ),
@@ -118,9 +132,14 @@ impl Render for PinnedImage {
     }
 }
 
+/// Keeps the local Escape shortcut separate from text or capture shortcuts.
+fn pinned_close_key(key: &str) -> bool {
+    key == "escape"
+}
+
 #[cfg(test)]
 mod tests {
-    use super::copy_pinned_image;
+    use super::{copy_pinned_image, pinned_close_key};
     use crate::{
         domain::geometry::PhysicalRect,
         platform::{
@@ -170,5 +189,12 @@ mod tests {
         assert_eq!(copied.bounds, frame.bounds);
         assert_eq!(copied.pixels.as_ref(), frame.pixels.as_ref());
         assert_eq!(copied.cpu_copy_count, frame.cpu_copy_count);
+    }
+
+    #[test]
+    fn escape_is_the_only_keyboard_close_command() {
+        assert!(pinned_close_key("escape"));
+        assert!(!pinned_close_key("enter"));
+        assert!(!pinned_close_key("shift-escape"));
     }
 }

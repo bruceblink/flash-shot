@@ -2670,12 +2670,22 @@ impl FlashShotApp {
                 return;
             }
         };
-        self.open_pinned_frame(
-            pinned_frame,
-            "Selection pinned in an always-on-top window",
-            None,
-            cx,
-        );
+        // The capture overlays sit above ordinary windows. Tear down this
+        // session first, then create the pinned window on the next UI turn so
+        // the selected image is immediately visible instead of hidden behind
+        // an overlay until the next capture.
+        self.reset(cx);
+        let app = cx.entity();
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| {
+                app.open_pinned_frame(
+                    pinned_frame,
+                    "Selection pinned in an always-on-top window",
+                    None,
+                    cx,
+                );
+            });
+        });
     }
 
     /// Reads the current clipboard image away from the UI thread and pins only the latest request.
