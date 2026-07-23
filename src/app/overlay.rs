@@ -37,7 +37,7 @@ const OVERLAY_DIMENSION_LABEL_HEIGHT: f32 = 26.0;
 const OVERLAY_DIMENSION_LABEL_GAP: f32 = 8.0;
 // Keep the terminal screenshot actions on one compact row while optional
 // actions expand only after the user asks for them.
-const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [76.0, 48.0, 52.0, 52.0, 56.0, 62.0];
+const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 34.0, 34.0];
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
     150.0, 125.0, 150.0, 100.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
 ];
@@ -56,6 +56,23 @@ enum SelectionCursor {
     Move,
     ResizeNwse,
     ResizeNesw,
+}
+
+struct OverlayTooltip(&'static str);
+
+impl Render for OverlayTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = ThemeColors::default();
+        div()
+            .px_2()
+            .py_1()
+            .bg(colors.panel)
+            .border_1()
+            .border_color(colors.border)
+            .text_color(colors.text)
+            .text_xs()
+            .child(self.0)
+    }
 }
 
 pub(super) struct CaptureOverlay {
@@ -1278,7 +1295,7 @@ impl Render for CaptureOverlay {
                             .child(
                                 div()
                                     .id("overlay-annotation-controls")
-                                    .w(px(76.0))
+                                    .w(px(52.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
                                     .items_center()
@@ -1297,6 +1314,16 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            OverlayTooltip(if show_more_actions {
+                                                "Hide more actions"
+                                            } else {
+                                                "More actions"
+                                            })
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -1305,12 +1332,12 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
-                                    .child("Annotate"),
+                                    .child("Draw"),
                             )
                             .child(
                                 div()
                                     .id("overlay-pin")
-                                    .w(px(48.0))
+                                    .w(px(44.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
                                     .items_center()
@@ -1332,7 +1359,7 @@ impl Render for CaptureOverlay {
                             .child(
                                 div()
                                     .id("overlay-copy")
-                                    .w(px(52.0))
+                                    .w(px(48.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
                                     .items_center()
@@ -1354,7 +1381,7 @@ impl Render for CaptureOverlay {
                             .child(
                                 div()
                                     .id("overlay-save")
-                                    .w(px(52.0))
+                                    .w(px(48.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
                                     .items_center()
@@ -1376,7 +1403,7 @@ impl Render for CaptureOverlay {
                             .child(
                                 div()
                                     .id("overlay-more-actions")
-                                    .w(px(56.0))
+                                    .w(px(34.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
                                     .items_center()
@@ -1399,12 +1426,12 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
-                                    .child(if show_more_actions { "Less" } else { "More" }),
+                                    .child(if show_more_actions { "-" } else { "..." }),
                             )
                             .child(
                                 div()
                                     .id("overlay-cancel")
-                                    .w(px(62.0))
+                                    .w(px(34.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
                                     .items_center()
@@ -1415,11 +1442,12 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x493035FF)))
+                                    .tooltip(|_, cx| cx.new(|_| OverlayTooltip("Cancel")).into())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
                                     }))
-                                    .child("Cancel"),
+                                    .child("X"),
                             )
                             .when(show_more_actions, |actions| {
                                 actions
@@ -2983,9 +3011,9 @@ mod tests {
         assert_eq!(
             action_toolbar_layout(Some(selection), transform, viewport, false, false),
             Some(ActionToolbarLayout {
-                left: 826.0,
+                left: 912.0,
                 top: 526.0,
-                width: 374.0,
+                width: 288.0,
                 height: 42.0,
             })
         );
@@ -3044,10 +3072,10 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false, false), 80.0);
+        assert_eq!(action_toolbar_height(324.0, false, false), 42.0);
         assert_eq!(action_toolbar_height(324.0, true, false), 232.0);
         assert_eq!(action_toolbar_height(324.0, true, true), 232.0);
-        assert_eq!(action_toolbar_natural_width(false, false), 374.0);
+        assert_eq!(action_toolbar_natural_width(false, false), 288.0);
         assert!(action_toolbar_natural_width(true, false) > OVERLAY_ACTION_BAR_WIDTH);
         let layout =
             action_toolbar_layout(Some(selection), transform, viewport, true, false).unwrap();
