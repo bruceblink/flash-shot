@@ -218,6 +218,13 @@ fn capture_settings(
                     }),
             ),
         )
+        .child(settings_row("Color copy format").child(settings_button(
+            "settings-color-format",
+            app_state.color_format_label(),
+            colors,
+            is_idle,
+            move |_, _, cx| app.update(cx, |this, cx| this.cycle_color_format(cx)),
+        )))
 }
 
 fn file_settings(

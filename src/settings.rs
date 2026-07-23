@@ -8,6 +8,7 @@ use std::{
 const SETTINGS_FILE: &str = "settings.json";
 const SETTINGS_VERSION: u8 = 1;
 pub const DEFAULT_HISTORY_LIMIT: u16 = 30;
+pub const DEFAULT_COLOR_FORMAT: u8 = 0;
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -18,6 +19,7 @@ pub struct UserSettings {
     pub include_cursor: bool,
     pub capture_delay_seconds: u8,
     pub history_limit: u16,
+    pub color_format: u8,
 }
 
 impl Default for UserSettings {
@@ -29,6 +31,7 @@ impl Default for UserSettings {
             include_cursor: false,
             capture_delay_seconds: 0,
             history_limit: DEFAULT_HISTORY_LIMIT,
+            color_format: DEFAULT_COLOR_FORMAT,
         }
     }
 }
@@ -50,6 +53,7 @@ impl UserSettings {
                 settings.capture_delay_seconds =
                     Self::normalize_capture_delay(settings.capture_delay_seconds);
                 settings.history_limit = Self::normalize_history_limit(settings.history_limit);
+                settings.color_format = Self::normalize_color_format(settings.color_format);
                 Ok((settings, path))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok((Self::default(), path)),
@@ -85,11 +89,18 @@ impl UserSettings {
             _ => DEFAULT_HISTORY_LIMIT,
         }
     }
+
+    pub const fn normalize_color_format(format: u8) -> u8 {
+        match format {
+            0..=2 => format,
+            _ => DEFAULT_COLOR_FORMAT,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_HISTORY_LIMIT, UserSettings};
+    use super::{DEFAULT_COLOR_FORMAT, DEFAULT_HISTORY_LIMIT, UserSettings};
 
     fn directory(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -109,6 +120,7 @@ mod tests {
         assert!(!settings.include_cursor);
         assert_eq!(settings.capture_delay_seconds, 0);
         assert_eq!(settings.history_limit, DEFAULT_HISTORY_LIMIT);
+        assert_eq!(settings.color_format, DEFAULT_COLOR_FORMAT);
         let _ = std::fs::remove_dir_all(directory);
     }
 
@@ -121,6 +133,7 @@ mod tests {
         settings.include_cursor = true;
         settings.capture_delay_seconds = 5;
         settings.history_limit = 100;
+        settings.color_format = 2;
         settings.save(&path).unwrap();
 
         let (reopened, _) = UserSettings::load(&directory).unwrap();
@@ -129,6 +142,7 @@ mod tests {
         assert!(reopened.include_cursor);
         assert_eq!(reopened.capture_delay_seconds, 5);
         assert_eq!(reopened.history_limit, 100);
+        assert_eq!(reopened.color_format, 2);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -186,6 +200,22 @@ mod tests {
         let (settings, _) = UserSettings::load(&directory).unwrap();
 
         assert_eq!(settings.history_limit, DEFAULT_HISTORY_LIMIT);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn invalid_saved_color_format_falls_back_to_hex() {
+        let directory = directory("invalid-color-format");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("settings.json"),
+            r#"{"version":1,"color_format":9}"#,
+        )
+        .unwrap();
+
+        let (settings, _) = UserSettings::load(&directory).unwrap();
+
+        assert_eq!(settings.color_format, DEFAULT_COLOR_FORMAT);
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

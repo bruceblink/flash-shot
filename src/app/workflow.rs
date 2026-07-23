@@ -951,7 +951,8 @@ impl FlashShotApp {
 
     /// Copies the current physical-pixel sample without changing the capture or annotation state.
     pub(super) fn copy_hover_color(&mut self, cx: &mut Context<Self>) {
-        let Some(color) = hovered_color_hex(self.frame.as_ref(), self.hover_pixel) else {
+        let format = ColorFormat::from_setting(self.settings.color_format);
+        let Some(color) = hovered_color(self.frame.as_ref(), self.hover_pixel, format) else {
             self.status = "Move over the captured image to copy a color".to_owned();
             cx.notify();
             return;
@@ -961,6 +962,25 @@ impl FlashShotApp {
             Err(error) => format!("Could not copy {color}: {error}"),
         };
         cx.notify();
+    }
+
+    /// Cycles the saved output syntax used by the overlay's pixel color copy action.
+    pub(super) fn cycle_color_format(&mut self, cx: &mut Context<Self>) {
+        let previous = self.settings.color_format;
+        let next = ColorFormat::from_setting(previous).next();
+        self.settings.color_format = next.setting_value();
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.settings.color_format = previous;
+            self.status = format!("Could not save color format preference: {error}");
+            cx.notify();
+            return;
+        }
+        self.status = format!("Color copy format: {}", next.label());
+        cx.notify();
+    }
+
+    pub(super) fn color_format_label(&self) -> &'static str {
+        ColorFormat::from_setting(self.settings.color_format).label()
     }
 
     pub(super) fn clear_recognition_result(&mut self, cx: &mut Context<Self>) {
@@ -4599,12 +4619,90 @@ fn resolve_pointer_selection(
     }
 }
 
-/// Returns the exact RGB value at the active overlay pointer, if it still belongs to this frame.
-fn hovered_color_hex(
+/// Formats the exact RGB value at the active overlay pointer, if it still belongs to this frame.
+fn hovered_color(
     frame: Option<&CaptureFrame>,
     hover_pixel: Option<PhysicalPoint>,
+    format: ColorFormat,
 ) -> Option<String> {
-    frame?.pixel_at(hover_pixel?).map(|color| color.hex_rgb())
+    frame?
+        .pixel_at(hover_pixel?)
+        .map(|color| format.format(color))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ColorFormat {
+    Hex,
+    Rgb,
+    Hsl,
+}
+
+impl ColorFormat {
+    const fn from_setting(value: u8) -> Self {
+        match value {
+            1 => Self::Rgb,
+            2 => Self::Hsl,
+            _ => Self::Hex,
+        }
+    }
+
+    const fn setting_value(self) -> u8 {
+        match self {
+            Self::Hex => 0,
+            Self::Rgb => 1,
+            Self::Hsl => 2,
+        }
+    }
+
+    const fn next(self) -> Self {
+        match self {
+            Self::Hex => Self::Rgb,
+            Self::Rgb => Self::Hsl,
+            Self::Hsl => Self::Hex,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Hex => "HEX",
+            Self::Rgb => "RGB",
+            Self::Hsl => "HSL",
+        }
+    }
+
+    fn format(self, color: crate::platform::capture::PixelColor) -> String {
+        match self {
+            Self::Hex => color.hex_rgb(),
+            Self::Rgb => format!("rgb({}, {}, {})", color.red, color.green, color.blue),
+            Self::Hsl => format_hsl(color.red, color.green, color.blue),
+        }
+    }
+}
+
+fn format_hsl(red: u8, green: u8, blue: u8) -> String {
+    let red = f32::from(red) / 255.0;
+    let green = f32::from(green) / 255.0;
+    let blue = f32::from(blue) / 255.0;
+    let minimum = red.min(green).min(blue);
+    let maximum = red.max(green).max(blue);
+    let lightness = (minimum + maximum) / 2.0;
+    let delta = maximum - minimum;
+    if delta == 0.0 {
+        return format!("hsl(0, 0%, {:.1}%)", lightness * 100.0);
+    }
+    let saturation = delta / (1.0 - (2.0 * lightness - 1.0).abs());
+    let hue = if maximum == red {
+        60.0 * ((green - blue) / delta).rem_euclid(6.0)
+    } else if maximum == green {
+        60.0 * ((blue - red) / delta + 2.0)
+    } else {
+        60.0 * ((red - green) / delta + 4.0)
+    };
+    format!(
+        "hsl({hue:.1}, {:.1}%, {:.1}%)",
+        saturation * 100.0,
+        lightness * 100.0
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -4766,12 +4864,12 @@ fn adjusted_number_value(value: u32, delta: i32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        KeyboardCommand, adjusted_number_value, annotation_added_status,
+        ColorFormat, KeyboardCommand, adjusted_number_value, annotation_added_status,
         annotation_cancelled_status, annotation_document_path, annotation_position,
         annotation_sidecar_path, compose_captured_displays, copy_annotated_frame_selection,
-        delayed_capture_status, drawing_status, fill_alpha, fill_color, format_recording_progress,
-        full_screen_copy_is_current, hovered_color_hex, intersect_rect, is_current_operation,
-        keyboard_command, load_annotation_document, next_annotation_counters,
+        delayed_capture_status, drawing_status, fill_alpha, fill_color, format_hsl,
+        format_recording_progress, full_screen_copy_is_current, hovered_color, intersect_rect,
+        is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
         next_annotation_selection, next_capture_delay, next_quick_save_path,
         next_quick_save_path_with_prefix, next_recording_audio_selection,
         next_recording_display_selection, open_annotation_project, open_image_project, pinned_size,
@@ -4957,14 +5055,40 @@ mod tests {
         };
 
         assert_eq!(
-            hovered_color_hex(Some(&frame), Some(PhysicalPoint { x: -2, y: 10 })),
+            hovered_color(
+                Some(&frame),
+                Some(PhysicalPoint { x: -2, y: 10 }),
+                ColorFormat::Hex
+            ),
             Some("#12AB05".to_owned())
         );
-        assert_eq!(hovered_color_hex(Some(&frame), None), None);
+        assert_eq!(hovered_color(Some(&frame), None, ColorFormat::Hex), None);
         assert_eq!(
-            hovered_color_hex(Some(&frame), Some(PhysicalPoint { x: 0, y: 10 })),
+            hovered_color(
+                Some(&frame),
+                Some(PhysicalPoint { x: 0, y: 10 }),
+                ColorFormat::Hex,
+            ),
             None
         );
+    }
+
+    #[test]
+    fn color_copy_formats_are_stable_and_cycle_through_all_supported_syntaxes() {
+        let color = crate::platform::capture::PixelColor {
+            red: 18,
+            green: 171,
+            blue: 5,
+            alpha: 255,
+        };
+
+        assert_eq!(ColorFormat::Hex.format(color), "#12AB05");
+        assert_eq!(ColorFormat::Rgb.format(color), "rgb(18, 171, 5)");
+        assert_eq!(ColorFormat::Hsl.format(color), "hsl(115.3, 94.3%, 34.5%)");
+        assert_eq!(format_hsl(128, 128, 128), "hsl(0, 0%, 50.2%)");
+        assert_eq!(ColorFormat::Hex.next(), ColorFormat::Rgb);
+        assert_eq!(ColorFormat::Rgb.next(), ColorFormat::Hsl);
+        assert_eq!(ColorFormat::Hsl.next(), ColorFormat::Hex);
     }
 
     #[test]
