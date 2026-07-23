@@ -174,6 +174,7 @@ pub struct SelectionDrag {
     move_origin: Option<PhysicalPoint>,
     move_selection: Option<PhysicalRect>,
     resize_aspect_ratio: Option<(u32, u32)>,
+    resize_center: Option<PhysicalPoint>,
 }
 
 impl SelectionDrag {
@@ -190,6 +191,7 @@ impl SelectionDrag {
         self.move_origin = None;
         self.move_selection = None;
         self.resize_aspect_ratio = None;
+        self.resize_center = None;
     }
 
     pub fn begin(&mut self, point: PhysicalPoint) {
@@ -199,6 +201,7 @@ impl SelectionDrag {
         self.move_origin = None;
         self.move_selection = None;
         self.resize_aspect_ratio = None;
+        self.resize_center = None;
     }
 
     pub fn update(&mut self, point: PhysicalPoint) {
@@ -257,6 +260,10 @@ impl SelectionDrag {
         self.move_selection = None;
         self.resize_aspect_ratio = (selection.width() > 0 && selection.height() > 0)
             .then_some((selection.width(), selection.height()));
+        self.resize_center = Some(PhysicalPoint {
+            x: selection.left.saturating_add(selection.width() as i32 / 2),
+            y: selection.top.saturating_add(selection.height() as i32 / 2),
+        });
     }
 
     /// Starts moving a committed selection while preserving the pointer's grab offset.
@@ -266,6 +273,7 @@ impl SelectionDrag {
         self.move_origin = Some(point);
         self.move_selection = Some(selection);
         self.resize_aspect_ratio = None;
+        self.resize_center = None;
     }
 
     /// Resizes from the active corner while Shift keeps the original selection ratio.
@@ -317,6 +325,66 @@ impl SelectionDrag {
         self.current = Some(PhysicalPoint {
             x: current.x.clamp(image_bounds.left, image_bounds.right),
             y: current.y.clamp(image_bounds.top, image_bounds.bottom),
+        });
+    }
+
+    /// Resizes symmetrically around the original selection center while keeping every edge in bounds.
+    pub fn update_from_center(
+        &mut self,
+        point: PhysicalPoint,
+        image_bounds: PhysicalRect,
+        preserve_aspect_ratio: bool,
+    ) {
+        let Some(center) = self.resize_center else {
+            return;
+        };
+        let requested_half_width = point.x.saturating_sub(center.x).unsigned_abs();
+        let requested_half_height = point.y.saturating_sub(center.y).unsigned_abs();
+        let max_half_width = center
+            .x
+            .saturating_sub(image_bounds.left)
+            .min(image_bounds.right.saturating_sub(center.x)) as u32;
+        let max_half_height = center
+            .y
+            .saturating_sub(image_bounds.top)
+            .min(image_bounds.bottom.saturating_sub(center.y)) as u32;
+        let (half_width, half_height) = if preserve_aspect_ratio {
+            let Some((original_width, original_height)) = self.resize_aspect_ratio else {
+                return;
+            };
+            let requested_width = requested_half_width.saturating_mul(2);
+            let requested_height = requested_half_height.saturating_mul(2);
+            let target_width = if u64::from(requested_width) * u64::from(original_height)
+                >= u64::from(requested_height) * u64::from(original_width)
+            {
+                requested_width
+            } else {
+                (u64::from(requested_height) * u64::from(original_width)
+                    / u64::from(original_height)) as u32
+            };
+            let target_width = target_width.min(max_half_width.saturating_mul(2)).min(
+                (u64::from(max_half_height.saturating_mul(2)) * u64::from(original_width)
+                    / u64::from(original_height)) as u32,
+            );
+            (
+                target_width / 2,
+                (u64::from(target_width) * u64::from(original_height)
+                    / u64::from(original_width)
+                    / 2) as u32,
+            )
+        } else {
+            (
+                requested_half_width.min(max_half_width),
+                requested_half_height.min(max_half_height),
+            )
+        };
+        self.anchor = Some(PhysicalPoint {
+            x: center.x.saturating_sub(half_width as i32),
+            y: center.y.saturating_sub(half_height as i32),
+        });
+        self.current = Some(PhysicalPoint {
+            x: center.x.saturating_add(half_width as i32),
+            y: center.y.saturating_add(half_height as i32),
         });
     }
 
@@ -621,6 +689,70 @@ mod tests {
                 top: 100,
                 right: -700,
                 bottom: 500,
+            })
+        );
+    }
+
+    #[test]
+    fn alt_resize_expands_a_corner_symmetrically_from_the_original_center() {
+        let mut drag = SelectionDrag::default();
+        let selection = PhysicalRect {
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+        };
+        drag.begin_resize(selection, ResizeHandle::BottomRight);
+        drag.update_from_center(
+            PhysicalPoint { x: 350, y: 240 },
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 1000,
+                bottom: 800,
+            },
+            false,
+        );
+
+        assert_eq!(
+            drag.selection(),
+            Some(PhysicalRect {
+                left: 50,
+                top: 60,
+                right: 350,
+                bottom: 240,
+            })
+        );
+    }
+
+    #[test]
+    fn shift_alt_resize_preserves_ratio_and_clamps_both_sides_to_the_image() {
+        let mut drag = SelectionDrag::default();
+        let selection = PhysicalRect {
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+        };
+        drag.begin_resize(selection, ResizeHandle::BottomRight);
+        drag.update_from_center(
+            PhysicalPoint { x: 600, y: 600 },
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 400,
+                bottom: 300,
+            },
+            true,
+        );
+
+        assert_eq!(
+            drag.selection(),
+            Some(PhysicalRect {
+                left: 0,
+                top: 50,
+                right: 400,
+                bottom: 250,
             })
         );
     }

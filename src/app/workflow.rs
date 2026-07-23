@@ -1458,6 +1458,7 @@ impl FlashShotApp {
         &mut self,
         point: crate::domain::geometry::PhysicalPoint,
         preserve_aspect_ratio: bool,
+        resize_from_center: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(frame) = self.frame.as_ref() else {
@@ -1491,7 +1492,10 @@ impl FlashShotApp {
             self.status = "Moving selection...".to_owned();
         } else {
             let point = clamp_physical_point(point, frame.bounds);
-            if preserve_aspect_ratio {
+            if resize_from_center {
+                self.selection_drag
+                    .update_from_center(point, frame.bounds, preserve_aspect_ratio);
+            } else if preserve_aspect_ratio {
                 self.selection_drag
                     .update_with_aspect_ratio(point, frame.bounds);
             } else {
@@ -1530,6 +1534,8 @@ impl FlashShotApp {
     pub(super) fn finish_overlay_selection(
         &mut self,
         point: crate::domain::geometry::PhysicalPoint,
+        preserve_aspect_ratio: bool,
+        resize_from_center: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(frame) = self.frame.as_ref() else {
@@ -1558,8 +1564,16 @@ impl FlashShotApp {
         if self.selection_drag.is_moving() {
             self.selection_drag.update_move(point, frame.bounds);
         } else {
-            self.selection_drag
-                .update(clamp_physical_point(point, frame.bounds));
+            let point = clamp_physical_point(point, frame.bounds);
+            if resize_from_center {
+                self.selection_drag
+                    .update_from_center(point, frame.bounds, preserve_aspect_ratio);
+            } else if preserve_aspect_ratio {
+                self.selection_drag
+                    .update_with_aspect_ratio(point, frame.bounds);
+            } else {
+                self.selection_drag.update(point);
+            }
         }
         let selection = self
             .selection_drag

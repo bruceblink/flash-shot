@@ -142,6 +142,7 @@ impl CaptureOverlay {
         let point = transform.view_to_pixel(view_point(event.position));
         let app = self.app.clone();
         let preserve_aspect_ratio = event.modifiers.shift;
+        let resize_from_center = event.modifiers.alt;
         let dragging_point = event
             .dragging()
             .then(cursor::position)
@@ -152,7 +153,12 @@ impl CaptureOverlay {
             app.update(cx, |app, cx| {
                 app.update_overlay_hover(point, cx);
                 if let Some(point) = dragging_point {
-                    app.update_overlay_selection(point, preserve_aspect_ratio, cx);
+                    app.update_overlay_selection(
+                        point,
+                        preserve_aspect_ratio,
+                        resize_from_center,
+                        cx,
+                    );
                 }
             })
         });
@@ -171,7 +177,13 @@ impl CaptureOverlay {
         });
         let Some(point) = point else { return };
         let app = self.app.clone();
-        cx.defer(move |cx| app.update(cx, |app, cx| app.finish_overlay_selection(point, cx)));
+        let preserve_aspect_ratio = event.modifiers.shift;
+        let resize_from_center = event.modifiers.alt;
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| {
+                app.finish_overlay_selection(point, preserve_aspect_ratio, resize_from_center, cx)
+            })
+        });
     }
 
     fn handle_key_down(
