@@ -3,7 +3,7 @@
 use std::{
     collections::VecDeque,
     fs, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -173,10 +173,23 @@ impl ScreenshotHistory {
                     created_at_ms: value.get("created_at_ms")?.as_u64()? as u128,
                 })
             })
-            .filter(|entry| entry.path.starts_with(&self.root) && entry.path.is_file())
+            .filter_map(|entry| {
+                self.managed_existing_path(&entry.path)
+                    .map(|path| HistoryEntry {
+                        path,
+                        created_at_ms: entry.created_at_ms,
+                    })
+            })
             .collect();
         self.prune()?;
         self.write_index()
+    }
+
+    /// Resolves an index entry before trusting it so `..` segments and links
+    /// cannot make a user-editable history index refer to files outside this store.
+    fn managed_existing_path(&self, path: &Path) -> Option<PathBuf> {
+        let path = path.canonicalize().ok()?;
+        (path.starts_with(&self.root) && path.is_file()).then_some(path)
     }
 
     fn prune(&mut self) -> io::Result<()> {
@@ -342,6 +355,41 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
         assert!(unmanaged.exists());
 
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn loading_an_escaped_index_entry_never_manages_or_deletes_an_outside_file() {
+        let root = directory("escaped-index");
+        let outside = directory("escaped-index-outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let outside_image = outside.join("outside.png");
+        fs::write(&outside_image, b"outside").unwrap();
+        let escaped = root
+            .join("..")
+            .join(
+                outside
+                    .file_name()
+                    .expect("temporary directory has a final path component"),
+            )
+            .join("outside.png");
+        fs::write(
+            root.join("history.json"),
+            serde_json::json!([{
+                "path": escaped,
+                "created_at_ms": 1,
+            }])
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut history = ScreenshotHistory::open(&root).unwrap();
+
+        assert!(history.entries().is_empty());
+        history.clear().unwrap();
+        assert!(outside_image.exists());
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
     }
