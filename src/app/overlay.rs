@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, KeyDownEvent,
+    Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, Hsla, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render,
     RenderImage, Subscription, TextAlign, TextRun, Window, canvas, div, fill, img, point,
     prelude::*, px, rgba, size,
@@ -29,16 +29,17 @@ const OVERLAY_EDGE_INSET: f32 = 18.0;
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
 const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
 const OVERLAY_ACTION_BAR_GAP: f32 = 12.0;
-const OVERLAY_ACTION_ITEM_GAP: f32 = 8.0;
+const OVERLAY_ACTION_ITEM_GAP: f32 = 4.0;
 const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 34.0;
+const OVERLAY_ACTION_BAR_PADDING: f32 = 4.0;
 const OVERLAY_DIMENSION_LABEL_WIDTH: f32 = 112.0;
 const OVERLAY_DIMENSION_LABEL_HEIGHT: f32 = 26.0;
 const OVERLAY_DIMENSION_LABEL_GAP: f32 = 8.0;
 // Keep the terminal screenshot actions on one compact row while optional
 // actions expand only after the user asks for them.
-const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 5] = [50.0, 65.0, 50.0, 45.0, 45.0];
-const OVERLAY_MORE_ACTION_WIDTHS: [f32; 12] = [
-    150.0, 125.0, 150.0, 100.0, 50.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
+const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [76.0, 48.0, 52.0, 52.0, 56.0, 62.0];
+const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
+    150.0, 125.0, 150.0, 100.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
 ];
 const OVERLAY_RECOGNITION_ACTION_WIDTHS: [f32; 2] = [60.0, 90.0];
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
@@ -1258,14 +1259,24 @@ impl Render for CaptureOverlay {
                     .flex()
                     .flex_wrap()
                     .justify_end()
-                    .gap_2()
+                    .gap_1()
+                    .p_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgba(0xFFFFFF24))
+                    .bg(rgba(0x15171BF5))
+                    .shadow_lg()
                     .when(can_export, |actions| {
                         actions
                             .child(
                                 div()
                                     .id("overlay-annotation-controls")
-                                    .px_3()
-                                    .py_2()
+                                    .w(px(76.0))
+                                    .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_sm()
                                     .bg(if show_annotation_controls {
                                         colors.accent
                                     } else {
@@ -1276,7 +1287,9 @@ impl Render for CaptureOverlay {
                                     } else {
                                         colors.text
                                     })
+                                    .text_sm()
                                     .cursor_pointer()
+                                    .hover(|style| style.bg(rgba(0x3A4049FF)))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -1285,20 +1298,44 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
-                                    .child(if show_annotation_controls {
-                                        "Tools"
-                                    } else {
-                                        "Annotate"
-                                    }),
+                                    .child("Annotate"),
+                            )
+                            .child(
+                                div()
+                                    .id("overlay-pin")
+                                    .w(px(48.0))
+                                    .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_sm()
+                                    .bg(colors.panel)
+                                    .text_color(colors.text)
+                                    .text_sm()
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.pin_selection(cx))
+                                        });
+                                    }))
+                                    .child("Pin"),
                             )
                             .child(
                                 div()
                                     .id("overlay-copy")
-                                    .px_3()
-                                    .py_2()
+                                    .w(px(52.0))
+                                    .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_sm()
                                     .bg(colors.accent)
                                     .text_color(colors.background)
+                                    .text_sm()
                                     .cursor_pointer()
+                                    .hover(|style| style.bg(rgba(0x81D4FAFF)))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -1310,11 +1347,17 @@ impl Render for CaptureOverlay {
                             .child(
                                 div()
                                     .id("overlay-save")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
+                                    .w(px(52.0))
+                                    .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_sm()
+                                    .bg(colors.panel)
                                     .text_color(colors.text)
+                                    .text_sm()
                                     .cursor_pointer()
+                                    .hover(|style| style.bg(rgba(0x3A4049FF)))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -1325,26 +1368,22 @@ impl Render for CaptureOverlay {
                             )
                             .child(
                                 div()
-                                    .id("overlay-cancel")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
-                                    .text_color(colors.text)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
-                                    }))
-                                    .child("Cancel"),
-                            )
-                            .child(
-                                div()
                                     .id("overlay-more-actions")
-                                    .px_3()
-                                    .py_2()
-                                    .bg(rgba(0x111827E6))
+                                    .w(px(56.0))
+                                    .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_sm()
+                                    .bg(if show_more_actions {
+                                        Hsla::from(rgba(0x3A4049FF))
+                                    } else {
+                                        colors.panel
+                                    })
                                     .text_color(colors.text)
+                                    .text_sm()
                                     .cursor_pointer()
+                                    .hover(|style| style.bg(rgba(0x3A4049FF)))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -1354,6 +1393,26 @@ impl Render for CaptureOverlay {
                                         });
                                     }))
                                     .child(if show_more_actions { "Less" } else { "More" }),
+                            )
+                            .child(
+                                div()
+                                    .id("overlay-cancel")
+                                    .w(px(62.0))
+                                    .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_sm()
+                                    .bg(rgba(0x2A2023FF))
+                                    .text_color(rgba(0xFFB4ABFF))
+                                    .text_sm()
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(rgba(0x493035FF)))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
+                                    }))
+                                    .child("Cancel"),
                             )
                             .when(show_more_actions, |actions| {
                                 actions
@@ -1428,22 +1487,6 @@ impl Render for CaptureOverlay {
                                                 });
                                             }))
                                             .child("Quick save"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("overlay-pin")
-                                            .px_3()
-                                            .py_2()
-                                            .bg(rgba(0x111827E6))
-                                            .text_color(colors.text)
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| app.pin_selection(cx))
-                                                });
-                                            }))
-                                            .child("Pin"),
                                     )
                                     .child(
                                         div()
@@ -2492,6 +2535,7 @@ fn action_toolbar_layout(
 fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_result: bool) -> f32 {
     let mut rows = 1_u32;
     let mut row_width = 0.0;
+    let content_width = (width - OVERLAY_ACTION_BAR_PADDING * 2.0).max(1.0);
     let more_widths = show_more_actions
         .then_some(OVERLAY_MORE_ACTION_WIDTHS)
         .into_iter()
@@ -2510,7 +2554,7 @@ fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_re
         } else {
             row_width + OVERLAY_ACTION_ITEM_GAP + item_width
         };
-        if row_width > 0.0 && next_width > width {
+        if row_width > 0.0 && next_width > content_width {
             rows = rows.saturating_add(1);
             row_width = item_width;
         } else {
@@ -2519,6 +2563,7 @@ fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_re
     }
     rows as f32 * OVERLAY_ACTION_ITEM_HEIGHT
         + rows.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
+        + OVERLAY_ACTION_BAR_PADDING * 2.0
 }
 
 /// Chooses pointer feedback without letting selection movement override an active drawing tool.
@@ -2889,7 +2934,7 @@ mod tests {
             action_toolbar_layout(Some(selection), transform, viewport, false, false),
             Some(ActionToolbarLayout {
                 left: 580.0,
-                top: 534.0,
+                top: 526.0,
                 width: 620.0,
             })
         );
@@ -2947,13 +2992,13 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false, false), 34.0);
-        assert_eq!(action_toolbar_height(324.0, true, false), 244.0);
-        assert_eq!(action_toolbar_height(324.0, true, true), 244.0);
+        assert_eq!(action_toolbar_height(324.0, false, false), 80.0);
+        assert_eq!(action_toolbar_height(324.0, true, false), 232.0);
+        assert_eq!(action_toolbar_height(324.0, true, true), 232.0);
         let layout =
             action_toolbar_layout(Some(selection), transform, viewport, true, false).unwrap();
         assert_eq!(layout.left, 18.0);
-        assert!((layout.top - 144.0).abs() < 0.01);
+        assert!((layout.top - 156.0).abs() < 0.01);
         assert_eq!(layout.width, 324.0);
     }
 

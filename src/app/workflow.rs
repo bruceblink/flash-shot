@@ -2670,20 +2670,22 @@ impl FlashShotApp {
                 return;
             }
         };
-        // The capture overlays sit above ordinary windows. Tear down this
-        // session first, then create the pinned window on the next UI turn so
-        // the selected image is immediately visible instead of hidden behind
-        // an overlay until the next capture.
+        // The capture overlays sit above ordinary windows. Reset schedules
+        // their destruction, so wait an extra UI turn before opening the pin.
+        // This guarantees the pinned image is not hidden until the next capture.
         self.reset(cx);
         let app = cx.entity();
         cx.defer(move |cx| {
-            app.update(cx, |app, cx| {
-                app.open_pinned_frame(
-                    pinned_frame,
-                    "Selection pinned in an always-on-top window",
-                    None,
-                    cx,
-                );
+            let app = app.clone();
+            cx.defer(move |cx| {
+                app.update(cx, |app, cx| {
+                    app.open_pinned_frame(
+                        pinned_frame,
+                        "Selection pinned in an always-on-top window",
+                        None,
+                        cx,
+                    );
+                });
             });
         });
     }

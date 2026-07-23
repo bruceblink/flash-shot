@@ -84,6 +84,8 @@ impl Render for PinnedImage {
         }
         div()
             .size_full()
+            .flex()
+            .flex_col()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, _| {
                 if pinned_close_key(&event.keystroke.key) {
@@ -95,8 +97,9 @@ impl Render for PinnedImage {
             .border_color(colors.border)
             .child(
                 div()
-                    .h(px(26.0))
-                    .px_2()
+                    .id("pinned-toolbar")
+                    .h(px(32.0))
+                    .px_3()
                     .flex()
                     .items_center()
                     .justify_between()
@@ -106,12 +109,18 @@ impl Render for PinnedImage {
                     .child(
                         div()
                             .flex()
-                            .gap_2()
+                            .items_center()
+                            .gap_1()
                             .child(
                                 div()
                                     .id("pinned-copy")
-                                    .px_2()
+                                    .px_3()
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
                                     .text_color(colors.text)
+                                    .text_xs()
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| this.copy_image(cx)))
                                     .child("Copy"),
@@ -119,16 +128,26 @@ impl Render for PinnedImage {
                             .child(
                                 div()
                                     .id("pinned-close")
-                                    .px_2()
-                                    .text_color(colors.text)
+                                    .px_3()
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.muted)
+                                    .text_xs()
                                     .cursor_pointer()
-                                    .window_control_area(WindowControlArea::Close)
                                     .on_click(cx.listener(|this, _, window, _| this.close(window)))
                                     .child("Close"),
                             ),
                     ),
             )
-            .child(img(self.image.clone()).size_full())
+            .child(
+                div()
+                    .id("pinned-image")
+                    .flex_1()
+                    .bg(colors.background)
+                    .child(img(self.image.clone()).size_full()),
+            )
     }
 }
 
