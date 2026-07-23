@@ -34,7 +34,9 @@ const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 34.0;
 const OVERLAY_DIMENSION_LABEL_WIDTH: f32 = 112.0;
 const OVERLAY_DIMENSION_LABEL_HEIGHT: f32 = 26.0;
 const OVERLAY_DIMENSION_LABEL_GAP: f32 = 8.0;
-const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 5] = [50.0, 65.0, 50.0, 100.0, 45.0];
+// Keep the terminal screenshot actions on one compact row while optional
+// actions expand only after the user asks for them.
+const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 5] = [50.0, 65.0, 50.0, 45.0, 45.0];
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 12] = [
     150.0, 125.0, 150.0, 100.0, 50.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
 ];
@@ -1323,6 +1325,20 @@ impl Render for CaptureOverlay {
                             )
                             .child(
                                 div()
+                                    .id("overlay-cancel")
+                                    .px_3()
+                                    .py_2()
+                                    .bg(rgba(0x111827E6))
+                                    .text_color(colors.text)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
+                                    }))
+                                    .child("Cancel"),
+                            )
+                            .child(
+                                div()
                                     .id("overlay-more-actions")
                                     .px_3()
                                     .py_2()
@@ -1596,20 +1612,22 @@ impl Render for CaptureOverlay {
                                     })
                             })
                     })
-                    .child(
-                        div()
-                            .id("overlay-cancel")
-                            .px_3()
-                            .py_2()
-                            .bg(rgba(0x111827E6))
-                            .text_color(colors.text)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
-                            }))
-                            .child("Cancel"),
-                    ),
+                    .when(!can_export, |actions| {
+                        actions.child(
+                            div()
+                                .id("overlay-cancel")
+                                .px_3()
+                                .py_2()
+                                .bg(rgba(0x111827E6))
+                                .text_color(colors.text)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let app = this.app.clone();
+                                    cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
+                                }))
+                                .child("Cancel"),
+                        )
+                    }),
             )
     }
 }
@@ -2929,7 +2947,7 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false, false), 76.0);
+        assert_eq!(action_toolbar_height(324.0, false, false), 34.0);
         assert_eq!(action_toolbar_height(324.0, true, false), 244.0);
         assert_eq!(action_toolbar_height(324.0, true, true), 244.0);
         let layout =
