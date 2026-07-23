@@ -182,9 +182,16 @@ impl CaptureOverlay {
         let app = self.app.clone();
         let preserve_aspect_ratio = event.modifiers.shift;
         let resize_from_center = event.modifiers.alt;
+        let copy_on_double_click = capture_double_click(event.click_count);
         cx.defer(move |cx| {
             app.update(cx, |app, cx| {
-                app.finish_overlay_selection(point, preserve_aspect_ratio, resize_from_center, cx)
+                app.finish_overlay_selection(
+                    point,
+                    preserve_aspect_ratio,
+                    resize_from_center,
+                    copy_on_double_click,
+                    cx,
+                )
             })
         });
     }
@@ -2437,6 +2444,11 @@ fn visible_selection(
         .or(committed_selection)
 }
 
+/// Limits the fast completion gesture to the platform's second left-button click.
+fn capture_double_click(click_count: usize) -> bool {
+    click_count == 2
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ActionToolbarLayout {
     left: f32,
@@ -2636,9 +2648,10 @@ mod tests {
     use super::{
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_WIDTH,
         SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
-        action_toolbar_natural_width, annotation_layer_label, arrow_head_points, intersect,
-        is_text_annotation, magnifier_origin, outline_shape_bounds, resize_handle_points,
-        selection_cursor, selection_dimension_label_layout, visible_selection,
+        action_toolbar_natural_width, annotation_layer_label, arrow_head_points,
+        capture_double_click, intersect, is_text_annotation, magnifier_origin,
+        outline_shape_bounds, resize_handle_points, selection_cursor,
+        selection_dimension_label_layout, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2671,6 +2684,13 @@ mod tests {
                 bottom: 500,
             })
         );
+    }
+
+    #[test]
+    fn only_the_second_click_triggers_fast_capture_completion() {
+        assert!(!capture_double_click(1));
+        assert!(capture_double_click(2));
+        assert!(!capture_double_click(3));
     }
 
     #[test]

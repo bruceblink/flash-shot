@@ -1536,6 +1536,7 @@ impl FlashShotApp {
         point: crate::domain::geometry::PhysicalPoint,
         preserve_aspect_ratio: bool,
         resize_from_center: bool,
+        copy_on_double_click: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(frame) = self.frame.as_ref() else {
@@ -1582,8 +1583,16 @@ impl FlashShotApp {
         self.pending_click_target = None;
         if let Some(selection) = selection {
             self.selection_drag.select(selection);
-            let _ = self.session.select(selection);
+            if let Err(error) = self.session.select(selection) {
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
             self.status = selection_status(selection);
+            if copy_on_double_click {
+                self.copy_selection(cx);
+                return;
+            }
         }
         cx.notify();
     }
