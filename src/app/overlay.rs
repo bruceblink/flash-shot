@@ -31,6 +31,9 @@ const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
 const OVERLAY_ACTION_BAR_GAP: f32 = 12.0;
 const OVERLAY_ACTION_ITEM_GAP: f32 = 8.0;
 const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 34.0;
+const OVERLAY_DIMENSION_LABEL_WIDTH: f32 = 112.0;
+const OVERLAY_DIMENSION_LABEL_HEIGHT: f32 = 26.0;
+const OVERLAY_DIMENSION_LABEL_GAP: f32 = 8.0;
 const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 5] = [50.0, 65.0, 50.0, 100.0, 45.0];
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 12] = [
     150.0, 125.0, 150.0, 100.0, 50.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
@@ -274,6 +277,12 @@ impl Render for CaptureOverlay {
             show_more_actions,
             recognition_result.is_some(),
         );
+        let dimension_layout = selection_dimension_label_layout(
+            selected_on_display,
+            transform,
+            viewport,
+            action_layout,
+        );
         let target_on_display = selection
             .is_none()
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
@@ -421,6 +430,27 @@ impl Render for CaptureOverlay {
                 .right_0()
                 .bottom_0(),
             )
+            .when_some(dimension_layout, |overlay, layout| {
+                let selection = selected_on_display.expect("dimension layout requires selection");
+                overlay.child(
+                    div()
+                        .id("overlay-selection-dimensions")
+                        .absolute()
+                        .left(px(layout.left))
+                        .top(px(layout.top))
+                        .w(px(OVERLAY_DIMENSION_LABEL_WIDTH))
+                        .h(px(OVERLAY_DIMENSION_LABEL_HEIGHT))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(rgba(0x111827E6))
+                        .border_1()
+                        .border_color(colors.accent)
+                        .text_color(colors.text)
+                        .text_sm()
+                        .child(format!("{} x {} px", selection.width(), selection.height())),
+                )
+            })
             .when(!layer_annotations.is_empty(), |overlay| {
                 overlay.child(
                     div()
@@ -2341,6 +2371,49 @@ struct ActionToolbarLayout {
     width: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionDimensionLayout {
+    left: f32,
+    top: f32,
+}
+
+/// Positions the pixel-size readout near the selection without covering export controls.
+fn selection_dimension_label_layout(
+    selection: Option<PhysicalRect>,
+    transform: Option<PreviewTransform>,
+    viewport: Bounds<Pixels>,
+    action_toolbar: Option<ActionToolbarLayout>,
+) -> Option<SelectionDimensionLayout> {
+    let selection = selection?;
+    let transform = transform?;
+    let viewport = view_rect(viewport);
+    let top_left = transform.physical_to_view(PhysicalPoint {
+        x: selection.left,
+        y: selection.top,
+    });
+    let bottom_right = transform.physical_to_view(PhysicalPoint {
+        x: selection.right,
+        y: selection.bottom,
+    });
+    let left_min = viewport.left + OVERLAY_EDGE_INSET;
+    let left_max =
+        (viewport.right() - OVERLAY_EDGE_INSET - OVERLAY_DIMENSION_LABEL_WIDTH).max(left_min);
+    let left = top_left.x.clamp(left_min, left_max);
+    let above = top_left.y - OVERLAY_DIMENSION_LABEL_HEIGHT - OVERLAY_DIMENSION_LABEL_GAP;
+    let below = bottom_right.y + OVERLAY_DIMENSION_LABEL_GAP;
+    let can_place_above = above >= viewport.top + OVERLAY_EDGE_INSET;
+    let overlaps_toolbar_below = action_toolbar.is_some_and(|toolbar| {
+        below < toolbar.top + OVERLAY_ACTION_ITEM_HEIGHT
+            && below + OVERLAY_DIMENSION_LABEL_HEIGHT > toolbar.top
+    });
+    let top = if can_place_above || overlaps_toolbar_below {
+        above.max(viewport.top + OVERLAY_EDGE_INSET)
+    } else {
+        below.min(viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - OVERLAY_DIMENSION_LABEL_HEIGHT)
+    };
+    Some(SelectionDimensionLayout { left, top })
+}
+
 fn action_toolbar_layout(
     selection: Option<PhysicalRect>,
     transform: Option<PreviewTransform>,
@@ -2457,9 +2530,10 @@ fn selection_cursor(
 mod tests {
     use super::{
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, SelectionCursor,
-        action_toolbar_height, action_toolbar_layout, annotation_layer_label, arrow_head_points,
-        intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
-        resize_handle_points, selection_cursor, visible_selection,
+        SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
+        annotation_layer_label, arrow_head_points, intersect, is_text_annotation, magnifier_origin,
+        outline_shape_bounds, resize_handle_points, selection_cursor,
+        selection_dimension_label_layout, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2787,6 +2861,39 @@ mod tests {
                 left: 580.0,
                 top: 534.0,
                 width: 620.0,
+            })
+        );
+    }
+
+    #[test]
+    fn selection_dimensions_stay_visible_and_avoid_a_toolbar_below_the_selection() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let transform = PreviewTransform::contain(
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 1280,
+                bottom: 720,
+            },
+            super::view_rect(viewport),
+        );
+        let selection = PhysicalRect {
+            left: 100,
+            top: 300,
+            right: 600,
+            bottom: 500,
+        };
+        let toolbar = ActionToolbarLayout {
+            left: 18.0,
+            top: 508.0,
+            width: 620.0,
+        };
+
+        assert_eq!(
+            selection_dimension_label_layout(Some(selection), transform, viewport, Some(toolbar)),
+            Some(SelectionDimensionLayout {
+                left: 100.0,
+                top: 266.0,
             })
         );
     }
