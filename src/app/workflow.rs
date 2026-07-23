@@ -949,6 +949,20 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Copies the current physical-pixel sample without changing the capture or annotation state.
+    pub(super) fn copy_hover_color(&mut self, cx: &mut Context<Self>) {
+        let Some(color) = hovered_color_hex(self.frame.as_ref(), self.hover_pixel) else {
+            self.status = "Move over the captured image to copy a color".to_owned();
+            cx.notify();
+            return;
+        };
+        self.status = match SystemClipboard.copy_text(&color) {
+            Ok(()) => format!("{color} copied to clipboard"),
+            Err(error) => format!("Could not copy {color}: {error}"),
+        };
+        cx.notify();
+    }
+
     pub(super) fn clear_recognition_result(&mut self, cx: &mut Context<Self>) {
         self.recognition_result = None;
         cx.notify();
@@ -4585,6 +4599,14 @@ fn resolve_pointer_selection(
     }
 }
 
+/// Returns the exact RGB value at the active overlay pointer, if it still belongs to this frame.
+fn hovered_color_hex(
+    frame: Option<&CaptureFrame>,
+    hover_pixel: Option<PhysicalPoint>,
+) -> Option<String> {
+    frame?.pixel_at(hover_pixel?).map(|color| color.hex_rgb())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum KeyboardCommand {
     Undo,
@@ -4748,16 +4770,17 @@ mod tests {
         annotation_cancelled_status, annotation_document_path, annotation_position,
         annotation_sidecar_path, compose_captured_displays, copy_annotated_frame_selection,
         delayed_capture_status, drawing_status, fill_alpha, fill_color, format_recording_progress,
-        full_screen_copy_is_current, intersect_rect, is_current_operation, keyboard_command,
-        load_annotation_document, next_annotation_counters, next_annotation_selection,
-        next_capture_delay, next_quick_save_path, next_quick_save_path_with_prefix,
-        next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
-        open_image_project, pinned_size, png_path, project_image_path,
-        quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
-        recording_audio_selection_label, recording_display_selection_label, recording_target_label,
-        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
-        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-        text_annotation_with_content, tool_selected_status, with_alpha,
+        full_screen_copy_is_current, hovered_color_hex, intersect_rect, is_current_operation,
+        keyboard_command, load_annotation_document, next_annotation_counters,
+        next_annotation_selection, next_capture_delay, next_quick_save_path,
+        next_quick_save_path_with_prefix, next_recording_audio_selection,
+        next_recording_display_selection, open_annotation_project, open_image_project, pinned_size,
+        png_path, project_image_path, quick_save_annotated_frame_selection_in,
+        quick_save_full_screen_frame_in, recording_audio_selection_label,
+        recording_display_selection_label, recording_target_label, resolve_pointer_selection,
+        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
+        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
+        tool_selected_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -4912,6 +4935,35 @@ mod tests {
         assert_eq!(
             frame.pixel_at(PhysicalPoint { x: -2, y: 10 }).unwrap().red,
             10
+        );
+    }
+
+    #[test]
+    fn hovered_color_uses_the_frame_physical_coordinates_and_rejects_missing_samples() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: -2,
+                top: 10,
+                right: 0,
+                bottom: 11,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([5, 171, 18, 255, 7, 8, 9, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        assert_eq!(
+            hovered_color_hex(Some(&frame), Some(PhysicalPoint { x: -2, y: 10 })),
+            Some("#12AB05".to_owned())
+        );
+        assert_eq!(hovered_color_hex(Some(&frame), None), None);
+        assert_eq!(
+            hovered_color_hex(Some(&frame), Some(PhysicalPoint { x: 0, y: 10 })),
+            None
         );
     }
 

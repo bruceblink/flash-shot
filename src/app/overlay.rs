@@ -1442,6 +1442,24 @@ impl Render for CaptureOverlay {
                                     )
                                     .child(
                                         div()
+                                            .id("overlay-copy-color")
+                                            .px_3()
+                                            .py_2()
+                                            .bg(rgba(0x111827E6))
+                                            .text_color(colors.text)
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.copy_hover_color(cx)
+                                                    })
+                                                });
+                                            }))
+                                            .child("Copy color"),
+                                    )
+                                    .child(
+                                        div()
                                             .id("overlay-translate")
                                             .px_3()
                                             .py_2()
