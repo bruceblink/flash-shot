@@ -1457,6 +1457,7 @@ impl FlashShotApp {
     pub(super) fn update_overlay_selection(
         &mut self,
         point: crate::domain::geometry::PhysicalPoint,
+        preserve_aspect_ratio: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(frame) = self.frame.as_ref() else {
@@ -1489,8 +1490,13 @@ impl FlashShotApp {
             self.selection_drag.update_move(point, frame.bounds);
             self.status = "Moving selection...".to_owned();
         } else {
-            self.selection_drag
-                .update(clamp_physical_point(point, frame.bounds));
+            let point = clamp_physical_point(point, frame.bounds);
+            if preserve_aspect_ratio {
+                self.selection_drag
+                    .update_with_aspect_ratio(point, frame.bounds);
+            } else {
+                self.selection_drag.update(point);
+            }
         }
         if let Some(selection) = self.selection_drag.selection()
             && !self.selection_drag.is_moving()

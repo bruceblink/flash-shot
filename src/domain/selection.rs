@@ -173,6 +173,7 @@ pub struct SelectionDrag {
     dragging: bool,
     move_origin: Option<PhysicalPoint>,
     move_selection: Option<PhysicalRect>,
+    resize_aspect_ratio: Option<(u32, u32)>,
 }
 
 impl SelectionDrag {
@@ -188,6 +189,7 @@ impl SelectionDrag {
         self.dragging = false;
         self.move_origin = None;
         self.move_selection = None;
+        self.resize_aspect_ratio = None;
     }
 
     pub fn begin(&mut self, point: PhysicalPoint) {
@@ -196,6 +198,7 @@ impl SelectionDrag {
         self.dragging = true;
         self.move_origin = None;
         self.move_selection = None;
+        self.resize_aspect_ratio = None;
     }
 
     pub fn update(&mut self, point: PhysicalPoint) {
@@ -252,6 +255,8 @@ impl SelectionDrag {
         self.dragging = true;
         self.move_origin = None;
         self.move_selection = None;
+        self.resize_aspect_ratio = (selection.width() > 0 && selection.height() > 0)
+            .then_some((selection.width(), selection.height()));
     }
 
     /// Starts moving a committed selection while preserving the pointer's grab offset.
@@ -260,6 +265,59 @@ impl SelectionDrag {
         self.dragging = true;
         self.move_origin = Some(point);
         self.move_selection = Some(selection);
+        self.resize_aspect_ratio = None;
+    }
+
+    /// Resizes from the active corner while Shift keeps the original selection ratio.
+    pub fn update_with_aspect_ratio(&mut self, point: PhysicalPoint, image_bounds: PhysicalRect) {
+        let Some(anchor) = self.anchor else {
+            return;
+        };
+        let Some((width, height)) = self.resize_aspect_ratio else {
+            self.update(point);
+            return;
+        };
+        let delta_x = point.x.saturating_sub(anchor.x);
+        let delta_y = point.y.saturating_sub(anchor.y);
+        let magnitude_x = delta_x.unsigned_abs();
+        let magnitude_y = delta_y.unsigned_abs();
+        let target_width = if u64::from(magnitude_x) * u64::from(height)
+            >= u64::from(magnitude_y) * u64::from(width)
+        {
+            magnitude_x
+        } else {
+            (u64::from(magnitude_y) * u64::from(width) / u64::from(height)) as u32
+        };
+        let max_width = if delta_x < 0 {
+            anchor.x.saturating_sub(image_bounds.left) as u32
+        } else {
+            image_bounds.right.saturating_sub(anchor.x) as u32
+        };
+        let max_height = if delta_y < 0 {
+            anchor.y.saturating_sub(image_bounds.top) as u32
+        } else {
+            image_bounds.bottom.saturating_sub(anchor.y) as u32
+        };
+        let target_width = target_width
+            .min(max_width)
+            .min((u64::from(max_height) * u64::from(width) / u64::from(height)) as u32);
+        let target_height = (u64::from(target_width) * u64::from(height) / u64::from(width)) as u32;
+        let current = PhysicalPoint {
+            x: anchor.x.saturating_add(if delta_x < 0 {
+                -(target_width as i32)
+            } else {
+                target_width as i32
+            }),
+            y: anchor.y.saturating_add(if delta_y < 0 {
+                -(target_height as i32)
+            } else {
+                target_height as i32
+            }),
+        };
+        self.current = Some(PhysicalPoint {
+            x: current.x.clamp(image_bounds.left, image_bounds.right),
+            y: current.y.clamp(image_bounds.top, image_bounds.bottom),
+        });
     }
 
     /// Moves the grabbed selection as one rectangle and clamps it inside the captured desktop.
@@ -540,6 +598,52 @@ mod tests {
                 top: 0,
                 right: -1620,
                 bottom: 280,
+            })
+        );
+    }
+
+    #[test]
+    fn shift_resize_preserves_the_original_selection_aspect_ratio() {
+        let selection = PhysicalRect {
+            left: -1500,
+            top: 100,
+            right: -900,
+            bottom: 400,
+        };
+        let mut drag = SelectionDrag::default();
+        drag.begin_resize(selection, ResizeHandle::BottomRight);
+        drag.update_with_aspect_ratio(PhysicalPoint { x: -700, y: 300 }, image_bounds());
+
+        assert_eq!(
+            drag.selection(),
+            Some(PhysicalRect {
+                left: -1500,
+                top: 100,
+                right: -700,
+                bottom: 500,
+            })
+        );
+    }
+
+    #[test]
+    fn shift_resize_clamps_the_active_corner_inside_the_captured_desktop() {
+        let selection = PhysicalRect {
+            left: -600,
+            top: 600,
+            right: -300,
+            bottom: 900,
+        };
+        let mut drag = SelectionDrag::default();
+        drag.begin_resize(selection, ResizeHandle::BottomRight);
+        drag.update_with_aspect_ratio(PhysicalPoint { x: 1000, y: 1000 }, image_bounds());
+
+        assert_eq!(
+            drag.selection(),
+            Some(PhysicalRect {
+                left: -600,
+                top: 600,
+                right: -120,
+                bottom: 1080,
             })
         );
     }
