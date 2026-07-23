@@ -8,11 +8,19 @@ pub fn position() -> io::Result<PhysicalPoint> {
     platform::position()
 }
 
+/// Moves the global cursor to a physical virtual-desktop coordinate.
+pub fn move_to(target: PhysicalPoint) -> io::Result<()> {
+    platform::move_to(target)
+}
+
 #[cfg(windows)]
 mod platform {
     use super::PhysicalPoint;
     use std::io;
-    use windows_sys::Win32::{Foundation::POINT, UI::WindowsAndMessaging::GetCursorPos};
+    use windows_sys::Win32::{
+        Foundation::POINT,
+        UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos},
+    };
 
     pub fn position() -> io::Result<PhysicalPoint> {
         let mut point = POINT::default();
@@ -26,6 +34,15 @@ mod platform {
             })
         }
     }
+
+    pub fn move_to(target: PhysicalPoint) -> io::Result<()> {
+        // SAFETY: Windows accepts physical virtual-desktop coordinates for SetCursorPos.
+        if unsafe { SetCursorPos(target.x, target.y) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -37,6 +54,13 @@ mod platform {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "global cursor position is currently Windows-only",
+        ))
+    }
+
+    pub fn move_to(_target: PhysicalPoint) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "global cursor movement is currently Windows-only",
         ))
     }
 }

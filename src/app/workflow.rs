@@ -2112,6 +2112,9 @@ impl FlashShotApp {
                     false
                 }
             }
+            KeyboardCommand::MoveColorCursor(delta_x, delta_y) => {
+                self.move_color_cursor(delta_x, delta_y, cx)
+            }
             KeyboardCommand::Nudge(delta_x, delta_y) => {
                 self.nudge_selected_annotation(delta_x, delta_y, cx)
                     || self.nudge_selection(delta_x, delta_y, cx)
@@ -2128,6 +2131,35 @@ impl FlashShotApp {
         if handled {
             cx.stop_propagation();
         }
+    }
+
+    /// Moves the color sampler by physical pixels while leaving the current selection unchanged.
+    fn move_color_cursor(&mut self, delta_x: i32, delta_y: i32, cx: &mut Context<Self>) -> bool {
+        let Some(frame) = self.frame.as_ref() else {
+            return false;
+        };
+        let Some(point) = self.hover_pixel else {
+            return false;
+        };
+        let target = clamp_physical_point(
+            PhysicalPoint {
+                x: point.x.saturating_add(delta_x),
+                y: point.y.saturating_add(delta_y),
+            },
+            frame.bounds,
+        );
+        if target == point {
+            return true;
+        }
+        if let Err(error) = crate::platform::cursor::move_to(target) {
+            self.status = format!("Could not move color sampler: {error}");
+            cx.notify();
+            return true;
+        }
+        self.hover_pixel = Some(target);
+        self.update_status_for_hover();
+        cx.notify();
+        true
     }
 
     fn cancel_editor_or_capture(&mut self, cx: &mut Context<Self>) -> bool {
@@ -4734,6 +4766,7 @@ enum KeyboardCommand {
     Copy,
     QuickSave,
     CopyColor,
+    MoveColorCursor(i32, i32),
     Nudge(i32, i32),
     SelectTool(Option<AnnotationTool>),
 }
@@ -4803,6 +4836,15 @@ fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
         && keystroke.key == "r"
     {
         return Some(KeyboardCommand::RotateClockwise);
+    }
+    if modifiers.control && !modifiers.alt && !modifiers.platform && !modifiers.function {
+        return match keystroke.key.as_str() {
+            "left" => Some(KeyboardCommand::MoveColorCursor(-1, 0)),
+            "right" => Some(KeyboardCommand::MoveColorCursor(1, 0)),
+            "up" => Some(KeyboardCommand::MoveColorCursor(0, -1)),
+            "down" => Some(KeyboardCommand::MoveColorCursor(0, 1)),
+            _ => None,
+        };
     }
     if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
         return None;
@@ -5133,6 +5175,18 @@ mod tests {
         assert_eq!(
             keyboard_command(&Keystroke::parse("shift-down").unwrap()),
             Some(KeyboardCommand::Nudge(0, 10))
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-left").unwrap()),
+            Some(KeyboardCommand::MoveColorCursor(-1, 0))
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-down").unwrap()),
+            Some(KeyboardCommand::MoveColorCursor(0, 1))
+        );
+        assert_eq!(
+            keyboard_command(&Keystroke::parse("ctrl-shift-left").unwrap()),
+            Some(KeyboardCommand::MoveColorCursor(-1, 0))
         );
         assert_eq!(
             keyboard_command(&Keystroke::parse("ctrl-enter").unwrap()),
