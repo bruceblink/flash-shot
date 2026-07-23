@@ -2442,6 +2442,7 @@ struct ActionToolbarLayout {
     left: f32,
     top: f32,
     width: f32,
+    height: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2476,8 +2477,7 @@ fn selection_dimension_label_layout(
     let below = bottom_right.y + OVERLAY_DIMENSION_LABEL_GAP;
     let can_place_above = above >= viewport.top + OVERLAY_EDGE_INSET;
     let overlaps_toolbar_below = action_toolbar.is_some_and(|toolbar| {
-        below < toolbar.top + OVERLAY_ACTION_ITEM_HEIGHT
-            && below + OVERLAY_DIMENSION_LABEL_HEIGHT > toolbar.top
+        below < toolbar.top + toolbar.height && below + OVERLAY_DIMENSION_LABEL_HEIGHT > toolbar.top
     });
     let top = if can_place_above || overlaps_toolbar_below {
         above.max(viewport.top + OVERLAY_EDGE_INSET)
@@ -2497,7 +2497,10 @@ fn action_toolbar_layout(
     let selection = selection?;
     let transform = transform?;
     let viewport = view_rect(viewport);
-    let width = (viewport.width - OVERLAY_EDGE_INSET * 2.0).clamp(1.0, OVERLAY_ACTION_BAR_WIDTH);
+    let available_width = (viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0);
+    let width = action_toolbar_natural_width(show_more_actions, has_recognition_result)
+        .min(available_width)
+        .min(OVERLAY_ACTION_BAR_WIDTH);
     let height = action_toolbar_height(width, show_more_actions, has_recognition_result);
     let selection_top = transform
         .physical_to_view(PhysicalPoint {
@@ -2529,7 +2532,34 @@ fn action_toolbar_layout(
     } else {
         above.max(viewport.top + OVERLAY_EDGE_INSET).min(lowest_top)
     };
-    Some(ActionToolbarLayout { left, top, width })
+    Some(ActionToolbarLayout {
+        left,
+        top,
+        width,
+        height,
+    })
+}
+
+/// Measures the single-row content width so compact actions do not occupy an empty 620 px panel.
+fn action_toolbar_natural_width(show_more_actions: bool, has_recognition_result: bool) -> f32 {
+    let more_widths = show_more_actions
+        .then_some(OVERLAY_MORE_ACTION_WIDTHS)
+        .into_iter()
+        .flatten();
+    let recognition_widths = (show_more_actions && has_recognition_result)
+        .then_some(OVERLAY_RECOGNITION_ACTION_WIDTHS)
+        .into_iter()
+        .flatten();
+    let widths = OVERLAY_PRIMARY_ACTION_WIDTHS
+        .into_iter()
+        .chain(more_widths)
+        .chain(recognition_widths);
+    let (count, item_width) = widths.fold((0_u32, 0.0), |(count, total), width| {
+        (count.saturating_add(1), total + width)
+    });
+    item_width
+        + count.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
+        + OVERLAY_ACTION_BAR_PADDING * 2.0
 }
 
 fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_result: bool) -> f32 {
@@ -2604,11 +2634,11 @@ fn selection_cursor(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, SelectionCursor,
-        SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
-        annotation_layer_label, arrow_head_points, intersect, is_text_annotation, magnifier_origin,
-        outline_shape_bounds, resize_handle_points, selection_cursor,
-        selection_dimension_label_layout, visible_selection,
+        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_WIDTH,
+        SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
+        action_toolbar_natural_width, annotation_layer_label, arrow_head_points, intersect,
+        is_text_annotation, magnifier_origin, outline_shape_bounds, resize_handle_points,
+        selection_cursor, selection_dimension_label_layout, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2933,9 +2963,10 @@ mod tests {
         assert_eq!(
             action_toolbar_layout(Some(selection), transform, viewport, false, false),
             Some(ActionToolbarLayout {
-                left: 580.0,
+                left: 826.0,
                 top: 526.0,
-                width: 620.0,
+                width: 374.0,
+                height: 42.0,
             })
         );
     }
@@ -2962,6 +2993,7 @@ mod tests {
             left: 18.0,
             top: 508.0,
             width: 620.0,
+            height: 42.0,
         };
 
         assert_eq!(
@@ -2995,11 +3027,14 @@ mod tests {
         assert_eq!(action_toolbar_height(324.0, false, false), 80.0);
         assert_eq!(action_toolbar_height(324.0, true, false), 232.0);
         assert_eq!(action_toolbar_height(324.0, true, true), 232.0);
+        assert_eq!(action_toolbar_natural_width(false, false), 374.0);
+        assert!(action_toolbar_natural_width(true, false) > OVERLAY_ACTION_BAR_WIDTH);
         let layout =
             action_toolbar_layout(Some(selection), transform, viewport, true, false).unwrap();
         assert_eq!(layout.left, 18.0);
         assert!((layout.top - 156.0).abs() < 0.01);
         assert_eq!(layout.width, 324.0);
+        assert_eq!(layout.height, 232.0);
     }
 
     #[test]
