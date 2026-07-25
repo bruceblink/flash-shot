@@ -102,10 +102,19 @@ impl Render for PinnedImage {
                     .px_3()
                     .flex()
                     .items_center()
-                    .justify_between()
                     .bg(colors.panel)
-                    .window_control_area(WindowControlArea::Drag)
-                    .child(div().text_xs().text_color(colors.muted).child(self.status))
+                    .child(
+                        // Keep native dragging away from Copy and Close so their
+                        // clicks remain ordinary client-area interactions.
+                        div()
+                            .id("pinned-drag-area")
+                            .flex_1()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .window_control_area(WindowControlArea::Drag)
+                            .child(div().text_xs().text_color(colors.muted).child(self.status)),
+                    )
                     .child(
                         div()
                             .flex()
