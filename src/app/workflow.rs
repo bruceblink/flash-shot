@@ -1191,6 +1191,7 @@ impl FlashShotApp {
     pub(super) fn copy_full_screen(&mut self, cx: &mut Context<Self>) {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
+            || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
             || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
@@ -1231,6 +1232,7 @@ impl FlashShotApp {
     pub(super) fn quick_save_full_screen(&mut self, cx: &mut Context<Self>) {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
+            || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
             || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
@@ -1265,6 +1267,42 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Captures the virtual desktop into a pinned reference window without using the clipboard.
+    pub(super) fn pin_full_screen(&mut self, cx: &mut Context<Self>) {
+        if self.full_screen_copy_generation.is_some()
+            || self.full_screen_save_generation.is_some()
+            || self.full_screen_pin_generation.is_some()
+            || self.clipboard_pin_generation.is_some()
+            || self.history_pin_generation.is_some()
+            || self.delayed_capture_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        let generation = self.operation_generation;
+        self.full_screen_pin_generation = Some(generation);
+        self.status = "Capturing full screen to pin...".to_owned();
+        self.hide_settings_window();
+        cx.notify();
+
+        let include_cursor = self.include_cursor;
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { capture_virtual_desktop_frame(include_cursor) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_full_screen_pin(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn start_capture_with_options(
         &mut self,
         delay_seconds: u8,
@@ -1273,6 +1311,7 @@ impl FlashShotApp {
     ) {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
+            || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
             || self.history_pin_generation.is_some()
         {
@@ -1528,6 +1567,7 @@ impl FlashShotApp {
         self.delayed_capture_remaining_seconds = None;
         self.full_screen_copy_generation = None;
         self.full_screen_save_generation = None;
+        self.full_screen_pin_generation = None;
         self.clipboard_pin_generation = None;
         self.history_pin_generation = None;
         self.frame = None;
@@ -2896,6 +2936,7 @@ impl FlashShotApp {
         if self.clipboard_pin_generation.is_some()
             || self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
+            || self.full_screen_pin_generation.is_some()
             || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
@@ -3873,6 +3914,38 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Opens the captured virtual desktop only when this remains the active pin request.
+    fn finish_full_screen_pin(
+        &mut self,
+        result: std::io::Result<CaptureFrame>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !full_screen_pin_is_current(
+            self.full_screen_pin_generation,
+            self.operation_generation,
+            generation,
+            self.session.state(),
+        ) {
+            return;
+        }
+        self.full_screen_pin_generation = None;
+        match result {
+            Ok(frame) => self.open_pinned_frame(
+                frame,
+                "Full screen pinned in an always-on-top window",
+                Some("Could not pin full screen"),
+                cx,
+            ),
+            Err(error) => {
+                self.status = format!("Could not pin full screen: {error}");
+                log::warn!(target: "flash_shot::pinned", "full_screen_pin_failed error={error}");
+                self.notify_user("Flash Shot", "Could not pin full screen");
+                cx.notify();
+            }
+        }
+    }
+
     /// Finishes a tray full-screen save, recording the managed file only after it was written.
     fn finish_full_screen_save(
         &mut self,
@@ -4056,6 +4129,18 @@ fn history_pin_is_current(
 }
 
 fn full_screen_copy_is_current(
+    active_generation: Option<u64>,
+    current_generation: u64,
+    completion_generation: u64,
+    session_state: CaptureSessionState,
+) -> bool {
+    active_generation == Some(completion_generation)
+        && is_current_operation(current_generation, completion_generation)
+        && session_state == CaptureSessionState::Idle
+}
+
+/// Prevents a late full-screen pin capture from opening after another workflow takes over.
+fn full_screen_pin_is_current(
     active_generation: Option<u64>,
     current_generation: u64,
     completion_generation: u64,
@@ -5292,8 +5377,8 @@ mod tests {
         annotation_position, annotation_sidecar_path, compose_captured_displays,
         copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha,
         fill_color, format_hsl, format_recording_progress, full_screen_copy_is_current,
-        history_pin_is_current, hovered_color, intersect_rect, is_current_operation,
-        keyboard_command, load_annotation_document, next_annotation_counters,
+        full_screen_pin_is_current, history_pin_is_current, hovered_color, intersect_rect,
+        is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
         next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
         next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
         open_image_project, pinned_size, png_path, project_image_path,
@@ -5894,6 +5979,28 @@ mod tests {
             CaptureSessionState::Idle
         ));
         assert!(!full_screen_copy_is_current(
+            Some(12),
+            12,
+            12,
+            CaptureSessionState::Capturing
+        ));
+    }
+
+    #[test]
+    fn full_screen_pin_completion_does_not_open_after_a_new_operation() {
+        assert!(full_screen_pin_is_current(
+            Some(12),
+            12,
+            12,
+            CaptureSessionState::Idle
+        ));
+        assert!(!full_screen_pin_is_current(
+            Some(12),
+            13,
+            12,
+            CaptureSessionState::Idle
+        ));
+        assert!(!full_screen_pin_is_current(
             Some(12),
             12,
             12,

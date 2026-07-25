@@ -246,6 +246,16 @@ fn capture_settings(
                                     app.update(cx, |this, cx| this.quick_save_full_screen(cx))
                                 }
                             },
+                        ))
+                        .child(settings_button(
+                            "settings-pin-full-screen",
+                            "Pin full screen",
+                            colors,
+                            is_idle,
+                            {
+                                let app = app.clone();
+                                move |_, _, cx| app.update(cx, |this, cx| this.pin_full_screen(cx))
+                            },
                         )),
                 ),
         )
