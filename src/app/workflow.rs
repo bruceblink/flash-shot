@@ -136,6 +136,13 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Checks the opt-in translation configuration without sending screenshot text or a network request.
+    pub(super) fn check_translation_support(&mut self, cx: &mut Context<Self>) {
+        self.status =
+            translation_support_status(crate::translation::TranslationConfig::from_environment());
+        cx.notify();
+    }
+
     pub(super) fn select_capture_shortcut(&mut self, preset: &'static str, cx: &mut Context<Self>) {
         if self.capture_shortcut == preset {
             return;
@@ -5461,6 +5468,22 @@ fn ocr_support_status(result: Result<&crate::ocr::OcrSupport, &std::io::Error>) 
     }
 }
 
+/// Describes only local translation configuration so checking support never contacts a service.
+fn translation_support_status(
+    result: std::io::Result<Option<crate::translation::TranslationConfig>>,
+) -> String {
+    match result {
+        Ok(Some(config)) => format!(
+            "Translation ready: HTTPS endpoint configured for {}",
+            config.target_language()
+        ),
+        Ok(None) => {
+            "Translation is disabled. Set FLASH_SHOT_TRANSLATION_ENDPOINT to opt in.".to_owned()
+        }
+        Err(error) => format!("Translation configuration needs attention: {error}"),
+    }
+}
+
 /// Turns each translation-stage failure into a recovery action instead of a generic error.
 fn translation_failure_status(outcome: &TranslationOutcome) -> String {
     match outcome {
@@ -5630,7 +5653,7 @@ mod tests {
         recording_support_status, recording_target_label, resolve_pointer_selection,
         sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
         save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-        tool_selected_status, translation_failure_status, with_alpha,
+        tool_selected_status, translation_failure_status, translation_support_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -7076,6 +7099,17 @@ mod tests {
             translation_failure_status(&TranslationOutcome::ServiceFailed("timeout".to_owned()))
                 .contains("Check the endpoint")
         );
+    }
+
+    #[test]
+    fn translation_support_status_keeps_disabled_configuration_local_and_actionable() {
+        assert!(translation_support_status(Ok(None)).contains("FLASH_SHOT_TRANSLATION_ENDPOINT"));
+
+        let invalid = std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "translation endpoint must use HTTPS",
+        );
+        assert!(translation_support_status(Err(invalid)).contains("needs attention"));
     }
 
     #[test]

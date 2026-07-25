@@ -374,10 +374,20 @@ fn capture_settings(
                         "Check support",
                         colors,
                         true,
-                        move |_, _, cx| app.update(cx, |this, cx| this.check_ocr_support(cx)),
+                        {
+                            let app = app.clone();
+                            move |_, _, cx| app.update(cx, |this, cx| this.check_ocr_support(cx))
+                        },
                     )),
             ),
         )
+        .child(settings_row("Translation", colors).child(settings_button(
+            "settings-check-translation-support",
+            "Check configuration",
+            colors,
+            true,
+            move |_, _, cx| app.update(cx, |this, cx| this.check_translation_support(cx)),
+        )))
 }
 
 fn file_settings(
