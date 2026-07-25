@@ -29,10 +29,34 @@ pub fn managed_history_directory() -> io::Result<PathBuf> {
     Ok(directory)
 }
 
+/// Names the user workflow that produced a managed screenshot.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistorySource {
+    #[default]
+    Unknown,
+    Selection,
+    FullScreen,
+    Pinned,
+}
+
+impl HistorySource {
+    /// Keeps list metadata short and understandable without leaking internal workflow names.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "Saved capture",
+            Self::Selection => "Selection",
+            Self::FullScreen => "Full screen",
+            Self::Pinned => "Pinned image",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HistoryEntry {
     pub path: PathBuf,
     pub created_at_ms: u128,
+    pub source: HistorySource,
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +113,11 @@ impl ScreenshotHistory {
     }
 
     pub fn record(&mut self, path: PathBuf) -> io::Result<()> {
+        self.record_with_source(path, HistorySource::Unknown)
+    }
+
+    /// Adds a file only after its producer has completed, retaining enough context for later reuse.
+    pub fn record_with_source(&mut self, path: PathBuf, source: HistorySource) -> io::Result<()> {
         let path = path.canonicalize().unwrap_or(path);
         if !path.starts_with(&self.root) {
             return Err(io::Error::new(
@@ -106,6 +135,7 @@ impl ScreenshotHistory {
         self.entries.push_front(HistoryEntry {
             path,
             created_at_ms: unix_timestamp_ms(),
+            source,
         });
         self.prune()?;
         self.write_index()
@@ -171,6 +201,10 @@ impl ScreenshotHistory {
                 Some(HistoryEntry {
                     path: PathBuf::from(value.get("path")?.as_str()?),
                     created_at_ms: value.get("created_at_ms")?.as_u64()? as u128,
+                    source: value
+                        .get("source")
+                        .and_then(|source| serde_json::from_value(source.clone()).ok())
+                        .unwrap_or_default(),
                 })
             })
             .filter_map(|entry| {
@@ -178,6 +212,7 @@ impl ScreenshotHistory {
                     .map(|path| HistoryEntry {
                         path,
                         created_at_ms: entry.created_at_ms,
+                        source: entry.source,
                     })
             })
             .collect();
@@ -215,6 +250,7 @@ impl ScreenshotHistory {
                 serde_json::json!({
                     "path": entry.path,
                     "created_at_ms": entry.created_at_ms,
+                    "source": entry.source,
                 })
             })
             .collect();
@@ -236,7 +272,7 @@ fn unix_timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::ScreenshotHistory;
+    use super::{HistorySource, ScreenshotHistory};
     use std::fs;
 
     fn directory(name: &str) -> std::path::PathBuf {
@@ -254,11 +290,14 @@ mod tests {
         let image = root.join("one.png");
         fs::write(&image, b"png").unwrap();
         let mut history = ScreenshotHistory::open(&root).unwrap();
-        history.record(image.clone()).unwrap();
+        history
+            .record_with_source(image.clone(), HistorySource::FullScreen)
+            .unwrap();
 
         let restored = ScreenshotHistory::open(&root).unwrap();
         assert_eq!(restored.entries().len(), 1);
         assert_eq!(restored.entries()[0].path, image.canonicalize().unwrap());
+        assert_eq!(restored.entries()[0].source, HistorySource::FullScreen);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -277,6 +316,28 @@ mod tests {
         assert!(!first.exists());
         assert!(second.exists());
         assert_eq!(history.entries().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_index_entries_default_to_an_unknown_source() {
+        let root = directory("legacy-source");
+        fs::create_dir_all(&root).unwrap();
+        let image = root.join("legacy.png");
+        fs::write(&image, b"png").unwrap();
+        fs::write(
+            root.join("history.json"),
+            serde_json::json!([{
+                "path": image,
+                "created_at_ms": 1,
+            }])
+            .to_string(),
+        )
+        .unwrap();
+
+        let history = ScreenshotHistory::open(&root).unwrap();
+
+        assert_eq!(history.entries()[0].source, HistorySource::Unknown);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -3785,7 +3785,7 @@ impl FlashShotApp {
                     this.update(&mut cx, |this, cx| {
                         match result {
                             Ok(path) => {
-                                let history_note = this.history.record(path.clone()).err().map(|error| {
+                                let history_note = this.history.record_with_source(path.clone(), crate::history::HistorySource::Pinned).err().map(|error| {
                                     log::warn!(target: "flash_shot::history", "pinned_save_history_record_failed error={error}");
                                     format!("; history unavailable: {error}")
                                 });
@@ -3973,7 +3973,7 @@ impl FlashShotApp {
                 if let Err(error) = self.session.export_completed() {
                     self.status = error.to_string();
                 } else {
-                    let history_status = managed.then(|| self.history.record(path.clone())).transpose().err().map(|error| {
+                    let history_status = managed.then(|| self.history.record_with_source(path.clone(), crate::history::HistorySource::Selection)).transpose().err().map(|error| {
                         log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
                         format!("; history unavailable: {error}")
                     });
@@ -4146,7 +4146,7 @@ impl FlashShotApp {
         self.full_screen_save_generation = None;
         match result {
             Ok(path) => {
-                let history_status = self.history.record(path.clone()).err().map(|error| {
+                let history_status = self.history.record_with_source(path.clone(), crate::history::HistorySource::FullScreen).err().map(|error| {
                     log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
                     format!("; history unavailable: {error}")
                 });

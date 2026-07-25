@@ -813,8 +813,9 @@ fn history_entry_label(entry: &crate::history::HistoryEntry, now_ms: u128) -> St
         .and_then(|name| name.to_str())
         .unwrap_or("Capture");
     format!(
-        "{name} - {}",
-        relative_timestamp_label(entry.created_at_ms, now_ms)
+        "{name} - {} - {}",
+        entry.source.label(),
+        relative_timestamp_label(entry.created_at_ms, now_ms),
     )
 }
 
@@ -1087,7 +1088,7 @@ mod tests {
         settings_page_intro, visible_history_entries,
     };
     use crate::app::SettingsSection;
-    use crate::history::HistoryEntry;
+    use crate::history::{HistoryEntry, HistorySource};
     use std::collections::VecDeque;
     use std::path::PathBuf;
 
@@ -1150,11 +1151,12 @@ mod tests {
         let entry = HistoryEntry {
             path: PathBuf::from("F:/captures/example.png"),
             created_at_ms: 1_000_000,
+            source: HistorySource::Selection,
         };
 
         assert_eq!(
             history_entry_label(&entry, 1_000_000),
-            "example.png - Just now"
+            "example.png - Selection - Just now"
         );
         assert_eq!(relative_timestamp_label(1_000_000, 1_065_000), "1m ago");
         assert_eq!(relative_timestamp_label(1_000_000, 4_600_000), "1h ago");
@@ -1167,6 +1169,7 @@ mod tests {
             .map(|created_at_ms| HistoryEntry {
                 path: PathBuf::from(format!("F:/captures/{created_at_ms}.png")),
                 created_at_ms,
+                source: HistorySource::Unknown,
             })
             .collect::<VecDeque<_>>();
 
