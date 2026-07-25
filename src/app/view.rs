@@ -51,6 +51,7 @@ impl gpui::Render for FlashShotApp {
                             .flex()
                             .flex_col()
                             .gap_5()
+                            .child(settings_page_intro(self.settings_section, colors))
                             .when(
                                 self.settings_section == SettingsSection::Capture,
                                 |content| {
@@ -510,6 +511,12 @@ fn settings_navigation_item(
         .w_full()
         .px_3()
         .py_2()
+        .border_l_2()
+        .border_color(if active {
+            colors.accent
+        } else {
+            colors.background
+        })
         .text_sm()
         .cursor_pointer()
         .bg(if active {
@@ -518,21 +525,46 @@ fn settings_navigation_item(
             colors.background
         })
         .text_color(if active { colors.text } else { colors.muted })
+        .hover(|style| style.bg(colors.panel).text_color(colors.text))
         .on_click(move |_, _, cx| {
             app.update(cx, |this, cx| this.select_settings_section(section, cx))
         })
         .child(label)
 }
 
+/// Gives every settings section a stable title and a short task-oriented summary.
+fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColors) -> gpui::Div {
+    let (title, summary) = match section {
+        SettingsSection::Capture => ("Capture", "Shortcut, cursor, and export behavior"),
+        SettingsSection::Files => ("Files", "Open images and manage saved captures"),
+        SettingsSection::Recording => ("Recording", "Choose a source and control recording"),
+        SettingsSection::System => ("System", "Startup and update preferences"),
+    };
+    div()
+        .pb_3()
+        .border_b_1()
+        .border_color(colors.border)
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_lg().child(title))
+        .child(div().text_sm().text_color(colors.muted).child(summary))
+}
+
 fn settings_section(label: &str) -> gpui::Div {
     div()
-        .p_4()
-        .border_1()
+        .pb_5()
+        .border_b_1()
         .border_color(crate::theme::ThemeColors::default().border)
         .flex()
         .flex_col()
         .gap_3()
-        .child(div().text_sm().child(label.to_owned()))
+        .child(
+            div()
+                .text_sm()
+                .text_color(crate::theme::ThemeColors::default().text)
+                .child(label.to_owned()),
+        )
 }
 
 fn settings_row(label: &str) -> gpui::Div {
@@ -557,9 +589,15 @@ fn settings_button(
         .py_1()
         .border_1()
         .border_color(colors.border)
+        .bg(colors.background)
         .text_sm()
         .text_color(if enabled { colors.text } else { colors.muted })
-        .when(enabled, |button| button.cursor_pointer().on_click(on_click))
+        .when(enabled, |button| {
+            button
+                .cursor_pointer()
+                .hover(|style| style.bg(colors.panel))
+                .on_click(on_click)
+        })
         .child(label.to_owned())
 }
 
@@ -647,11 +685,25 @@ fn settings_delay_button(
 
 #[cfg(test)]
 mod tests {
-    use super::capture_command_label;
+    use super::{capture_command_label, settings_page_intro};
+    use crate::app::SettingsSection;
 
     #[test]
     fn capture_header_turns_into_a_delay_cancellation_command() {
         assert_eq!(capture_command_label(None), "Capture");
         assert_eq!(capture_command_label(Some(3)), "Cancel delay");
+    }
+
+    #[test]
+    fn every_settings_section_has_a_renderable_page_intro() {
+        let colors = crate::theme::ThemeColors::default();
+        for section in [
+            SettingsSection::Capture,
+            SettingsSection::Files,
+            SettingsSection::Recording,
+            SettingsSection::System,
+        ] {
+            let _ = settings_page_intro(section, colors);
+        }
     }
 }
