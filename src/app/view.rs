@@ -91,18 +91,14 @@ impl gpui::Render for FlashShotApp {
                                 self.settings_section == SettingsSection::System,
                                 |content| content.child(system_settings(self, colors, app.clone())),
                             )
-                            .when(
-                                self.settings_section == SettingsSection::Files
-                                    && !history_entries.is_empty(),
-                                |content| {
-                                    content.child(history_settings(
-                                        history_entries,
-                                        colors,
-                                        is_idle,
-                                        app.clone(),
-                                    ))
-                                },
-                            ),
+                            .when(self.settings_section == SettingsSection::Files, |content| {
+                                content.child(history_settings(
+                                    history_entries,
+                                    colors,
+                                    is_idle,
+                                    app.clone(),
+                                ))
+                            }),
                     ),
             )
             .child(
@@ -499,7 +495,16 @@ fn history_settings(
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
     let now_ms = current_timestamp_ms();
+    let is_empty = entries.is_empty();
     settings_section("Recent captures", colors)
+        .when(is_empty, |section| {
+            section.child(
+                div()
+                    .text_sm()
+                    .text_color(colors.muted)
+                    .child(empty_history_message()),
+            )
+        })
         .children(entries.into_iter().map(|(entry, thumbnail)| {
             let label = history_entry_label(&entry, now_ms);
             history_row(&label, thumbnail, colors).child(
@@ -618,6 +623,11 @@ fn current_timestamp_ms() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+/// Explains where the first managed screenshot will appear before history has any entries.
+fn empty_history_message() -> &'static str {
+    "Saved screenshots will appear here."
 }
 
 /// Adds a concise age to a history item so users can scan recent captures quickly.
@@ -920,6 +930,14 @@ mod tests {
         ] {
             let _ = settings_page_intro(section, colors);
         }
+    }
+
+    #[test]
+    fn empty_history_section_explains_when_saved_captures_appear() {
+        assert_eq!(
+            super::empty_history_message(),
+            "Saved screenshots will appear here."
+        );
     }
 
     #[test]
