@@ -139,7 +139,6 @@ impl Render for PinnedImage {
                                     .text_color(colors.muted)
                                     .text_xs()
                                     .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, window, _| this.close(window)))
                                     .child("Close"),
                             ),
                     ),

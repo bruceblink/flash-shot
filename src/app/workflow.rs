@@ -2796,7 +2796,10 @@ impl FlashShotApp {
                 titlebar: None,
                 focus: true,
                 show: true,
-                kind: WindowKind::PopUp,
+                // PopUp windows use a style with no resize frame on Windows.
+                // The pinned image stays topmost through PinnedImage, while a
+                // normal window keeps the native resize hit targets available.
+                kind: WindowKind::Normal,
                 is_movable: true,
                 is_resizable: true,
                 is_minimizable: false,
