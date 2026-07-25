@@ -3280,7 +3280,9 @@ impl FlashShotApp {
                     self.manual_scroll.frame_count(),
                     overlap
                 ),
-                Err(error) => format!("Manual scroll stopped: {error}"),
+                Err(error) => format!(
+                    "That frame did not overlap the previous one: {error}. Adjust the scroll position and capture again."
+                ),
             },
             Err(error) => format!("Could not capture scroll frame: {error}"),
         };

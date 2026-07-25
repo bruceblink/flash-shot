@@ -36,6 +36,7 @@ impl Render for ManualScrollControl {
         let status = app.status.clone();
         let frame_count = app.manual_scroll.frame_count();
         let capture_in_flight = app.manual_scroll_capture_in_flight;
+        let retry_available = app.manual_scroll.failure().is_some();
 
         div()
             .size_full()
@@ -114,7 +115,10 @@ impl Render for ManualScrollControl {
                                         });
                                     }))
                             })
-                            .child(manual_scroll_capture_label(capture_in_flight)),
+                            .child(manual_scroll_capture_label(
+                                capture_in_flight,
+                                retry_available,
+                            )),
                     )
                     .child(
                         div()
@@ -160,9 +164,11 @@ impl Render for ManualScrollControl {
 }
 
 /// Keeps the primary action explicit while one scroll frame is being captured.
-fn manual_scroll_capture_label(capture_in_flight: bool) -> &'static str {
+fn manual_scroll_capture_label(capture_in_flight: bool, retry_available: bool) -> &'static str {
     if capture_in_flight {
         "Capturing..."
+    } else if retry_available {
+        "Retry frame"
     } else {
         "Capture next"
     }
@@ -174,7 +180,8 @@ mod tests {
 
     #[test]
     fn capture_action_describes_its_busy_state() {
-        assert_eq!(manual_scroll_capture_label(false), "Capture next");
-        assert_eq!(manual_scroll_capture_label(true), "Capturing...");
+        assert_eq!(manual_scroll_capture_label(false, false), "Capture next");
+        assert_eq!(manual_scroll_capture_label(false, true), "Retry frame");
+        assert_eq!(manual_scroll_capture_label(true, true), "Capturing...");
     }
 }

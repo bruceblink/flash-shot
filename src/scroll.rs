@@ -74,6 +74,9 @@ impl ManualScrollCapture {
     }
 
     /// Adds a frame only when it has a reliable overlap with the latest viewport frame.
+    ///
+    /// A rejected frame never joins the session. Previously accepted frames remain available so
+    /// the controller can ask the user to adjust the scroll position and try again.
     pub fn append(&mut self, frame: CaptureFrame, options: OverlapOptions) -> io::Result<u32> {
         self.require(ManualScrollState::Collecting, "append")?;
         let previous = self
@@ -83,12 +86,12 @@ impl ManualScrollCapture {
         let overlap = match detect_vertical_overlap(previous, &frame, options) {
             Ok(overlap) => overlap,
             Err(error) => {
-                self.state = ManualScrollState::Failed;
                 self.failure = Some(error.to_string());
                 return Err(error);
             }
         };
         self.frames.push(frame);
+        self.failure = None;
         Ok(overlap)
     }
 
@@ -403,15 +406,18 @@ mod tests {
     }
 
     #[test]
-    fn manual_capture_records_overlap_failures_and_can_reset() {
+    fn rejected_scroll_frame_keeps_the_session_ready_for_a_retry() {
         let mut capture = ManualScrollCapture::default();
         capture.begin(frame(0..10)).unwrap();
 
         assert!(capture.append(frame(20..30), options()).is_err());
-        assert_eq!(capture.state(), ManualScrollState::Failed);
+        assert_eq!(capture.state(), ManualScrollState::Collecting);
         assert!(capture.failure().is_some());
-        capture.reset().unwrap();
-        assert_eq!(capture.state(), ManualScrollState::Idle);
+        assert_eq!(capture.frame_count(), 1);
+
+        assert_eq!(capture.append(frame(6..16), options()).unwrap(), 4);
+        assert_eq!(capture.failure(), None);
+        assert_eq!(capture.frame_count(), 2);
     }
 
     #[test]
