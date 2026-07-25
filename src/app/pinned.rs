@@ -291,10 +291,11 @@ impl Render for PinnedImage {
             .child(
                 div()
                     .id("pinned-toolbar")
-                    .h(px(32.0))
                     .px_3()
                     .flex()
+                    .flex_wrap()
                     .items_center()
+                    .gap_1()
                     .bg(colors.panel)
                     .child(
                         // Native title-bar dragging provides the window move affordance.
@@ -303,7 +304,8 @@ impl Render for PinnedImage {
                         div()
                             .id("pinned-drag-area")
                             .flex_1()
-                            .h_full()
+                            .min_w(px(80.0))
+                            .py_1()
                             .flex()
                             .items_center()
                             .child(div().text_xs().text_color(colors.muted).child(self.status)),
@@ -311,6 +313,7 @@ impl Render for PinnedImage {
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .items_center()
                             .gap_1()
                             .child(
