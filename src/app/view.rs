@@ -716,13 +716,20 @@ fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div
         )
 }
 
+/// Keeps a preference label and its control readable when the settings window narrows.
 fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
-    div().flex().items_center().justify_between().gap_3().child(
-        div()
-            .text_sm()
-            .text_color(colors.muted)
-            .child(label.to_owned()),
-    )
+    div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(
+            div()
+                .text_sm()
+                .text_color(colors.muted)
+                .child(label.to_owned()),
+        )
 }
 
 fn settings_button(
@@ -866,6 +873,13 @@ mod tests {
         ] {
             let _ = settings_page_intro(section, colors);
         }
+    }
+
+    #[test]
+    fn settings_rows_render_for_compact_and_wide_labels() {
+        let colors = crate::theme::ThemeColors::default();
+        let _ = super::settings_row("Audio", colors);
+        let _ = super::settings_row("Start with Windows", colors);
     }
 
     #[test]
