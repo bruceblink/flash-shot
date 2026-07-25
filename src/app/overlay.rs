@@ -1411,6 +1411,16 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            OverlayTooltip(if show_more_actions {
+                                                "Hide more actions"
+                                            } else {
+                                                "Show more actions"
+                                            })
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
