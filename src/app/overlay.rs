@@ -33,6 +33,8 @@ const OVERLAY_ACTION_ITEM_GAP: f32 = 4.0;
 const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 34.0;
 const OVERLAY_ACTION_BAR_PADDING: f32 = 4.0;
 const OVERLAY_SECONDARY_MENU_GAP: f32 = 8.0;
+const OVERLAY_RECOGNITION_PREVIEW_HEIGHT: f32 = 64.0;
+const OVERLAY_RECOGNITION_PREVIEW_LIMIT: usize = 240;
 const OVERLAY_DIMENSION_LABEL_WIDTH: f32 = 112.0;
 const OVERLAY_DIMENSION_LABEL_HEIGHT: f32 = 26.0;
 const OVERLAY_DIMENSION_LABEL_GAP: f32 = 8.0;
@@ -1788,8 +1790,36 @@ impl Render for CaptureOverlay {
                                                 }))
                                                 .child("Record window"),
                                         )
-                                        .when_some(recognition_result, |actions, _result| {
+                                        .when_some(recognition_result, |actions, result| {
                                             actions
+                                                .child(
+                                                    div()
+                                                        .id("overlay-recognition-preview")
+                                                        .w_full()
+                                                        .h(px(OVERLAY_RECOGNITION_PREVIEW_HEIGHT))
+                                                        .p_2()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .overflow_hidden()
+                                                        .border_1()
+                                                        .border_color(rgba(0xFFFFFF24))
+                                                        .bg(rgba(0x0B0D10E6))
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(colors.muted)
+                                                                .child(result.title.clone()),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(colors.text)
+                                                                .child(recognition_result_preview(
+                                                                    &result.text,
+                                                                )),
+                                                        ),
+                                                )
                                                 .child(
                                                     div()
                                                         .id("overlay-copy-recognition")
@@ -2750,7 +2780,27 @@ fn secondary_action_menu_height(width: f32, has_recognition_result: bool) -> f32
                 .into_iter()
                 .flatten(),
         ),
-    )
+    ) + if has_recognition_result {
+        OVERLAY_RECOGNITION_PREVIEW_HEIGHT + OVERLAY_ACTION_ITEM_GAP
+    } else {
+        0.0
+    }
+}
+
+/// Bounds visible OCR, QR, and translation text so a result never covers the screenshot controls.
+fn recognition_result_preview(text: &str) -> String {
+    let mut preview: String = text
+        .chars()
+        .take(OVERLAY_RECOGNITION_PREVIEW_LIMIT)
+        .collect();
+    if text
+        .chars()
+        .nth(OVERLAY_RECOGNITION_PREVIEW_LIMIT)
+        .is_some()
+    {
+        preview.push_str("...");
+    }
+    preview
 }
 
 /// Measures the single-row content width so compact actions do not occupy an empty 620 px panel.
@@ -2853,11 +2903,12 @@ fn selection_cursor(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, SelectionCursor,
-        SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
-        action_toolbar_natural_width, annotation_layer_label, arrow_head_points,
-        capture_double_click, intersect, is_text_annotation, magnifier_origin,
-        outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip, resize_handle_points,
+        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
+        OVERLAY_RECOGNITION_PREVIEW_LIMIT, SelectionCursor, SelectionDimensionLayout,
+        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
+        annotation_layer_label, arrow_head_points, capture_double_click, intersect,
+        is_text_annotation, magnifier_origin, outline_shape_bounds, owns_selection_toolbar,
+        primary_action_tooltip, recognition_result_preview, resize_handle_points,
         secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
         selection_cursor, selection_dimension_label_layout, visible_selection,
     };
@@ -3328,12 +3379,25 @@ mod tests {
         assert_eq!(layout.width, 288.0);
         assert_eq!(layout.height, 42.0);
         assert_eq!(secondary_action_menu_height(288.0, false), 194.0);
-        assert_eq!(secondary_action_menu_height(288.0, true), 232.0);
+        assert_eq!(secondary_action_menu_height(288.0, true), 300.0);
         assert!(secondary_menu_opens_above(
             layout,
             viewport,
             secondary_action_menu_height(layout.width, false)
         ));
+    }
+
+    #[test]
+    fn recognition_preview_keeps_short_content_and_bounds_long_results() {
+        assert_eq!(recognition_result_preview("short result"), "short result");
+
+        let long = "x".repeat(OVERLAY_RECOGNITION_PREVIEW_LIMIT + 1);
+        let preview = recognition_result_preview(&long);
+        assert_eq!(
+            preview.chars().count(),
+            OVERLAY_RECOGNITION_PREVIEW_LIMIT + 3
+        );
+        assert!(preview.ends_with("..."));
     }
 
     #[test]
