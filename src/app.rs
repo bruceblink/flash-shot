@@ -419,6 +419,9 @@ impl FlashShotApp {
                         TrayEvent::FullScreenSaveRequested => {
                             this.update(&mut cx, |this, cx| this.quick_save_full_screen(cx));
                         }
+                        TrayEvent::FullScreenPinRequested => {
+                            this.update(&mut cx, |this, cx| this.pin_full_screen(cx));
+                        }
                         TrayEvent::PinClipboardImageRequested => {
                             this.update(&mut cx, |this, cx| this.pin_clipboard_image(cx));
                         }

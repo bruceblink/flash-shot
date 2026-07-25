@@ -9,6 +9,7 @@ pub enum TrayEvent {
     FullScreenCaptureRequested,
     FullScreenCopyRequested,
     FullScreenSaveRequested,
+    FullScreenPinRequested,
     PinClipboardImageRequested,
     DelayedCaptureRequested(u8),
     ToggleDisplayRecordingRequested,
@@ -211,6 +212,7 @@ mod platform {
     const MENU_FULL_SCREEN_SAVE: usize = 18;
     const MENU_PIN_CLIPBOARD_IMAGE: usize = 19;
     const MENU_TOGGLE_CAPTURE_SHORTCUT: usize = 20;
+    const MENU_FULL_SCREEN_PIN: usize = 21;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
 
     pub struct TrayListener {
@@ -574,6 +576,7 @@ mod platform {
         let full_screen_capture = wide("Capture full screen");
         let full_screen_copy = wide("Copy full screen to clipboard");
         let full_screen_save = wide("Save full screen");
+        let full_screen_pin = wide("Pin full screen");
         let delayed_capture_3_seconds = wide("Capture in 3 seconds");
         let delayed_capture_5_seconds = wide("Capture in 5 seconds");
         let delayed_capture_10_seconds = wide("Capture in 10 seconds");
@@ -611,6 +614,12 @@ mod platform {
                 MF_STRING,
                 MENU_FULL_SCREEN_SAVE,
                 full_screen_save.as_ptr(),
+            );
+            AppendMenuW(
+                capture_menu,
+                MF_STRING,
+                MENU_FULL_SCREEN_PIN,
+                full_screen_pin.as_ptr(),
             );
             AppendMenuW(
                 capture_menu,
@@ -755,6 +764,7 @@ mod platform {
             MENU_FULL_SCREEN_CAPTURE => Some(TrayEvent::FullScreenCaptureRequested),
             MENU_FULL_SCREEN_COPY => Some(TrayEvent::FullScreenCopyRequested),
             MENU_FULL_SCREEN_SAVE => Some(TrayEvent::FullScreenSaveRequested),
+            MENU_FULL_SCREEN_PIN => Some(TrayEvent::FullScreenPinRequested),
             MENU_PIN_CLIPBOARD_IMAGE => Some(TrayEvent::PinClipboardImageRequested),
             MENU_DELAYED_CAPTURE_3_SECONDS => Some(TrayEvent::DelayedCaptureRequested(3)),
             MENU_DELAYED_CAPTURE_5_SECONDS => Some(TrayEvent::DelayedCaptureRequested(5)),
@@ -949,6 +959,17 @@ mod tests {
         assert_eq!(
             tray_event_for_command(18),
             Some(TrayEvent::FullScreenSaveRequested)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn full_screen_pin_menu_item_dispatches_the_pinned_capture_event() {
+        use super::{TrayEvent, platform::tray_event_for_command};
+
+        assert_eq!(
+            tray_event_for_command(21),
+            Some(TrayEvent::FullScreenPinRequested)
         );
     }
 
