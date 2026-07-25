@@ -201,6 +201,53 @@ fn capture_settings(
             div()
                 .flex()
                 .flex_col()
+                .gap_2()
+                .child(div().text_sm().child("Quick actions"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(settings_button(
+                            "settings-capture-full-screen",
+                            "Select full screen",
+                            colors,
+                            is_idle,
+                            {
+                                let app = app.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| this.start_full_screen_capture(cx))
+                                }
+                            },
+                        ))
+                        .child(settings_button(
+                            "settings-copy-full-screen",
+                            "Copy full screen",
+                            colors,
+                            is_idle,
+                            {
+                                let app = app.clone();
+                                move |_, _, cx| app.update(cx, |this, cx| this.copy_full_screen(cx))
+                            },
+                        ))
+                        .child(settings_button(
+                            "settings-save-full-screen",
+                            "Save full screen",
+                            colors,
+                            is_idle,
+                            {
+                                let app = app.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| this.quick_save_full_screen(cx))
+                                }
+                            },
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
                 .gap_1()
                 .child(div().text_sm().child("Global shortcut"))
                 .child(
