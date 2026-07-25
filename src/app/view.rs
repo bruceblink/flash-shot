@@ -608,23 +608,31 @@ fn settings_toggle(
     enabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
-    settings_button(
-        id,
-        if enabled_value { "On" } else { "Off" },
-        colors,
-        enabled,
-        on_click,
-    )
-    .bg(if enabled_value {
-        colors.accent
-    } else {
-        colors.panel
-    })
-    .text_color(if enabled_value {
-        colors.background
-    } else {
-        colors.text
-    })
+    // A fixed-size track keeps binary preferences easy to scan without letting
+    // the label change shift adjacent settings rows.
+    div()
+        .id(id)
+        .w(px(36.0))
+        .h(px(20.0))
+        .p(px(2.0))
+        .flex()
+        .items_center()
+        .when(enabled_value, |toggle| toggle.justify_end())
+        .rounded_full()
+        .bg(if enabled_value && enabled {
+            colors.accent
+        } else {
+            colors.panel
+        })
+        .border_1()
+        .border_color(colors.border)
+        .when(enabled, |toggle| {
+            toggle
+                .cursor_pointer()
+                .hover(|style| style.bg(colors.accent))
+                .on_click(on_click)
+        })
+        .child(div().size(px(14.0)).rounded_full().bg(colors.text))
 }
 
 fn settings_shortcut_button(
