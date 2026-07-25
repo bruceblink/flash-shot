@@ -99,6 +99,7 @@ impl gpui::Render for FlashShotApp {
                                     history_entries,
                                     history_total,
                                     self.history_expanded,
+                                    self.history_clear_confirmation,
                                     colors,
                                     is_idle,
                                     app.clone(),
@@ -560,6 +561,7 @@ fn history_settings(
     )>,
     total_entries: usize,
     expanded: bool,
+    clear_confirmation: bool,
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
@@ -670,13 +672,51 @@ fn history_settings(
                     )),
             )
         }))
-        .child(settings_button(
-            "settings-clear-history",
-            "Clear history",
-            colors,
-            is_idle,
-            move |_, _, cx| app.update(cx, |this, cx| this.clear_history(cx)),
-        ))
+        .when(!clear_confirmation, |section| {
+            let clear_app = app.clone();
+            section.child(settings_button(
+                "settings-clear-history",
+                "Clear history",
+                colors,
+                is_idle && total_entries > 0,
+                move |_, _, cx| clear_app.update(cx, |this, cx| this.request_history_clear(cx)),
+            ))
+        })
+        .when(clear_confirmation, |section| {
+            let confirm_app = app.clone();
+            section.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(colors.muted)
+                            .child(history_clear_confirmation_label(total_entries)),
+                    )
+                    .child(settings_button(
+                        "settings-confirm-clear-history",
+                        "Delete captures",
+                        colors,
+                        is_idle,
+                        move |_, _, cx| confirm_app.update(cx, |this, cx| this.clear_history(cx)),
+                    ))
+                    .child(settings_button(
+                        "settings-cancel-clear-history",
+                        "Cancel",
+                        colors,
+                        true,
+                        move |_, _, cx| app.update(cx, |this, cx| this.cancel_history_clear(cx)),
+                    )),
+            )
+        })
+}
+
+/// Makes the destructive confirmation name its exact scope instead of relying on a generic warning.
+fn history_clear_confirmation_label(total_entries: usize) -> String {
+    format!("Delete all {total_entries} saved capture(s)?")
 }
 
 /// Separates preview metadata from its commands so narrow settings windows can wrap actions safely.
@@ -1032,9 +1072,9 @@ fn settings_delay_button(
 #[cfg(test)]
 mod tests {
     use super::{
-        capture_command_label, capture_shortcut_summary, history_entry_label,
-        history_visibility_label, relative_timestamp_label, settings_page_intro,
-        visible_history_entries,
+        capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
+        history_entry_label, history_visibility_label, relative_timestamp_label,
+        settings_page_intro, visible_history_entries,
     };
     use crate::app::SettingsSection;
     use crate::history::HistoryEntry;
@@ -1056,6 +1096,14 @@ mod tests {
         assert_eq!(
             capture_shortcut_summary("Ctrl+Alt+S", false),
             "Disabled: Ctrl+Alt+S"
+        );
+    }
+
+    #[test]
+    fn history_clear_confirmation_names_the_exact_number_of_captures() {
+        assert_eq!(
+            history_clear_confirmation_label(12),
+            "Delete all 12 saved capture(s)?"
         );
     }
 

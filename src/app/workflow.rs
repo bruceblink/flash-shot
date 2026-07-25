@@ -74,6 +74,27 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Requires a deliberate second action before removing every managed screenshot.
+    pub(super) fn request_history_clear(&mut self, cx: &mut Context<Self>) {
+        if self.history.entries().is_empty() {
+            self.status = "Screenshot history is already empty".to_owned();
+        } else {
+            self.history_clear_confirmation = true;
+            self.status = format!(
+                "Confirm deletion of {} saved capture(s)",
+                self.history.entries().len()
+            );
+        }
+        cx.notify();
+    }
+
+    /// Leaves every managed screenshot untouched after an accidental clear request.
+    pub(super) fn cancel_history_clear(&mut self, cx: &mut Context<Self>) {
+        self.history_clear_confirmation = false;
+        self.status = "Screenshot history clear cancelled".to_owned();
+        cx.notify();
+    }
+
     /// Cycles the persisted local-OCR language preset without changing the executable location.
     pub(super) fn cycle_ocr_language(&mut self, cx: &mut Context<Self>) {
         let previous = self.settings.ocr_language.clone();
@@ -3977,6 +3998,10 @@ impl FlashShotApp {
     }
 
     pub(super) fn clear_history(&mut self, cx: &mut Context<Self>) {
+        if !self.history_clear_confirmation {
+            self.request_history_clear(cx);
+            return;
+        }
         match self.history.clear() {
             Ok(()) => self.status = "Screenshot history cleared".to_owned(),
             Err(error) => {
@@ -3986,6 +4011,8 @@ impl FlashShotApp {
         }
         self.history_thumbnails.clear();
         self.history_thumbnail_loading.clear();
+        self.history_expanded = false;
+        self.history_clear_confirmation = false;
         cx.notify();
     }
 
