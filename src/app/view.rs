@@ -455,59 +455,66 @@ fn history_settings(
     settings_section("Recent captures", colors)
         .children(entries.into_iter().map(|(entry, thumbnail)| {
             let label = history_entry_label(&entry, now_ms);
-            history_row(&label, thumbnail, colors)
-                .child(settings_button(
-                    format!("settings-open-history-{}", entry.created_at_ms),
-                    "Open",
-                    colors,
-                    is_idle,
-                    {
-                        let app = app.clone();
-                        let path = entry.path.clone();
-                        move |_, _, cx| {
-                            app.update(cx, |this, cx| this.open_history_image(path.clone(), cx))
-                        }
-                    },
-                ))
-                .child(settings_button(
-                    format!("settings-copy-history-{}", entry.created_at_ms),
-                    "Copy",
-                    colors,
-                    is_idle,
-                    {
-                        let app = app.clone();
-                        let path = entry.path.clone();
-                        move |_, _, cx| {
-                            app.update(cx, |this, cx| this.copy_history_image(path.clone(), cx))
-                        }
-                    },
-                ))
-                .child(settings_button(
-                    format!("settings-pin-history-{}", entry.created_at_ms),
-                    "Pin",
-                    colors,
-                    is_idle,
-                    {
-                        let app = app.clone();
-                        let path = entry.path.clone();
-                        move |_, _, cx| {
-                            app.update(cx, |this, cx| this.pin_history_image(path.clone(), cx))
-                        }
-                    },
-                ))
-                .child(settings_button(
-                    format!("settings-remove-history-{}", entry.created_at_ms),
-                    "Remove",
-                    colors,
-                    is_idle,
-                    {
-                        let app = app.clone();
-                        let path = entry.path.clone();
-                        move |_, _, cx| {
-                            app.update(cx, |this, cx| this.remove_history_image(path.clone(), cx))
-                        }
-                    },
-                ))
+            history_row(&label, thumbnail, colors).child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(settings_button(
+                        format!("settings-open-history-{}", entry.created_at_ms),
+                        "Open",
+                        colors,
+                        is_idle,
+                        {
+                            let app = app.clone();
+                            let path = entry.path.clone();
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| this.open_history_image(path.clone(), cx))
+                            }
+                        },
+                    ))
+                    .child(settings_button(
+                        format!("settings-copy-history-{}", entry.created_at_ms),
+                        "Copy",
+                        colors,
+                        is_idle,
+                        {
+                            let app = app.clone();
+                            let path = entry.path.clone();
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| this.copy_history_image(path.clone(), cx))
+                            }
+                        },
+                    ))
+                    .child(settings_button(
+                        format!("settings-pin-history-{}", entry.created_at_ms),
+                        "Pin",
+                        colors,
+                        is_idle,
+                        {
+                            let app = app.clone();
+                            let path = entry.path.clone();
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| this.pin_history_image(path.clone(), cx))
+                            }
+                        },
+                    ))
+                    .child(settings_button(
+                        format!("settings-remove-history-{}", entry.created_at_ms),
+                        "Remove",
+                        colors,
+                        is_idle,
+                        {
+                            let app = app.clone();
+                            let path = entry.path.clone();
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| {
+                                    this.remove_history_image(path.clone(), cx)
+                                })
+                            }
+                        },
+                    )),
+            )
         }))
         .child(settings_button(
             "settings-clear-history",
@@ -518,25 +525,45 @@ fn history_settings(
         ))
 }
 
-/// Renders a fixed preview well so history metadata and actions stay aligned while it loads.
+/// Separates preview metadata from its commands so narrow settings windows can wrap actions safely.
 fn history_row(
     label: &str,
     thumbnail: Option<std::sync::Arc<gpui::RenderImage>>,
     colors: crate::theme::ThemeColors,
 ) -> gpui::Div {
-    settings_row(label, colors).child(
-        div()
-            .w(px(72.0))
-            .h(px(46.0))
-            .flex_none()
-            .overflow_hidden()
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors.panel)
-            .when_some(thumbnail, |preview, thumbnail| {
-                preview.child(img(thumbnail).size_full().object_fit(ObjectFit::Cover))
-            }),
-    )
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .pb_3()
+        .border_b_1()
+        .border_color(colors.border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    div()
+                        .w(px(72.0))
+                        .h(px(46.0))
+                        .flex_none()
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(colors.border)
+                        .bg(colors.panel)
+                        .when_some(thumbnail, |preview, thumbnail| {
+                            preview.child(img(thumbnail).size_full().object_fit(ObjectFit::Cover))
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(colors.muted)
+                        .child(label.to_owned()),
+                ),
+        )
 }
 
 fn current_timestamp_ms() -> u128 {
