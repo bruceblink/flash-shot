@@ -39,6 +39,7 @@ fn pinned_control_tooltip(control: &str) -> &'static str {
         "zoom-in" => "Zoom in (Ctrl++)",
         "opacity" => "Cycle opacity (Ctrl+O)",
         "copy" => "Copy image (Ctrl+C)",
+        "save" => "Save image (Ctrl+S)",
         "close" => "Close pinned image (Escape)",
         _ => "",
     }
@@ -83,6 +84,15 @@ impl PinnedImage {
                 "Could not copy image"
             }
         };
+        cx.notify();
+    }
+
+    /// Delegates the file write to the capture service so history ownership stays centralized.
+    fn save_image(&mut self, cx: &mut Context<Self>) {
+        let frame = self.frame.clone();
+        self.app
+            .update(cx, |app, cx| app.quick_save_pinned_frame(frame, cx));
+        self.status = "Saving image...";
         cx.notify();
     }
 
@@ -181,6 +191,7 @@ impl Render for PinnedImage {
                 match pinned_keyboard_command(&event.keystroke) {
                     Some(PinnedKeyboardCommand::Close) => this.close(window),
                     Some(PinnedKeyboardCommand::Copy) => this.copy_image(cx),
+                    Some(PinnedKeyboardCommand::Save) => this.save_image(cx),
                     Some(PinnedKeyboardCommand::ZoomOut) => this.zoom(0.8, window, cx),
                     Some(PinnedKeyboardCommand::ZoomIn) => this.zoom(1.25, window, cx),
                     Some(PinnedKeyboardCommand::CycleOpacity) => this.cycle_opacity(window, cx),
@@ -215,6 +226,26 @@ impl Render for PinnedImage {
                             .flex()
                             .items_center()
                             .gap_1()
+                            .child(
+                                div()
+                                    .id("pinned-save")
+                                    .px_3()
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(pinned_control_tooltip("save"), colors)
+                                        })
+                                        .into()
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| this.save_image(cx)))
+                                    .child("Save"),
+                            )
                             .child(
                                 div()
                                     .id("pinned-zoom-out")
@@ -347,6 +378,7 @@ fn pinned_close_key(key: &str) -> bool {
 enum PinnedKeyboardCommand {
     Close,
     Copy,
+    Save,
     ZoomOut,
     ZoomIn,
     CycleOpacity,
@@ -361,6 +393,7 @@ fn pinned_keyboard_command(keystroke: &Keystroke) -> Option<PinnedKeyboardComman
     if modifiers.secondary() && !modifiers.alt && !modifiers.function {
         return match keystroke.key.as_str() {
             "c" => Some(PinnedKeyboardCommand::Copy),
+            "s" => Some(PinnedKeyboardCommand::Save),
             "-" => Some(PinnedKeyboardCommand::ZoomOut),
             "=" | "+" => Some(PinnedKeyboardCommand::ZoomIn),
             "o" => Some(PinnedKeyboardCommand::CycleOpacity),
@@ -458,7 +491,7 @@ mod tests {
 
     #[test]
     fn compact_pin_controls_explain_their_actions() {
-        for control in ["zoom-out", "zoom-in", "opacity", "copy", "close"] {
+        for control in ["zoom-out", "zoom-in", "opacity", "copy", "save", "close"] {
             assert!(!pinned_control_tooltip(control).is_empty());
         }
         assert!(pinned_control_tooltip("close").contains("Escape"));
@@ -486,6 +519,10 @@ mod tests {
         assert_eq!(
             pinned_keyboard_command(&key("-", control)),
             Some(PinnedKeyboardCommand::ZoomOut)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key("s", control)),
+            Some(PinnedKeyboardCommand::Save)
         );
         assert_eq!(
             pinned_keyboard_command(&key("=", control)),

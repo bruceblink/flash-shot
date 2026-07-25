@@ -3551,6 +3551,44 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Saves an independent pinned frame and adds it to local history without reopening capture UI.
+    pub(super) fn quick_save_pinned_frame(&mut self, frame: CaptureFrame, cx: &mut Context<Self>) {
+        self.status = "Saving pinned image...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { quick_save_full_screen_frame(&frame) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        match result {
+                            Ok(path) => {
+                                let history_note = this.history.record(path.clone()).err().map(|error| {
+                                    log::warn!(target: "flash_shot::history", "pinned_save_history_record_failed error={error}");
+                                    format!("; history unavailable: {error}")
+                                });
+                                this.status = format!("Pinned image saved to {}", path.display());
+                                if let Some(history_note) = history_note {
+                                    this.status.push_str(&history_note);
+                                }
+                                this.notify_user("Flash Shot", "Pinned image saved");
+                            }
+                            Err(error) => {
+                                this.status = format!("Could not save pinned image: {error}");
+                                log::warn!(target: "flash_shot::pinned", "pinned_save_failed error={error}");
+                            }
+                        }
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub(super) fn save_annotation_document(&mut self, cx: &mut Context<Self>) {
         let Some(document) = self.annotation_document.clone() else {
             self.status = "Annotation document is unavailable".to_owned();
