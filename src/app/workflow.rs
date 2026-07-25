@@ -380,6 +380,33 @@ impl FlashShotApp {
         );
     }
 
+    /// Probes FFmpeg without opening a recording process so users can fix local prerequisites first.
+    pub(super) fn check_recording_support(&mut self, cx: &mut Context<Self>) {
+        if self.recording_control.is_some() || self.recording_start_in_flight {
+            self.status = "Stop the current recording before checking support".to_owned();
+            cx.notify();
+            return;
+        }
+        self.status = "Checking FFmpeg recording support...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { discover() })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.status = recording_support_status(result.as_ref());
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub(super) fn start_region_recording(&mut self, cx: &mut Context<Self>) {
         let Some(bounds) = self.selection_drag.selection() else {
             self.status = "Select a region before starting a recording".to_owned();
@@ -4862,6 +4889,28 @@ fn recording_start_failure_status(error: &std::io::Error) -> String {
     }
 }
 
+/// Converts a read-only FFmpeg probe into an actionable recording readiness message.
+fn recording_support_status(
+    result: Result<&crate::recording::FfmpegCapabilities, &std::io::Error>,
+) -> String {
+    match result {
+        Ok(capabilities) if capabilities.supports_display_capture() => format!(
+            "Recording ready: FFmpeg {} supports {}",
+            capabilities.version(),
+            if capabilities.supports_input("ddagrab") {
+                "Desktop Duplication"
+            } else {
+                "GDI capture"
+            }
+        ),
+        Ok(capabilities) => format!(
+            "FFmpeg {} is installed but cannot capture the desktop. Use a build with ddagrab or gdigrab.",
+            capabilities.version()
+        ),
+        Err(error) => recording_start_failure_status(error),
+    }
+}
+
 fn next_quick_save_path(
     directory: &Path,
     timestamp_ms: u128,
@@ -5506,10 +5555,10 @@ mod tests {
         open_annotation_project, open_image_project, pinned_size, png_path, project_image_path,
         quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
         recording_audio_selection_label, recording_display_selection_label,
-        recording_start_failure_status, recording_target_label, resolve_pointer_selection,
-        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
-        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-        tool_selected_status, translation_failure_status, with_alpha,
+        recording_start_failure_status, recording_support_status, recording_target_label,
+        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
+        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+        text_annotation_with_content, tool_selected_status, translation_failure_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -6603,6 +6652,13 @@ mod tests {
         let unsupported =
             std::io::Error::new(std::io::ErrorKind::Unsupported, "ddagrab unavailable");
         assert!(recording_start_failure_status(&unsupported).contains("ddagrab or gdigrab"));
+    }
+
+    #[test]
+    fn recording_support_probe_reuses_actionable_missing_ffmpeg_guidance() {
+        let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "ffmpeg.exe");
+
+        assert!(recording_support_status(Err(&missing)).contains("FLASH_SHOT_FFMPEG"));
     }
 
     #[test]

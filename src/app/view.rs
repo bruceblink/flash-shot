@@ -456,6 +456,16 @@ fn recording_settings(
                 .flex()
                 .gap_2()
                 .child(settings_button(
+                    "settings-check-recording-support",
+                    "Check support",
+                    colors,
+                    !recording_active && !recording_starting,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.check_recording_support(cx))
+                    },
+                ))
+                .child(settings_button(
                     "settings-record-display",
                     if recording_starting {
                         "Preparing..."
