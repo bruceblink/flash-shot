@@ -59,11 +59,11 @@ enum SelectionCursor {
     ResizeNesw,
 }
 
-struct OverlayTooltip(&'static str);
+struct OverlayTooltip(&'static str, ThemeColors);
 
 impl Render for OverlayTooltip {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = ThemeColors::default();
+        let colors = self.1;
         div()
             .px_2()
             .py_1()
@@ -240,9 +240,9 @@ impl Focusable for CaptureOverlay {
 
 impl Render for CaptureOverlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = ThemeColors::default();
         let display_bounds = self.display.physical_bounds;
         let app = self.app.read(cx);
+        let colors = app.colors;
         // The session owns the committed selection. Keep rendering it after the
         // drag has ended, even if a late pointer event clears transient UI state.
         let selection = visible_selection(app.selection_drag, app.session.selection());
@@ -1343,8 +1343,8 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x3A4049FF)))
-                                    .tooltip(|_, cx| {
-                                        cx.new(|_| OverlayTooltip("Pin selection")).into()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| OverlayTooltip("Pin selection", colors)).into()
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
@@ -1418,11 +1418,14 @@ impl Render for CaptureOverlay {
                                     .hover(|style| style.bg(rgba(0x3A4049FF)))
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
-                                            OverlayTooltip(if show_more_actions {
-                                                "Hide more actions"
-                                            } else {
-                                                "Show more actions"
-                                            })
+                                            OverlayTooltip(
+                                                if show_more_actions {
+                                                    "Hide more actions"
+                                                } else {
+                                                    "Show more actions"
+                                                },
+                                                colors,
+                                            )
                                         })
                                         .into()
                                     })
@@ -1450,7 +1453,9 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x493035FF)))
-                                    .tooltip(|_, cx| cx.new(|_| OverlayTooltip("Cancel")).into())
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| OverlayTooltip("Cancel", colors)).into()
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));

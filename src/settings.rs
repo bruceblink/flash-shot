@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::theme::ThemeMode;
+
 const SETTINGS_FILE: &str = "settings.json";
 const SETTINGS_VERSION: u8 = 1;
 pub const DEFAULT_HISTORY_LIMIT: u16 = 30;
@@ -20,6 +22,7 @@ pub struct UserSettings {
     pub capture_delay_seconds: u8,
     pub history_limit: u16,
     pub color_format: u8,
+    pub theme_mode: ThemeMode,
 }
 
 impl Default for UserSettings {
@@ -32,6 +35,7 @@ impl Default for UserSettings {
             capture_delay_seconds: 0,
             history_limit: DEFAULT_HISTORY_LIMIT,
             color_format: DEFAULT_COLOR_FORMAT,
+            theme_mode: ThemeMode::Dark,
         }
     }
 }
@@ -101,6 +105,7 @@ impl UserSettings {
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_COLOR_FORMAT, DEFAULT_HISTORY_LIMIT, UserSettings};
+    use crate::theme::ThemeMode;
 
     fn directory(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -121,6 +126,7 @@ mod tests {
         assert_eq!(settings.capture_delay_seconds, 0);
         assert_eq!(settings.history_limit, DEFAULT_HISTORY_LIMIT);
         assert_eq!(settings.color_format, DEFAULT_COLOR_FORMAT);
+        assert_eq!(settings.theme_mode, ThemeMode::Dark);
         let _ = std::fs::remove_dir_all(directory);
     }
 
@@ -134,6 +140,7 @@ mod tests {
         settings.capture_delay_seconds = 5;
         settings.history_limit = 100;
         settings.color_format = 2;
+        settings.theme_mode = ThemeMode::Light;
         settings.save(&path).unwrap();
 
         let (reopened, _) = UserSettings::load(&directory).unwrap();
@@ -143,6 +150,7 @@ mod tests {
         assert_eq!(reopened.capture_delay_seconds, 5);
         assert_eq!(reopened.history_limit, 100);
         assert_eq!(reopened.color_format, 2);
+        assert_eq!(reopened.theme_mode, ThemeMode::Light);
         std::fs::remove_dir_all(directory).unwrap();
     }
 

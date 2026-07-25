@@ -2,41 +2,48 @@
 
 use std::sync::Arc;
 
-use gpui::{FocusHandle, Focusable, KeyDownEvent, Render, Window, div, img, prelude::*, px};
+use gpui::{
+    Context, Entity, FocusHandle, Focusable, KeyDownEvent, Render, Subscription, Window, div, img,
+    prelude::*, px,
+};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-use crate::{
-    platform::{
-        capture::CaptureFrame,
-        clipboard::{ClipboardService, SystemClipboard},
-    },
-    theme::ThemeColors,
+use super::FlashShotApp;
+use crate::platform::{
+    capture::CaptureFrame,
+    clipboard::{ClipboardService, SystemClipboard},
 };
 
 pub(super) struct PinnedImage {
     image: Arc<gpui::RenderImage>,
     frame: CaptureFrame,
+    app: Entity<FlashShotApp>,
     focus_handle: FocusHandle,
     topmost_requested: bool,
     status: &'static str,
+    _app_observation: Subscription,
 }
 
 impl PinnedImage {
     pub(super) fn new(
         image: Arc<gpui::RenderImage>,
         frame: CaptureFrame,
-        cx: &mut gpui::Context<Self>,
+        app: Entity<FlashShotApp>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let observation = cx.observe(&app, |_, _, cx| cx.notify());
         Self {
             image,
             frame,
+            app,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
             status: "Pinned capture",
+            _app_observation: observation,
         }
     }
 
-    fn copy_image(&mut self, cx: &mut gpui::Context<Self>) {
+    fn copy_image(&mut self, cx: &mut Context<Self>) {
         self.status = match copy_pinned_image(&self.frame, &SystemClipboard) {
             Ok(()) => "Copied image",
             Err(error) => {
@@ -48,7 +55,7 @@ impl PinnedImage {
     }
 
     /// Scales the complete native window so the contained image remains undistorted.
-    fn zoom(&mut self, scale: f32, window: &mut Window, cx: &mut gpui::Context<Self>) {
+    fn zoom(&mut self, scale: f32, window: &mut Window, cx: &mut Context<Self>) {
         self.status = match window.window_handle() {
             Ok(handle) => match handle.as_raw() {
                 RawWindowHandle::Win32(handle) => {
@@ -95,7 +102,7 @@ impl Focusable for PinnedImage {
 
 impl Render for PinnedImage {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let colors = ThemeColors::default();
+        let colors = self.app.read(cx).colors;
         if !self.topmost_requested
             && let Ok(handle) = window.window_handle()
             && let RawWindowHandle::Win32(handle) = handle.as_raw()

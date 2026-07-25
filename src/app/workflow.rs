@@ -237,6 +237,23 @@ impl FlashShotApp {
         }
         cx.notify();
     }
+
+    /// Switches the shared color palette only after the preference is safely persisted.
+    pub(super) fn toggle_theme_mode(&mut self, cx: &mut Context<Self>) {
+        let previous = self.settings.theme_mode;
+        let next = previous.toggled();
+        self.settings.theme_mode = next;
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.settings.theme_mode = previous;
+            self.status = format!("Could not save appearance preference: {error}");
+            cx.notify();
+            return;
+        }
+        self.colors = crate::theme::ThemeColors::for_mode(next);
+        self.status = format!("Appearance changed to {}", next.label());
+        cx.notify();
+    }
+
     pub(super) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
         if self.update_check_in_flight {
             return;
@@ -2790,6 +2807,7 @@ impl FlashShotApp {
         };
         let window_size = pinned_size(pinned_frame.width as f32, pinned_frame.height as f32);
         let window_bounds = WindowBounds::centered(window_size, cx);
+        let pinned_app = cx.entity();
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(window_bounds),
@@ -2814,7 +2832,8 @@ impl FlashShotApp {
                 ..Default::default()
             },
             move |window, cx| {
-                let pinned = cx.new(|cx| PinnedImage::new(pinned.image, pinned_frame, cx));
+                let pinned =
+                    cx.new(|cx| PinnedImage::new(pinned.image, pinned_frame, pinned_app, cx));
                 pinned.read(cx).focus_handle(cx).focus(window, cx);
                 pinned
             },

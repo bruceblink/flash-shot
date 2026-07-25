@@ -189,7 +189,7 @@ fn capture_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    settings_section("Capture behavior")
+    settings_section("Capture behavior", colors)
         .child(
             div()
                 .flex()
@@ -203,27 +203,31 @@ fn capture_settings(
                         .child(app_state.capture_shortcut.clone()),
                 ),
         )
-        .child(settings_row("Global shortcut").child(settings_toggle(
-            "settings-shortcut-enabled",
-            app_state.capture_shortcut_enabled,
-            colors,
-            is_idle,
-            {
-                let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.toggle_capture_shortcut(cx))
-            },
-        )))
-        .child(settings_row("Include cursor").child(settings_toggle(
-            "settings-cursor",
-            app_state.include_cursor,
-            colors,
-            is_idle,
-            {
-                let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.toggle_capture_cursor(cx))
-            },
-        )))
-        .child(settings_row("Shortcut").child(
+        .child(
+            settings_row("Global shortcut", colors).child(settings_toggle(
+                "settings-shortcut-enabled",
+                app_state.capture_shortcut_enabled,
+                colors,
+                is_idle,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.toggle_capture_shortcut(cx))
+                },
+            )),
+        )
+        .child(
+            settings_row("Include cursor", colors).child(settings_toggle(
+                "settings-cursor",
+                app_state.include_cursor,
+                colors,
+                is_idle,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.toggle_capture_cursor(cx))
+                },
+            )),
+        )
+        .child(settings_row("Shortcut", colors).child(
             div().flex().flex_wrap().justify_end().gap_2().children(
                 CaptureShortcut::PRESETS.into_iter().map(|preset| {
                     let app = app.clone();
@@ -240,8 +244,8 @@ fn capture_settings(
             ),
         ))
         .child(
-            settings_row("Capture delay").child(div().flex().gap_1().children([0, 3, 5, 10].map(
-                |delay_seconds| {
+            settings_row("Capture delay", colors).child(div().flex().gap_1().children(
+                [0, 3, 5, 10].map(|delay_seconds| {
                     let app = app.clone();
                     settings_delay_button(
                         format!("settings-delay-{delay_seconds}"),
@@ -253,16 +257,18 @@ fn capture_settings(
                             app.update(cx, |this, cx| this.set_capture_delay(delay_seconds, cx))
                         },
                     )
-                },
-            ))),
+                }),
+            )),
         )
-        .child(settings_row("Color copy format").child(settings_button(
-            "settings-color-format",
-            app_state.color_format_label(),
-            colors,
-            is_idle,
-            move |_, _, cx| app.update(cx, |this, cx| this.cycle_color_format(cx)),
-        )))
+        .child(
+            settings_row("Color copy format", colors).child(settings_button(
+                "settings-color-format",
+                app_state.color_format_label(),
+                colors,
+                is_idle,
+                move |_, _, cx| app.update(cx, |this, cx| this.cycle_color_format(cx)),
+            )),
+        )
 }
 
 fn file_settings(
@@ -271,7 +277,7 @@ fn file_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    settings_section("Open and history").child(
+    settings_section("Open and history", colors).child(
         div()
             .flex()
             .gap_2()
@@ -314,8 +320,8 @@ fn recording_settings(
     audio: &str,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    settings_section("Recording")
-        .child(settings_row("Display").child(settings_button(
+    settings_section("Recording", colors)
+        .child(settings_row("Display", colors).child(settings_button(
             "settings-recording-display",
             display,
             colors,
@@ -325,7 +331,7 @@ fn recording_settings(
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_display(cx))
             },
         )))
-        .child(settings_row("Audio").child(settings_button(
+        .child(settings_row("Audio", colors).child(settings_button(
             "settings-recording-audio",
             audio,
             colors,
@@ -372,18 +378,30 @@ fn system_settings(
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    settings_section("System")
-        .child(settings_row("Start with Windows").child(settings_toggle(
-            "settings-auto-start",
-            app_state.auto_start_enabled,
+    settings_section("System", colors)
+        .child(settings_row("Appearance", colors).child(settings_button(
+            "settings-theme-mode",
+            app_state.settings.theme_mode.label(),
             colors,
             true,
             {
                 let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.toggle_auto_start(cx))
+                move |_, _, cx| app.update(cx, |this, cx| this.toggle_theme_mode(cx))
             },
         )))
-        .child(settings_row("Updates").child(settings_button(
+        .child(
+            settings_row("Start with Windows", colors).child(settings_toggle(
+                "settings-auto-start",
+                app_state.auto_start_enabled,
+                colors,
+                true,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.toggle_auto_start(cx))
+                },
+            )),
+        )
+        .child(settings_row("Updates", colors).child(settings_button(
             "settings-check-updates",
             if app_state.update_check_in_flight {
                 "Checking..."
@@ -402,7 +420,7 @@ fn history_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    settings_section("Recent captures")
+    settings_section("Recent captures", colors)
         .children(entries.into_iter().map(|entry| {
             settings_row(
                 entry
@@ -410,6 +428,7 @@ fn history_settings(
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("Capture"),
+                colors,
             )
             .child(settings_button(
                 format!("settings-open-history-{}", entry.created_at_ms),
@@ -551,27 +570,27 @@ fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColo
         .child(div().text_sm().text_color(colors.muted).child(summary))
 }
 
-fn settings_section(label: &str) -> gpui::Div {
+fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
     div()
         .pb_5()
         .border_b_1()
-        .border_color(crate::theme::ThemeColors::default().border)
+        .border_color(colors.border)
         .flex()
         .flex_col()
         .gap_3()
         .child(
             div()
                 .text_sm()
-                .text_color(crate::theme::ThemeColors::default().text)
+                .text_color(colors.text)
                 .child(label.to_owned()),
         )
 }
 
-fn settings_row(label: &str) -> gpui::Div {
+fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
     div().flex().items_center().justify_between().gap_3().child(
         div()
             .text_sm()
-            .text_color(crate::theme::ThemeColors::default().muted)
+            .text_color(colors.muted)
             .child(label.to_owned()),
     )
 }

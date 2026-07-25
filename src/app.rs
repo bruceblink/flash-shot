@@ -305,7 +305,7 @@ impl FlashShotApp {
         }
 
         Self {
-            colors: ThemeColors::default(),
+            colors: ThemeColors::for_mode(settings.theme_mode),
             session: CaptureSession::default(),
             frame: None,
             annotation_document: None,

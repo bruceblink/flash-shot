@@ -5,7 +5,6 @@ use gpui::{
 };
 
 use super::FlashShotApp;
-use crate::theme::ThemeColors;
 
 pub(super) struct ManualScrollControl {
     app: Entity<FlashShotApp>,
@@ -32,8 +31,8 @@ impl Focusable for ManualScrollControl {
 
 impl Render for ManualScrollControl {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = ThemeColors::default();
         let app = self.app.read(cx);
+        let colors = app.colors;
         let status = app.status.clone();
         let frame_count = app.manual_scroll.frame_count();
 
