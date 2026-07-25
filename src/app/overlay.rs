@@ -326,7 +326,11 @@ impl Render for CaptureOverlay {
             .is_none()
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
             .flatten();
-        let can_export = selection.is_some();
+        let has_selection = selection.is_some();
+        let owns_action_toolbar =
+            selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds));
+        let can_export = has_selection && owns_action_toolbar;
+        let show_action_toolbar = !has_selection || owns_action_toolbar;
         let selection_cursor = selection_cursor(
             selection,
             transform,
@@ -1269,6 +1273,7 @@ impl Render for CaptureOverlay {
             .child(
                 div()
                     .absolute()
+                    .when(!show_action_toolbar, |actions| actions.hidden())
                     .when_some(action_layout, |actions, layout| {
                         actions
                             .left(px(layout.left))
@@ -1719,7 +1724,7 @@ impl Render for CaptureOverlay {
                                 )
                             })
                     })
-                    .when(!can_export, |actions| {
+                    .when(!has_selection, |actions| {
                         actions.child(
                             div()
                                 .id("overlay-cancel")
@@ -2607,6 +2612,16 @@ fn action_toolbar_layout(
     })
 }
 
+/// Assigns one cross-display selection to the screen nearest its export controls.
+fn owns_selection_toolbar(selection: PhysicalRect, display_bounds: PhysicalRect) -> bool {
+    selection.width() > 0
+        && selection.height() > 0
+        && display_bounds.contains(PhysicalPoint {
+            x: selection.right.saturating_sub(1),
+            y: selection.bottom.saturating_sub(1),
+        })
+}
+
 /// Chooses the side with room for the detached secondary menu without moving the main toolbar.
 fn secondary_menu_opens_above(
     toolbar: ActionToolbarLayout,
@@ -2736,9 +2751,9 @@ mod tests {
         SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
         action_toolbar_natural_width, annotation_layer_label, arrow_head_points,
         capture_double_click, intersect, is_text_annotation, magnifier_origin,
-        outline_shape_bounds, resize_handle_points, secondary_action_menu_height,
-        secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
-        visible_selection,
+        outline_shape_bounds, owns_selection_toolbar, resize_handle_points,
+        secondary_action_menu_height, secondary_menu_opens_above, selection_cursor,
+        selection_dimension_label_layout, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2771,6 +2786,51 @@ mod tests {
                 bottom: 500,
             })
         );
+    }
+
+    #[test]
+    fn only_the_display_containing_the_selection_end_owns_its_actions() {
+        let left_display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let right_display = PhysicalRect {
+            left: 1920,
+            top: 0,
+            right: 3840,
+            bottom: 1080,
+        };
+        let selection = PhysicalRect {
+            left: 1600,
+            top: 200,
+            right: 2200,
+            bottom: 600,
+        };
+
+        assert!(!owns_selection_toolbar(selection, left_display));
+        assert!(owns_selection_toolbar(selection, right_display));
+    }
+
+    #[test]
+    fn empty_selection_never_owns_a_toolbar() {
+        let display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+
+        assert!(!owns_selection_toolbar(
+            PhysicalRect {
+                left: 300,
+                top: 200,
+                right: 300,
+                bottom: 600,
+            },
+            display
+        ));
     }
 
     #[test]
