@@ -66,6 +66,13 @@ impl FlashShotApp {
         }
     }
 
+    /// Expands the saved-capture list only after the user asks for it, avoiding thumbnail work in
+    /// the default settings view while still making every retained capture reachable.
+    pub(super) fn toggle_history_expanded(&mut self, cx: &mut Context<Self>) {
+        self.history_expanded = !self.history_expanded;
+        cx.notify();
+    }
+
     pub(super) fn select_capture_shortcut(&mut self, preset: &'static str, cx: &mut Context<Self>) {
         if self.capture_shortcut == preset {
             return;
