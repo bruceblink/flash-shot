@@ -59,7 +59,6 @@ impl gpui::Render for FlashShotApp {
                                         colors,
                                         is_idle,
                                         app.clone(),
-                                        cx,
                                     ))
                                 },
                             )
@@ -188,7 +187,6 @@ fn capture_settings(
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
-    cx: &mut gpui::Context<FlashShotApp>,
 ) -> gpui::Div {
     settings_section("Capture behavior")
         .child(
@@ -241,24 +239,21 @@ fn capture_settings(
             ),
         ))
         .child(
-            settings_row("Capture delay").child(
-                div()
-                    .id("settings-delay")
-                    .px_3()
-                    .py_1()
-                    .border_1()
-                    .border_color(colors.border)
-                    .text_color(colors.muted)
-                    .cursor_pointer()
-                    .when(is_idle, |button| {
-                        button.on_click(cx.listener(|this, _, _, cx| this.cycle_capture_delay(cx)))
-                    })
-                    .child(if app_state.capture_delay_seconds == 0 {
-                        "Off".to_owned()
-                    } else {
-                        format!("{} seconds", app_state.capture_delay_seconds)
-                    }),
-            ),
+            settings_row("Capture delay").child(div().flex().gap_1().children([0, 3, 5, 10].map(
+                |delay_seconds| {
+                    let app = app.clone();
+                    settings_delay_button(
+                        format!("settings-delay-{delay_seconds}"),
+                        delay_seconds,
+                        app_state.capture_delay_seconds == delay_seconds,
+                        colors,
+                        is_idle,
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.set_capture_delay(delay_seconds, cx))
+                        },
+                    )
+                },
+            ))),
         )
         .child(settings_row("Color copy format").child(settings_button(
             "settings-color-format",
@@ -602,6 +597,37 @@ fn settings_shortcut_button(
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
     settings_button(id, label, colors, true, on_click)
+        .border_color(if selected {
+            colors.accent
+        } else {
+            colors.border
+        })
+        .bg(if selected {
+            colors.accent
+        } else {
+            colors.panel
+        })
+        .text_color(if selected {
+            colors.background
+        } else {
+            colors.text
+        })
+}
+
+fn settings_delay_button(
+    id: impl Into<gpui::ElementId>,
+    delay_seconds: u8,
+    selected: bool,
+    colors: crate::theme::ThemeColors,
+    enabled: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let label = if delay_seconds == 0 {
+        "Off".to_owned()
+    } else {
+        format!("{delay_seconds}s")
+    };
+    settings_button(id, &label, colors, enabled, on_click)
         .border_color(if selected {
             colors.accent
         } else {

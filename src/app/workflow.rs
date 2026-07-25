@@ -47,6 +47,7 @@ use crate::{
         AudioSource, RecordingAudioConfig, RecordingEvent, RecordingProgress, RecordingRequest,
         RecordingTarget, discover, discover_audio_sources, start_recording,
     },
+    settings::UserSettings,
     update::{UpdateAvailability, UpdateConfig},
 };
 
@@ -874,9 +875,13 @@ impl FlashShotApp {
         cx.notify();
     }
 
-    pub(super) fn cycle_capture_delay(&mut self, cx: &mut Context<Self>) {
+    /// Persists one of the supported delayed-capture choices selected in settings.
+    pub(super) fn set_capture_delay(&mut self, delay_seconds: u8, cx: &mut Context<Self>) {
+        let next_delay = UserSettings::normalize_capture_delay(delay_seconds);
+        if next_delay != delay_seconds || self.capture_delay_seconds == next_delay {
+            return;
+        }
         let previous_delay = self.capture_delay_seconds;
-        let next_delay = next_capture_delay(previous_delay);
         self.capture_delay_seconds = next_delay;
         self.settings.capture_delay_seconds = next_delay;
         if let Err(error) = self.settings.save(&self.settings_path) {
@@ -3801,15 +3806,6 @@ fn full_screen_copy_is_current(
         && session_state == CaptureSessionState::Idle
 }
 
-fn next_capture_delay(current: u8) -> u8 {
-    match current {
-        0 => 3,
-        3 => 5,
-        5 => 10,
-        _ => 0,
-    }
-}
-
 fn next_history_limit(current: u16) -> u16 {
     match current {
         10 => 30,
@@ -4969,15 +4965,14 @@ mod tests {
         delayed_capture_status, drawing_status, fill_alpha, fill_color, format_hsl,
         format_recording_progress, full_screen_copy_is_current, hovered_color, intersect_rect,
         is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
-        next_annotation_selection, next_capture_delay, next_quick_save_path,
-        next_quick_save_path_with_prefix, next_recording_audio_selection,
-        next_recording_display_selection, open_annotation_project, open_image_project, pinned_size,
-        png_path, project_image_path, quick_save_annotated_frame_selection_in,
-        quick_save_full_screen_frame_in, recording_audio_selection_label,
-        recording_display_selection_label, recording_target_label, resolve_pointer_selection,
-        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
-        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-        tool_selected_status, with_alpha,
+        next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
+        next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
+        open_image_project, pinned_size, png_path, project_image_path,
+        quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
+        recording_audio_selection_label, recording_display_selection_label, recording_target_label,
+        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
+        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+        text_annotation_with_content, tool_selected_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -5531,15 +5526,6 @@ mod tests {
         let large = pinned_size(1_280.0, 720.0);
         assert_eq!(f32::from(large.width), 640.0);
         assert_eq!(f32::from(large.height), 386.0);
-    }
-
-    #[test]
-    fn capture_delay_cycles_through_the_supported_values() {
-        assert_eq!(next_capture_delay(0), 3);
-        assert_eq!(next_capture_delay(3), 5);
-        assert_eq!(next_capture_delay(5), 10);
-        assert_eq!(next_capture_delay(10), 0);
-        assert_eq!(next_capture_delay(9), 0);
     }
 
     #[test]
