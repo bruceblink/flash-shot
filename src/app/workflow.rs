@@ -613,7 +613,8 @@ impl FlashShotApp {
                 .detach();
             }
             Err(error) => {
-                self.status = format!("Could not start screen recording: {error}");
+                log::warn!(target: "flash_shot::recording", "recording_start_failed error={error}");
+                self.status = recording_start_failure_status(&error);
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
             }
         }
@@ -4615,6 +4616,19 @@ fn format_recording_progress(target: &str, progress: RecordingProgress) -> Strin
     format!("Recording {target}: {seconds}s, {frames} frames")
 }
 
+/// Maps FFmpeg startup failures to the concrete local recovery step while retaining diagnostics.
+fn recording_start_failure_status(error: &std::io::Error) -> String {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => format!(
+            "Recording is unavailable because FFmpeg was not found. Install FFmpeg or set FLASH_SHOT_FFMPEG: {error}"
+        ),
+        std::io::ErrorKind::Unsupported => format!(
+            "This FFmpeg build cannot record the selected source. Use a build with ddagrab or gdigrab: {error}"
+        ),
+        _ => format!("Could not start screen recording: {error}"),
+    }
+}
+
 fn next_quick_save_path(
     directory: &Path,
     timestamp_ms: u128,
@@ -5246,10 +5260,11 @@ mod tests {
         next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
         open_image_project, pinned_size, png_path, project_image_path,
         quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
-        recording_audio_selection_label, recording_display_selection_label, recording_target_label,
-        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
-        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-        text_annotation_with_content, tool_selected_status, translation_failure_status, with_alpha,
+        recording_audio_selection_label, recording_display_selection_label,
+        recording_start_failure_status, recording_target_label, resolve_pointer_selection,
+        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
+        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
+        tool_selected_status, translation_failure_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -6311,6 +6326,16 @@ mod tests {
             ),
             "Recording selected area: 3s, 117 frames"
         );
+    }
+
+    #[test]
+    fn recording_start_failures_name_the_available_recovery_path() {
+        let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "ffmpeg.exe");
+        assert!(recording_start_failure_status(&missing).contains("FLASH_SHOT_FFMPEG"));
+
+        let unsupported =
+            std::io::Error::new(std::io::ErrorKind::Unsupported, "ddagrab unavailable");
+        assert!(recording_start_failure_status(&unsupported).contains("ddagrab or gdigrab"));
     }
 
     #[test]
