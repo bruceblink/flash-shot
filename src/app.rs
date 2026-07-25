@@ -7,7 +7,12 @@ mod scroll_control;
 mod view;
 mod workflow;
 
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    path::PathBuf,
+    sync::Arc,
+};
 
 use gpui::{
     AsyncApp, Context, EntityInputHandler, FocusHandle, Focusable, RenderImage, Subscription,
@@ -94,6 +99,8 @@ pub struct FlashShotApp {
     status: String,
     performance: PerformanceRecorder,
     history: ScreenshotHistory,
+    history_thumbnails: HashMap<PathBuf, Arc<RenderImage>>,
+    history_thumbnail_loading: HashSet<PathBuf>,
     _shutdown: Subscription,
     _shortcut: Option<GlobalShortcutService>,
     _tray: Option<TrayService>,
@@ -361,6 +368,8 @@ impl FlashShotApp {
             status,
             performance,
             history,
+            history_thumbnails: HashMap::new(),
+            history_thumbnail_loading: HashSet::new(),
             _shutdown: shutdown,
             _shortcut: shortcut,
             _tray: tray,

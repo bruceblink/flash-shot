@@ -1,6 +1,6 @@
 //! The small, on-demand settings window for the background capture service.
 
-use gpui::{Window, div, prelude::*, px, rgba};
+use gpui::{ObjectFit, Window, div, img, prelude::*, px, rgba};
 
 use super::{FlashShotApp, SettingsSection};
 use crate::{domain::session::CaptureSessionState, platform::shortcut::CaptureShortcut};
@@ -16,7 +16,14 @@ impl gpui::Render for FlashShotApp {
             super::workflow::recording_audio_selection_label(&self.recording_audio);
         let recording_display =
             super::workflow::recording_display_selection_label(&self.recording_display);
-        let history_entries: Vec<_> = self.history.entries().iter().take(5).cloned().collect();
+        let recent_history: Vec<_> = self.history.entries().iter().take(5).cloned().collect();
+        let history_entries: Vec<_> = recent_history
+            .into_iter()
+            .map(|entry| {
+                let thumbnail = self.history_thumbnail(&entry.path, cx);
+                (entry, thumbnail)
+            })
+            .collect();
         let app = cx.entity();
 
         div()
@@ -415,16 +422,19 @@ fn system_settings(
 }
 
 fn history_settings(
-    entries: Vec<crate::history::HistoryEntry>,
+    entries: Vec<(
+        crate::history::HistoryEntry,
+        Option<std::sync::Arc<gpui::RenderImage>>,
+    )>,
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
     let now_ms = current_timestamp_ms();
     settings_section("Recent captures", colors)
-        .children(entries.into_iter().map(|entry| {
+        .children(entries.into_iter().map(|(entry, thumbnail)| {
             let label = history_entry_label(&entry, now_ms);
-            settings_row(&label, colors)
+            history_row(&label, thumbnail, colors)
                 .child(settings_button(
                     format!("settings-open-history-{}", entry.created_at_ms),
                     "Open",
@@ -472,6 +482,27 @@ fn history_settings(
             is_idle,
             move |_, _, cx| app.update(cx, |this, cx| this.clear_history(cx)),
         ))
+}
+
+/// Renders a fixed preview well so history metadata and actions stay aligned while it loads.
+fn history_row(
+    label: &str,
+    thumbnail: Option<std::sync::Arc<gpui::RenderImage>>,
+    colors: crate::theme::ThemeColors,
+) -> gpui::Div {
+    settings_row(label, colors).child(
+        div()
+            .w(px(72.0))
+            .h(px(46.0))
+            .flex_none()
+            .overflow_hidden()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.panel)
+            .when_some(thumbnail, |preview, thumbnail| {
+                preview.child(img(thumbnail).size_full().object_fit(ObjectFit::Cover))
+            }),
+    )
 }
 
 fn current_timestamp_ms() -> u128 {

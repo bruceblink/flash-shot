@@ -15,8 +15,11 @@ use gpui::{
 
 use super::{
     FlashShotApp, RecognitionResult, RecordingAudioSelection, RecordingDisplaySelection,
-    SettingsSection, overlay::CaptureOverlay, pinned::PinnedImage,
-    render_image::render_image_from_capture, scroll_control::ManualScrollControl,
+    SettingsSection,
+    overlay::CaptureOverlay,
+    pinned::PinnedImage,
+    render_image::{history_thumbnail_frame, render_image_from_capture},
+    scroll_control::ManualScrollControl,
 };
 use crate::{
     domain::{
@@ -837,6 +840,59 @@ impl FlashShotApp {
             }
         })
         .detach();
+    }
+
+    /// Returns a cached history preview and starts one background decode when it is first needed.
+    pub(super) fn history_thumbnail(
+        &mut self,
+        path: &PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<RenderImage>> {
+        if let Some(thumbnail) = self.history_thumbnails.get(path) {
+            return Some(thumbnail.clone());
+        }
+        if !self.history_thumbnail_loading.insert(path.clone()) {
+            return None;
+        }
+        let path = path.clone();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn({
+                        let decode_path = path.clone();
+                        async move {
+                            let frame = CaptureFrame::open_png(&decode_path)?;
+                            history_thumbnail_frame(&frame)
+                        }
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_history_thumbnail(path, result, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+        None
+    }
+
+    /// Stores a successfully decoded preview without surfacing transient list-rendering errors.
+    fn finish_history_thumbnail(
+        &mut self,
+        path: PathBuf,
+        result: std::io::Result<CaptureFrame>,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_thumbnail_loading.remove(&path);
+        if let Ok(frame) = result
+            && let Ok(thumbnail) = render_image_from_capture(&frame)
+        {
+            self.history_thumbnails.insert(path, thumbnail.image);
+        }
+        cx.notify();
     }
 
     fn finish_open_image(
@@ -3624,6 +3680,8 @@ impl FlashShotApp {
                 log::warn!(target: "flash_shot::history", "history_clear_failed error={error}");
             }
         }
+        self.history_thumbnails.clear();
+        self.history_thumbnail_loading.clear();
         cx.notify();
     }
 
@@ -3638,6 +3696,8 @@ impl FlashShotApp {
                 log::warn!(target: "flash_shot::history", "history_remove_failed path={} error={error}", path.display());
             }
         }
+        self.history_thumbnails.remove(&path);
+        self.history_thumbnail_loading.remove(&path);
         cx.notify();
     }
 
