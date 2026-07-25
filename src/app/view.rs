@@ -420,42 +420,50 @@ fn history_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
+    let now_ms = current_timestamp_ms();
     settings_section("Recent captures", colors)
         .children(entries.into_iter().map(|entry| {
-            settings_row(
-                entry
-                    .path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Capture"),
-                colors,
-            )
-            .child(settings_button(
-                format!("settings-open-history-{}", entry.created_at_ms),
-                "Open",
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    let path = entry.path.clone();
-                    move |_, _, cx| {
-                        app.update(cx, |this, cx| this.open_history_image(path.clone(), cx))
-                    }
-                },
-            ))
-            .child(settings_button(
-                format!("settings-remove-history-{}", entry.created_at_ms),
-                "Remove",
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    let path = entry.path.clone();
-                    move |_, _, cx| {
-                        app.update(cx, |this, cx| this.remove_history_image(path.clone(), cx))
-                    }
-                },
-            ))
+            let label = history_entry_label(&entry, now_ms);
+            settings_row(&label, colors)
+                .child(settings_button(
+                    format!("settings-open-history-{}", entry.created_at_ms),
+                    "Open",
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        let path = entry.path.clone();
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.open_history_image(path.clone(), cx))
+                        }
+                    },
+                ))
+                .child(settings_button(
+                    format!("settings-copy-history-{}", entry.created_at_ms),
+                    "Copy",
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        let path = entry.path.clone();
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.copy_history_image(path.clone(), cx))
+                        }
+                    },
+                ))
+                .child(settings_button(
+                    format!("settings-remove-history-{}", entry.created_at_ms),
+                    "Remove",
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        let path = entry.path.clone();
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.remove_history_image(path.clone(), cx))
+                        }
+                    },
+                ))
         }))
         .child(settings_button(
             "settings-clear-history",
@@ -464,6 +472,36 @@ fn history_settings(
             is_idle,
             move |_, _, cx| app.update(cx, |this, cx| this.clear_history(cx)),
         ))
+}
+
+fn current_timestamp_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+/// Adds a concise age to a history item so users can scan recent captures quickly.
+fn history_entry_label(entry: &crate::history::HistoryEntry, now_ms: u128) -> String {
+    let name = entry
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Capture");
+    format!(
+        "{name} - {}",
+        relative_timestamp_label(entry.created_at_ms, now_ms)
+    )
+}
+
+fn relative_timestamp_label(created_at_ms: u128, now_ms: u128) -> String {
+    let elapsed_seconds = now_ms.saturating_sub(created_at_ms) / 1_000;
+    match elapsed_seconds {
+        0..=59 => "Just now".to_owned(),
+        60..=3_599 => format!("{}m ago", elapsed_seconds / 60),
+        3_600..=86_399 => format!("{}h ago", elapsed_seconds / 3_600),
+        _ => format!("{}d ago", elapsed_seconds / 86_400),
+    }
 }
 
 fn settings_navigation(
@@ -712,8 +750,12 @@ fn settings_delay_button(
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_command_label, settings_page_intro};
+    use super::{
+        capture_command_label, history_entry_label, relative_timestamp_label, settings_page_intro,
+    };
     use crate::app::SettingsSection;
+    use crate::history::HistoryEntry;
+    use std::path::PathBuf;
 
     #[test]
     fn capture_header_turns_into_a_delay_cancellation_command() {
@@ -732,5 +774,21 @@ mod tests {
         ] {
             let _ = settings_page_intro(section, colors);
         }
+    }
+
+    #[test]
+    fn history_labels_include_a_file_name_and_human_readable_age() {
+        let entry = HistoryEntry {
+            path: PathBuf::from("F:/captures/example.png"),
+            created_at_ms: 1_000_000,
+        };
+
+        assert_eq!(
+            history_entry_label(&entry, 1_000_000),
+            "example.png - Just now"
+        );
+        assert_eq!(relative_timestamp_label(1_000_000, 1_065_000), "1m ago");
+        assert_eq!(relative_timestamp_label(1_000_000, 4_600_000), "1h ago");
+        assert_eq!(relative_timestamp_label(1_000_000, 173_800_000), "2d ago");
     }
 }

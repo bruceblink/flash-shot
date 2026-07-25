@@ -810,6 +810,35 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Decodes and copies a retained PNG without opening the annotation workflow.
+    pub(super) fn copy_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.session.state() != CaptureSessionState::Idle {
+            return;
+        }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.status = format!("Copying {}...", path.display());
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let frame = CaptureFrame::open_png(&path)?;
+                        SystemClipboard.copy_image(&frame)
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_history_copy(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn finish_open_image(
         &mut self,
         outcome: OpenImageOutcome,
@@ -889,6 +918,24 @@ impl FlashShotApp {
                 self.status = message;
             }
         }
+        cx.notify();
+    }
+
+    fn finish_history_copy(
+        &mut self,
+        result: std::io::Result<()>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation)
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        self.status = match result {
+            Ok(()) => "History image copied to clipboard".to_owned(),
+            Err(error) => format!("Could not copy history image: {error}"),
+        };
         cx.notify();
     }
 
