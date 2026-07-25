@@ -40,6 +40,11 @@ pub fn set_opacity(handle: isize, opacity: u8) -> io::Result<()> {
     platform::set_opacity(handle, opacity)
 }
 
+/// Lets a pinned reference image receive no pointer input while retaining keyboard focus.
+pub fn set_mouse_through(handle: isize, enabled: bool) -> io::Result<()> {
+    platform::set_mouse_through(handle, enabled)
+}
+
 #[cfg(windows)]
 mod platform {
     use super::{
@@ -53,7 +58,7 @@ mod platform {
             GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IsWindow, LWA_ALPHA,
             SW_HIDE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
             SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
-            ShowWindow, WS_EX_LAYERED,
+            ShowWindow, WS_EX_LAYERED, WS_EX_TRANSPARENT,
         },
     };
 
@@ -142,6 +147,24 @@ mod platform {
         }
         Ok(())
     }
+
+    pub fn set_mouse_through(handle: isize, enabled: bool) -> io::Result<()> {
+        let window = window(handle)?;
+        let extended_style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
+        let updated_style = mouse_through_style(extended_style, enabled);
+        // SAFETY: window is live and the replacement preserves every unrelated style bit.
+        unsafe { SetWindowLongPtrW(window, GWL_EXSTYLE, updated_style) };
+        Ok(())
+    }
+
+    /// Adds or removes only the Windows hit-testing flag used for mouse-through reference windows.
+    pub(super) fn mouse_through_style(style: isize, enabled: bool) -> isize {
+        if enabled {
+            style | WS_EX_TRANSPARENT as isize
+        } else {
+            style & !(WS_EX_TRANSPARENT as isize)
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -165,6 +188,10 @@ mod platform {
     }
 
     pub fn set_opacity(_handle: isize, _opacity: u8) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn set_mouse_through(_handle: isize, _enabled: bool) -> io::Result<()> {
         Ok(())
     }
 }
@@ -199,5 +226,18 @@ mod tests {
             scaled_extent(400, f32::NAN, PIN_WINDOW_MIN_WIDTH, PIN_WINDOW_MAX_WIDTH),
             400
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn mouse_through_style_preserves_other_extended_window_flags() {
+        use super::platform::mouse_through_style;
+        use windows_sys::Win32::UI::WindowsAndMessaging::WS_EX_TRANSPARENT;
+
+        let other_style = 0x1000isize;
+        let enabled = mouse_through_style(other_style, true);
+        assert_eq!(enabled & other_style, other_style);
+        assert_ne!(enabled & WS_EX_TRANSPARENT as isize, 0);
+        assert_eq!(mouse_through_style(enabled, false), other_style);
     }
 }

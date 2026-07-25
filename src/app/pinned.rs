@@ -38,6 +38,7 @@ fn pinned_control_tooltip(control: &str) -> &'static str {
         "zoom-out" => "Zoom out (Ctrl+-)",
         "zoom-in" => "Zoom in (Ctrl++)",
         "opacity" => "Cycle opacity (Ctrl+O)",
+        "mouse-through" => "Toggle mouse-through (Ctrl+M)",
         "copy" => "Copy image (Ctrl+C)",
         "save" => "Save image (Ctrl+S)",
         "close" => "Close pinned image (Escape)",
@@ -52,6 +53,7 @@ pub(super) struct PinnedImage {
     focus_handle: FocusHandle,
     topmost_requested: bool,
     opacity: u8,
+    mouse_through: bool,
     status: &'static str,
     _app_observation: Subscription,
 }
@@ -71,6 +73,7 @@ impl PinnedImage {
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
             opacity: 255,
+            mouse_through: false,
             status: "Pinned capture",
             _app_observation: observation,
         }
@@ -150,6 +153,40 @@ impl PinnedImage {
         cx.notify();
     }
 
+    /// Lets clicks reach the app below while this pinned image remains usable through Ctrl+M.
+    fn toggle_mouse_through(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = !self.mouse_through;
+        self.status = match window.window_handle() {
+            Ok(handle) => match handle.as_raw() {
+                RawWindowHandle::Win32(handle) => {
+                    match crate::platform::window_visibility::set_mouse_through(
+                        handle.hwnd.get(),
+                        next,
+                    ) {
+                        Ok(()) => {
+                            self.mouse_through = next;
+                            if next {
+                                "Mouse through enabled"
+                            } else {
+                                "Mouse through disabled"
+                            }
+                        }
+                        Err(error) => {
+                            log::warn!(target: "flash_shot::pinned", "pinned_window_mouse_through_failed error={error}");
+                            "Could not change mouse-through"
+                        }
+                    }
+                }
+                _ => "Mouse through is unavailable",
+            },
+            Err(error) => {
+                log::warn!(target: "flash_shot::pinned", "pinned_window_handle_failed error={error}");
+                "Could not change mouse-through"
+            }
+        };
+        cx.notify();
+    }
+
     /// Closes this independent pinned window without affecting the capture service.
     fn close(&mut self, window: &mut Window) {
         window.remove_window();
@@ -195,6 +232,9 @@ impl Render for PinnedImage {
                     Some(PinnedKeyboardCommand::ZoomOut) => this.zoom(0.8, window, cx),
                     Some(PinnedKeyboardCommand::ZoomIn) => this.zoom(1.25, window, cx),
                     Some(PinnedKeyboardCommand::CycleOpacity) => this.cycle_opacity(window, cx),
+                    Some(PinnedKeyboardCommand::ToggleMouseThrough) => {
+                        this.toggle_mouse_through(window, cx)
+                    }
                     None => {}
                 }
             }))
@@ -319,6 +359,39 @@ impl Render for PinnedImage {
                             )
                             .child(
                                 div()
+                                    .id("pinned-mouse-through")
+                                    .px_2()
+                                    .py_1()
+                                    .bg(if self.mouse_through {
+                                        colors.accent
+                                    } else {
+                                        colors.background
+                                    })
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(if self.mouse_through {
+                                        colors.background
+                                    } else {
+                                        colors.text
+                                    })
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(
+                                                pinned_control_tooltip("mouse-through"),
+                                                colors,
+                                            )
+                                        })
+                                        .into()
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_mouse_through(window, cx)
+                                    }))
+                                    .child("Pass"),
+                            )
+                            .child(
+                                div()
                                     .id("pinned-copy")
                                     .px_3()
                                     .py_1()
@@ -382,6 +455,7 @@ enum PinnedKeyboardCommand {
     ZoomOut,
     ZoomIn,
     CycleOpacity,
+    ToggleMouseThrough,
 }
 
 /// Maps focused-window keys to local pin actions without changing global shortcuts.
@@ -397,6 +471,7 @@ fn pinned_keyboard_command(keystroke: &Keystroke) -> Option<PinnedKeyboardComman
             "-" => Some(PinnedKeyboardCommand::ZoomOut),
             "=" | "+" => Some(PinnedKeyboardCommand::ZoomIn),
             "o" => Some(PinnedKeyboardCommand::CycleOpacity),
+            "m" => Some(PinnedKeyboardCommand::ToggleMouseThrough),
             _ => None,
         };
     }
@@ -491,7 +566,15 @@ mod tests {
 
     #[test]
     fn compact_pin_controls_explain_their_actions() {
-        for control in ["zoom-out", "zoom-in", "opacity", "copy", "save", "close"] {
+        for control in [
+            "zoom-out",
+            "zoom-in",
+            "opacity",
+            "mouse-through",
+            "copy",
+            "save",
+            "close",
+        ] {
             assert!(!pinned_control_tooltip(control).is_empty());
         }
         assert!(pinned_control_tooltip("close").contains("Escape"));
@@ -531,6 +614,10 @@ mod tests {
         assert_eq!(
             pinned_keyboard_command(&key("o", control)),
             Some(PinnedKeyboardCommand::CycleOpacity)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key("m", control)),
+            Some(PinnedKeyboardCommand::ToggleMouseThrough)
         );
         assert_eq!(pinned_keyboard_command(&key("c", Default::default())), None);
     }
