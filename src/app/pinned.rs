@@ -39,6 +39,8 @@ fn pinned_control_tooltip(control: &str) -> &'static str {
         "zoom-in" => "Zoom in (Ctrl++)",
         "opacity" => "Cycle opacity (Ctrl+O)",
         "mouse-through" => "Toggle mouse-through (Ctrl+M)",
+        "solo" => "Hide other pinned images (Ctrl+H)",
+        "show-all" => "Show all pinned images (Ctrl+Shift+H)",
         "copy" => "Copy image (Ctrl+C)",
         "save" => "Save image (Ctrl+S)",
         "close" => "Close pinned image (Escape)",
@@ -187,6 +189,37 @@ impl PinnedImage {
         cx.notify();
     }
 
+    /// Keeps one reference image visible without closing the user's other pinned captures.
+    fn hide_other_pinned_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.status = match native_window_handle(window) {
+            Some(handle) => {
+                let hidden = self
+                    .app
+                    .update(cx, |app, cx| app.hide_other_pinned_windows(handle, cx));
+                if hidden == 0 {
+                    "No other pinned images"
+                } else {
+                    "Other pinned images hidden"
+                }
+            }
+            None => "Pinned window handle is unavailable",
+        };
+        cx.notify();
+    }
+
+    /// Restores hidden reference images while preserving the active pin's keyboard focus.
+    fn show_all_pinned_images(&mut self, cx: &mut Context<Self>) {
+        let shown = self
+            .app
+            .update(cx, |app, cx| app.show_all_pinned_windows(cx));
+        self.status = if shown == 0 {
+            "No pinned images to show"
+        } else {
+            "All pinned images shown"
+        };
+        cx.notify();
+    }
+
     /// Closes this independent pinned window without affecting the capture service.
     fn close(&mut self, window: &mut Window) {
         window.remove_window();
@@ -204,6 +237,16 @@ impl Focusable for PinnedImage {
     fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
         self.focus_handle.clone()
     }
+}
+
+/// Returns the native handle only for the focused pin's visibility commands.
+fn native_window_handle(window: &Window) -> Option<isize> {
+    HasWindowHandle::window_handle(window)
+        .ok()
+        .and_then(|handle| match handle.as_raw() {
+            RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+            _ => None,
+        })
 }
 
 impl Render for PinnedImage {
@@ -235,6 +278,10 @@ impl Render for PinnedImage {
                     Some(PinnedKeyboardCommand::ToggleMouseThrough) => {
                         this.toggle_mouse_through(window, cx)
                     }
+                    Some(PinnedKeyboardCommand::HideOthers) => {
+                        this.hide_other_pinned_images(window, cx)
+                    }
+                    Some(PinnedKeyboardCommand::ShowAll) => this.show_all_pinned_images(cx),
                     None => {}
                 }
             }))
@@ -392,6 +439,55 @@ impl Render for PinnedImage {
                             )
                             .child(
                                 div()
+                                    .id("pinned-solo")
+                                    .px_2()
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(pinned_control_tooltip("solo"), colors)
+                                        })
+                                        .into()
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.hide_other_pinned_images(window, cx)
+                                    }))
+                                    .child("Solo"),
+                            )
+                            .child(
+                                div()
+                                    .id("pinned-show-all")
+                                    .px_2()
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(
+                                                pinned_control_tooltip("show-all"),
+                                                colors,
+                                            )
+                                        })
+                                        .into()
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.show_all_pinned_images(cx)
+                                        }),
+                                    )
+                                    .child("All"),
+                            )
+                            .child(
+                                div()
                                     .id("pinned-copy")
                                     .px_3()
                                     .py_1()
@@ -456,6 +552,8 @@ enum PinnedKeyboardCommand {
     ZoomIn,
     CycleOpacity,
     ToggleMouseThrough,
+    HideOthers,
+    ShowAll,
 }
 
 /// Maps focused-window keys to local pin actions without changing global shortcuts.
@@ -472,6 +570,8 @@ fn pinned_keyboard_command(keystroke: &Keystroke) -> Option<PinnedKeyboardComman
             "=" | "+" => Some(PinnedKeyboardCommand::ZoomIn),
             "o" => Some(PinnedKeyboardCommand::CycleOpacity),
             "m" => Some(PinnedKeyboardCommand::ToggleMouseThrough),
+            "h" if modifiers.shift => Some(PinnedKeyboardCommand::ShowAll),
+            "h" => Some(PinnedKeyboardCommand::HideOthers),
             _ => None,
         };
     }
@@ -571,6 +671,8 @@ mod tests {
             "zoom-in",
             "opacity",
             "mouse-through",
+            "solo",
+            "show-all",
             "copy",
             "save",
             "close",
@@ -618,6 +720,21 @@ mod tests {
         assert_eq!(
             pinned_keyboard_command(&key("m", control)),
             Some(PinnedKeyboardCommand::ToggleMouseThrough)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key("h", control)),
+            Some(PinnedKeyboardCommand::HideOthers)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key(
+                "h",
+                gpui::Modifiers {
+                    control: true,
+                    shift: true,
+                    ..Default::default()
+                },
+            )),
+            Some(PinnedKeyboardCommand::ShowAll)
         );
         assert_eq!(pinned_keyboard_command(&key("c", Default::default())), None);
     }

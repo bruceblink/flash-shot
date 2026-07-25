@@ -26,6 +26,11 @@ pub fn restore(handle: isize) -> io::Result<()> {
     platform::restore(handle)
 }
 
+/// Shows a previously hidden window without changing the user's active window.
+pub fn show(handle: isize) -> io::Result<()> {
+    platform::show(handle)
+}
+
 pub fn make_topmost(handle: isize) -> io::Result<()> {
     platform::make_topmost(handle)
 }
@@ -89,6 +94,13 @@ mod platform {
             ShowWindow(window, SW_RESTORE);
             SetForegroundWindow(window);
         }
+        Ok(())
+    }
+
+    pub fn show(handle: isize) -> io::Result<()> {
+        let window = window(handle)?;
+        // SAFETY: window is a live HWND. This restores visibility without requesting foreground.
+        unsafe { ShowWindow(window, SW_RESTORE) };
         Ok(())
     }
 
@@ -176,6 +188,10 @@ mod platform {
     }
 
     pub fn restore(_handle: isize) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn show(_handle: isize) -> io::Result<()> {
         Ok(())
     }
 

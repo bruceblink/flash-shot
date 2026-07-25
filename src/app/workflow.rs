@@ -12,6 +12,7 @@ use gpui::{
     PathPromptOptions, Pixels, RenderImage, WeakEntity, WindowBackgroundAppearance, WindowBounds,
     WindowKind, WindowOptions, point, px, size,
 };
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::{
     FlashShotApp, RecognitionResult, RecordingAudioSelection, RecordingDisplaySelection,
@@ -3057,7 +3058,8 @@ impl FlashShotApp {
                 pinned
             },
         ) {
-            Ok(_) => {
+            Ok(window) => {
+                self.pinned_windows.push(window);
                 self.status = success_status.to_owned();
             }
             Err(error) => {
@@ -3069,6 +3071,72 @@ impl FlashShotApp {
             }
         }
         cx.notify();
+    }
+
+    /// Hides every live pinned window except the focused reference image.
+    /// Closed windows are dropped from the registry so later focus commands remain harmless.
+    pub(super) fn hide_other_pinned_windows(
+        &mut self,
+        current_handle: isize,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let mut hidden = 0;
+        self.pinned_windows.retain(|pinned| {
+            match pinned.update(cx, |_, window, _| -> Result<bool, String> {
+                let handle = native_window_handle(window);
+                if handle == Some(current_handle) {
+                    return Ok(false);
+                }
+                handle
+                    .ok_or_else(|| "Pinned window handle is unavailable".to_owned())
+                    .and_then(|handle| {
+                        window_visibility::hide(handle).map_err(|error| error.to_string())
+                    })?;
+                Ok(true)
+            }) {
+                Ok(Ok(true)) => {
+                    hidden += 1;
+                    true
+                }
+                Ok(Ok(false)) => true,
+                Ok(Err(error)) => {
+                    log::warn!(target: "flash_shot::pinned", "pinned_window_hide_failed error={error}");
+                    true
+                }
+                Err(error) => {
+                    log::debug!(target: "flash_shot::pinned", "stale_pinned_window_removed error={error}");
+                    false
+                }
+            }
+        });
+        hidden
+    }
+
+    /// Restores all live pinned references without stealing focus from the current image.
+    pub(super) fn show_all_pinned_windows(&mut self, cx: &mut Context<Self>) -> usize {
+        let mut shown = 0;
+        self.pinned_windows.retain(|pinned| {
+            match pinned.update(cx, |_, window, _| -> Result<(), String> {
+                let handle = native_window_handle(window)
+                    .ok_or_else(|| "Pinned window handle is unavailable".to_owned())?;
+                window_visibility::show(handle).map_err(|error| error.to_string())?;
+                Ok(())
+            }) {
+                Ok(Ok(())) => {
+                    shown += 1;
+                    true
+                }
+                Ok(Err(error)) => {
+                    log::warn!(target: "flash_shot::pinned", "pinned_window_show_failed error={error}");
+                    true
+                }
+                Err(error) => {
+                    log::debug!(target: "flash_shot::pinned", "stale_pinned_window_removed error={error}");
+                    false
+                }
+            }
+        });
+        shown
     }
 
     pub(super) fn start_manual_scroll(&mut self, cx: &mut Context<Self>) {
@@ -4352,6 +4420,16 @@ fn close_overlay_windows(windows: Vec<gpui::WindowHandle<CaptureOverlay>>, cx: &
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.remove_window());
     }
+}
+
+/// Extracts the HWND of a GPUI window for the small set of native visibility controls.
+fn native_window_handle(window: &gpui::Window) -> Option<isize> {
+    HasWindowHandle::window_handle(window)
+        .ok()
+        .and_then(|handle| match handle.as_raw() {
+            RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+            _ => None,
+        })
 }
 
 struct CapturedDesktopPreview {
