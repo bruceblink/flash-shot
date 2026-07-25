@@ -1,6 +1,6 @@
 //! The small, on-demand settings window for the background capture service.
 
-use gpui::{Window, div, prelude::*, px};
+use gpui::{Window, div, prelude::*, px, rgba};
 
 use super::{FlashShotApp, SettingsSection};
 use crate::{domain::session::CaptureSessionState, platform::shortcut::CaptureShortcut};
@@ -26,7 +26,12 @@ impl gpui::Render for FlashShotApp {
             .flex_col()
             .bg(colors.background)
             .text_color(colors.text)
-            .child(settings_header(colors, cx))
+            .child(settings_header(
+                colors,
+                is_idle,
+                self.delayed_capture_remaining_seconds,
+                cx,
+            ))
             .child(
                 div()
                     .id("settings-workspace")
@@ -110,6 +115,8 @@ impl gpui::Render for FlashShotApp {
 
 fn settings_header(
     colors: crate::theme::ThemeColors,
+    is_idle: bool,
+    delayed_capture_remaining_seconds: Option<u8>,
     cx: &mut gpui::Context<FlashShotApp>,
 ) -> gpui::Div {
     div()
@@ -130,15 +137,50 @@ fn settings_header(
         )
         .child(
             div()
-                .id("settings-hide")
-                .px_3()
-                .py_1()
-                .text_sm()
-                .text_color(colors.muted)
-                .cursor_pointer()
-                .on_click(cx.listener(|this, _, _, _| this.hide_settings_window()))
-                .child("Close"),
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .id("settings-capture")
+                        .px_3()
+                        .py_1()
+                        .bg(if is_idle { colors.accent } else { colors.panel })
+                        .text_sm()
+                        .text_color(if is_idle {
+                            colors.background
+                        } else {
+                            colors.muted
+                        })
+                        .when(is_idle, |button| {
+                            button
+                                .cursor_pointer()
+                                .hover(|style| style.bg(rgba(0x81D4FAFF)))
+                                .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx)))
+                        })
+                        .child(capture_command_label(delayed_capture_remaining_seconds)),
+                )
+                .child(
+                    div()
+                        .id("settings-hide")
+                        .px_3()
+                        .py_1()
+                        .text_sm()
+                        .text_color(colors.muted)
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, _| this.hide_settings_window()))
+                        .child("Close"),
+                ),
         )
+}
+
+/// Labels the header command so a queued delayed capture can be cancelled in place.
+fn capture_command_label(delayed_capture_remaining_seconds: Option<u8>) -> &'static str {
+    if delayed_capture_remaining_seconds.is_some() {
+        "Cancel delay"
+    } else {
+        "Capture"
+    }
 }
 
 fn capture_settings(
@@ -575,4 +617,15 @@ fn settings_shortcut_button(
         } else {
             colors.text
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::capture_command_label;
+
+    #[test]
+    fn capture_header_turns_into_a_delay_cancellation_command() {
+        assert_eq!(capture_command_label(None), "Capture");
+        assert_eq!(capture_command_label(Some(3)), "Cancel delay");
+    }
 }
