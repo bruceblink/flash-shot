@@ -343,7 +343,19 @@ fn capture_settings(
                 app_state.color_format_label(),
                 colors,
                 is_idle,
-                move |_, _, cx| app.update(cx, |this, cx| this.cycle_color_format(cx)),
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_color_format(cx))
+                },
+            )),
+        )
+        .child(
+            settings_row("Local OCR language", colors).child(settings_button(
+                "settings-ocr-language",
+                super::workflow::ocr_language_label(app_state.settings.ocr_language.as_deref()),
+                colors,
+                true,
+                move |_, _, cx| app.update(cx, |this, cx| this.cycle_ocr_language(cx)),
             )),
         )
 }

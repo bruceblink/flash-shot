@@ -11,6 +11,8 @@ const SETTINGS_FILE: &str = "settings.json";
 const SETTINGS_VERSION: u8 = 1;
 pub const DEFAULT_HISTORY_LIMIT: u16 = 30;
 pub const DEFAULT_COLOR_FORMAT: u8 = 0;
+pub const OCR_LANGUAGE_OPTIONS: [Option<&str>; 4] =
+    [None, Some("eng"), Some("chi_sim"), Some("eng+chi_sim")];
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -22,6 +24,8 @@ pub struct UserSettings {
     pub capture_delay_seconds: u8,
     pub history_limit: u16,
     pub color_format: u8,
+    /// A standard Tesseract language selected in Settings; `None` preserves the environment fallback.
+    pub ocr_language: Option<String>,
     pub theme_mode: ThemeMode,
 }
 
@@ -35,6 +39,7 @@ impl Default for UserSettings {
             capture_delay_seconds: 0,
             history_limit: DEFAULT_HISTORY_LIMIT,
             color_format: DEFAULT_COLOR_FORMAT,
+            ocr_language: None,
             theme_mode: ThemeMode::Dark,
         }
     }
@@ -58,6 +63,7 @@ impl UserSettings {
                     Self::normalize_capture_delay(settings.capture_delay_seconds);
                 settings.history_limit = Self::normalize_history_limit(settings.history_limit);
                 settings.color_format = Self::normalize_color_format(settings.color_format);
+                settings.ocr_language = Self::normalize_ocr_language(settings.ocr_language);
                 Ok((settings, path))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok((Self::default(), path)),
@@ -100,6 +106,25 @@ impl UserSettings {
             _ => DEFAULT_COLOR_FORMAT,
         }
     }
+
+    /// Keeps persisted OCR choices within the small set that the settings UI can restore safely.
+    pub fn normalize_ocr_language(language: Option<String>) -> Option<String> {
+        language.filter(|language| {
+            OCR_LANGUAGE_OPTIONS
+                .iter()
+                .flatten()
+                .any(|supported| language == supported)
+        })
+    }
+
+    /// Advances through automatic, English, Chinese, and bilingual local OCR presets.
+    pub fn next_ocr_language(current: Option<&str>) -> Option<String> {
+        let position = OCR_LANGUAGE_OPTIONS
+            .iter()
+            .position(|candidate| *candidate == current)
+            .unwrap_or(0);
+        OCR_LANGUAGE_OPTIONS[(position + 1) % OCR_LANGUAGE_OPTIONS.len()].map(str::to_owned)
+    }
 }
 
 #[cfg(test)]
@@ -126,6 +151,7 @@ mod tests {
         assert_eq!(settings.capture_delay_seconds, 0);
         assert_eq!(settings.history_limit, DEFAULT_HISTORY_LIMIT);
         assert_eq!(settings.color_format, DEFAULT_COLOR_FORMAT);
+        assert_eq!(settings.ocr_language, None);
         assert_eq!(settings.theme_mode, ThemeMode::Dark);
         let _ = std::fs::remove_dir_all(directory);
     }
@@ -140,6 +166,7 @@ mod tests {
         settings.capture_delay_seconds = 5;
         settings.history_limit = 100;
         settings.color_format = 2;
+        settings.ocr_language = Some("eng+chi_sim".to_owned());
         settings.theme_mode = ThemeMode::Light;
         settings.save(&path).unwrap();
 
@@ -150,6 +177,7 @@ mod tests {
         assert_eq!(reopened.capture_delay_seconds, 5);
         assert_eq!(reopened.history_limit, 100);
         assert_eq!(reopened.color_format, 2);
+        assert_eq!(reopened.ocr_language.as_deref(), Some("eng+chi_sim"));
         assert_eq!(reopened.theme_mode, ThemeMode::Light);
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -225,5 +253,30 @@ mod tests {
 
         assert_eq!(settings.color_format, DEFAULT_COLOR_FORMAT);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn invalid_saved_ocr_language_returns_to_the_environment_fallback() {
+        let directory = directory("invalid-ocr-language");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("settings.json"),
+            r#"{"version":1,"ocr_language":"unsupported"}"#,
+        )
+        .unwrap();
+
+        let (settings, _) = UserSettings::load(&directory).unwrap();
+
+        assert_eq!(settings.ocr_language, None);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn ocr_language_cycle_keeps_the_automatic_environment_option() {
+        assert_eq!(
+            UserSettings::next_ocr_language(None).as_deref(),
+            Some("eng")
+        );
+        assert_eq!(UserSettings::next_ocr_language(Some("eng+chi_sim")), None);
     }
 }

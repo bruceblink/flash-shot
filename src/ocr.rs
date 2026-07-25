@@ -16,12 +16,23 @@ const TESSERACT_LANGUAGE_ENV: &str = "FLASH_SHOT_OCR_LANGUAGE";
 
 /// Runs the local OCR executable only when the user explicitly requests text recognition.
 pub fn recognize(frame: &CaptureFrame) -> io::Result<String> {
+    recognize_with_language(frame, None)
+}
+
+/// Runs local OCR with a saved language preset, falling back to the environment for legacy setups.
+pub fn recognize_with_language(
+    frame: &CaptureFrame,
+    configured_language: Option<&str>,
+) -> io::Result<String> {
     let image_path = temporary_image_path()?;
     let temporary = TemporaryImage::create(image_path)?;
     frame.save_png(temporary.path())?;
 
     let output = Command::new(executable_path())
-        .args(command_arguments(temporary.path(), &language()))
+        .args(command_arguments(
+            temporary.path(),
+            configured_language.unwrap_or(&language()),
+        ))
         .output()?;
     if !output.status.success() {
         let diagnostic = String::from_utf8_lossy(&output.stderr);

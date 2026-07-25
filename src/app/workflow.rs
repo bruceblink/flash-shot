@@ -74,6 +74,24 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Cycles the persisted local-OCR language preset without changing the executable location.
+    pub(super) fn cycle_ocr_language(&mut self, cx: &mut Context<Self>) {
+        let previous = self.settings.ocr_language.clone();
+        let next = UserSettings::next_ocr_language(previous.as_deref());
+        self.settings.ocr_language = next;
+        self.status = match self.settings.save(&self.settings_path) {
+            Ok(()) => format!(
+                "Local OCR language: {}",
+                ocr_language_label(self.settings.ocr_language.as_deref())
+            ),
+            Err(error) => {
+                self.settings.ocr_language = previous;
+                format!("Could not save OCR language preference: {error}")
+            }
+        };
+        cx.notify();
+    }
+
     pub(super) fn select_capture_shortcut(&mut self, preset: &'static str, cx: &mut Context<Self>) {
         if self.capture_shortcut == preset {
             return;
@@ -3426,7 +3444,11 @@ impl FlashShotApp {
             return;
         };
 
-        self.status = "Recognizing text locally...".to_owned();
+        let ocr_language = self.settings.ocr_language.clone();
+        self.status = format!(
+            "Recognizing text locally ({})...",
+            ocr_language_label(ocr_language.as_deref())
+        );
         let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -3436,7 +3458,7 @@ impl FlashShotApp {
                     .background_executor()
                     .spawn(async move {
                         let frame = frame.composite_annotations(&document)?.crop(selection)?;
-                        crate::ocr::recognize(&frame)
+                        crate::ocr::recognize_with_language(&frame, ocr_language.as_deref())
                     })
                     .await;
                 if let Some(this) = this.upgrade() {
@@ -3504,6 +3526,7 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
+        let ocr_language = self.settings.ocr_language.clone();
 
         self.status = "Recognizing and translating text...".to_owned();
         let generation = self.operation_generation;
@@ -3513,9 +3536,9 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(
-                        async move { translate_selected_frame(frame, document, selection, config) },
-                    )
+                    .spawn(async move {
+                        translate_selected_frame(frame, document, selection, config, ocr_language)
+                    })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
@@ -5283,6 +5306,7 @@ fn translate_selected_frame(
     document: AnnotationDocument,
     selection: PhysicalRect,
     config: crate::translation::TranslationConfig,
+    ocr_language: Option<String>,
 ) -> TranslationOutcome {
     let frame = match frame
         .composite_annotations(&document)
@@ -5291,7 +5315,7 @@ fn translate_selected_frame(
         Ok(frame) => frame,
         Err(error) => return TranslationOutcome::PreparationFailed(error.to_string()),
     };
-    let text = match crate::ocr::recognize(&frame) {
+    let text = match crate::ocr::recognize_with_language(&frame, ocr_language.as_deref()) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return TranslationOutcome::OcrUnavailable;
@@ -5301,6 +5325,17 @@ fn translate_selected_frame(
     match crate::translation::translate(&config, &text) {
         Ok(text) => TranslationOutcome::Completed(text),
         Err(error) => TranslationOutcome::ServiceFailed(error.to_string()),
+    }
+}
+
+/// Formats the persisted OCR choice so status messages never expose a raw optional value.
+pub(super) fn ocr_language_label(language: Option<&str>) -> &'static str {
+    match language {
+        None => "automatic",
+        Some("eng") => "English",
+        Some("chi_sim") => "Simplified Chinese",
+        Some("eng+chi_sim") => "English + Simplified Chinese",
+        Some(_) => "automatic",
     }
 }
 
@@ -5465,8 +5500,8 @@ mod tests {
         full_screen_pin_is_current, history_pin_is_current, hovered_color, intersect_rect,
         is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
         next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
-        next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
-        open_image_project, pinned_size, png_path, project_image_path,
+        next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
+        open_annotation_project, open_image_project, pinned_size, png_path, project_image_path,
         quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
         recording_audio_selection_label, recording_display_selection_label,
         recording_start_failure_status, recording_target_label, resolve_pointer_selection,
@@ -6911,6 +6946,18 @@ mod tests {
             translation_failure_status(&TranslationOutcome::ServiceFailed("timeout".to_owned()))
                 .contains("Check the endpoint")
         );
+    }
+
+    #[test]
+    fn ocr_language_labels_make_each_saved_preset_readable() {
+        assert_eq!(ocr_language_label(None), "automatic");
+        assert_eq!(ocr_language_label(Some("eng")), "English");
+        assert_eq!(ocr_language_label(Some("chi_sim")), "Simplified Chinese");
+        assert_eq!(
+            ocr_language_label(Some("eng+chi_sim")),
+            "English + Simplified Chinese"
+        );
+        assert_eq!(ocr_language_label(Some("unknown")), "automatic");
     }
 
     #[test]
