@@ -64,6 +64,17 @@ fn secondary_action_tooltip(action_id: &str) -> &'static str {
     }
 }
 
+/// Keeps the primary capture commands and their keyboard equivalents discoverable.
+fn primary_action_tooltip(action_id: &str) -> &'static str {
+    match action_id {
+        "draw" => "Show drawing and annotation controls",
+        "copy" => "Copy selection to clipboard (Enter)",
+        "save" => "Save selection as a PNG",
+        "cancel" => "Cancel capture (Escape)",
+        _ => "",
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectionCursor {
     Crosshair,
@@ -1332,6 +1343,12 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            OverlayTooltip(primary_action_tooltip("draw"), colors)
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -1381,6 +1398,12 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x81D4FAFF)))
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            OverlayTooltip(primary_action_tooltip("copy"), colors)
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -1403,6 +1426,12 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            OverlayTooltip(primary_action_tooltip("save"), colors)
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -1467,7 +1496,10 @@ impl Render for CaptureOverlay {
                                     .cursor_pointer()
                                     .hover(|style| style.bg(rgba(0x493035FF)))
                                     .tooltip(move |_, cx| {
-                                        cx.new(|_| OverlayTooltip("Cancel", colors)).into()
+                                        cx.new(|_| {
+                                            OverlayTooltip(primary_action_tooltip("cancel"), colors)
+                                        })
+                                        .into()
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
@@ -2825,7 +2857,7 @@ mod tests {
         SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
         action_toolbar_natural_width, annotation_layer_label, arrow_head_points,
         capture_double_click, intersect, is_text_annotation, magnifier_origin,
-        outline_shape_bounds, owns_selection_toolbar, resize_handle_points,
+        outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip, resize_handle_points,
         secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
         selection_cursor, selection_dimension_label_layout, visible_selection,
     };
@@ -2900,6 +2932,14 @@ mod tests {
             assert!(!secondary_action_tooltip(action).is_empty());
         }
         assert_eq!(secondary_action_tooltip("unknown"), "");
+    }
+
+    #[test]
+    fn primary_action_tooltips_expose_capture_shortcuts_and_intent() {
+        assert!(primary_action_tooltip("copy").contains("Enter"));
+        assert!(primary_action_tooltip("cancel").contains("Escape"));
+        assert!(!primary_action_tooltip("draw").is_empty());
+        assert_eq!(primary_action_tooltip("unknown"), "");
     }
 
     #[test]
