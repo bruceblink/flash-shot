@@ -51,6 +51,19 @@ const MAGNIFIER_RADIUS: i32 = 4;
 const MAGNIFIER_CELL_SIZE: f32 = 12.0;
 const MAGNIFIER_GAP: f32 = 18.0;
 
+/// Names the less-frequent actions at the exact point where users discover them.
+fn secondary_action_tooltip(action_id: &str) -> &'static str {
+    match action_id {
+        "scroll" => "Capture a long page one scroll at a time",
+        "qr" => "Read QR codes from the selection",
+        "ocr" => "Recognize text locally with Tesseract",
+        "translate" => "Recognize text, then use the configured translation service",
+        "record-area" => "Start recording the selected area",
+        "record-window" => "Record the top-level window under this selection",
+        _ => "",
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectionCursor {
     Crosshair,
@@ -1569,6 +1582,15 @@ impl Render for CaptureOverlay {
                                                 .bg(rgba(0x111827E6))
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
+                                                .tooltip(move |_, cx| {
+                                                    cx.new(|_| {
+                                                        OverlayTooltip(
+                                                            secondary_action_tooltip("scroll"),
+                                                            colors,
+                                                        )
+                                                    })
+                                                    .into()
+                                                })
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     let app = this.app.clone();
                                                     cx.defer(move |cx| {
@@ -1587,6 +1609,15 @@ impl Render for CaptureOverlay {
                                                 .bg(rgba(0x111827E6))
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
+                                                .tooltip(move |_, cx| {
+                                                    cx.new(|_| {
+                                                        OverlayTooltip(
+                                                            secondary_action_tooltip("qr"),
+                                                            colors,
+                                                        )
+                                                    })
+                                                    .into()
+                                                })
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     let app = this.app.clone();
                                                     cx.defer(move |cx| {
@@ -1605,6 +1636,15 @@ impl Render for CaptureOverlay {
                                                 .bg(rgba(0x111827E6))
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
+                                                .tooltip(move |_, cx| {
+                                                    cx.new(|_| {
+                                                        OverlayTooltip(
+                                                            secondary_action_tooltip("ocr"),
+                                                            colors,
+                                                        )
+                                                    })
+                                                    .into()
+                                                })
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     let app = this.app.clone();
                                                     cx.defer(move |cx| {
@@ -1641,6 +1681,15 @@ impl Render for CaptureOverlay {
                                                 .bg(rgba(0x111827E6))
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
+                                                .tooltip(move |_, cx| {
+                                                    cx.new(|_| {
+                                                        OverlayTooltip(
+                                                            secondary_action_tooltip("translate"),
+                                                            colors,
+                                                        )
+                                                    })
+                                                    .into()
+                                                })
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     let app = this.app.clone();
                                                     cx.defer(move |cx| {
@@ -1659,6 +1708,15 @@ impl Render for CaptureOverlay {
                                                 .bg(rgba(0x111827E6))
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
+                                                .tooltip(move |_, cx| {
+                                                    cx.new(|_| {
+                                                        OverlayTooltip(
+                                                            secondary_action_tooltip("record-area"),
+                                                            colors,
+                                                        )
+                                                    })
+                                                    .into()
+                                                })
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     let app = this.app.clone();
                                                     cx.defer(move |cx| {
@@ -1677,6 +1735,17 @@ impl Render for CaptureOverlay {
                                                 .bg(rgba(0x111827E6))
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
+                                                .tooltip(move |_, cx| {
+                                                    cx.new(|_| {
+                                                        OverlayTooltip(
+                                                            secondary_action_tooltip(
+                                                                "record-window",
+                                                            ),
+                                                            colors,
+                                                        )
+                                                    })
+                                                    .into()
+                                                })
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     let app = this.app.clone();
                                                     cx.defer(move |cx| {
@@ -2757,8 +2826,8 @@ mod tests {
         action_toolbar_natural_width, annotation_layer_label, arrow_head_points,
         capture_double_click, intersect, is_text_annotation, magnifier_origin,
         outline_shape_bounds, owns_selection_toolbar, resize_handle_points,
-        secondary_action_menu_height, secondary_menu_opens_above, selection_cursor,
-        selection_dimension_label_layout, visible_selection,
+        secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
+        selection_cursor, selection_dimension_label_layout, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -2816,6 +2885,21 @@ mod tests {
 
         assert!(!owns_selection_toolbar(selection, left_display));
         assert!(owns_selection_toolbar(selection, right_display));
+    }
+
+    #[test]
+    fn secondary_action_tooltips_explain_each_advanced_workflow() {
+        for action in [
+            "scroll",
+            "qr",
+            "ocr",
+            "translate",
+            "record-area",
+            "record-window",
+        ] {
+            assert!(!secondary_action_tooltip(action).is_empty());
+        }
+        assert_eq!(secondary_action_tooltip("unknown"), "");
     }
 
     #[test]
