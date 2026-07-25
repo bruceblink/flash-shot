@@ -16,6 +16,34 @@ use crate::platform::{
 
 const PIN_OPACITY_STEPS: [u8; 4] = [255, 191, 128, 64];
 
+struct PinnedTooltip(&'static str, crate::theme::ThemeColors);
+
+impl Render for PinnedTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .bg(self.1.panel)
+            .border_1()
+            .border_color(self.1.border)
+            .text_color(self.1.text)
+            .text_xs()
+            .child(self.0)
+    }
+}
+
+/// Describes each compact pin control without requiring the image window to stay large.
+fn pinned_control_tooltip(control: &str) -> &'static str {
+    match control {
+        "zoom-out" => "Zoom out",
+        "zoom-in" => "Zoom in",
+        "opacity" => "Cycle opacity",
+        "copy" => "Copy image",
+        "close" => "Close pinned image (Escape)",
+        _ => "",
+    }
+}
+
 pub(super) struct PinnedImage {
     image: Arc<gpui::RenderImage>,
     frame: CaptureFrame,
@@ -193,6 +221,15 @@ impl Render for PinnedImage {
                                     .text_color(colors.text)
                                     .text_xs()
                                     .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(
+                                                pinned_control_tooltip("zoom-out"),
+                                                colors,
+                                            )
+                                        })
+                                        .into()
+                                    })
                                     .on_click(
                                         cx.listener(|this, _, window, cx| {
                                             this.zoom(0.8, window, cx)
@@ -211,6 +248,12 @@ impl Render for PinnedImage {
                                     .text_color(colors.text)
                                     .text_xs()
                                     .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(pinned_control_tooltip("zoom-in"), colors)
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.zoom(1.25, window, cx)
                                     }))
@@ -227,6 +270,12 @@ impl Render for PinnedImage {
                                     .text_color(colors.text)
                                     .text_xs()
                                     .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(pinned_control_tooltip("opacity"), colors)
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.cycle_opacity(window, cx)
                                     }))
@@ -243,8 +292,34 @@ impl Render for PinnedImage {
                                     .text_color(colors.text)
                                     .text_xs()
                                     .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(pinned_control_tooltip("copy"), colors)
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| this.copy_image(cx)))
                                     .child("Copy"),
+                            )
+                            .child(
+                                div()
+                                    .id("pinned-close")
+                                    .w(px(24.0))
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| {
+                                            PinnedTooltip(pinned_control_tooltip("close"), colors)
+                                        })
+                                        .into()
+                                    })
+                                    .on_click(cx.listener(|this, _, window, _| this.close(window)))
+                                    .child("X"),
                             ),
                     ),
             )
@@ -287,7 +362,10 @@ fn pin_opacity_label(opacity: u8) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_pinned_image, next_pin_opacity, opacity_percentage, pinned_close_key};
+    use super::{
+        copy_pinned_image, next_pin_opacity, opacity_percentage, pinned_close_key,
+        pinned_control_tooltip,
+    };
     use crate::{
         domain::geometry::PhysicalRect,
         platform::{
@@ -344,6 +422,14 @@ mod tests {
         assert!(pinned_close_key("escape"));
         assert!(!pinned_close_key("enter"));
         assert!(!pinned_close_key("shift-escape"));
+    }
+
+    #[test]
+    fn compact_pin_controls_explain_their_actions() {
+        for control in ["zoom-out", "zoom-in", "opacity", "copy", "close"] {
+            assert!(!pinned_control_tooltip(control).is_empty());
+        }
+        assert!(pinned_control_tooltip("close").contains("Escape"));
     }
 
     #[test]
