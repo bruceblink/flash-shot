@@ -128,6 +128,9 @@ impl Render for PinnedImage {
                             .child(
                                 div()
                                     .id("pinned-close")
+                                    // On Windows this prevents the draggable toolbar from
+                                    // claiming the close button's native hit-test area.
+                                    .window_control_area(WindowControlArea::Close)
                                     .px_3()
                                     .py_1()
                                     .bg(colors.background)
