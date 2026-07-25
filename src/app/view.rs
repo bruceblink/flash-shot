@@ -287,6 +287,7 @@ fn file_settings(
     settings_section("Open and history", colors).child(
         div()
             .flex()
+            .flex_wrap()
             .gap_2()
             .child(settings_button(
                 "settings-open-image",
