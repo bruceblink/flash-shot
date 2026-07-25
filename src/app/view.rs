@@ -350,13 +350,32 @@ fn capture_settings(
             )),
         )
         .child(
-            settings_row("Local OCR language", colors).child(settings_button(
-                "settings-ocr-language",
-                super::workflow::ocr_language_label(app_state.settings.ocr_language.as_deref()),
-                colors,
-                true,
-                move |_, _, cx| app.update(cx, |this, cx| this.cycle_ocr_language(cx)),
-            )),
+            settings_row("Local OCR", colors).child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap_2()
+                    .child(settings_button(
+                        "settings-ocr-language",
+                        super::workflow::ocr_language_label(
+                            app_state.settings.ocr_language.as_deref(),
+                        ),
+                        colors,
+                        true,
+                        {
+                            let app = app.clone();
+                            move |_, _, cx| app.update(cx, |this, cx| this.cycle_ocr_language(cx))
+                        },
+                    ))
+                    .child(settings_button(
+                        "settings-check-ocr-support",
+                        "Check support",
+                        colors,
+                        true,
+                        move |_, _, cx| app.update(cx, |this, cx| this.check_ocr_support(cx)),
+                    )),
+            ),
         )
 }
 

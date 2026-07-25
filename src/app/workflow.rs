@@ -92,6 +92,29 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Probes Tesseract and the selected language before the user needs OCR on a screenshot.
+    pub(super) fn check_ocr_support(&mut self, cx: &mut Context<Self>) {
+        let language = self.settings.ocr_language.clone();
+        self.status = "Checking local OCR support...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { crate::ocr::check_support(language.as_deref()) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.status = ocr_support_status(result.as_ref());
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub(super) fn select_capture_shortcut(&mut self, preset: &'static str, cx: &mut Context<Self>) {
         if self.capture_shortcut == preset {
             return;
@@ -5390,6 +5413,27 @@ pub(super) fn ocr_language_label(language: Option<&str>) -> &'static str {
     }
 }
 
+/// Turns a local OCR probe into a concise readiness result with a concrete recovery action.
+fn ocr_support_status(result: Result<&crate::ocr::OcrSupport, &std::io::Error>) -> String {
+    match result {
+        Ok(support) if support.language_available() => format!(
+            "Local OCR ready: {} with {}",
+            support.version(),
+            ocr_language_label(Some(support.language()))
+        ),
+        Ok(support) => format!(
+            "Tesseract is installed but the {} language data is missing. Install that language pack or choose another OCR language.",
+            ocr_language_label(Some(support.language()))
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            format!(
+                "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT: {error}"
+            )
+        }
+        Err(error) => format!("Could not check local OCR support: {error}"),
+    }
+}
+
 /// Turns each translation-stage failure into a recovery action instead of a generic error.
 fn translation_failure_status(outcome: &TranslationOutcome) -> String {
     match outcome {
@@ -5552,13 +5596,14 @@ mod tests {
         is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
         next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
         next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
-        open_annotation_project, open_image_project, pinned_size, png_path, project_image_path,
-        quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
-        recording_audio_selection_label, recording_display_selection_label,
-        recording_start_failure_status, recording_support_status, recording_target_label,
-        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
-        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-        text_annotation_with_content, tool_selected_status, translation_failure_status, with_alpha,
+        ocr_support_status, open_annotation_project, open_image_project, pinned_size, png_path,
+        project_image_path, quick_save_annotated_frame_selection_in,
+        quick_save_full_screen_frame_in, recording_audio_selection_label,
+        recording_display_selection_label, recording_start_failure_status,
+        recording_support_status, recording_target_label, resolve_pointer_selection,
+        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
+        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
+        tool_selected_status, translation_failure_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -7016,6 +7061,13 @@ mod tests {
             "English + Simplified Chinese"
         );
         assert_eq!(ocr_language_label(Some("unknown")), "automatic");
+    }
+
+    #[test]
+    fn ocr_support_probe_names_the_local_installation_recovery_step() {
+        let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "tesseract.exe");
+
+        assert!(ocr_support_status(Err(&missing)).contains("FLASH_SHOT_TESSERACT"));
     }
 
     #[test]
