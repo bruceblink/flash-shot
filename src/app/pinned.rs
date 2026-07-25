@@ -47,6 +47,33 @@ impl PinnedImage {
         cx.notify();
     }
 
+    /// Scales the complete native window so the contained image remains undistorted.
+    fn zoom(&mut self, scale: f32, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        self.status = match window.window_handle() {
+            Ok(handle) => match handle.as_raw() {
+                RawWindowHandle::Win32(handle) => {
+                    match crate::platform::window_visibility::resize_centered(
+                        handle.hwnd.get(),
+                        scale,
+                    ) {
+                        Ok(()) if scale > 1.0 => "Zoomed in",
+                        Ok(()) => "Zoomed out",
+                        Err(error) => {
+                            log::warn!(target: "flash_shot::pinned", "pinned_window_zoom_failed error={error}");
+                            "Could not resize window"
+                        }
+                    }
+                }
+                _ => "Window zoom is unavailable",
+            },
+            Err(error) => {
+                log::warn!(target: "flash_shot::pinned", "pinned_window_handle_failed error={error}");
+                "Could not resize window"
+            }
+        };
+        cx.notify();
+    }
+
     /// Closes this independent pinned window without affecting the capture service.
     fn close(&mut self, window: &mut Window) {
         window.remove_window();
@@ -113,20 +140,58 @@ impl Render for PinnedImage {
                             .child(div().text_xs().text_color(colors.muted).child(self.status)),
                     )
                     .child(
-                        div().flex().items_center().gap_1().child(
-                            div()
-                                .id("pinned-copy")
-                                .px_3()
-                                .py_1()
-                                .bg(colors.background)
-                                .border_1()
-                                .border_color(colors.border)
-                                .text_color(colors.text)
-                                .text_xs()
-                                .cursor_pointer()
-                                .on_click(cx.listener(|this, _, _, cx| this.copy_image(cx)))
-                                .child("Copy"),
-                        ),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .id("pinned-zoom-out")
+                                    .w(px(24.0))
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| {
+                                            this.zoom(0.8, window, cx)
+                                        }),
+                                    )
+                                    .child("-"),
+                            )
+                            .child(
+                                div()
+                                    .id("pinned-zoom-in")
+                                    .w(px(24.0))
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.zoom(1.25, window, cx)
+                                    }))
+                                    .child("+"),
+                            )
+                            .child(
+                                div()
+                                    .id("pinned-copy")
+                                    .px_3()
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| this.copy_image(cx)))
+                                    .child("Copy"),
+                            ),
                     ),
             )
             .child(
