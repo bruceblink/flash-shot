@@ -3396,11 +3396,9 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move {
-                        let frame = frame.composite_annotations(&document)?.crop(selection)?;
-                        let text = crate::ocr::recognize(&frame)?;
-                        crate::translation::translate(&config, &text)
-                    })
+                    .spawn(
+                        async move { translate_selected_frame(frame, document, selection, config) },
+                    )
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
@@ -3414,7 +3412,7 @@ impl FlashShotApp {
 
     fn finish_translation(
         &mut self,
-        result: std::io::Result<String>,
+        result: TranslationOutcome,
         generation: u64,
         cx: &mut Context<Self>,
     ) {
@@ -3422,21 +3420,30 @@ impl FlashShotApp {
             return;
         }
         self.status = match result {
-            Ok(text) if text.is_empty() => "No text found in the selection".to_owned(),
-            Ok(text) => {
+            TranslationOutcome::Completed(text) if text.is_empty() => {
+                "No text found in the selection".to_owned()
+            }
+            TranslationOutcome::Completed(text) => {
                 self.recognition_result = Some(RecognitionResult {
                     title: "Translation".to_owned(),
                     text,
                 });
                 "Translation completed".to_owned()
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT."
-                    .to_owned()
+            TranslationOutcome::PreparationFailed(error) => {
+                log::warn!(target: "flash_shot::translation", "translation_preparation_failed error={error}");
+                translation_failure_status(&TranslationOutcome::PreparationFailed(error))
             }
-            Err(error) => {
-                log::warn!(target: "flash_shot::translation", "translation_failed error={error}");
-                format!("Translation failed: {error}")
+            TranslationOutcome::OcrUnavailable => {
+                translation_failure_status(&TranslationOutcome::OcrUnavailable)
+            }
+            TranslationOutcome::OcrFailed(error) => {
+                log::warn!(target: "flash_shot::translation", "translation_ocr_failed error={error}");
+                translation_failure_status(&TranslationOutcome::OcrFailed(error))
+            }
+            TranslationOutcome::ServiceFailed(error) => {
+                log::warn!(target: "flash_shot::translation", "translation_service_failed error={error}");
+                translation_failure_status(&TranslationOutcome::ServiceFailed(error))
             }
         };
         cx.notify();
@@ -5039,6 +5046,61 @@ enum OpenImageOutcome {
     Failed(String),
 }
 
+/// Separates local OCR and remote translation failures so the overlay can suggest the right fix.
+enum TranslationOutcome {
+    Completed(String),
+    PreparationFailed(String),
+    OcrUnavailable,
+    OcrFailed(String),
+    ServiceFailed(String),
+}
+
+/// Runs the selection pipeline outside the UI thread while retaining the failure stage.
+fn translate_selected_frame(
+    frame: CaptureFrame,
+    document: AnnotationDocument,
+    selection: PhysicalRect,
+    config: crate::translation::TranslationConfig,
+) -> TranslationOutcome {
+    let frame = match frame
+        .composite_annotations(&document)
+        .and_then(|frame| frame.crop(selection))
+    {
+        Ok(frame) => frame,
+        Err(error) => return TranslationOutcome::PreparationFailed(error.to_string()),
+    };
+    let text = match crate::ocr::recognize(&frame) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return TranslationOutcome::OcrUnavailable;
+        }
+        Err(error) => return TranslationOutcome::OcrFailed(error.to_string()),
+    };
+    match crate::translation::translate(&config, &text) {
+        Ok(text) => TranslationOutcome::Completed(text),
+        Err(error) => TranslationOutcome::ServiceFailed(error.to_string()),
+    }
+}
+
+/// Turns each translation-stage failure into a recovery action instead of a generic error.
+fn translation_failure_status(outcome: &TranslationOutcome) -> String {
+    match outcome {
+        TranslationOutcome::PreparationFailed(error) => {
+            format!("Could not prepare the selection for translation: {error}")
+        }
+        TranslationOutcome::OcrUnavailable => {
+            "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT.".to_owned()
+        }
+        TranslationOutcome::OcrFailed(error) => {
+            format!("Could not recognize text for translation: {error}")
+        }
+        TranslationOutcome::ServiceFailed(error) => {
+            format!("Translation service failed: {error}. Check the endpoint and try again.")
+        }
+        TranslationOutcome::Completed(_) => String::new(),
+    }
+}
+
 fn keyboard_command(keystroke: &Keystroke) -> Option<KeyboardCommand> {
     let modifiers = keystroke.modifiers;
     if modifiers.secondary()
@@ -5173,21 +5235,21 @@ fn adjusted_number_value(value: u32, delta: i32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ColorFormat, KeyboardCommand, adjusted_number_value, annotation_added_status,
-        annotation_cancelled_status, annotation_document_path, annotation_position,
-        annotation_sidecar_path, compose_captured_displays, copy_annotated_frame_selection,
-        delayed_capture_status, drawing_status, fill_alpha, fill_color, format_hsl,
-        format_recording_progress, full_screen_copy_is_current, history_pin_is_current,
-        hovered_color, intersect_rect, is_current_operation, keyboard_command,
-        load_annotation_document, next_annotation_counters, next_annotation_selection,
-        next_quick_save_path, next_quick_save_path_with_prefix, next_recording_audio_selection,
-        next_recording_display_selection, open_annotation_project, open_image_project, pinned_size,
-        png_path, project_image_path, quick_save_annotated_frame_selection_in,
-        quick_save_full_screen_frame_in, recording_audio_selection_label,
-        recording_display_selection_label, recording_target_label, resolve_pointer_selection,
-        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
-        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-        tool_selected_status, with_alpha,
+        ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
+        annotation_added_status, annotation_cancelled_status, annotation_document_path,
+        annotation_position, annotation_sidecar_path, compose_captured_displays,
+        copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha,
+        fill_color, format_hsl, format_recording_progress, full_screen_copy_is_current,
+        history_pin_is_current, hovered_color, intersect_rect, is_current_operation,
+        keyboard_command, load_annotation_document, next_annotation_counters,
+        next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
+        next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
+        open_image_project, pinned_size, png_path, project_image_path,
+        quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
+        recording_audio_selection_label, recording_display_selection_label, recording_target_label,
+        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
+        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+        text_annotation_with_content, tool_selected_status, translation_failure_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -6578,6 +6640,22 @@ mod tests {
     fn stale_background_completion_is_ignored_after_a_new_operation_starts() {
         assert!(is_current_operation(4, 4));
         assert!(!is_current_operation(5, 4));
+    }
+
+    #[test]
+    fn translation_failure_messages_identify_the_recovery_step() {
+        assert!(
+            translation_failure_status(&TranslationOutcome::OcrUnavailable)
+                .contains("Install Tesseract")
+        );
+        assert!(
+            translation_failure_status(&TranslationOutcome::OcrFailed("bad image".to_owned()))
+                .contains("recognize text")
+        );
+        assert!(
+            translation_failure_status(&TranslationOutcome::ServiceFailed("timeout".to_owned()))
+                .contains("Check the endpoint")
+        );
     }
 
     #[test]
