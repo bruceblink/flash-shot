@@ -186,6 +186,15 @@ fn capture_command_label(delayed_capture_remaining_seconds: Option<u8>) -> &'sta
     }
 }
 
+/// Makes the configured capture shortcut and its current system registration readable together.
+fn capture_shortcut_summary(shortcut: &str, registered: bool) -> String {
+    if registered {
+        format!("Registered: {shortcut}")
+    } else {
+        format!("Disabled: {shortcut}")
+    }
+}
+
 fn capture_settings(
     app_state: &FlashShotApp,
     colors: crate::theme::ThemeColors,
@@ -250,7 +259,10 @@ fn capture_settings(
                     div()
                         .text_sm()
                         .text_color(colors.muted)
-                        .child(app_state.capture_shortcut.clone()),
+                        .child(capture_shortcut_summary(
+                            &app_state.capture_shortcut,
+                            app_state.capture_shortcut_enabled,
+                        )),
                 ),
         )
         .child(
@@ -907,7 +919,8 @@ fn settings_delay_button(
 #[cfg(test)]
 mod tests {
     use super::{
-        capture_command_label, history_entry_label, relative_timestamp_label, settings_page_intro,
+        capture_command_label, capture_shortcut_summary, history_entry_label,
+        relative_timestamp_label, settings_page_intro,
     };
     use crate::app::SettingsSection;
     use crate::history::HistoryEntry;
@@ -917,6 +930,18 @@ mod tests {
     fn capture_header_turns_into_a_delay_cancellation_command() {
         assert_eq!(capture_command_label(None), "Capture");
         assert_eq!(capture_command_label(Some(3)), "Cancel delay");
+    }
+
+    #[test]
+    fn shortcut_summary_distinguishes_registered_and_disabled_keys() {
+        assert_eq!(
+            capture_shortcut_summary("Ctrl+Alt+S", true),
+            "Registered: Ctrl+Alt+S"
+        );
+        assert_eq!(
+            capture_shortcut_summary("Ctrl+Alt+S", false),
+            "Disabled: Ctrl+Alt+S"
+        );
     }
 
     #[test]
