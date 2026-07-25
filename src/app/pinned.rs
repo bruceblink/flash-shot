@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, KeyDownEvent, Render, Subscription, Window, div, img,
-    prelude::*, px,
+    Context, Entity, FocusHandle, Focusable, KeyDownEvent, Keystroke, Render, Subscription, Window,
+    div, img, prelude::*, px,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -35,10 +35,10 @@ impl Render for PinnedTooltip {
 /// Describes each compact pin control without requiring the image window to stay large.
 fn pinned_control_tooltip(control: &str) -> &'static str {
     match control {
-        "zoom-out" => "Zoom out",
-        "zoom-in" => "Zoom in",
-        "opacity" => "Cycle opacity",
-        "copy" => "Copy image",
+        "zoom-out" => "Zoom out (Ctrl+-)",
+        "zoom-in" => "Zoom in (Ctrl++)",
+        "opacity" => "Cycle opacity (Ctrl+O)",
+        "copy" => "Copy image (Ctrl+C)",
         "close" => "Close pinned image (Escape)",
         _ => "",
     }
@@ -177,9 +177,14 @@ impl Render for PinnedImage {
             .flex()
             .flex_col()
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, _| {
-                if pinned_close_key(&event.keystroke.key) {
-                    this.close(window);
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                match pinned_keyboard_command(&event.keystroke) {
+                    Some(PinnedKeyboardCommand::Close) => this.close(window),
+                    Some(PinnedKeyboardCommand::Copy) => this.copy_image(cx),
+                    Some(PinnedKeyboardCommand::ZoomOut) => this.zoom(0.8, window, cx),
+                    Some(PinnedKeyboardCommand::ZoomIn) => this.zoom(1.25, window, cx),
+                    Some(PinnedKeyboardCommand::CycleOpacity) => this.cycle_opacity(window, cx),
+                    None => {}
                 }
             }))
             .bg(colors.background)
@@ -338,6 +343,33 @@ fn pinned_close_key(key: &str) -> bool {
     key == "escape"
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PinnedKeyboardCommand {
+    Close,
+    Copy,
+    ZoomOut,
+    ZoomIn,
+    CycleOpacity,
+}
+
+/// Maps focused-window keys to local pin actions without changing global shortcuts.
+fn pinned_keyboard_command(keystroke: &Keystroke) -> Option<PinnedKeyboardCommand> {
+    let modifiers = keystroke.modifiers;
+    if pinned_close_key(&keystroke.key) && !modifiers.shift {
+        return Some(PinnedKeyboardCommand::Close);
+    }
+    if modifiers.secondary() && !modifiers.alt && !modifiers.function {
+        return match keystroke.key.as_str() {
+            "c" => Some(PinnedKeyboardCommand::Copy),
+            "-" => Some(PinnedKeyboardCommand::ZoomOut),
+            "=" | "+" => Some(PinnedKeyboardCommand::ZoomIn),
+            "o" => Some(PinnedKeyboardCommand::CycleOpacity),
+            _ => None,
+        };
+    }
+    None
+}
+
 fn next_pin_opacity(current: u8) -> u8 {
     PIN_OPACITY_STEPS
         .iter()
@@ -363,8 +395,8 @@ fn pin_opacity_label(opacity: u8) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_pinned_image, next_pin_opacity, opacity_percentage, pinned_close_key,
-        pinned_control_tooltip,
+        PinnedKeyboardCommand, copy_pinned_image, next_pin_opacity, opacity_percentage,
+        pinned_close_key, pinned_control_tooltip, pinned_keyboard_command,
     };
     use crate::{
         domain::geometry::PhysicalRect,
@@ -430,6 +462,40 @@ mod tests {
             assert!(!pinned_control_tooltip(control).is_empty());
         }
         assert!(pinned_control_tooltip("close").contains("Escape"));
+    }
+
+    #[test]
+    fn focused_pin_shortcuts_keep_copy_and_window_controls_local() {
+        let control = gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        let key = |key: &str, modifiers| gpui::Keystroke {
+            key: key.into(),
+            modifiers,
+            key_char: None,
+        };
+        assert_eq!(
+            pinned_keyboard_command(&key("escape", Default::default())),
+            Some(PinnedKeyboardCommand::Close)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key("c", control)),
+            Some(PinnedKeyboardCommand::Copy)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key("-", control)),
+            Some(PinnedKeyboardCommand::ZoomOut)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key("=", control)),
+            Some(PinnedKeyboardCommand::ZoomIn)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key("o", control)),
+            Some(PinnedKeyboardCommand::CycleOpacity)
+        );
+        assert_eq!(pinned_keyboard_command(&key("c", Default::default())), None);
     }
 
     #[test]
