@@ -35,6 +35,7 @@ impl Render for ManualScrollControl {
         let colors = app.colors;
         let status = app.status.clone();
         let frame_count = app.manual_scroll.frame_count();
+        let capture_in_flight = app.manual_scroll_capture_in_flight;
 
         div()
             .size_full()
@@ -73,14 +74,21 @@ impl Render for ManualScrollControl {
                             .px_3()
                             .py_1()
                             .bg(colors.panel)
-                            .text_color(colors.text)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.assist_manual_scroll(cx))
-                                });
-                            }))
+                            .text_color(if capture_in_flight {
+                                colors.muted
+                            } else {
+                                colors.text
+                            })
+                            .when(!capture_in_flight, |button| {
+                                button
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.assist_manual_scroll(cx))
+                                        });
+                                    }))
+                            })
                             .child("Scroll down"),
                     )
                     .child(
@@ -89,15 +97,24 @@ impl Render for ManualScrollControl {
                             .px_3()
                             .py_1()
                             .bg(colors.accent)
-                            .text_color(colors.background)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.capture_manual_scroll_frame(cx))
-                                });
-                            }))
-                            .child("Capture next"),
+                            .text_color(if capture_in_flight {
+                                colors.muted
+                            } else {
+                                colors.background
+                            })
+                            .when(!capture_in_flight, |button| {
+                                button
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.capture_manual_scroll_frame(cx)
+                                            })
+                                        });
+                                    }))
+                            })
+                            .child(manual_scroll_capture_label(capture_in_flight)),
                     )
                     .child(
                         div()
@@ -105,14 +122,21 @@ impl Render for ManualScrollControl {
                             .px_3()
                             .py_1()
                             .bg(colors.panel)
-                            .text_color(colors.text)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.finish_manual_scroll(cx))
-                                });
-                            }))
+                            .text_color(if capture_in_flight {
+                                colors.muted
+                            } else {
+                                colors.text
+                            })
+                            .when(!capture_in_flight, |button| {
+                                button
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.finish_manual_scroll(cx))
+                                        });
+                                    }))
+                            })
                             .child("Finish"),
                     )
                     .child(
@@ -132,5 +156,25 @@ impl Render for ManualScrollControl {
                     ),
             )
             .child(div().text_xs().text_color(colors.muted).child(status))
+    }
+}
+
+/// Keeps the primary action explicit while one scroll frame is being captured.
+fn manual_scroll_capture_label(capture_in_flight: bool) -> &'static str {
+    if capture_in_flight {
+        "Capturing..."
+    } else {
+        "Capture next"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::manual_scroll_capture_label;
+
+    #[test]
+    fn capture_action_describes_its_busy_state() {
+        assert_eq!(manual_scroll_capture_label(false), "Capture next");
+        assert_eq!(manual_scroll_capture_label(true), "Capturing...");
     }
 }
