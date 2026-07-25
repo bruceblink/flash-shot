@@ -2793,7 +2793,13 @@ impl FlashShotApp {
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(window_bounds),
-                titlebar: None,
+                // A native title bar supplies Windows' complete resize frame (all
+                // edges and corners) and an immediate close path. GPUI's borderless
+                // frame only exposes custom hit testing for part of that surface.
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some("Pinned capture".into()),
+                    ..Default::default()
+                }),
                 focus: true,
                 show: true,
                 // PopUp windows use a style with no resize frame on Windows.

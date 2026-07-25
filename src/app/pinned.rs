@@ -2,10 +2,7 @@
 
 use std::sync::Arc;
 
-use gpui::{
-    FocusHandle, Focusable, KeyDownEvent, Render, Window, WindowControlArea, div, img, prelude::*,
-    px,
-};
+use gpui::{FocusHandle, Focusable, KeyDownEvent, Render, Window, div, img, prelude::*, px};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::{
@@ -104,52 +101,32 @@ impl Render for PinnedImage {
                     .items_center()
                     .bg(colors.panel)
                     .child(
-                        // Keep native dragging away from Copy and Close so their
-                        // clicks remain ordinary client-area interactions.
+                        // Native title-bar dragging provides the window move affordance.
+                        // Keeping this status area client-only avoids turning toolbar clicks
+                        // into non-client hit tests on Windows.
                         div()
                             .id("pinned-drag-area")
                             .flex_1()
                             .h_full()
                             .flex()
                             .items_center()
-                            .window_control_area(WindowControlArea::Drag)
                             .child(div().text_xs().text_color(colors.muted).child(self.status)),
                     )
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .id("pinned-copy")
-                                    .px_3()
-                                    .py_1()
-                                    .bg(colors.background)
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .text_color(colors.text)
-                                    .text_xs()
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| this.copy_image(cx)))
-                                    .child("Copy"),
-                            )
-                            .child(
-                                div()
-                                    .id("pinned-close")
-                                    // On Windows this prevents the draggable toolbar from
-                                    // claiming the close button's native hit-test area.
-                                    .window_control_area(WindowControlArea::Close)
-                                    .px_3()
-                                    .py_1()
-                                    .bg(colors.background)
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .text_color(colors.muted)
-                                    .text_xs()
-                                    .cursor_pointer()
-                                    .child("Close"),
-                            ),
+                        div().flex().items_center().gap_1().child(
+                            div()
+                                .id("pinned-copy")
+                                .px_3()
+                                .py_1()
+                                .bg(colors.background)
+                                .border_1()
+                                .border_color(colors.border)
+                                .text_color(colors.text)
+                                .text_xs()
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| this.copy_image(cx)))
+                                .child("Copy"),
+                        ),
                     ),
             )
             .child(
