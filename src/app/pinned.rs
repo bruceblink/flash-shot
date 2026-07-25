@@ -14,12 +14,15 @@ use crate::platform::{
     clipboard::{ClipboardService, SystemClipboard},
 };
 
+const PIN_OPACITY_STEPS: [u8; 4] = [255, 191, 128, 64];
+
 pub(super) struct PinnedImage {
     image: Arc<gpui::RenderImage>,
     frame: CaptureFrame,
     app: Entity<FlashShotApp>,
     focus_handle: FocusHandle,
     topmost_requested: bool,
+    opacity: u8,
     status: &'static str,
     _app_observation: Subscription,
 }
@@ -38,6 +41,7 @@ impl PinnedImage {
             app,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
+            opacity: 255,
             status: "Pinned capture",
             _app_observation: observation,
         }
@@ -76,6 +80,33 @@ impl PinnedImage {
             Err(error) => {
                 log::warn!(target: "flash_shot::pinned", "pinned_window_handle_failed error={error}");
                 "Could not resize window"
+            }
+        };
+        cx.notify();
+    }
+
+    /// Cycles through readable reference-image opacity levels without moving the window.
+    fn cycle_opacity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = next_pin_opacity(self.opacity);
+        self.status = match window.window_handle() {
+            Ok(handle) => match handle.as_raw() {
+                RawWindowHandle::Win32(handle) => {
+                    match crate::platform::window_visibility::set_opacity(handle.hwnd.get(), next) {
+                        Ok(()) => {
+                            self.opacity = next;
+                            pin_opacity_label(next)
+                        }
+                        Err(error) => {
+                            log::warn!(target: "flash_shot::pinned", "pinned_window_opacity_failed error={error}");
+                            "Could not change opacity"
+                        }
+                    }
+                }
+                _ => "Window opacity is unavailable",
+            },
+            Err(error) => {
+                log::warn!(target: "flash_shot::pinned", "pinned_window_handle_failed error={error}");
+                "Could not change opacity"
             }
         };
         cx.notify();
@@ -187,6 +218,22 @@ impl Render for PinnedImage {
                             )
                             .child(
                                 div()
+                                    .id("pinned-opacity")
+                                    .w(px(40.0))
+                                    .py_1()
+                                    .bg(colors.background)
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.cycle_opacity(window, cx)
+                                    }))
+                                    .child(format!("{}%", opacity_percentage(self.opacity))),
+                            )
+                            .child(
+                                div()
                                     .id("pinned-copy")
                                     .px_3()
                                     .py_1()
@@ -216,9 +263,31 @@ fn pinned_close_key(key: &str) -> bool {
     key == "escape"
 }
 
+fn next_pin_opacity(current: u8) -> u8 {
+    PIN_OPACITY_STEPS
+        .iter()
+        .position(|opacity| *opacity == current)
+        .and_then(|index| PIN_OPACITY_STEPS.get(index + 1))
+        .copied()
+        .unwrap_or(PIN_OPACITY_STEPS[0])
+}
+
+fn opacity_percentage(opacity: u8) -> u8 {
+    ((u16::from(opacity) * 100 + 127) / 255) as u8
+}
+
+fn pin_opacity_label(opacity: u8) -> &'static str {
+    match opacity {
+        255 => "Opacity 100%",
+        191 => "Opacity 75%",
+        128 => "Opacity 50%",
+        _ => "Opacity 25%",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{copy_pinned_image, pinned_close_key};
+    use super::{copy_pinned_image, next_pin_opacity, opacity_percentage, pinned_close_key};
     use crate::{
         domain::geometry::PhysicalRect,
         platform::{
@@ -275,5 +344,15 @@ mod tests {
         assert!(pinned_close_key("escape"));
         assert!(!pinned_close_key("enter"));
         assert!(!pinned_close_key("shift-escape"));
+    }
+
+    #[test]
+    fn opacity_control_cycles_through_reference_friendly_levels() {
+        assert_eq!(next_pin_opacity(255), 191);
+        assert_eq!(next_pin_opacity(191), 128);
+        assert_eq!(next_pin_opacity(128), 64);
+        assert_eq!(next_pin_opacity(64), 255);
+        assert_eq!(next_pin_opacity(99), 255);
+        assert_eq!(opacity_percentage(191), 75);
     }
 }

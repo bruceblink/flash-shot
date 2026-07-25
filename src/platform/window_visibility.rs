@@ -35,6 +35,11 @@ pub fn resize_centered(handle: isize, scale: f32) -> io::Result<()> {
     platform::resize_centered(handle, scale)
 }
 
+/// Applies an alpha value to a native window without changing its z-order or focus.
+pub fn set_opacity(handle: isize, opacity: u8) -> io::Result<()> {
+    platform::set_opacity(handle, opacity)
+}
+
 #[cfg(windows)]
 mod platform {
     use super::{
@@ -45,8 +50,10 @@ mod platform {
     use windows_sys::Win32::{
         Foundation::RECT,
         UI::WindowsAndMessaging::{
-            GetWindowRect, HWND_TOPMOST, IsWindow, SW_HIDE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow,
+            GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IsWindow, LWA_ALPHA,
+            SW_HIDE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+            SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
+            ShowWindow, WS_EX_LAYERED,
         },
     };
 
@@ -122,6 +129,19 @@ mod platform {
         }
         Ok(())
     }
+
+    pub fn set_opacity(handle: isize, opacity: u8) -> io::Result<()> {
+        let window = window(handle)?;
+        // SAFETY: window is a live HWND. This only adds the layered style needed for alpha.
+        let extended_style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
+        // SAFETY: window is a live HWND and the replacement retains every existing style bit.
+        unsafe { SetWindowLongPtrW(window, GWL_EXSTYLE, extended_style | WS_EX_LAYERED as isize) };
+        // SAFETY: window is live and opacity is a valid BYTE alpha value.
+        if unsafe { SetLayeredWindowAttributes(window, 0, opacity, LWA_ALPHA) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 #[cfg(not(windows))]
@@ -141,6 +161,10 @@ mod platform {
     }
 
     pub fn resize_centered(_handle: isize, _scale: f32) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn set_opacity(_handle: isize, _opacity: u8) -> io::Result<()> {
         Ok(())
     }
 }
