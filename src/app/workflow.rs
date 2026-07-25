@@ -842,6 +842,68 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Decodes a retained screenshot in the background before opening it as an always-on-top pin.
+    pub(super) fn pin_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.history_pin_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.history_pin_generation = Some(generation);
+        self.status = format!("Pinning {}...", path.display());
+        self.hide_settings_window();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { CaptureFrame::open_png(&path) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_history_pin(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Opens only the most recently requested retained image and ignores stale decode results.
+    fn finish_history_pin(
+        &mut self,
+        result: std::io::Result<CaptureFrame>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !history_pin_is_current(
+            self.history_pin_generation,
+            self.operation_generation,
+            generation,
+            self.session.state(),
+        ) {
+            return;
+        }
+        self.history_pin_generation = None;
+        match result {
+            Ok(frame) => self.open_pinned_frame(
+                frame,
+                "History image pinned in an always-on-top window",
+                Some("Could not pin history image"),
+                cx,
+            ),
+            Err(error) => {
+                self.status = format!("Could not pin history image: {error}");
+                log::warn!(target: "flash_shot::pinned", "history_pin_failed error={error}");
+                self.notify_user("Flash Shot", "Could not pin history image");
+                cx.notify();
+            }
+        }
+    }
+
     /// Returns a cached history preview and starts one background decode when it is first needed.
     pub(super) fn history_thumbnail(
         &mut self,
@@ -1129,6 +1191,7 @@ impl FlashShotApp {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
             || self.clipboard_pin_generation.is_some()
+            || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -1168,6 +1231,7 @@ impl FlashShotApp {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
             || self.clipboard_pin_generation.is_some()
+            || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -1209,6 +1273,7 @@ impl FlashShotApp {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
             || self.clipboard_pin_generation.is_some()
+            || self.history_pin_generation.is_some()
         {
             return;
         }
@@ -1463,6 +1528,7 @@ impl FlashShotApp {
         self.full_screen_copy_generation = None;
         self.full_screen_save_generation = None;
         self.clipboard_pin_generation = None;
+        self.history_pin_generation = None;
         self.frame = None;
         self.annotation_document = None;
         self.annotation_history = Default::default();
@@ -2829,6 +2895,7 @@ impl FlashShotApp {
         if self.clipboard_pin_generation.is_some()
             || self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
+            || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -3928,6 +3995,18 @@ fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
 
 fn is_current_operation(current: u64, completed: u64) -> bool {
     current == completed
+}
+
+/// Confirms a history decode belongs to the latest pin request before opening a new window.
+fn history_pin_is_current(
+    active_generation: Option<u64>,
+    current_generation: u64,
+    completion_generation: u64,
+    session_state: CaptureSessionState,
+) -> bool {
+    active_generation == Some(completion_generation)
+        && is_current_operation(current_generation, completion_generation)
+        && session_state == CaptureSessionState::Idle
 }
 
 fn full_screen_copy_is_current(
@@ -5098,16 +5177,17 @@ mod tests {
         annotation_cancelled_status, annotation_document_path, annotation_position,
         annotation_sidecar_path, compose_captured_displays, copy_annotated_frame_selection,
         delayed_capture_status, drawing_status, fill_alpha, fill_color, format_hsl,
-        format_recording_progress, full_screen_copy_is_current, hovered_color, intersect_rect,
-        is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
-        next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
-        next_recording_audio_selection, next_recording_display_selection, open_annotation_project,
-        open_image_project, pinned_size, png_path, project_image_path,
-        quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
-        recording_audio_selection_label, recording_display_selection_label, recording_target_label,
-        resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
-        save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-        text_annotation_with_content, tool_selected_status, with_alpha,
+        format_recording_progress, full_screen_copy_is_current, history_pin_is_current,
+        hovered_color, intersect_rect, is_current_operation, keyboard_command,
+        load_annotation_document, next_annotation_counters, next_annotation_selection,
+        next_quick_save_path, next_quick_save_path_with_prefix, next_recording_audio_selection,
+        next_recording_display_selection, open_annotation_project, open_image_project, pinned_size,
+        png_path, project_image_path, quick_save_annotated_frame_selection_in,
+        quick_save_full_screen_frame_in, recording_audio_selection_label,
+        recording_display_selection_label, recording_target_label, resolve_pointer_selection,
+        sanitize_save_prefix, save_annotated_frame_selection, save_annotation_document,
+        save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
+        tool_selected_status, with_alpha,
     };
     use crate::{
         domain::{
@@ -6498,5 +6578,27 @@ mod tests {
     fn stale_background_completion_is_ignored_after_a_new_operation_starts() {
         assert!(is_current_operation(4, 4));
         assert!(!is_current_operation(5, 4));
+    }
+
+    #[test]
+    fn only_the_latest_idle_history_pin_request_can_open_a_window() {
+        assert!(history_pin_is_current(
+            Some(7),
+            7,
+            7,
+            CaptureSessionState::Idle
+        ));
+        assert!(!history_pin_is_current(
+            Some(7),
+            8,
+            7,
+            CaptureSessionState::Idle
+        ));
+        assert!(!history_pin_is_current(
+            Some(7),
+            7,
+            7,
+            CaptureSessionState::Selecting
+        ));
     }
 }

@@ -462,6 +462,19 @@ fn history_settings(
                     },
                 ))
                 .child(settings_button(
+                    format!("settings-pin-history-{}", entry.created_at_ms),
+                    "Pin",
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        let path = entry.path.clone();
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.pin_history_image(path.clone(), cx))
+                        }
+                    },
+                ))
+                .child(settings_button(
                     format!("settings-remove-history-{}", entry.created_at_ms),
                     "Remove",
                     colors,
