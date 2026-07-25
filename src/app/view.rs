@@ -309,6 +309,26 @@ fn file_settings(
                 },
             ))
             .child(settings_button(
+                "settings-open-screenshot-folder",
+                "Open folder",
+                colors,
+                is_idle,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.open_history_directory(cx))
+                },
+            ))
+            .child(settings_button(
+                "settings-pin-clipboard",
+                "Pin clipboard",
+                colors,
+                is_idle,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.pin_clipboard_image(cx))
+                },
+            ))
+            .child(settings_button(
                 "settings-history-retention",
                 &format!("Keep {}", app_state.settings.history_limit),
                 colors,
