@@ -21,6 +21,18 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn select_history_filter(
+        &mut self,
+        filter: HistoryFilter,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history_filter != filter {
+            self.history_filter = filter;
+            self.history_expanded = false;
+            cx.notify();
+        }
+    }
+
     /// Requires a deliberate second action before removing every managed screenshot.
     pub(in crate::app) fn request_history_clear(&mut self, cx: &mut Context<Self>) {
         if self.history.entries().is_empty() {

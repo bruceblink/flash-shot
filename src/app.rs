@@ -103,6 +103,7 @@ pub struct FlashShotApp {
     performance: PerformanceRecorder,
     history: ScreenshotHistory,
     history_expanded: bool,
+    history_filter: HistoryFilter,
     history_clear_confirmation: bool,
     history_thumbnails: HashMap<PathBuf, Arc<RenderImage>>,
     history_thumbnail_loading: HashSet<PathBuf>,
@@ -121,6 +122,37 @@ pub(super) enum SettingsSection {
     Files,
     Recording,
     System,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum HistoryFilter {
+    #[default]
+    All,
+    Selection,
+    FullScreen,
+    Pinned,
+}
+
+impl HistoryFilter {
+    pub(super) const ALL: [Self; 4] = [Self::All, Self::Selection, Self::FullScreen, Self::Pinned];
+
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Selection => "Selections",
+            Self::FullScreen => "Full screen",
+            Self::Pinned => "Pinned",
+        }
+    }
+
+    pub(super) const fn matches(self, source: crate::history::HistorySource) -> bool {
+        match self {
+            Self::All => true,
+            Self::Selection => matches!(source, crate::history::HistorySource::Selection),
+            Self::FullScreen => matches!(source, crate::history::HistorySource::FullScreen),
+            Self::Pinned => matches!(source, crate::history::HistorySource::Pinned),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -378,6 +410,7 @@ impl FlashShotApp {
             performance,
             history,
             history_expanded: false,
+            history_filter: HistoryFilter::All,
             history_clear_confirmation: false,
             history_thumbnails: HashMap::new(),
             history_thumbnail_loading: HashSet::new(),

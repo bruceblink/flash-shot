@@ -2,7 +2,7 @@
 
 use gpui::{ObjectFit, Window, div, img, prelude::*, px, rgba};
 
-use super::{FlashShotApp, SettingsSection};
+use super::{FlashShotApp, HistoryFilter, SettingsSection};
 use crate::{domain::session::CaptureSessionState, platform::shortcut::CaptureShortcut};
 
 const HISTORY_PREVIEW_LIMIT: usize = 5;
@@ -19,14 +19,23 @@ impl gpui::Render for FlashShotApp {
         let recording_display =
             super::workflow::recording_display_selection_label(&self.recording_display);
         let history_total = self.history.entries().len();
-        let history_entries: Vec<_> =
-            visible_history_entries(self.history.entries(), self.history_expanded)
-                .into_iter()
-                .map(|entry| {
-                    let thumbnail = self.history_thumbnail(&entry.path, cx);
-                    (entry, thumbnail)
-                })
-                .collect();
+        let filtered_history_total = self
+            .history
+            .entries()
+            .iter()
+            .filter(|entry| self.history_filter.matches(entry.source))
+            .count();
+        let history_entries: Vec<_> = visible_history_entries(
+            self.history.entries(),
+            self.history_expanded,
+            self.history_filter,
+        )
+        .into_iter()
+        .map(|entry| {
+            let thumbnail = self.history_thumbnail(&entry.path, cx);
+            (entry, thumbnail)
+        })
+        .collect();
         let app = cx.entity();
 
         div()
@@ -98,10 +107,14 @@ impl gpui::Render for FlashShotApp {
                             )
                             .when(self.settings_section == SettingsSection::Files, |content| {
                                 content.child(history_settings(
-                                    history_entries,
-                                    history_total,
-                                    self.history_expanded,
-                                    self.history_clear_confirmation,
+                                    HistoryViewState {
+                                        entries: history_entries,
+                                        total_entries: history_total,
+                                        filtered_entries: filtered_history_total,
+                                        expanded: self.history_expanded,
+                                        filter: self.history_filter,
+                                        clear_confirmation: self.history_clear_confirmation,
+                                    },
                                     colors,
                                     is_idle,
                                     app.clone(),
@@ -328,7 +341,7 @@ fn capture_settings(
             div().flex().flex_wrap().justify_end().gap_2().children(
                 CaptureShortcut::PRESETS.into_iter().map(|preset| {
                     let app = app.clone();
-                    settings_shortcut_button(
+                    settings_segment_button(
                         format!("settings-shortcut-{preset}"),
                         preset,
                         app_state.capture_shortcut == preset,
@@ -580,23 +593,57 @@ fn system_settings(
         )))
 }
 
-fn history_settings(
+struct HistoryViewState {
     entries: Vec<(
         crate::history::HistoryEntry,
         Option<std::sync::Arc<gpui::RenderImage>>,
     )>,
     total_entries: usize,
+    filtered_entries: usize,
     expanded: bool,
+    filter: HistoryFilter,
     clear_confirmation: bool,
+}
+
+fn history_settings(
+    state: HistoryViewState,
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
+    let HistoryViewState {
+        entries,
+        total_entries,
+        filtered_entries,
+        expanded,
+        filter,
+        clear_confirmation,
+    } = state;
     let now_ms = current_timestamp_ms();
     let is_empty = entries.is_empty();
     settings_section("Recent captures", colors)
-        .when(total_entries > HISTORY_PREVIEW_LIMIT, |section| {
-            let remaining = total_entries.saturating_sub(HISTORY_PREVIEW_LIMIT);
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .children(HistoryFilter::ALL.map(|candidate| {
+                    let selected = candidate == filter;
+                    let filter_app = app.clone();
+                    settings_segment_button(
+                        format!("settings-history-filter-{}", candidate.label()),
+                        candidate.label(),
+                        selected,
+                        colors,
+                        move |_, _, cx| {
+                            filter_app
+                                .update(cx, |this, cx| this.select_history_filter(candidate, cx))
+                        },
+                    )
+                })),
+        )
+        .when(filtered_entries > HISTORY_PREVIEW_LIMIT, |section| {
+            let remaining = filtered_entries.saturating_sub(HISTORY_PREVIEW_LIMIT);
             let toggle_app = app.clone();
             let toggle_label = if expanded {
                 "Show recent".to_owned()
@@ -614,7 +661,7 @@ fn history_settings(
                         div()
                             .text_sm()
                             .text_color(colors.muted)
-                            .child(history_visibility_label(total_entries, expanded)),
+                            .child(history_visibility_label(filtered_entries, expanded)),
                     )
                     .child(settings_button(
                         "settings-toggle-history-list",
@@ -632,7 +679,7 @@ fn history_settings(
                 div()
                     .text_sm()
                     .text_color(colors.muted)
-                    .child(empty_history_message()),
+                    .child(empty_history_message(total_entries, filter)),
             )
         })
         .children(entries.into_iter().map(|(entry, thumbnail)| {
@@ -794,8 +841,12 @@ fn current_timestamp_ms() -> u128 {
 }
 
 /// Explains where the first managed screenshot will appear before history has any entries.
-fn empty_history_message() -> &'static str {
-    "Saved screenshots will appear here."
+fn empty_history_message(total_entries: usize, filter: HistoryFilter) -> String {
+    if total_entries == 0 {
+        "Saved screenshots will appear here.".to_owned()
+    } else {
+        format!("No {} captures yet.", filter.label().to_lowercase())
+    }
 }
 
 /// Returns the lightweight default history preview or the explicit full list.
@@ -803,13 +854,19 @@ fn empty_history_message() -> &'static str {
 fn visible_history_entries(
     entries: &std::collections::VecDeque<crate::history::HistoryEntry>,
     expanded: bool,
+    filter: HistoryFilter,
 ) -> Vec<crate::history::HistoryEntry> {
     let limit = if expanded {
-        entries.len()
+        usize::MAX
     } else {
-        entries.len().min(HISTORY_PREVIEW_LIMIT)
+        HISTORY_PREVIEW_LIMIT
     };
-    entries.iter().take(limit).cloned().collect()
+    entries
+        .iter()
+        .filter(|entry| filter.matches(entry.source))
+        .take(limit)
+        .cloned()
+        .collect()
 }
 
 /// Describes whether the history settings page is showing its bounded preview or every retained item.
@@ -1094,7 +1151,7 @@ fn settings_toggle(
         .child(div().size(px(14.0)).rounded_full().bg(colors.text))
 }
 
-fn settings_shortcut_button(
+fn settings_segment_button(
     id: impl Into<gpui::ElementId>,
     label: &str,
     selected: bool,
@@ -1157,7 +1214,7 @@ mod tests {
         history_entry_label, history_visibility_label, relative_timestamp_label,
         settings_page_intro, visible_history_entries,
     };
-    use crate::app::SettingsSection;
+    use crate::app::{HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
     use std::collections::VecDeque;
     use std::path::PathBuf;
@@ -1204,8 +1261,12 @@ mod tests {
     #[test]
     fn empty_history_section_explains_when_saved_captures_appear() {
         assert_eq!(
-            super::empty_history_message(),
+            super::empty_history_message(0, HistoryFilter::All),
             "Saved screenshots will appear here."
+        );
+        assert_eq!(
+            super::empty_history_message(3, HistoryFilter::Pinned),
+            "No pinned captures yet."
         );
     }
 
@@ -1243,12 +1304,45 @@ mod tests {
             })
             .collect::<VecDeque<_>>();
 
-        assert_eq!(visible_history_entries(&entries, false).len(), 5);
-        assert_eq!(visible_history_entries(&entries, true).len(), 7);
+        assert_eq!(
+            visible_history_entries(&entries, false, HistoryFilter::All).len(),
+            5
+        );
+        assert_eq!(
+            visible_history_entries(&entries, true, HistoryFilter::All).len(),
+            7
+        );
         assert_eq!(
             history_visibility_label(7, false),
             "Showing 5 of 7 captures"
         );
         assert_eq!(history_visibility_label(7, true), "Showing all 7 captures");
+    }
+
+    #[test]
+    fn history_source_filter_applies_before_the_preview_limit() {
+        let entries = (0..12)
+            .map(|created_at_ms| HistoryEntry {
+                path: PathBuf::from(format!("F:/captures/{created_at_ms}.png")),
+                created_at_ms,
+                source: if created_at_ms % 2 == 0 {
+                    HistorySource::Pinned
+                } else {
+                    HistorySource::Selection
+                },
+            })
+            .collect::<VecDeque<_>>();
+
+        let preview = visible_history_entries(&entries, false, HistoryFilter::Pinned);
+        assert_eq!(preview.len(), 5);
+        assert!(
+            preview
+                .iter()
+                .all(|entry| entry.source == HistorySource::Pinned)
+        );
+        assert_eq!(
+            visible_history_entries(&entries, true, HistoryFilter::Pinned).len(),
+            6
+        );
     }
 }

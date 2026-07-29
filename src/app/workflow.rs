@@ -32,8 +32,8 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::{
-    FlashShotApp, RecognitionResult, RecordingAudioSelection, RecordingDisplaySelection,
-    SettingsSection,
+    FlashShotApp, HistoryFilter, RecognitionResult, RecordingAudioSelection,
+    RecordingDisplaySelection, SettingsSection,
     overlay::CaptureOverlay,
     pinned::PinnedImage,
     render_image::{history_thumbnail_frame, render_image_from_capture},
