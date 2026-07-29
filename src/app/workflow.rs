@@ -124,6 +124,7 @@ impl FlashShotApp {
         if self.history_retention_target.is_some()
             || self.history_clear_in_flight
             || self.history_clear_confirmation
+            || !self.history_deletions_in_flight.is_empty()
         {
             return;
         }

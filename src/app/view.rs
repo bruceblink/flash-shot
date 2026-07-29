@@ -38,7 +38,8 @@ impl gpui::Render for FlashShotApp {
         .into_iter()
         .map(|entry| {
             let thumbnail = self.history_thumbnail(&entry.path, cx);
-            (entry, thumbnail)
+            let deleting = self.history_deletions_in_flight.contains(&entry.path);
+            (entry, thumbnail, deleting)
         })
         .collect();
         let app = cx.entity();
@@ -126,6 +127,9 @@ impl gpui::Render for FlashShotApp {
                                         retention_in_flight: self
                                             .history_retention_target
                                             .is_some(),
+                                        deletion_in_flight: !self
+                                            .history_deletions_in_flight
+                                            .is_empty(),
                                         search_query: self.history_search_query().to_owned(),
                                         search_active: self.history_search_is_active(),
                                         search_focus: self.focus_handle.clone(),
@@ -629,6 +633,7 @@ struct HistoryViewState {
     entries: Vec<(
         crate::history::HistoryEntry,
         Option<std::sync::Arc<gpui::RenderImage>>,
+        bool,
     )>,
     total_entries: usize,
     filtered_entries: usize,
@@ -637,6 +642,7 @@ struct HistoryViewState {
     clear_confirmation: bool,
     clear_in_flight: bool,
     retention_in_flight: bool,
+    deletion_in_flight: bool,
     search_query: String,
     search_active: bool,
     search_focus: FocusHandle,
@@ -657,6 +663,7 @@ fn history_settings(
         clear_confirmation,
         clear_in_flight,
         retention_in_flight,
+        deletion_in_flight,
         search_query,
         search_active,
         search_focus,
@@ -731,7 +738,7 @@ fn history_settings(
                     .child(empty_history_message(total_entries, filter, &search_query)),
             )
         })
-        .children(entries.into_iter().map(|(entry, thumbnail)| {
+        .children(entries.into_iter().map(|(entry, thumbnail, deleting)| {
             let label = history_entry_label(&entry, now_ms);
             history_row(&label, thumbnail, colors).child(
                 div()
@@ -742,7 +749,7 @@ fn history_settings(
                         format!("settings-open-history-{}", entry.created_at_ms),
                         "Open",
                         colors,
-                        is_idle,
+                        is_idle && !deleting,
                         {
                             let app = app.clone();
                             let path = entry.path.clone();
@@ -755,7 +762,7 @@ fn history_settings(
                         format!("settings-copy-history-{}", entry.created_at_ms),
                         "Copy",
                         colors,
-                        is_idle,
+                        is_idle && !deleting,
                         {
                             let app = app.clone();
                             let path = entry.path.clone();
@@ -768,7 +775,7 @@ fn history_settings(
                         format!("settings-pin-history-{}", entry.created_at_ms),
                         "Pin",
                         colors,
-                        is_idle,
+                        is_idle && !deleting,
                         {
                             let app = app.clone();
                             let path = entry.path.clone();
@@ -779,9 +786,13 @@ fn history_settings(
                     ))
                     .child(settings_button(
                         format!("settings-remove-history-{}", entry.created_at_ms),
-                        "Remove",
+                        if deleting { "Removing..." } else { "Remove" },
                         colors,
-                        is_idle,
+                        is_idle
+                            && !deleting
+                            && !clear_confirmation
+                            && !clear_in_flight
+                            && !retention_in_flight,
                         {
                             let app = app.clone();
                             let path = entry.path.clone();
@@ -804,7 +815,11 @@ fn history_settings(
                     "Clear history"
                 },
                 colors,
-                is_idle && total_entries > 0 && !clear_in_flight && !retention_in_flight,
+                is_idle
+                    && total_entries > 0
+                    && !clear_in_flight
+                    && !retention_in_flight
+                    && !deletion_in_flight,
                 move |_, _, cx| clear_app.update(cx, |this, cx| this.request_history_clear(cx)),
             ))
         })

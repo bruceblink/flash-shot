@@ -345,7 +345,10 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn clear_history(&mut self, cx: &mut Context<Self>) {
-        if self.history_clear_in_flight || self.history_retention_target.is_some() {
+        if self.history_clear_in_flight
+            || self.history_retention_target.is_some()
+            || !self.history_deletions_in_flight.is_empty()
+        {
             return;
         }
         if !self.history_clear_confirmation {
@@ -399,19 +402,63 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn remove_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match self.history.remove(&path) {
-            Ok(true) => self.status = format!("Removed {} from screenshot history", path.display()),
-            Ok(false) => {
-                self.status = format!("Removed missing {} from screenshot history", path.display())
-            }
-            Err(error) => {
-                self.status = format!("Could not remove screenshot history item: {error}");
-                log::warn!(target: "flash_shot::history", "history_remove_failed path={} error={error}", path.display());
-            }
+        if self.history_clear_in_flight
+            || self.history_clear_confirmation
+            || self.history_retention_target.is_some()
+            || !self
+                .history
+                .entries()
+                .iter()
+                .any(|entry| entry.path == path)
+            || !self.history_deletions_in_flight.insert(path.clone())
+        {
+            return;
         }
-        self.history_thumbnails.remove(&path);
-        self.history_thumbnail_loading.remove(&path);
-        self.history_thumbnail_failed.remove(&path);
+        self.status = format!("Removing {}...", path.display());
+        cx.notify();
+        let snapshot = self.history.clone();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let deletion = cx
+                    .background_executor()
+                    .spawn({
+                        let path = path.clone();
+                        async move { snapshot.delete_managed_paths([path]) }
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_remove_history_image(path, deletion, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_remove_history_image(
+        &mut self,
+        path: PathBuf,
+        deletion: crate::history::HistoryFileDeletion,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_deletions_in_flight.remove(&path);
+        for (failed_path, error) in &deletion.failures {
+            log::warn!(target: "flash_shot::history", "history_remove_failed path={} error={error}", failed_path.display());
+        }
+        self.status = if let Some((_, error)) = deletion.failures.first() {
+            format!("Could not remove screenshot history item: {error}")
+        } else {
+            match self.history.forget_deleted(&deletion.deleted) {
+                Ok(()) => format!("Removed {} from screenshot history", path.display()),
+                Err(error) => {
+                    log::warn!(target: "flash_shot::history", "history_index_update_failed error={error}");
+                    format!("Capture was removed, but history could not be updated: {error}")
+                }
+            }
+        };
+        self.synchronize_history_preview_cache();
         cx.notify();
     }
 
