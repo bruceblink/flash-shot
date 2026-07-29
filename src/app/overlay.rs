@@ -38,6 +38,11 @@ const OVERLAY_RECOGNITION_PREVIEW_LIMIT: usize = 240;
 const OVERLAY_DIMENSION_LABEL_WIDTH: f32 = 112.0;
 const OVERLAY_DIMENSION_LABEL_HEIGHT: f32 = 26.0;
 const OVERLAY_DIMENSION_LABEL_GAP: f32 = 8.0;
+const ANNOTATION_TOOL_ESTIMATED_WIDTH: f32 = 104.0;
+const ANNOTATION_TOOL_ROW_HEIGHT: f32 = 34.0;
+const ANNOTATION_TOOL_GAP: f32 = 8.0;
+const ANNOTATION_TOOLBAR_PADDING: f32 = 4.0;
+const ANNOTATION_STYLE_ROW_GAP: f32 = 30.0;
 // Keep the terminal screenshot actions on one compact row while optional
 // actions expand only after the user asks for them.
 const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 34.0, 34.0];
@@ -333,6 +338,25 @@ impl Render for CaptureOverlay {
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
+        let annotation_toolbar_items = 12
+            + usize::from(can_undo)
+            + usize::from(can_redo)
+            + usize::from(can_delete) * 6
+            + usize::from(can_edit_text)
+            + usize::from(selected_number.is_some()) * 3
+            + usize::from(can_rotate);
+        let annotation_toolbar_height =
+            annotation_toolbar_height(viewport, annotation_toolbar_items);
+        let annotation_style_top =
+            OVERLAY_EDGE_INSET + annotation_toolbar_height + ANNOTATION_TOOL_GAP;
+        let annotation_layer_top = if show_annotation_controls {
+            annotation_style_top
+        } else {
+            OVERLAY_EDGE_INSET
+        };
+        let annotation_layer_max_height =
+            (view_rect(viewport).height - annotation_layer_top - OVERLAY_BOTTOM_SAFE_INSET)
+                .max(80.0);
         let transform = self.transform(viewport);
         let selected_on_display =
             selection.and_then(|selection| intersect(selection, display_bounds));
@@ -523,10 +547,13 @@ impl Render for CaptureOverlay {
             .when(!layer_annotations.is_empty(), |overlay| {
                 overlay.child(
                     div()
+                        .id("overlay-layers")
                         .absolute()
                         .right(px(18.0))
-                        .top(px(18.0))
+                        .top(px(annotation_layer_top))
                         .w(px(180.0))
+                        .max_h(px(annotation_layer_max_height))
+                        .overflow_y_scroll()
                         .p_2()
                         .bg(rgba(0x111827E6))
                         .border_1()
@@ -575,10 +602,34 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .absolute()
+                        .left(px(10.0))
+                        .top(px(annotation_style_top - 8.0))
+                        .w(px(164.0))
+                        .h(px(if can_adjust_font_size { 158.0 } else { 128.0 }))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(rgba(0xFFFFFF24))
+                        .bg(rgba(0x15171BE8))
+                        .shadow_lg(),
+                )
+            })
+            .when(show_annotation_controls, |overlay| {
+                overlay.child(
+                    div()
+                        .absolute()
                         .left(px(OVERLAY_EDGE_INSET))
-                        .top(px(18.0))
+                        .right(px(OVERLAY_EDGE_INSET))
+                        .top(px(OVERLAY_EDGE_INSET))
                         .flex()
+                        .flex_wrap()
+                        .items_center()
                         .gap_2()
+                        .p_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(rgba(0xFFFFFF24))
+                        .bg(rgba(0x15171BF5))
+                        .shadow_lg()
                         .when(can_undo, |tools| {
                             tools.child(
                                 div()
@@ -1111,7 +1162,7 @@ impl Render for CaptureOverlay {
                     div()
                         .absolute()
                         .left(px(18.0))
-                        .top(px(58.0))
+                        .top(px(annotation_style_top))
                         .flex()
                         .gap_2()
                         .children(ANNOTATION_COLORS.into_iter().map(|color| {
@@ -1145,7 +1196,7 @@ impl Render for CaptureOverlay {
                         div()
                             .absolute()
                             .left(px(18.0))
-                            .top(px(178.0))
+                            .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 4.0))
                             .flex()
                             .gap_2()
                             .children(ANNOTATION_FONT_SIZES.into_iter().map(|font_size| {
@@ -1184,7 +1235,7 @@ impl Render for CaptureOverlay {
                     div()
                         .absolute()
                         .left(px(18.0))
-                        .top(px(118.0))
+                        .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 2.0))
                         .px_3()
                         .py_2()
                         .id("overlay-fill")
@@ -1213,7 +1264,7 @@ impl Render for CaptureOverlay {
                     div()
                         .absolute()
                         .left(px(18.0))
-                        .top(px(88.0))
+                        .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP))
                         .flex()
                         .gap_2()
                         .children(ANNOTATION_WIDTHS.into_iter().map(|width| {
@@ -1251,7 +1302,7 @@ impl Render for CaptureOverlay {
                     div()
                         .absolute()
                         .left(px(18.0))
-                        .top(px(148.0))
+                        .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 3.0))
                         .flex()
                         .gap_2()
                         .children(ANNOTATION_OPACITIES.into_iter().map(|opacity| {
@@ -2661,6 +2712,23 @@ struct SelectionDimensionLayout {
     top: f32,
 }
 
+/// Reserves enough vertical space for the annotation toolbar before style controls are placed.
+/// Widths are deliberately conservative so localized or contextual labels cannot overlap the
+/// rows below even when GPUI wraps them earlier than expected.
+fn annotation_toolbar_height(viewport: Bounds<Pixels>, item_count: usize) -> f32 {
+    let viewport = view_rect(viewport);
+    let available_width =
+        (viewport.width - OVERLAY_EDGE_INSET * 2.0 - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
+    let columns = (((available_width + ANNOTATION_TOOL_GAP)
+        / (ANNOTATION_TOOL_ESTIMATED_WIDTH + ANNOTATION_TOOL_GAP))
+        .floor() as usize)
+        .max(1);
+    let rows = item_count.max(1).div_ceil(columns);
+    rows as f32 * ANNOTATION_TOOL_ROW_HEIGHT
+        + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
+        + ANNOTATION_TOOLBAR_PADDING * 2.0
+}
+
 /// Positions the pixel-size readout near the selection without covering export controls.
 fn selection_dimension_label_layout(
     selection: Option<PhysicalRect>,
@@ -2906,11 +2974,12 @@ mod tests {
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
         OVERLAY_RECOGNITION_PREVIEW_LIMIT, SelectionCursor, SelectionDimensionLayout,
         action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
-        annotation_layer_label, arrow_head_points, capture_double_click, intersect,
-        is_text_annotation, magnifier_origin, outline_shape_bounds, owns_selection_toolbar,
-        primary_action_tooltip, recognition_result_preview, resize_handle_points,
-        secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
-        selection_cursor, selection_dimension_label_layout, visible_selection,
+        annotation_layer_label, annotation_toolbar_height, arrow_head_points, capture_double_click,
+        intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
+        owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
+        resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
+        secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
+        visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -3385,6 +3454,16 @@ mod tests {
             viewport,
             secondary_action_menu_height(layout.width, false)
         ));
+    }
+
+    #[test]
+    fn annotation_toolbar_reserves_wrapped_rows_on_narrow_overlays() {
+        let wide = Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0)));
+        let narrow = Bounds::new(point(px(0.0), px(0.0)), size(px(360.0), px(720.0)));
+
+        assert_eq!(annotation_toolbar_height(wide, 12), 42.0);
+        assert_eq!(annotation_toolbar_height(narrow, 12), 252.0);
+        assert!(annotation_toolbar_height(narrow, 20) > 252.0);
     }
 
     #[test]
