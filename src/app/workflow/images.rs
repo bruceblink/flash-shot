@@ -250,6 +250,9 @@ impl FlashShotApp {
         if let Some(thumbnail) = self.history_thumbnails.get(path) {
             return Some(thumbnail.clone());
         }
+        if self.history_thumbnail_failed.contains(path) {
+            return None;
+        }
         if !self.history_thumbnail_loading.insert(path.clone()) {
             return None;
         }
@@ -286,10 +289,15 @@ impl FlashShotApp {
         cx: &mut Context<Self>,
     ) {
         self.history_thumbnail_loading.remove(&path);
-        if let Ok(frame) = result
-            && let Ok(thumbnail) = render_image_from_capture(&frame)
-        {
-            self.history_thumbnails.insert(path, thumbnail.image);
+        match result.and_then(|frame| render_image_from_capture(&frame)) {
+            Ok(thumbnail) => {
+                self.history_thumbnail_failed.remove(&path);
+                self.history_thumbnails.insert(path, thumbnail.image);
+            }
+            Err(error) => {
+                log::warn!(target: "flash_shot::history", "history_thumbnail_failed path={} error={error}", path.display());
+                self.history_thumbnail_failed.insert(path);
+            }
         }
         cx.notify();
     }

@@ -131,6 +131,7 @@ impl FlashShotApp {
                                 if let Some(history_note) = history_note {
                                     this.status.push_str(&history_note);
                                 }
+                                this.synchronize_history_preview_cache();
                                 this.notify_user("Flash Shot", "Pinned image saved");
                             }
                             Err(error) => {
@@ -319,6 +320,7 @@ impl FlashShotApp {
                     if let Some(history_status) = history_status {
                         self.status.push_str(&history_status);
                     }
+                    self.synchronize_history_preview_cache();
                     self.notify_user("Flash Shot", "Screenshot saved");
                     self.close_capture_overlays(cx);
                     self.return_to_background();
@@ -356,6 +358,7 @@ impl FlashShotApp {
         }
         self.history_thumbnails.clear();
         self.history_thumbnail_loading.clear();
+        self.history_thumbnail_failed.clear();
         self.history_expanded = false;
         self.history_clear_confirmation = false;
         cx.notify();
@@ -374,7 +377,24 @@ impl FlashShotApp {
         }
         self.history_thumbnails.remove(&path);
         self.history_thumbnail_loading.remove(&path);
+        self.history_thumbnail_failed.remove(&path);
         cx.notify();
+    }
+
+    /// Drops decoded previews and retry state as soon as retention removes their history entries.
+    pub(super) fn synchronize_history_preview_cache(&mut self) {
+        let retained = self
+            .history
+            .entries()
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<std::collections::HashSet<_>>();
+        self.history_thumbnails
+            .retain(|path, _| retained.contains(path));
+        self.history_thumbnail_loading
+            .retain(|path| retained.contains(path));
+        self.history_thumbnail_failed
+            .retain(|path| retained.contains(path));
     }
 
     pub(super) fn finish_copy(
@@ -491,6 +511,7 @@ impl FlashShotApp {
                 if let Some(history_status) = history_status {
                     self.status.push_str(&history_status);
                 }
+                self.synchronize_history_preview_cache();
                 self.notify_user("Flash Shot", "Full screen saved");
             }
             Err(error) => {

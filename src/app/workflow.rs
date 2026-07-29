@@ -128,6 +128,7 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        self.synchronize_history_preview_cache();
         self.settings.history_limit = next_limit;
         if let Err(error) = self.settings.save(&self.settings_path) {
             self.status = format!(
