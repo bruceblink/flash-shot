@@ -257,10 +257,14 @@ impl Render for PinnedImage {
             && let RawWindowHandle::Win32(handle) = handle.as_raw()
         {
             self.topmost_requested = true;
-            if let Err(error) = crate::platform::window_visibility::make_topmost(handle.hwnd.get())
-            {
-                log::warn!(target: "flash_shot::pinned", "pinned_window_topmost_failed error={error}");
-            }
+            let hwnd = handle.hwnd.get();
+            // Rendering runs from GPUI's native window dispatch. Defer the Win32
+            // z-order change so it cannot synchronously re-enter that dispatch.
+            cx.defer(move |_| {
+                if let Err(error) = crate::platform::window_visibility::make_topmost(hwnd) {
+                    log::warn!(target: "flash_shot::pinned", "pinned_window_topmost_failed error={error}");
+                }
+            });
         }
         div()
             .size_full()

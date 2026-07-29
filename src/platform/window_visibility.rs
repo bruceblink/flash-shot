@@ -61,9 +61,9 @@ mod platform {
         Foundation::RECT,
         UI::WindowsAndMessaging::{
             GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IsWindow, LWA_ALPHA,
-            SW_HIDE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-            SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
-            ShowWindow, WS_EX_LAYERED, WS_EX_TRANSPARENT,
+            SW_HIDE, SW_RESTORE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SWP_NOZORDER, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW,
+            SetWindowPos, ShowWindow, WS_EX_LAYERED, WS_EX_TRANSPARENT,
         },
     };
 
@@ -106,8 +106,20 @@ mod platform {
 
     pub fn make_topmost(handle: isize) -> io::Result<()> {
         let window = window(handle)?;
-        // SAFETY: window is live and the call only changes its z-order.
-        if unsafe { SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE) } == 0 {
+        // SAFETY: window is live and the call only changes its z-order. Dispatch it
+        // asynchronously to avoid re-entering a GPUI render callback on Windows.
+        if unsafe {
+            SetWindowPos(
+                window,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+            )
+        } == 0
+        {
             return Err(io::Error::last_os_error());
         }
         Ok(())
