@@ -117,6 +117,30 @@ impl ScreenshotHistory {
         self.write_index()
     }
 
+    pub(crate) fn retention_candidates(&self, limit: usize) -> Vec<PathBuf> {
+        self.entries
+            .iter()
+            .skip(limit)
+            .map(|entry| entry.path.clone())
+            .collect()
+    }
+
+    pub(crate) fn set_limit_after_prune(&mut self, limit: usize) -> io::Result<()> {
+        if limit == 0 || self.entries.len() > limit {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "history must be pruned before applying its retention limit",
+            ));
+        }
+        let previous = self.limit;
+        self.limit = limit;
+        if let Err(error) = self.write_index() {
+            self.limit = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn record(&mut self, path: PathBuf) -> io::Result<()> {
         self.record_with_source(path, HistorySource::Unknown)
     }
@@ -163,22 +187,27 @@ impl ScreenshotHistory {
     /// Deletes the files represented by this immutable snapshot without changing a live index.
     /// A caller can perform this work off the UI thread, then merge only the completed deletions.
     pub(crate) fn delete_snapshot_files(&self) -> HistoryFileDeletion {
-        let mut deleted = Vec::with_capacity(self.entries.len());
+        self.delete_managed_paths(self.entries.iter().map(|entry| entry.path.clone()))
+    }
+
+    pub(crate) fn delete_managed_paths(
+        &self,
+        paths: impl IntoIterator<Item = PathBuf>,
+    ) -> HistoryFileDeletion {
+        let mut deleted = Vec::new();
         let mut failures = Vec::new();
-        for entry in &self.entries {
-            if !entry.path.starts_with(&self.root) {
+        for path in paths {
+            if !path.starts_with(&self.root) {
                 failures.push((
-                    entry.path.clone(),
+                    path,
                     "history only manages files inside its own directory".to_owned(),
                 ));
                 continue;
             }
-            match fs::remove_file(&entry.path) {
-                Ok(()) => deleted.push(entry.path.clone()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    deleted.push(entry.path.clone())
-                }
-                Err(error) => failures.push((entry.path.clone(), error.to_string())),
+            match fs::remove_file(&path) {
+                Ok(()) => deleted.push(path),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => deleted.push(path),
+                Err(error) => failures.push((path, error.to_string())),
             }
         }
         HistoryFileDeletion { deleted, failures }
@@ -404,6 +433,32 @@ mod tests {
         assert!(!first.exists());
         assert!(second.exists());
         assert_eq!(history.entries().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_retention_deletes_oldest_entries_before_applying_the_limit() {
+        let root = directory("staged-retention");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.png");
+        let second = root.join("two.png");
+        fs::write(&first, b"one").unwrap();
+        fs::write(&second, b"two").unwrap();
+        let mut history = ScreenshotHistory::open_with_limit(&root, 2).unwrap();
+        history.record(first.clone()).unwrap();
+        history.record(second.clone()).unwrap();
+
+        assert!(history.set_limit_after_prune(1).is_err());
+        let candidates = history.retention_candidates(1);
+        assert_eq!(candidates, vec![first.canonicalize().unwrap()]);
+        let deletion = history.delete_managed_paths(candidates);
+        assert!(deletion.failures.is_empty());
+        history.forget_deleted(&deletion.deleted).unwrap();
+        history.set_limit_after_prune(1).unwrap();
+
+        assert_eq!(history.limit(), 1);
+        assert_eq!(history.entries().len(), 1);
+        assert_eq!(history.entries()[0].path, second.canonicalize().unwrap());
         fs::remove_dir_all(root).unwrap();
     }
 

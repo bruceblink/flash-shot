@@ -121,24 +121,92 @@ impl FlashShotApp {
     }
 
     pub(super) fn cycle_history_limit(&mut self, cx: &mut Context<Self>) {
-        let previous_limit = self.settings.history_limit;
-        let next_limit = next_history_limit(previous_limit);
-        if let Err(error) = self.history.set_limit(usize::from(next_limit)) {
-            self.status = format!("Could not update screenshot history retention: {error}");
+        if self.history_retention_target.is_some()
+            || self.history_clear_in_flight
+            || self.history_clear_confirmation
+        {
+            return;
+        }
+        let next_limit = next_history_limit(self.settings.history_limit);
+        self.history_retention_target = Some(next_limit);
+        self.status = format!("Updating screenshot history retention to {next_limit}...");
+        cx.notify();
+        self.continue_history_retention(cx);
+    }
+
+    fn continue_history_retention(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self.history_retention_target else {
+            return;
+        };
+        let candidates = self.history.retention_candidates(usize::from(target));
+        if candidates.is_empty() {
+            self.finish_history_retention(cx);
+            return;
+        }
+        let snapshot = self.history.clone();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let deletion = cx
+                    .background_executor()
+                    .spawn(async move { snapshot.delete_managed_paths(candidates) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_history_retention_deletion(deletion, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_history_retention_deletion(
+        &mut self,
+        deletion: crate::history::HistoryFileDeletion,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history_retention_target.is_none() {
+            return;
+        }
+        for (path, error) in &deletion.failures {
+            log::warn!(target: "flash_shot::history", "history_retention_delete_failed path={} error={error}", path.display());
+        }
+        if let Err(error) = self.history.forget_deleted(&deletion.deleted) {
+            self.history_retention_target = None;
+            self.status = format!("Could not update screenshot history index: {error}");
             cx.notify();
             return;
         }
         self.synchronize_history_preview_cache();
-        self.settings.history_limit = next_limit;
-        if let Err(error) = self.settings.save(&self.settings_path) {
+        if !deletion.failures.is_empty() {
+            let failure_count = deletion.failures.len();
+            self.history_retention_target = None;
             self.status = format!(
-                "History retention is {} captures for this session but could not be saved: {error}",
-                next_limit
+                "Could not remove {failure_count} capture(s); history retention was unchanged"
             );
             cx.notify();
             return;
         }
-        self.status = format!("Screenshot history retains the latest {next_limit} captures");
+        self.continue_history_retention(cx);
+    }
+
+    fn finish_history_retention(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self.history_retention_target.take() else {
+            return;
+        };
+        if let Err(error) = self.history.set_limit_after_prune(usize::from(target)) {
+            self.status = format!("Could not update screenshot history retention: {error}");
+            cx.notify();
+            return;
+        }
+        self.settings.history_limit = target;
+        self.status = match self.settings.save(&self.settings_path) {
+            Ok(()) => format!("Screenshot history retains the latest {target} captures"),
+            Err(error) => format!(
+                "History retention is {target} captures for this session but could not be saved: {error}"
+            ),
+        };
         cx.notify();
     }
 

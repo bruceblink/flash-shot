@@ -115,6 +115,9 @@ impl gpui::Render for FlashShotApp {
                                         filter: self.history_filter,
                                         clear_confirmation: self.history_clear_confirmation,
                                         clear_in_flight: self.history_clear_in_flight,
+                                        retention_in_flight: self
+                                            .history_retention_target
+                                            .is_some(),
                                     },
                                     colors,
                                     is_idle,
@@ -484,9 +487,15 @@ fn file_settings(
             ))
             .child(settings_button(
                 "settings-history-retention",
-                &format!("Keep {}", app_state.settings.history_limit),
+                &app_state.history_retention_target.map_or_else(
+                    || format!("Keep {}", app_state.settings.history_limit),
+                    |limit| format!("Updating to {limit}..."),
+                ),
                 colors,
-                is_idle,
+                is_idle
+                    && !app_state.history_clear_in_flight
+                    && !app_state.history_clear_confirmation
+                    && app_state.history_retention_target.is_none(),
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_history_limit(cx)),
             )),
     )
@@ -616,6 +625,7 @@ struct HistoryViewState {
     filter: HistoryFilter,
     clear_confirmation: bool,
     clear_in_flight: bool,
+    retention_in_flight: bool,
 }
 
 fn history_settings(
@@ -632,6 +642,7 @@ fn history_settings(
         filter,
         clear_confirmation,
         clear_in_flight,
+        retention_in_flight,
     } = state;
     let now_ms = current_timestamp_ms();
     let is_empty = entries.is_empty();
@@ -769,7 +780,7 @@ fn history_settings(
                     "Clear history"
                 },
                 colors,
-                is_idle && total_entries > 0 && !clear_in_flight,
+                is_idle && total_entries > 0 && !clear_in_flight && !retention_in_flight,
                 move |_, _, cx| clear_app.update(cx, |this, cx| this.request_history_clear(cx)),
             ))
         })
@@ -791,7 +802,7 @@ fn history_settings(
                         "settings-confirm-clear-history",
                         "Delete captures",
                         colors,
-                        is_idle,
+                        is_idle && !retention_in_flight,
                         move |_, _, cx| confirm_app.update(cx, |this, cx| this.clear_history(cx)),
                     ))
                     .child(settings_button(
