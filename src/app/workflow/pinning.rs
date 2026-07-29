@@ -138,13 +138,12 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if self.clipboard_pin_generation != Some(generation) {
-            return;
-        }
-        self.clipboard_pin_generation = None;
-        if !is_current_operation(self.operation_generation, generation)
-            || self.session.state() != CaptureSessionState::Idle
-        {
+        if !claim_idle_completion(
+            &mut self.clipboard_pin_generation,
+            self.operation_generation,
+            generation,
+            self.session.state(),
+        ) {
             return;
         }
         match result {

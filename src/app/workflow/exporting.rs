@@ -414,15 +414,14 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !full_screen_copy_is_current(
-            self.full_screen_copy_generation,
+        if !claim_idle_completion(
+            &mut self.full_screen_copy_generation,
             self.operation_generation,
             generation,
             self.session.state(),
         ) {
             return;
         }
-        self.full_screen_copy_generation = None;
         match result {
             Ok(()) => {
                 self.status = "Full screen copied to clipboard".to_owned();
@@ -443,15 +442,14 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !full_screen_pin_is_current(
-            self.full_screen_pin_generation,
+        if !claim_idle_completion(
+            &mut self.full_screen_pin_generation,
             self.operation_generation,
             generation,
             self.session.state(),
         ) {
             return;
         }
-        self.full_screen_pin_generation = None;
         match result {
             Ok(frame) => self.open_pinned_frame(
                 frame,
@@ -475,13 +473,14 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if self.full_screen_save_generation != Some(generation)
-            || !is_current_operation(self.operation_generation, generation)
-            || self.session.state() != CaptureSessionState::Idle
-        {
+        if !claim_idle_completion(
+            &mut self.full_screen_save_generation,
+            self.operation_generation,
+            generation,
+            self.session.state(),
+        ) {
             return;
         }
-        self.full_screen_save_generation = None;
         match result {
             Ok(path) => {
                 let history_status = self.history.record_with_source(path.clone(), crate::history::HistorySource::FullScreen).err().map(|error| {

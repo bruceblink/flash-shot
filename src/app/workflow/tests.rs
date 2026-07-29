@@ -1,15 +1,14 @@
 use super::{
     ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
-    annotation_position, annotation_sidecar_path, compose_captured_displays,
+    annotation_position, annotation_sidecar_path, claim_idle_completion, compose_captured_displays,
     copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha, fill_color,
-    format_hsl, format_recording_progress, full_screen_copy_is_current, full_screen_pin_is_current,
-    history_pin_is_current, hovered_color, intersect_rect, is_current_operation, keyboard_command,
-    load_annotation_document, next_annotation_counters, next_annotation_selection,
-    next_quick_save_path, next_quick_save_path_with_prefix, next_recording_audio_selection,
-    next_recording_display_selection, ocr_language_label, ocr_support_status,
-    open_annotation_project, open_image_project, pinned_size, png_path, project_image_path,
-    quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
+    format_hsl, format_recording_progress, hovered_color, intersect_rect, is_current_operation,
+    keyboard_command, load_annotation_document, next_annotation_counters,
+    next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
+    next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
+    ocr_support_status, open_annotation_project, open_image_project, pinned_size, png_path,
+    project_image_path, quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
     recording_audio_selection_label, recording_display_selection_label,
     recording_start_failure_status, recording_support_status, recording_target_label,
     resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
@@ -587,53 +586,42 @@ fn delayed_capture_status_reports_each_remaining_second() {
 }
 
 #[test]
-fn full_screen_copy_completion_does_not_override_a_new_capture_session() {
-    assert!(full_screen_copy_is_current(
-        Some(12),
+fn stale_idle_completion_releases_its_slot_without_overriding_new_state() {
+    let mut active = Some(12);
+    assert!(claim_idle_completion(
+        &mut active,
         12,
         12,
         CaptureSessionState::Idle
     ));
-    assert!(!full_screen_copy_is_current(
-        Some(12),
-        13,
-        12,
-        CaptureSessionState::Idle
-    ));
-    assert!(!full_screen_copy_is_current(
-        Some(13),
-        13,
-        12,
-        CaptureSessionState::Idle
-    ));
-    assert!(!full_screen_copy_is_current(
-        Some(12),
-        12,
-        12,
-        CaptureSessionState::Capturing
-    ));
-}
+    assert_eq!(active, None);
 
-#[test]
-fn full_screen_pin_completion_does_not_open_after_a_new_operation() {
-    assert!(full_screen_pin_is_current(
-        Some(12),
-        12,
-        12,
-        CaptureSessionState::Idle
-    ));
-    assert!(!full_screen_pin_is_current(
-        Some(12),
+    let mut superseded = Some(12);
+    assert!(!claim_idle_completion(
+        &mut superseded,
         13,
         12,
         CaptureSessionState::Idle
     ));
-    assert!(!full_screen_pin_is_current(
-        Some(12),
+    assert_eq!(superseded, None);
+
+    let mut newer_task = Some(13);
+    assert!(!claim_idle_completion(
+        &mut newer_task,
+        13,
+        12,
+        CaptureSessionState::Idle
+    ));
+    assert_eq!(newer_task, Some(13));
+
+    let mut active_capture = Some(12);
+    assert!(!claim_idle_completion(
+        &mut active_capture,
         12,
         12,
         CaptureSessionState::Capturing
     ));
+    assert_eq!(active_capture, None);
 }
 
 #[test]
@@ -1488,26 +1476,4 @@ fn ocr_support_probe_names_the_local_installation_recovery_step() {
     let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "tesseract.exe");
 
     assert!(ocr_support_status(Err(&missing)).contains("FLASH_SHOT_TESSERACT"));
-}
-
-#[test]
-fn only_the_latest_idle_history_pin_request_can_open_a_window() {
-    assert!(history_pin_is_current(
-        Some(7),
-        7,
-        7,
-        CaptureSessionState::Idle
-    ));
-    assert!(!history_pin_is_current(
-        Some(7),
-        8,
-        7,
-        CaptureSessionState::Idle
-    ));
-    assert!(!history_pin_is_current(
-        Some(7),
-        7,
-        7,
-        CaptureSessionState::Selecting
-    ));
 }

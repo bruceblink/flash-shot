@@ -217,15 +217,14 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !history_pin_is_current(
-            self.history_pin_generation,
+        if !claim_idle_completion(
+            &mut self.history_pin_generation,
             self.operation_generation,
             generation,
             self.session.state(),
         ) {
             return;
         }
-        self.history_pin_generation = None;
         match result {
             Ok(frame) => self.open_pinned_frame(
                 frame,

@@ -312,38 +312,19 @@ fn is_current_operation(current: u64, completed: u64) -> bool {
     current == completed
 }
 
-/// Confirms a history decode belongs to the latest pin request before opening a new window.
-fn history_pin_is_current(
-    active_generation: Option<u64>,
+/// Releases the completed task's slot and accepts its result only while its workflow is current.
+/// A superseded completion must still clear its own slot or future capture requests stay blocked.
+fn claim_idle_completion(
+    active_generation: &mut Option<u64>,
     current_generation: u64,
     completion_generation: u64,
     session_state: CaptureSessionState,
 ) -> bool {
-    active_generation == Some(completion_generation)
-        && is_current_operation(current_generation, completion_generation)
-        && session_state == CaptureSessionState::Idle
-}
-
-fn full_screen_copy_is_current(
-    active_generation: Option<u64>,
-    current_generation: u64,
-    completion_generation: u64,
-    session_state: CaptureSessionState,
-) -> bool {
-    active_generation == Some(completion_generation)
-        && is_current_operation(current_generation, completion_generation)
-        && session_state == CaptureSessionState::Idle
-}
-
-/// Prevents a late full-screen pin capture from opening after another workflow takes over.
-fn full_screen_pin_is_current(
-    active_generation: Option<u64>,
-    current_generation: u64,
-    completion_generation: u64,
-    session_state: CaptureSessionState,
-) -> bool {
-    active_generation == Some(completion_generation)
-        && is_current_operation(current_generation, completion_generation)
+    if *active_generation != Some(completion_generation) {
+        return false;
+    }
+    *active_generation = None;
+    is_current_operation(current_generation, completion_generation)
         && session_state == CaptureSessionState::Idle
 }
 
