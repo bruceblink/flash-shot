@@ -46,6 +46,7 @@ impl gpui::Render for FlashShotApp {
                 div()
                     .id("settings-workspace")
                     .flex_1()
+                    .min_h(px(0.0))
                     .flex()
                     .child(settings_navigation(
                         self.settings_section,
@@ -56,6 +57,7 @@ impl gpui::Render for FlashShotApp {
                         div()
                             .id("settings-content")
                             .flex_1()
+                            .min_h(px(0.0))
                             .overflow_y_scroll()
                             .p_5()
                             .flex()
@@ -110,13 +112,20 @@ impl gpui::Render for FlashShotApp {
             .child(
                 div()
                     .h(px(42.0))
+                    .flex_none()
                     .px_5()
                     .flex()
                     .items_center()
+                    .gap_2()
                     .border_t_1()
                     .border_color(colors.border)
                     .text_sm()
                     .text_color(colors.muted)
+                    .child(div().size(px(7.0)).rounded_full().bg(if is_idle {
+                        colors.success
+                    } else {
+                        colors.accent
+                    }))
                     .child(self.status.clone()),
             )
     }
@@ -130,6 +139,7 @@ fn settings_header(
 ) -> gpui::Div {
     div()
         .h(px(56.0))
+        .flex_none()
         .px_5()
         .flex()
         .items_center()
@@ -142,44 +152,37 @@ fn settings_header(
                 .flex_col()
                 .gap_1()
                 .child(div().text_lg().child("Flash Shot"))
-                .child(div().text_sm().text_color(colors.muted).child("Settings")),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
                 .child(
                     div()
-                        .id("settings-capture")
-                        .px_3()
-                        .py_1()
-                        .bg(if is_idle { colors.accent } else { colors.panel })
-                        .text_sm()
-                        .text_color(if is_idle {
-                            colors.background
-                        } else {
-                            colors.muted
-                        })
-                        .when(is_idle, |button| {
-                            button
-                                .cursor_pointer()
-                                .hover(|style| style.bg(rgba(0x81D4FAFF)))
-                                .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx)))
-                        })
-                        .child(capture_command_label(delayed_capture_remaining_seconds)),
-                )
-                .child(
-                    div()
-                        .id("settings-hide")
-                        .px_3()
-                        .py_1()
                         .text_sm()
                         .text_color(colors.muted)
-                        .cursor_pointer()
-                        .on_click(cx.listener(|this, _, _, _| this.hide_settings_window()))
-                        .child("Close"),
+                        .child("Capture center"),
                 ),
+        )
+        .child(
+            div().flex().items_center().gap_2().child(
+                div()
+                    .id("settings-capture")
+                    .h(px(32.0))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .rounded_sm()
+                    .bg(if is_idle { colors.accent } else { colors.panel })
+                    .text_sm()
+                    .text_color(if is_idle {
+                        colors.background
+                    } else {
+                        colors.muted
+                    })
+                    .when(is_idle, |button| {
+                        button
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgba(0x81D4FAFF)))
+                            .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx)))
+                    })
+                    .child(capture_command_label(delayed_capture_remaining_seconds)),
+            ),
         )
 }
 
@@ -207,64 +210,80 @@ fn capture_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    settings_section("Capture behavior", colors)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().text_sm().child("Quick actions"))
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(settings_button(
-                            "settings-capture-full-screen",
-                            "Select full screen",
-                            colors,
-                            is_idle,
-                            {
-                                let app = app.clone();
-                                move |_, _, cx| {
-                                    app.update(cx, |this, cx| this.start_full_screen_capture(cx))
-                                }
-                            },
-                        ))
-                        .child(settings_button(
-                            "settings-copy-full-screen",
-                            "Copy full screen",
-                            colors,
-                            is_idle,
-                            {
-                                let app = app.clone();
-                                move |_, _, cx| app.update(cx, |this, cx| this.copy_full_screen(cx))
-                            },
-                        ))
-                        .child(settings_button(
-                            "settings-save-full-screen",
-                            "Save full screen",
-                            colors,
-                            is_idle,
-                            {
-                                let app = app.clone();
-                                move |_, _, cx| {
-                                    app.update(cx, |this, cx| this.quick_save_full_screen(cx))
-                                }
-                            },
-                        ))
-                        .child(settings_button(
-                            "settings-pin-full-screen",
-                            "Pin full screen",
-                            colors,
-                            is_idle,
-                            {
-                                let app = app.clone();
-                                move |_, _, cx| app.update(cx, |this, cx| this.pin_full_screen(cx))
-                            },
-                        )),
-                ),
-        )
+    let quick_actions = settings_section("Screenshot", colors).child(
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .child(quick_action_button(
+                "settings-capture-region",
+                "Region capture",
+                colors,
+                is_idle,
+                true,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.start_capture(cx))
+                },
+            ))
+            .child(quick_action_button(
+                "settings-capture-full-screen",
+                "Full screen",
+                colors,
+                is_idle,
+                false,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.start_full_screen_capture(cx))
+                },
+            ))
+            .child(quick_action_button(
+                "settings-copy-full-screen",
+                "Copy full screen",
+                colors,
+                is_idle,
+                false,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.copy_full_screen(cx))
+                },
+            ))
+            .child(quick_action_button(
+                "settings-save-full-screen",
+                "Save full screen",
+                colors,
+                is_idle,
+                false,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.quick_save_full_screen(cx))
+                },
+            ))
+            .child(quick_action_button(
+                "settings-pin-full-screen",
+                "Pin full screen",
+                colors,
+                is_idle,
+                false,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.pin_full_screen(cx))
+                },
+            ))
+            .child(quick_action_button(
+                "settings-pin-clipboard",
+                "Pin clipboard",
+                colors,
+                is_idle,
+                false,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.pin_clipboard_image(cx))
+                },
+            )),
+    );
+
+    let preferences = settings_section("Capture preferences", colors)
         .child(
             div()
                 .flex()
@@ -387,7 +406,14 @@ fn capture_settings(
             colors,
             true,
             move |_, _, cx| app.update(cx, |this, cx| this.check_translation_support(cx)),
-        )))
+        )));
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_5()
+        .child(quick_actions)
+        .child(preferences)
 }
 
 fn file_settings(
@@ -429,16 +455,6 @@ fn file_settings(
                 {
                     let app = app.clone();
                     move |_, _, cx| app.update(cx, |this, cx| this.open_history_directory(cx))
-                },
-            ))
-            .child(settings_button(
-                "settings-pin-clipboard",
-                "Pin clipboard",
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.pin_clipboard_image(cx))
                 },
             ))
             .child(settings_button(
@@ -846,7 +862,7 @@ fn settings_navigation(
         .children([
             settings_navigation_item(
                 "settings-nav-capture",
-                "Capture",
+                "Actions",
                 SettingsSection::Capture,
                 selected,
                 colors,
@@ -914,13 +930,13 @@ fn settings_navigation_item(
         .child(label)
 }
 
-/// Gives every settings section a stable title and a short task-oriented summary.
+/// Gives every section a stable task-oriented title.
 fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColors) -> gpui::Div {
-    let (title, summary) = match section {
-        SettingsSection::Capture => ("Capture", "Shortcut, cursor, and export behavior"),
-        SettingsSection::Files => ("Files", "Open images and manage saved captures"),
-        SettingsSection::Recording => ("Recording", "Choose a source and control recording"),
-        SettingsSection::System => ("System", "Startup and update preferences"),
+    let title = match section {
+        SettingsSection::Capture => "Quick actions",
+        SettingsSection::Files => "Files",
+        SettingsSection::Recording => "Recording",
+        SettingsSection::System => "System",
     };
     div()
         .pb_3()
@@ -928,9 +944,7 @@ fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColo
         .border_color(colors.border)
         .flex()
         .flex_col()
-        .gap_1()
         .child(div().text_lg().child(title))
-        .child(div().text_sm().text_color(colors.muted).child(summary))
 }
 
 fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
@@ -974,8 +988,12 @@ fn settings_button(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .h(px(32.0))
         .px_3()
-        .py_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
         .border_1()
         .border_color(colors.border)
         .bg(colors.background)
@@ -985,6 +1003,58 @@ fn settings_button(
             button
                 .cursor_pointer()
                 .hover(|style| style.bg(colors.panel))
+                .on_click(on_click)
+        })
+        .child(label.to_owned())
+}
+
+fn quick_action_button(
+    id: impl Into<gpui::ElementId>,
+    label: &str,
+    colors: crate::theme::ThemeColors,
+    enabled: bool,
+    primary: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .h(px(42.0))
+        .when(primary, |button| button.w_full())
+        .when(!primary, |button| button.flex_1().min_w(px(140.0)))
+        .px_3()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .border_1()
+        .border_color(if primary {
+            colors.accent
+        } else {
+            colors.border
+        })
+        .bg(if primary && enabled {
+            colors.accent
+        } else {
+            colors.panel
+        })
+        .text_sm()
+        .text_color(if primary && enabled {
+            colors.background
+        } else if enabled {
+            colors.text
+        } else {
+            colors.muted
+        })
+        .when(enabled, |button| {
+            button
+                .cursor_pointer()
+                .hover(move |style| {
+                    style.bg(if primary {
+                        gpui::Hsla::from(rgba(0x81D4FAFF))
+                    } else {
+                        colors.background
+                    })
+                })
                 .on_click(on_click)
         })
         .child(label.to_owned())

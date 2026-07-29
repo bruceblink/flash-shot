@@ -66,7 +66,7 @@ pub fn run(
             // when requested, keeping app launch out of the capture workflow.
             show: false,
             titlebar: Some(TitlebarOptions {
-                title: Some("Flash Shot Settings".into()),
+                title: Some("Flash Shot".into()),
                 ..Default::default()
             }),
             ..Default::default()
