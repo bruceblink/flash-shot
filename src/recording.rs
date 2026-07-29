@@ -9,7 +9,10 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU8, Ordering},
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -314,34 +317,18 @@ pub enum RecordingEvent {
 
 /// Handle for an isolated recording worker. Dropping it requests a normal FFmpeg stop.
 pub struct RecordingControl {
-    commands: async_channel::Sender<RecordingCommand>,
+    commands: Arc<RecordingCommands>,
     events: async_channel::Receiver<RecordingEvent>,
     target: RecordingTarget,
 }
 
 impl RecordingControl {
     pub fn request_stop(&self) -> io::Result<()> {
-        self.send_command(RecordingCommand::Stop)
+        self.commands.request_stop()
     }
 
     pub fn set_paused(&self, paused: bool) -> io::Result<()> {
-        self.send_command(if paused {
-            RecordingCommand::Pause
-        } else {
-            RecordingCommand::Resume
-        })
-    }
-
-    fn send_command(&self, command: RecordingCommand) -> io::Result<()> {
-        self.commands
-            .try_send(command)
-            .or_else(|error| match error {
-                async_channel::TrySendError::Full(_) => Ok(()),
-                async_channel::TrySendError::Closed(_) => Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "recording worker is no longer running",
-                )),
-            })
+        self.commands.set_paused(paused)
     }
 
     pub fn events(&self) -> async_channel::Receiver<RecordingEvent> {
@@ -356,7 +343,74 @@ impl RecordingControl {
 
 impl Drop for RecordingControl {
     fn drop(&mut self) {
-        let _ = self.commands.try_send(RecordingCommand::Stop);
+        let _ = self.commands.request_stop();
+    }
+}
+
+const PAUSE_UNCHANGED: u8 = 0;
+const PAUSE_RESUME: u8 = 1;
+const PAUSE_PAUSE: u8 = 2;
+
+/// Coalesces UI control changes into bounded shared state while keeping stop permanently visible.
+struct RecordingCommands {
+    running: AtomicBool,
+    stop_requested: AtomicBool,
+    pause_request: AtomicU8,
+}
+
+impl RecordingCommands {
+    fn new() -> Self {
+        Self {
+            running: AtomicBool::new(true),
+            stop_requested: AtomicBool::new(false),
+            pause_request: AtomicU8::new(PAUSE_UNCHANGED),
+        }
+    }
+
+    fn request_stop(&self) -> io::Result<()> {
+        self.require_running()?;
+        self.stop_requested.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    fn set_paused(&self, paused: bool) -> io::Result<()> {
+        self.require_running()?;
+        self.pause_request.store(
+            if paused { PAUSE_PAUSE } else { PAUSE_RESUME },
+            Ordering::Release,
+        );
+        Ok(())
+    }
+
+    fn stop_requested(&self) -> bool {
+        self.stop_requested.load(Ordering::Acquire)
+    }
+
+    fn take_pause_request(&self) -> Option<bool> {
+        match self.pause_request.swap(PAUSE_UNCHANGED, Ordering::AcqRel) {
+            PAUSE_PAUSE => Some(true),
+            PAUSE_RESUME => Some(false),
+            _ => None,
+        }
+    }
+
+    fn require_running(&self) -> io::Result<()> {
+        if self.running.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "recording worker is no longer running",
+            ))
+        }
+    }
+}
+
+struct RecordingWorkerLifecycle(Arc<RecordingCommands>);
+
+impl Drop for RecordingWorkerLifecycle {
+    fn drop(&mut self) {
+        self.0.running.store(false, Ordering::Release);
     }
 }
 
@@ -367,13 +421,12 @@ pub fn start_recording(
 ) -> io::Result<RecordingControl> {
     let command = build_recording_command(&capabilities, &request)?;
     let target = request.target.clone();
-    // Commands must be lossless: a Stop issued immediately after Pause still has to reach the
-    // worker even when it has not consumed the preceding command yet.
-    let (command_tx, command_rx) = async_channel::unbounded();
+    let commands = Arc::new(RecordingCommands::new());
     let (event_tx, event_rx) = async_channel::bounded(32);
+    let worker_commands = Arc::clone(&commands);
     std::thread::Builder::new()
         .name("flash-shot-recording".to_owned())
-        .spawn(move || recording_worker(command, request.output, command_rx, event_tx))
+        .spawn(move || recording_worker(command, request.output, worker_commands, event_tx))
         .map_err(|error| {
             io::Error::new(
                 error.kind(),
@@ -381,7 +434,7 @@ pub fn start_recording(
             )
         })?;
     Ok(RecordingControl {
-        commands: command_tx,
+        commands,
         events: event_rx,
         target,
     })
@@ -390,9 +443,10 @@ pub fn start_recording(
 fn recording_worker(
     command: FfmpegCommand,
     output: PathBuf,
-    commands: async_channel::Receiver<RecordingCommand>,
+    commands: Arc<RecordingCommands>,
     events: async_channel::Sender<RecordingEvent>,
 ) {
+    let _lifecycle = RecordingWorkerLifecycle(Arc::clone(&commands));
     let mut process = match RecordingProcess::start(command) {
         Ok(process) => process,
         Err(error) => {
@@ -408,12 +462,7 @@ fn recording_worker(
     let mut last_progress = RecordingProgress::default();
     let mut paused = false;
     loop {
-        let command = match commands.try_recv() {
-            Ok(command) => Some(command),
-            Err(async_channel::TryRecvError::Empty) => None,
-            Err(async_channel::TryRecvError::Closed) => Some(RecordingCommand::Stop),
-        };
-        if matches!(command, Some(RecordingCommand::Stop)) {
+        if commands.stop_requested() {
             match process.stop_gracefully(GRACEFUL_STOP_TIMEOUT) {
                 Ok(exit) if exit.success => {
                     let _ = events.try_send(RecordingEvent::Finished { output });
@@ -429,25 +478,17 @@ fn recording_worker(
             }
             return;
         }
-        if matches!(command, Some(RecordingCommand::Pause)) && !paused {
-            match process.set_paused(true) {
+        if let Some(requested_pause) = commands.take_pause_request()
+            && requested_pause != paused
+        {
+            match process.set_paused(requested_pause) {
                 Ok(()) => {
-                    paused = true;
-                    let _ = events.try_send(RecordingEvent::Paused);
-                }
-                Err(error) => {
-                    let _ = events.try_send(RecordingEvent::Failed {
-                        message: error.to_string(),
+                    paused = requested_pause;
+                    let _ = events.try_send(if paused {
+                        RecordingEvent::Paused
+                    } else {
+                        RecordingEvent::Resumed
                     });
-                    return;
-                }
-            }
-        }
-        if matches!(command, Some(RecordingCommand::Resume)) && paused {
-            match process.set_paused(false) {
-                Ok(()) => {
-                    paused = false;
-                    let _ = events.try_send(RecordingEvent::Resumed);
                 }
                 Err(error) => {
                     let _ = events.try_send(RecordingEvent::Failed {
@@ -486,13 +527,6 @@ fn recording_worker(
         }
         thread::sleep(Duration::from_millis(50));
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RecordingCommand {
-    Stop,
-    Pause,
-    Resume,
 }
 
 /// The latest machine-readable progress information emitted by FFmpeg's `-progress` pipe.
@@ -1164,11 +1198,11 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 mod tests {
     use super::{
         AudioSource, DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, FfmpegCommand,
-        GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingAudioConfig, RecordingProcess,
-        RecordingProgress, RecordingRequest, RecordingSession, RecordingState, RecordingTarget,
-        VERSION_ARGUMENTS, audio_source_from_config, build_recording_command, diagnostic_suffix,
-        executable_from, first_diagnostic_line, graceful_stop_input, parse_dshow_audio_devices,
-        parse_input_formats, parse_version, read_bounded_diagnostics,
+        GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingAudioConfig, RecordingCommands,
+        RecordingProcess, RecordingProgress, RecordingRequest, RecordingSession, RecordingState,
+        RecordingTarget, VERSION_ARGUMENTS, audio_source_from_config, build_recording_command,
+        diagnostic_suffix, executable_from, first_diagnostic_line, graceful_stop_input,
+        parse_dshow_audio_devices, parse_input_formats, parse_version, read_bounded_diagnostics,
     };
     use crate::domain::geometry::PhysicalRect;
     use std::{ffi::OsString, io::Cursor, path::PathBuf, time::Duration};
@@ -1196,6 +1230,36 @@ mod tests {
         assert_eq!(VERSION_ARGUMENTS, ["-hide_banner", "-version"]);
         assert_eq!(FORMAT_ARGUMENTS, ["-hide_banner", "-formats"]);
         assert_eq!(DEVICE_ARGUMENTS, ["-hide_banner", "-devices"]);
+    }
+
+    #[test]
+    fn recording_controls_coalesce_pause_changes_without_losing_stop() {
+        let commands = RecordingCommands::new();
+
+        commands.set_paused(true).unwrap();
+        commands.set_paused(false).unwrap();
+        commands.request_stop().unwrap();
+
+        assert_eq!(commands.take_pause_request(), Some(false));
+        assert_eq!(commands.take_pause_request(), None);
+        assert!(commands.stop_requested());
+    }
+
+    #[test]
+    fn recording_controls_reject_changes_after_the_worker_finishes() {
+        let commands = RecordingCommands::new();
+        commands
+            .running
+            .store(false, std::sync::atomic::Ordering::Release);
+
+        assert_eq!(
+            commands.request_stop().unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        assert_eq!(
+            commands.set_paused(true).unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
     }
 
     #[test]
