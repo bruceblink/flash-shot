@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, KeyDownEvent, Keystroke, Render, Subscription, Window,
-    div, img, prelude::*, px,
+    Context, Entity, FocusHandle, Focusable, KeyDownEvent, Keystroke, Render, Window, div, img,
+    prelude::*, px,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -52,12 +52,12 @@ pub(super) struct PinnedImage {
     image: Arc<gpui::RenderImage>,
     frame: CaptureFrame,
     app: Entity<FlashShotApp>,
+    colors: crate::theme::ThemeColors,
     focus_handle: FocusHandle,
     topmost_requested: bool,
     opacity: u8,
     mouse_through: bool,
     status: &'static str,
-    _app_observation: Subscription,
 }
 
 impl PinnedImage {
@@ -65,19 +65,19 @@ impl PinnedImage {
         image: Arc<gpui::RenderImage>,
         frame: CaptureFrame,
         app: Entity<FlashShotApp>,
+        colors: crate::theme::ThemeColors,
         cx: &mut Context<Self>,
     ) -> Self {
-        let observation = cx.observe(&app, |_, _, cx| cx.notify());
         Self {
             image,
             frame,
             app,
+            colors,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
             opacity: 255,
             mouse_through: false,
             status: "Pinned capture",
-            _app_observation: observation,
         }
     }
 
@@ -251,7 +251,7 @@ fn native_window_handle(window: &Window) -> Option<isize> {
 
 impl Render for PinnedImage {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let colors = self.app.read(cx).colors;
+        let colors = self.colors;
         if !self.topmost_requested
             && let Ok(handle) = window.window_handle()
             && let RawWindowHandle::Win32(handle) = handle.as_raw()

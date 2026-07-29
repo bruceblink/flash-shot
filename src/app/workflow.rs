@@ -3137,6 +3137,7 @@ impl FlashShotApp {
         let window_size = pinned_size(pinned_frame.width as f32, pinned_frame.height as f32);
         let window_bounds = WindowBounds::centered(window_size, cx);
         let pinned_app = cx.entity();
+        let pinned_colors = self.colors;
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(window_bounds),
@@ -3161,8 +3162,9 @@ impl FlashShotApp {
                 ..Default::default()
             },
             move |window, cx| {
-                let pinned =
-                    cx.new(|cx| PinnedImage::new(pinned.image, pinned_frame, pinned_app, cx));
+                let pinned = cx.new(|cx| {
+                    PinnedImage::new(pinned.image, pinned_frame, pinned_app, pinned_colors, cx)
+                });
                 pinned.read(cx).focus_handle(cx).focus(window, cx);
                 pinned
             },
