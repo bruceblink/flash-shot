@@ -194,10 +194,10 @@ impl FlashShotApp {
                 show: true,
                 kind: WindowKind::PopUp,
                 is_movable: true,
-                is_resizable: false,
+                is_resizable: true,
                 is_minimizable: false,
                 window_background: WindowBackgroundAppearance::Opaque,
-                window_min_size: Some(size(px(180.0), px(140.0))),
+                window_min_size: None,
                 ..Default::default()
             },
             move |window, cx| {

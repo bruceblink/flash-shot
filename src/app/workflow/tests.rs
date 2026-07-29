@@ -1,4 +1,3 @@
-
 use super::{
     ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
@@ -564,12 +563,12 @@ fn opacity_preserves_rgb_and_scales_the_shape_fill() {
 #[test]
 fn pinned_window_size_matches_the_image_without_downscaling() {
     let small = pinned_size(100.0, 80.0);
-    assert_eq!(f32::from(small.width), 180.0);
-    assert_eq!(f32::from(small.height), 140.0);
+    assert_eq!(f32::from(small.width), 100.0);
+    assert_eq!(f32::from(small.height), 80.0);
 
     let large = pinned_size(1_280.0, 720.0);
     assert_eq!(f32::from(large.width), 1_280.0);
-    assert_eq!(f32::from(large.height), 746.0);
+    assert_eq!(f32::from(large.height), 720.0);
 }
 
 #[test]

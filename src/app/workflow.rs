@@ -1017,13 +1017,9 @@ fn fill_color(stroke_rgba: u32) -> u32 {
 }
 
 fn pinned_size(image_width: f32, image_height: f32) -> gpui::Size<Pixels> {
-    const HEADER_HEIGHT: f32 = 26.0;
     let width = image_width.max(1.0);
     let height = image_height.max(1.0);
-    size(
-        px(width.max(180.0)),
-        px((height + HEADER_HEIGHT).max(140.0)),
-    )
+    size(px(width), px(height))
 }
 
 fn with_alpha(color: u32, alpha: u8) -> u32 {
