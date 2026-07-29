@@ -36,6 +36,7 @@ pub struct ThemeColors {
     pub muted: Hsla,
     pub accent: Hsla,
     pub success: Hsla,
+    pub danger: Hsla,
 }
 
 impl Default for ThemeColors {
@@ -55,6 +56,7 @@ impl ThemeColors {
                 muted: Hsla::from(rgb(0xaeb6c2)),
                 accent: Hsla::from(rgb(0x4fc3f7)),
                 success: Hsla::from(rgb(0x58d68d)),
+                danger: Hsla::from(rgb(0xef6461)),
             },
             ThemeMode::Light => Self {
                 background: Hsla::from(rgb(0xf7f8fa)),
@@ -64,6 +66,7 @@ impl ThemeColors {
                 muted: Hsla::from(rgb(0x64748b)),
                 accent: Hsla::from(rgb(0x1689c7)),
                 success: Hsla::from(rgb(0x168558)),
+                danger: Hsla::from(rgb(0xc53b3b)),
             },
         }
     }
@@ -85,5 +88,14 @@ mod tests {
         let light = ThemeColors::for_mode(ThemeMode::Light);
         assert_ne!(dark.background, light.background);
         assert_ne!(dark.text, light.text);
+    }
+
+    #[test]
+    fn destructive_actions_have_a_distinct_semantic_color() {
+        for mode in [ThemeMode::Dark, ThemeMode::Light] {
+            let colors = ThemeColors::for_mode(mode);
+            assert_ne!(colors.danger, colors.accent);
+            assert_ne!(colors.danger, colors.success);
+        }
     }
 }

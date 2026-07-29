@@ -158,7 +158,13 @@ impl gpui::Render for FlashShotApp {
                     } else {
                         colors.accent
                     }))
-                    .child(self.status.clone()),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_ellipsis()
+                            .child(self.status.clone()),
+                    ),
             )
     }
 }
@@ -510,6 +516,7 @@ fn file_settings(
                 is_idle
                     && !app_state.history_clear_in_flight
                     && !app_state.history_clear_confirmation
+                    && app_state.history_deletions_in_flight.is_empty()
                     && app_state.history_retention_target.is_none(),
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_history_limit(cx)),
             )),
@@ -784,7 +791,7 @@ fn history_settings(
                             }
                         },
                     ))
-                    .child(settings_button(
+                    .child(settings_danger_button(
                         format!("settings-remove-history-{}", entry.created_at_ms),
                         if deleting { "Removing..." } else { "Remove" },
                         colors,
@@ -807,7 +814,7 @@ fn history_settings(
         }))
         .when(!clear_confirmation, |section| {
             let clear_app = app.clone();
-            section.child(settings_button(
+            section.child(settings_danger_button(
                 "settings-clear-history",
                 if clear_in_flight {
                     "Clearing..."
@@ -837,7 +844,7 @@ fn history_settings(
                             .text_color(colors.muted)
                             .child(history_clear_confirmation_label(total_entries)),
                     )
-                    .child(settings_button(
+                    .child(settings_danger_button(
                         "settings-confirm-clear-history",
                         "Delete captures",
                         colors,
@@ -1241,6 +1248,22 @@ fn settings_button(
                 .on_click(on_click)
         })
         .child(label.to_owned())
+}
+
+fn settings_danger_button(
+    id: impl Into<gpui::ElementId>,
+    label: &str,
+    colors: crate::theme::ThemeColors,
+    enabled: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    settings_button(id, label, colors, enabled, on_click)
+        .border_color(if enabled {
+            colors.danger
+        } else {
+            colors.border
+        })
+        .text_color(if enabled { colors.danger } else { colors.muted })
 }
 
 fn quick_action_button(
