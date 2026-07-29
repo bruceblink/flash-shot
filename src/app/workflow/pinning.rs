@@ -287,4 +287,34 @@ impl FlashShotApp {
         });
         shown
     }
+
+    /// Provides a recovery route when a click-through pin no longer owns keyboard focus.
+    pub(in crate::app) fn restore_pinned_window_input(&mut self, cx: &mut Context<Self>) {
+        let mut restored = 0;
+        self.pinned_windows.retain(|pinned| {
+            match pinned.update(cx, |pinned, window, cx| {
+                pinned.restore_mouse_input(window, cx)
+            }) {
+                Ok(Ok(true)) => {
+                    restored += 1;
+                    true
+                }
+                Ok(Ok(false)) => true,
+                Ok(Err(error)) => {
+                    log::warn!(target: "flash_shot::pinned", "pinned_window_input_restore_failed error={error}");
+                    true
+                }
+                Err(error) => {
+                    log::debug!(target: "flash_shot::pinned", "stale_pinned_window_removed error={error}");
+                    false
+                }
+            }
+        });
+        self.status = if restored == 0 {
+            "No pinned windows needed input recovery".to_owned()
+        } else {
+            format!("Restored mouse input for {restored} pinned window(s)")
+        };
+        cx.notify();
+    }
 }

@@ -293,6 +293,17 @@ fn capture_settings(
                     let app = app.clone();
                     move |_, _, cx| app.update(cx, |this, cx| this.pin_clipboard_image(cx))
                 },
+            ))
+            .child(quick_action_button(
+                "settings-restore-pin-input",
+                "Restore pin input",
+                colors,
+                is_idle,
+                false,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.restore_pinned_window_input(cx))
+                },
             )),
     );
 

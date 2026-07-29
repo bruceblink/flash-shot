@@ -38,7 +38,7 @@ fn pinned_control_tooltip(control: &str) -> &'static str {
         "zoom-out" => "Zoom out (Ctrl+-)",
         "zoom-in" => "Zoom in (Ctrl++)",
         "opacity" => "Cycle opacity (Ctrl+O)",
-        "mouse-through" => "Toggle mouse-through (Ctrl+M)",
+        "mouse-through" => "Toggle mouse-through (Ctrl+M; restore from Actions)",
         "solo" => "Hide other pinned images (Ctrl+H)",
         "show-all" => "Show all pinned images (Ctrl+Shift+H)",
         "copy" => "Copy image (Ctrl+C)",
@@ -168,6 +168,10 @@ impl PinnedImage {
                         Ok(()) => {
                             self.mouse_through = next;
                             if next {
+                                self.app.read(cx).notify_user(
+                                    "Flash Shot",
+                                    "Mouse-through enabled; restore pin input from Actions",
+                                );
                                 "Mouse through enabled"
                             } else {
                                 "Mouse through disabled"
@@ -187,6 +191,24 @@ impl PinnedImage {
             }
         };
         cx.notify();
+    }
+
+    pub(super) fn restore_mouse_input(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, String> {
+        if !self.mouse_through {
+            return Ok(false);
+        }
+        let handle = native_window_handle(window)
+            .ok_or_else(|| "Pinned window handle is unavailable".to_owned())?;
+        crate::platform::window_visibility::set_mouse_through(handle, false)
+            .map_err(|error| error.to_string())?;
+        self.mouse_through = false;
+        self.status = "Mouse through disabled";
+        cx.notify();
+        Ok(true)
     }
 
     /// Keeps one reference image visible without closing the user's other pinned captures.
