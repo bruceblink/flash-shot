@@ -114,6 +114,7 @@ impl gpui::Render for FlashShotApp {
                                         expanded: self.history_expanded,
                                         filter: self.history_filter,
                                         clear_confirmation: self.history_clear_confirmation,
+                                        clear_in_flight: self.history_clear_in_flight,
                                     },
                                     colors,
                                     is_idle,
@@ -614,6 +615,7 @@ struct HistoryViewState {
     expanded: bool,
     filter: HistoryFilter,
     clear_confirmation: bool,
+    clear_in_flight: bool,
 }
 
 fn history_settings(
@@ -629,6 +631,7 @@ fn history_settings(
         expanded,
         filter,
         clear_confirmation,
+        clear_in_flight,
     } = state;
     let now_ms = current_timestamp_ms();
     let is_empty = entries.is_empty();
@@ -760,9 +763,13 @@ fn history_settings(
             let clear_app = app.clone();
             section.child(settings_button(
                 "settings-clear-history",
-                "Clear history",
+                if clear_in_flight {
+                    "Clearing..."
+                } else {
+                    "Clear history"
+                },
                 colors,
-                is_idle && total_entries > 0,
+                is_idle && total_entries > 0 && !clear_in_flight,
                 move |_, _, cx| clear_app.update(cx, |this, cx| this.request_history_clear(cx)),
             ))
         })

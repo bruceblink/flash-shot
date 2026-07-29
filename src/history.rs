@@ -66,6 +66,11 @@ pub struct ScreenshotHistory {
     entries: VecDeque<HistoryEntry>,
 }
 
+pub(crate) struct HistoryFileDeletion {
+    pub(crate) deleted: Vec<PathBuf>,
+    pub(crate) failures: Vec<(PathBuf, String)>,
+}
+
 impl ScreenshotHistory {
     pub fn open(root: impl Into<PathBuf>) -> io::Result<Self> {
         Self::open_with_limit(root, DEFAULT_LIMIT)
@@ -153,6 +158,46 @@ impl ScreenshotHistory {
         }
         self.entries.clear();
         self.write_index()
+    }
+
+    /// Deletes the files represented by this immutable snapshot without changing a live index.
+    /// A caller can perform this work off the UI thread, then merge only the completed deletions.
+    pub(crate) fn delete_snapshot_files(&self) -> HistoryFileDeletion {
+        let mut deleted = Vec::with_capacity(self.entries.len());
+        let mut failures = Vec::new();
+        for entry in &self.entries {
+            if !entry.path.starts_with(&self.root) {
+                failures.push((
+                    entry.path.clone(),
+                    "history only manages files inside its own directory".to_owned(),
+                ));
+                continue;
+            }
+            match fs::remove_file(&entry.path) {
+                Ok(()) => deleted.push(entry.path.clone()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    deleted.push(entry.path.clone())
+                }
+                Err(error) => failures.push((entry.path.clone(), error.to_string())),
+            }
+        }
+        HistoryFileDeletion { deleted, failures }
+    }
+
+    /// Removes only a completed snapshot from the current index so captures recorded while the
+    /// background deletion was running remain intact.
+    pub(crate) fn forget_deleted(&mut self, deleted: &[PathBuf]) -> io::Result<()> {
+        let previous = self.entries.clone();
+        let deleted = deleted
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        self.entries.retain(|entry| !deleted.contains(&entry.path));
+        if let Err(error) = self.write_index() {
+            self.entries = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Removes one managed screenshot and its index entry. Callers cannot use
@@ -375,6 +420,35 @@ mod tests {
         assert!(history.entries().is_empty());
         assert!(!image.exists());
         assert!(root.join("history.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn background_clear_snapshot_preserves_newer_history_entries() {
+        let root = directory("background-clear");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.png");
+        let second = root.join("two.png");
+        fs::write(&first, b"one").unwrap();
+        let mut history = ScreenshotHistory::open(&root).unwrap();
+        history.record(first.clone()).unwrap();
+        let snapshot = history.clone();
+
+        fs::write(&second, b"two").unwrap();
+        history
+            .record_with_source(second.clone(), HistorySource::Pinned)
+            .unwrap();
+        let deletion = snapshot.delete_snapshot_files();
+        assert!(deletion.failures.is_empty());
+        history.forget_deleted(&deletion.deleted).unwrap();
+
+        assert!(!first.exists());
+        assert!(second.exists());
+        assert_eq!(history.entries().len(), 1);
+        assert_eq!(history.entries()[0].path, second.canonicalize().unwrap());
+        assert_eq!(history.entries()[0].source, HistorySource::Pinned);
+        let restored = ScreenshotHistory::open(&root).unwrap();
+        assert_eq!(restored.entries(), history.entries());
         fs::remove_dir_all(root).unwrap();
     }
 

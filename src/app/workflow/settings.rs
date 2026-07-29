@@ -35,6 +35,9 @@ impl FlashShotApp {
 
     /// Requires a deliberate second action before removing every managed screenshot.
     pub(in crate::app) fn request_history_clear(&mut self, cx: &mut Context<Self>) {
+        if self.history_clear_in_flight {
+            return;
+        }
         if self.history.entries().is_empty() {
             self.status = "Screenshot history is already empty".to_owned();
         } else {

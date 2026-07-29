@@ -345,22 +345,56 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn clear_history(&mut self, cx: &mut Context<Self>) {
+        if self.history_clear_in_flight {
+            return;
+        }
         if !self.history_clear_confirmation {
             self.request_history_clear(cx);
             return;
         }
-        match self.history.clear() {
-            Ok(()) => self.status = "Screenshot history cleared".to_owned(),
-            Err(error) => {
-                self.status = format!("Could not clear screenshot history: {error}");
-                log::warn!(target: "flash_shot::history", "history_clear_failed error={error}");
-            }
-        }
-        self.history_thumbnails.clear();
-        self.history_thumbnail_loading.clear();
-        self.history_thumbnail_failed.clear();
-        self.history_expanded = false;
+        let snapshot = self.history.clone();
+        self.history_clear_in_flight = true;
         self.history_clear_confirmation = false;
+        self.status = format!("Clearing {} saved capture(s)...", snapshot.entries().len());
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { snapshot.delete_snapshot_files() })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| this.finish_clear_history(result, cx));
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_clear_history(
+        &mut self,
+        deletion: crate::history::HistoryFileDeletion,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_clear_in_flight = false;
+        let deleted_count = deletion.deleted.len();
+        let failure_count = deletion.failures.len();
+        for (path, error) in &deletion.failures {
+            log::warn!(target: "flash_shot::history", "history_file_delete_failed path={} error={error}", path.display());
+        }
+        self.status = match self.history.forget_deleted(&deletion.deleted) {
+            Ok(()) if failure_count == 0 => "Screenshot history cleared".to_owned(),
+            Ok(()) => {
+                format!("Cleared {deleted_count} capture(s); {failure_count} could not be deleted")
+            }
+            Err(error) => {
+                log::warn!(target: "flash_shot::history", "history_index_update_failed error={error}");
+                format!("Capture files were cleared, but history could not be updated: {error}")
+            }
+        };
+        self.history_expanded = false;
+        self.synchronize_history_preview_cache();
         cx.notify();
     }
 
