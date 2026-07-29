@@ -1,5 +1,6 @@
 //! GPUI capture workspace state and module boundaries.
 
+mod history_search;
 mod overlay;
 mod pinned;
 mod render_image;
@@ -104,6 +105,7 @@ pub struct FlashShotApp {
     history: ScreenshotHistory,
     history_expanded: bool,
     history_filter: HistoryFilter,
+    history_search: HistorySearch,
     history_clear_confirmation: bool,
     history_clear_in_flight: bool,
     history_retention_target: Option<u16>,
@@ -133,6 +135,14 @@ pub(super) enum HistoryFilter {
     Selection,
     FullScreen,
     Pinned,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct HistorySearch {
+    content: String,
+    selected_range: Range<usize>,
+    marked_range: Option<Range<usize>>,
+    active: bool,
 }
 
 impl HistoryFilter {
@@ -413,6 +423,7 @@ impl FlashShotApp {
             history,
             history_expanded: false,
             history_filter: HistoryFilter::All,
+            history_search: HistorySearch::default(),
             history_clear_confirmation: false,
             history_clear_in_flight: false,
             history_retention_target: None,
@@ -526,10 +537,18 @@ impl EntityInputHandler for FlashShotApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
-        let edit = self.text_edit.as_ref()?;
-        let range = utf16_range_to_byte_range(&edit.content, &range_utf16);
-        *actual_range = Some(byte_range_to_utf16_range(&edit.content, &range));
-        Some(edit.content[range].to_owned())
+        let content = self
+            .text_edit
+            .as_ref()
+            .map(|edit| edit.content.as_str())
+            .or_else(|| {
+                self.history_search
+                    .active
+                    .then_some(self.history_search.content.as_str())
+            })?;
+        let range = utf16_range_to_byte_range(content, &range_utf16);
+        *actual_range = Some(byte_range_to_utf16_range(content, &range));
+        Some(content[range].to_owned())
     }
 
     fn selected_text_range(
@@ -538,9 +557,18 @@ impl EntityInputHandler for FlashShotApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let edit = self.text_edit.as_ref()?;
+        let (content, selected_range) = if let Some(edit) = self.text_edit.as_ref() {
+            (&edit.content, &edit.selected_range)
+        } else if self.history_search.active {
+            (
+                &self.history_search.content,
+                &self.history_search.selected_range,
+            )
+        } else {
+            return None;
+        };
         Some(UTF16Selection {
-            range: byte_range_to_utf16_range(&edit.content, &edit.selected_range),
+            range: byte_range_to_utf16_range(content, selected_range),
             reversed: false,
         })
     }
@@ -550,14 +578,25 @@ impl EntityInputHandler for FlashShotApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<std::ops::Range<usize>> {
-        let edit = self.text_edit.as_ref()?;
-        edit.marked_range
+        let (content, marked_range) = if let Some(edit) = self.text_edit.as_ref() {
+            (&edit.content, edit.marked_range.as_ref())
+        } else if self.history_search.active {
+            (
+                &self.history_search.content,
+                self.history_search.marked_range.as_ref(),
+            )
+        } else {
+            return None;
+        };
+        marked_range
             .as_ref()
-            .map(|range| byte_range_to_utf16_range(&edit.content, range))
+            .map(|range| byte_range_to_utf16_range(content, range))
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.unmark_text_edit(cx);
+        if !self.unmark_text_edit(cx) {
+            self.unmark_history_search(cx);
+        }
     }
 
     fn replace_text_in_range(
@@ -567,7 +606,9 @@ impl EntityInputHandler for FlashShotApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.replace_text_edit(range_utf16, text, None, cx);
+        if !self.replace_text_edit(range_utf16.clone(), text, None, cx) {
+            self.replace_history_search(range_utf16, text, None, cx);
+        }
     }
 
     fn replace_and_mark_text_in_range(
@@ -578,7 +619,9 @@ impl EntityInputHandler for FlashShotApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.replace_text_edit(range_utf16, text, selected_range_utf16, cx);
+        if !self.replace_text_edit(range_utf16.clone(), text, selected_range_utf16.clone(), cx) {
+            self.replace_history_search(range_utf16, text, selected_range_utf16, cx);
+        }
     }
 
     fn bounds_for_range(
@@ -588,7 +631,7 @@ impl EntityInputHandler for FlashShotApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<gpui::Pixels>> {
-        self.text_edit.as_ref().map(|_| bounds)
+        (self.text_edit.is_some() || self.history_search.active).then_some(bounds)
     }
 
     fn character_index_for_point(
@@ -599,11 +642,17 @@ impl EntityInputHandler for FlashShotApp {
     ) -> Option<usize> {
         self.text_edit
             .as_ref()
-            .map(|edit| edit.content.chars().map(char::len_utf16).sum::<usize>())
+            .map(|edit| edit.content.as_str())
+            .or_else(|| {
+                self.history_search
+                    .active
+                    .then_some(self.history_search.content.as_str())
+            })
+            .map(|content| content.chars().map(char::len_utf16).sum::<usize>())
     }
 
     fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
-        self.text_edit.is_some()
+        self.text_edit.is_some() || self.history_search.active
     }
 }
 

@@ -1,6 +1,9 @@
 //! The small, on-demand settings window for the background capture service.
 
-use gpui::{ObjectFit, Window, div, img, prelude::*, px, rgba};
+use gpui::{
+    CursorStyle, ElementInputHandler, FocusHandle, KeyDownEvent, ObjectFit, Window, canvas, div,
+    img, prelude::*, px, rgba,
+};
 
 use super::{FlashShotApp, HistoryFilter, SettingsSection};
 use crate::{domain::session::CaptureSessionState, platform::shortcut::CaptureShortcut};
@@ -19,16 +22,18 @@ impl gpui::Render for FlashShotApp {
         let recording_display =
             super::workflow::recording_display_selection_label(&self.recording_display);
         let history_total = self.history.entries().len();
+        let history_query = self.history_search_query().trim().to_lowercase();
         let filtered_history_total = self
             .history
             .entries()
             .iter()
-            .filter(|entry| self.history_filter.matches(entry.source))
+            .filter(|entry| history_entry_matches(entry, self.history_filter, &history_query))
             .count();
         let history_entries: Vec<_> = visible_history_entries(
             self.history.entries(),
             self.history_expanded,
             self.history_filter,
+            &history_query,
         )
         .into_iter()
         .map(|entry| {
@@ -41,6 +46,9 @@ impl gpui::Render for FlashShotApp {
         div()
             .size_full()
             .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                this.handle_history_search_key(&event.keystroke, cx);
+            }))
             .flex()
             .flex_col()
             .bg(colors.background)
@@ -118,6 +126,9 @@ impl gpui::Render for FlashShotApp {
                                         retention_in_flight: self
                                             .history_retention_target
                                             .is_some(),
+                                        search_query: self.history_search_query().to_owned(),
+                                        search_active: self.history_search_is_active(),
+                                        search_focus: self.focus_handle.clone(),
                                     },
                                     colors,
                                     is_idle,
@@ -626,6 +637,9 @@ struct HistoryViewState {
     clear_confirmation: bool,
     clear_in_flight: bool,
     retention_in_flight: bool,
+    search_query: String,
+    search_active: bool,
+    search_focus: FocusHandle,
 }
 
 fn history_settings(
@@ -643,10 +657,20 @@ fn history_settings(
         clear_confirmation,
         clear_in_flight,
         retention_in_flight,
+        search_query,
+        search_active,
+        search_focus,
     } = state;
     let now_ms = current_timestamp_ms();
     let is_empty = entries.is_empty();
     settings_section("Recent captures", colors)
+        .child(history_search_box(
+            &search_query,
+            search_active,
+            search_focus,
+            colors,
+            app.clone(),
+        ))
         .child(
             div()
                 .flex()
@@ -704,7 +728,7 @@ fn history_settings(
                 div()
                     .text_sm()
                     .text_color(colors.muted)
-                    .child(empty_history_message(total_entries, filter)),
+                    .child(empty_history_message(total_entries, filter, &search_query)),
             )
         })
         .children(entries.into_iter().map(|(entry, thumbnail)| {
@@ -816,6 +840,93 @@ fn history_settings(
         })
 }
 
+fn history_search_box(
+    query: &str,
+    active: bool,
+    focus_handle: FocusHandle,
+    colors: crate::theme::ThemeColors,
+    app: gpui::Entity<FlashShotApp>,
+) -> gpui::Stateful<gpui::Div> {
+    let input_app = app.clone();
+    let input_focus = focus_handle.clone();
+    let activate_app = app.clone();
+    let activate_focus = focus_handle.clone();
+    div()
+        .id("settings-history-search")
+        .h(px(36.0))
+        .w_full()
+        .relative()
+        .px_3()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(if active { colors.accent } else { colors.border })
+        .bg(colors.panel)
+        .text_sm()
+        .cursor(CursorStyle::IBeam)
+        .on_click(move |_, window, cx| {
+            activate_app.update(cx, |this, cx| this.activate_history_search(cx));
+            activate_focus.focus(window, cx);
+        })
+        .child(
+            canvas(
+                move |bounds, _, _| (bounds, active),
+                move |bounds, (_, active), window, cx| {
+                    if active {
+                        window.handle_input(
+                            &input_focus,
+                            ElementInputHandler::new(bounds, input_app.clone()),
+                            cx,
+                        );
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0(),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .text_ellipsis_start()
+                .text_color(if query.is_empty() {
+                    colors.muted
+                } else {
+                    colors.text
+                })
+                .child(if query.is_empty() {
+                    "Search captures".to_owned()
+                } else {
+                    query.to_owned()
+                }),
+        )
+        .when(!query.is_empty(), |search| {
+            search.child(
+                div()
+                    .id("settings-clear-history-search")
+                    .w(px(24.0))
+                    .h(px(24.0))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .text_color(colors.muted)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(colors.background).text_color(colors.text))
+                    .on_click(move |_, _, cx| {
+                        app.update(cx, |this, cx| this.clear_history_search(cx))
+                    })
+                    .child("X"),
+            )
+        })
+}
+
 /// Makes the destructive confirmation name its exact scope instead of relying on a generic warning.
 fn history_clear_confirmation_label(total_entries: usize) -> String {
     format!("Delete all {total_entries} saved capture(s)?")
@@ -870,9 +981,11 @@ fn current_timestamp_ms() -> u128 {
 }
 
 /// Explains where the first managed screenshot will appear before history has any entries.
-fn empty_history_message(total_entries: usize, filter: HistoryFilter) -> String {
+fn empty_history_message(total_entries: usize, filter: HistoryFilter, query: &str) -> String {
     if total_entries == 0 {
         "Saved screenshots will appear here.".to_owned()
+    } else if !query.trim().is_empty() {
+        format!("No captures match \"{}\".", query.trim())
     } else {
         format!("No {} captures yet.", filter.label().to_lowercase())
     }
@@ -884,6 +997,7 @@ fn visible_history_entries(
     entries: &std::collections::VecDeque<crate::history::HistoryEntry>,
     expanded: bool,
     filter: HistoryFilter,
+    query: &str,
 ) -> Vec<crate::history::HistoryEntry> {
     let limit = if expanded {
         usize::MAX
@@ -892,10 +1006,30 @@ fn visible_history_entries(
     };
     entries
         .iter()
-        .filter(|entry| filter.matches(entry.source))
+        .filter(|entry| history_entry_matches(entry, filter, query))
         .take(limit)
         .cloned()
         .collect()
+}
+
+fn history_entry_matches(
+    entry: &crate::history::HistoryEntry,
+    filter: HistoryFilter,
+    query: &str,
+) -> bool {
+    if !filter.matches(entry.source) {
+        return false;
+    }
+    let query = query.trim();
+    if query.is_empty() {
+        return true;
+    }
+    entry
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.to_lowercase().contains(query))
+        || entry.source.label().to_lowercase().contains(query)
 }
 
 /// Describes whether the history settings page is showing its bounded preview or every retained item.
@@ -1240,8 +1374,8 @@ fn settings_delay_button(
 mod tests {
     use super::{
         capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
-        history_entry_label, history_visibility_label, relative_timestamp_label,
-        settings_page_intro, visible_history_entries,
+        history_entry_label, history_entry_matches, history_visibility_label,
+        relative_timestamp_label, settings_page_intro, visible_history_entries,
     };
     use crate::app::{HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -1290,12 +1424,16 @@ mod tests {
     #[test]
     fn empty_history_section_explains_when_saved_captures_appear() {
         assert_eq!(
-            super::empty_history_message(0, HistoryFilter::All),
+            super::empty_history_message(0, HistoryFilter::All, ""),
             "Saved screenshots will appear here."
         );
         assert_eq!(
-            super::empty_history_message(3, HistoryFilter::Pinned),
+            super::empty_history_message(3, HistoryFilter::Pinned, ""),
             "No pinned captures yet."
+        );
+        assert_eq!(
+            super::empty_history_message(3, HistoryFilter::All, "invoice"),
+            "No captures match \"invoice\"."
         );
     }
 
@@ -1334,11 +1472,11 @@ mod tests {
             .collect::<VecDeque<_>>();
 
         assert_eq!(
-            visible_history_entries(&entries, false, HistoryFilter::All).len(),
+            visible_history_entries(&entries, false, HistoryFilter::All, "").len(),
             5
         );
         assert_eq!(
-            visible_history_entries(&entries, true, HistoryFilter::All).len(),
+            visible_history_entries(&entries, true, HistoryFilter::All, "").len(),
             7
         );
         assert_eq!(
@@ -1362,7 +1500,7 @@ mod tests {
             })
             .collect::<VecDeque<_>>();
 
-        let preview = visible_history_entries(&entries, false, HistoryFilter::Pinned);
+        let preview = visible_history_entries(&entries, false, HistoryFilter::Pinned, "");
         assert_eq!(preview.len(), 5);
         assert!(
             preview
@@ -1370,8 +1508,34 @@ mod tests {
                 .all(|entry| entry.source == HistorySource::Pinned)
         );
         assert_eq!(
-            visible_history_entries(&entries, true, HistoryFilter::Pinned).len(),
+            visible_history_entries(&entries, true, HistoryFilter::Pinned, "").len(),
             6
         );
+    }
+
+    #[test]
+    fn history_search_matches_file_names_and_source_labels() {
+        let entry = HistoryEntry {
+            path: PathBuf::from("F:/captures/Quarterly-Report.png"),
+            created_at_ms: 1,
+            source: HistorySource::Pinned,
+        };
+
+        assert!(history_entry_matches(
+            &entry,
+            HistoryFilter::All,
+            "quarterly"
+        ));
+        assert!(history_entry_matches(&entry, HistoryFilter::All, "pinned"));
+        assert!(!history_entry_matches(
+            &entry,
+            HistoryFilter::Selection,
+            "quarterly"
+        ));
+        assert!(!history_entry_matches(
+            &entry,
+            HistoryFilter::All,
+            "invoice"
+        ));
     }
 }

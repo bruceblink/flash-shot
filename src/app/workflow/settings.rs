@@ -10,6 +10,10 @@ impl FlashShotApp {
     ) {
         if self.settings_section != section {
             self.settings_section = section;
+            if section != SettingsSection::Files {
+                self.history_search.active = false;
+                self.history_search.marked_range = None;
+            }
             cx.notify();
         }
     }
