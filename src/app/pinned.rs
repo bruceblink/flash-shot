@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, KeyDownEvent, Keystroke, Render, Window, div, img,
-    prelude::*, px,
+    Context, Entity, FocusHandle, Focusable, KeyDownEvent, Keystroke, Render, Window,
+    WindowControlArea, div, img, prelude::*, px,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -302,9 +302,8 @@ impl Render for PinnedImage {
                     .gap_1()
                     .bg(colors.panel)
                     .child(
-                        // Native title-bar dragging provides the window move affordance.
-                        // Keeping this status area client-only avoids turning toolbar clicks
-                        // into non-client hit tests on Windows.
+                        // Keep the window chrome-free while exposing a dedicated drag region
+                        // that cannot intercept any toolbar button clicks.
                         div()
                             .id("pinned-drag-area")
                             .flex_1()
@@ -312,6 +311,7 @@ impl Render for PinnedImage {
                             .py_1()
                             .flex()
                             .items_center()
+                            .window_control_area(WindowControlArea::Drag)
                             .child(div().text_xs().text_color(colors.muted).child(self.status)),
                     )
                     .child(

@@ -3141,21 +3141,12 @@ impl FlashShotApp {
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(window_bounds),
-                // A native title bar supplies Windows' complete resize frame (all
-                // edges and corners) and an immediate close path. GPUI's borderless
-                // frame only exposes custom hit testing for part of that surface.
-                titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("Pinned capture".into()),
-                    ..Default::default()
-                }),
+                titlebar: None,
                 focus: true,
                 show: true,
-                // PopUp windows use a style with no resize frame on Windows.
-                // The pinned image stays topmost through PinnedImage, while a
-                // normal window keeps the native resize hit targets available.
-                kind: WindowKind::Normal,
+                kind: WindowKind::PopUp,
                 is_movable: true,
-                is_resizable: true,
+                is_resizable: false,
                 is_minimizable: false,
                 window_background: WindowBackgroundAppearance::Opaque,
                 window_min_size: Some(size(px(180.0), px(140.0))),
