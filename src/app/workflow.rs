@@ -3015,24 +3015,37 @@ impl FlashShotApp {
                 return;
             }
         };
-        // The capture overlays sit above ordinary windows. Reset schedules
-        // their destruction, so wait an extra UI turn before opening the pin.
-        // This guarantees the pinned image is not hidden until the next capture.
+        // Closing an overlay while handling one of its events must complete before a
+        // normal topmost window is opened. Re-entering the window API from nested
+        // deferred callbacks can leave the Windows event loop blocked instead.
         self.reset(cx);
-        let app = cx.entity();
-        cx.defer(move |cx| {
-            let app = app.clone();
-            cx.defer(move |cx| {
-                app.update(cx, |app, cx| {
-                    app.open_pinned_frame(
-                        pinned_frame,
-                        "Selection pinned in an always-on-top window",
-                        None,
-                        cx,
-                    );
-                });
-            });
-        });
+        let generation = self.operation_generation;
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                // Yield to the native message loop so reset's deferred overlay
+                // teardown runs before this pin creates and focuses its own window.
+                cx.background_executor()
+                    .timer(Duration::from_millis(1))
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |app, cx| {
+                        if app.operation_generation != generation
+                            || app.session.state() != CaptureSessionState::Idle
+                        {
+                            return;
+                        }
+                        app.open_pinned_frame(
+                            pinned_frame,
+                            "Selection pinned in an always-on-top window",
+                            None,
+                            cx,
+                        );
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     /// Reads the current clipboard image away from the UI thread and pins only the latest request.
@@ -5202,16 +5215,11 @@ fn fill_color(stroke_rgba: u32) -> u32 {
 
 fn pinned_size(image_width: f32, image_height: f32) -> gpui::Size<Pixels> {
     const HEADER_HEIGHT: f32 = 26.0;
-    const MAX_WIDTH: f32 = 640.0;
-    const MAX_HEIGHT: f32 = 540.0;
     let width = image_width.max(1.0);
     let height = image_height.max(1.0);
-    let scale = (MAX_WIDTH / width)
-        .min((MAX_HEIGHT - HEADER_HEIGHT) / height)
-        .min(1.0);
     size(
-        px((width * scale).max(180.0)),
-        px((height * scale + HEADER_HEIGHT).max(140.0)),
+        px(width.max(180.0)),
+        px((height + HEADER_HEIGHT).max(140.0)),
     )
 }
 
@@ -6199,14 +6207,14 @@ mod tests {
     }
 
     #[test]
-    fn pinned_window_size_preserves_small_images_and_constrains_large_ones() {
+    fn pinned_window_size_matches_the_image_without_downscaling() {
         let small = pinned_size(100.0, 80.0);
         assert_eq!(f32::from(small.width), 180.0);
         assert_eq!(f32::from(small.height), 140.0);
 
         let large = pinned_size(1_280.0, 720.0);
-        assert_eq!(f32::from(large.width), 640.0);
-        assert_eq!(f32::from(large.height), 386.0);
+        assert_eq!(f32::from(large.width), 1_280.0);
+        assert_eq!(f32::from(large.height), 746.0);
     }
 
     #[test]
