@@ -378,11 +378,20 @@ mod tests {
     use super::platform::ShortcutListener;
     use super::{CaptureShortcut, GlobalShortcutService, ShortcutAction, ShortcutBinding};
     #[cfg(windows)]
+    use std::sync::Mutex;
+    #[cfg(windows)]
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, VK_F23, VK_F24};
+
+    // RegisterHotKey is process-wide, so these native tests must not reserve F24 concurrently.
+    #[cfg(windows)]
+    static HOTKEY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[cfg(windows)]
     #[test]
     fn capture_hotkey_registers_and_stops_cleanly() {
+        let _guard = HOTKEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let (listener, _events) = ShortcutListener::register_keys(vec![(
             1,
             super::ShortcutEvent::CaptureRequested,
@@ -397,6 +406,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn multiple_hotkeys_register_and_stop_on_one_listener_thread() {
+        let _guard = HOTKEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let (listener, _events) = ShortcutListener::register_keys(vec![
             (
                 1,
