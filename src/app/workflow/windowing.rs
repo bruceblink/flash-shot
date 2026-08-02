@@ -2,6 +2,9 @@
 
 use super::*;
 
+// Keeps every manual-scroll command on one row after the incomplete-session guidance was added.
+const MANUAL_SCROLL_CONTROL_WIDTH: f32 = 440.0;
+
 pub(super) fn open_capture_overlays(
     app: gpui::Entity<FlashShotApp>,
     displays: Vec<CapturedDisplayPreview>,
@@ -142,7 +145,10 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
     let control_app = app.clone();
     match cx.open_window(
         WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(390.0), px(120.0)), cx)),
+            window_bounds: Some(WindowBounds::centered(
+                size(px(MANUAL_SCROLL_CONTROL_WIDTH), px(120.0)),
+                cx,
+            )),
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Flash Shot - Manual Scroll".into()),
                 ..Default::default()
