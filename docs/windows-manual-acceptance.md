@@ -60,4 +60,9 @@ cargo run --release --bin annotation-stress -- --iterations 30
 
 | 日期 | 提交 | 自动门禁 | 手工矩阵 | 说明 |
 | --- | --- | --- | --- | --- |
-| 2026-08-02 | `bccfeba` | 313 项库测试、Clippy、格式检查、100 次连续截图和 4K 标注压力测试通过。 | 待执行 | 当前机器只提供单显示器压力测试证据；负坐标双屏、混合 DPI 和 FFmpeg 实机结果尚未记录。 |
+| 2026-08-02 | `88ed32e` | 313 项库测试、Clippy、格式检查、100 次连续截图和 4K 标注压力测试通过；Release 启动 p95 为 264.24ms（上限 500ms），快捷键到覆盖层 p95 为 96.38ms（上限 100ms）。 | 待执行 | 当前机器只提供单显示器压力测试证据；负坐标双屏、混合 DPI 和 FFmpeg 实机结果尚未记录。 |
+
+本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
+`target\\release-startup-performance-20260802.json` 与
+`target\\release-capture-performance-20260802.json`。这些文件可用于复核本表中的数值，
+但不得替代缺失的真实双屏和录屏手工证据。
