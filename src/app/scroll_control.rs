@@ -36,6 +36,8 @@ impl Render for ManualScrollControl {
         let status = app.status.clone();
         let frame_count = app.manual_scroll.frame_count();
         let capture_in_flight = app.manual_scroll_capture_in_flight;
+        let auto_capture_pending = app.manual_scroll_auto_capture_generation.is_some();
+        let controls_busy = capture_in_flight || auto_capture_pending;
         let retry_available = app.manual_scroll.failure().is_some();
         let can_finish = app.manual_scroll.can_finish();
 
@@ -76,12 +78,12 @@ impl Render for ManualScrollControl {
                             .px_3()
                             .py_1()
                             .bg(colors.panel)
-                            .text_color(if capture_in_flight {
+                            .text_color(if controls_busy {
                                 colors.muted
                             } else {
                                 colors.text
                             })
-                            .when(!capture_in_flight, |button| {
+                            .when(!controls_busy, |button| {
                                 button
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -95,16 +97,41 @@ impl Render for ManualScrollControl {
                     )
                     .child(
                         div()
+                            .id("scroll-auto-capture-next")
+                            .px_3()
+                            .py_1()
+                            .bg(colors.panel)
+                            .text_color(if controls_busy {
+                                colors.muted
+                            } else {
+                                colors.text
+                            })
+                            .when(!controls_busy, |button| {
+                                button
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| {
+                                                app.auto_capture_manual_scroll_frame(cx)
+                                            })
+                                        });
+                                    }))
+                            })
+                            .child(auto_scroll_capture_label(auto_capture_pending)),
+                    )
+                    .child(
+                        div()
                             .id("scroll-capture-next")
                             .px_3()
                             .py_1()
                             .bg(colors.accent)
-                            .text_color(if capture_in_flight {
+                            .text_color(if controls_busy {
                                 colors.muted
                             } else {
                                 colors.background
                             })
-                            .when(!capture_in_flight, |button| {
+                            .when(!controls_busy, |button| {
                                 button
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -127,12 +154,12 @@ impl Render for ManualScrollControl {
                             .px_3()
                             .py_1()
                             .bg(colors.panel)
-                            .text_color(if capture_in_flight || !can_finish {
+                            .text_color(if controls_busy || !can_finish {
                                 colors.muted
                             } else {
                                 colors.text
                             })
-                            .when(!capture_in_flight && can_finish, |button| {
+                            .when(!controls_busy && can_finish, |button| {
                                 button
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -175,6 +202,15 @@ fn manual_scroll_capture_label(capture_in_flight: bool, retry_available: bool) -
     }
 }
 
+/// Explains that automatic capture is waiting for the target application to repaint.
+fn auto_scroll_capture_label(auto_capture_pending: bool) -> &'static str {
+    if auto_capture_pending {
+        "Waiting..."
+    } else {
+        "Scroll + capture"
+    }
+}
+
 /// Names the next required action until a second viewport makes stitching possible.
 fn manual_scroll_finish_label(can_finish: bool) -> &'static str {
     if can_finish {
@@ -186,7 +222,9 @@ fn manual_scroll_finish_label(can_finish: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{manual_scroll_capture_label, manual_scroll_finish_label};
+    use super::{
+        auto_scroll_capture_label, manual_scroll_capture_label, manual_scroll_finish_label,
+    };
 
     #[test]
     fn capture_action_describes_its_busy_state() {
@@ -199,5 +237,11 @@ mod tests {
     fn finish_action_requires_an_overlapping_viewport() {
         assert_eq!(manual_scroll_finish_label(false), "Capture another");
         assert_eq!(manual_scroll_finish_label(true), "Finish");
+    }
+
+    #[test]
+    fn automatic_capture_action_reports_its_settle_delay() {
+        assert_eq!(auto_scroll_capture_label(false), "Scroll + capture");
+        assert_eq!(auto_scroll_capture_label(true), "Waiting...");
     }
 }

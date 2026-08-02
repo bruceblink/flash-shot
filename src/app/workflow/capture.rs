@@ -267,6 +267,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.manual_scroll_auto_capture_generation = None;
         self.recognition_result = None;
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
@@ -475,6 +476,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.manual_scroll_auto_capture_generation = None;
         self.recognition_result = None;
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
@@ -512,6 +514,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.manual_scroll_auto_capture_generation = None;
         self.recognition_result = None;
         self.recording_control = None;
         self.recording_start_in_flight = false;

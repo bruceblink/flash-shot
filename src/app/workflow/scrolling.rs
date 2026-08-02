@@ -2,6 +2,8 @@
 
 use super::*;
 
+const AUTO_SCROLL_SETTLE_DELAY: Duration = Duration::from_millis(400);
+
 impl FlashShotApp {
     pub(in crate::app) fn start_manual_scroll(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = self.session.selection() else {
@@ -81,6 +83,58 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Scrolls the selected content once and captures it after a short settle delay.
+    ///
+    /// The generation token makes a queued capture harmless after the user cancels or starts a
+    /// new workflow, so delayed input never appends a frame to the wrong scrolling session.
+    pub(in crate::app) fn auto_capture_manual_scroll_frame(&mut self, cx: &mut Context<Self>) {
+        let Some(selection) = self.manual_scroll_selection else {
+            self.status = "Manual scroll capture is not active".to_owned();
+            cx.notify();
+            return;
+        };
+        if self.manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
+            self.status = "Manual scroll capture is not collecting frames".to_owned();
+            cx.notify();
+            return;
+        }
+        if self.manual_scroll_capture_in_flight
+            || self.manual_scroll_auto_capture_generation.is_some()
+        {
+            self.status = "Scroll frame capture is already in progress".to_owned();
+            cx.notify();
+            return;
+        }
+        let target = scroll_target(selection);
+        if let Err(error) = crate::platform::scroll::scroll_notches_at(
+            target,
+            crate::platform::scroll::DEFAULT_SCROLL_NOTCHES,
+        ) {
+            self.status = format!("Could not assist scroll: {error}");
+            cx.notify();
+            return;
+        }
+
+        let generation = self.operation_generation;
+        self.manual_scroll_auto_capture_generation = Some(generation);
+        self.status = "Scrolled target content. Capturing when it settles...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                cx.background_executor()
+                    .timer(AUTO_SCROLL_SETTLE_DELAY)
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_auto_scroll_capture(generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub(in crate::app) fn assist_manual_scroll(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = self.manual_scroll_selection else {
             self.status = "Manual scroll capture is not active".to_owned();
@@ -92,10 +146,7 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
-        let target = crate::domain::geometry::PhysicalPoint {
-            x: selection.left + (selection.width() / 2) as i32,
-            y: selection.top + (selection.height() / 2) as i32,
-        };
+        let target = scroll_target(selection);
         match crate::platform::scroll::scroll_notches_at(
             target,
             crate::platform::scroll::DEFAULT_SCROLL_NOTCHES,
@@ -107,6 +158,18 @@ impl FlashShotApp {
             Err(error) => self.status = format!("Could not assist scroll: {error}"),
         }
         cx.notify();
+    }
+
+    /// Claims only the matching delayed request before beginning the normal capture pipeline.
+    fn finish_auto_scroll_capture(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if self.manual_scroll_auto_capture_generation != Some(generation) {
+            return;
+        }
+        self.manual_scroll_auto_capture_generation = None;
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
+        self.capture_manual_scroll_frame(cx);
     }
 
     fn finish_manual_scroll_frame(
@@ -172,6 +235,7 @@ impl FlashShotApp {
             self.selection_drag.select(bounds);
             self.manual_scroll_selection = None;
             self.manual_scroll_capture_in_flight = false;
+            self.manual_scroll_auto_capture_generation = None;
             Ok(())
         })();
         match result {
@@ -216,5 +280,33 @@ impl FlashShotApp {
         }
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.manual_scroll_auto_capture_generation = None;
+    }
+}
+
+/// Calculates the physical viewport center used for deliberate wheel input.
+fn scroll_target(selection: PhysicalRect) -> PhysicalPoint {
+    PhysicalPoint {
+        x: selection.left + (selection.width() / 2) as i32,
+        y: selection.top + (selection.height() / 2) as i32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scroll_target;
+    use crate::domain::geometry::PhysicalRect;
+
+    #[test]
+    fn scroll_target_uses_the_selected_viewport_center() {
+        assert_eq!(
+            scroll_target(PhysicalRect {
+                left: -100,
+                top: 20,
+                right: 300,
+                bottom: 220,
+            }),
+            crate::domain::geometry::PhysicalPoint { x: 100, y: 120 }
+        );
     }
 }

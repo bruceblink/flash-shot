@@ -180,6 +180,7 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
                 let _ = app.manual_scroll.reset();
                 app.manual_scroll_selection = None;
                 app.manual_scroll_capture_in_flight = false;
+                app.manual_scroll_auto_capture_generation = None;
                 app.status = format!("Could not open manual scroll controls: {error}");
                 app.return_to_background();
                 cx.notify();
