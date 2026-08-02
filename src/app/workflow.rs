@@ -14,6 +14,7 @@ mod support;
 mod windowing;
 
 use file_io::*;
+pub(super) use settings::shortcut_option_label;
 pub(super) use support::*;
 use windowing::*;
 
@@ -66,7 +67,6 @@ use crate::{
         clipboard::{ClipboardService, SystemClipboard},
         directory,
         display::{DisplayProvider, SystemDisplayProvider},
-        shortcut::GlobalShortcutService,
         window_inspector::{
             InspectionKind, InspectionTarget, SystemWindowInspector, WindowInspector,
         },

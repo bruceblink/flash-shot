@@ -35,7 +35,9 @@ use crate::{
     platform::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::CaptureFrame,
-        shortcut::{CaptureShortcut, GlobalShortcutService, ShortcutEvent},
+        shortcut::{
+            CaptureShortcut, GlobalShortcutService, ShortcutAction, ShortcutBinding, ShortcutEvent,
+        },
         tray::{TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState, TrayService},
         window_inspector::InspectionTarget,
     },
@@ -300,7 +302,7 @@ impl FlashShotApp {
         };
         let capture_shortcut_label = capture_shortcut.to_string();
         let shortcut = if settings.capture_shortcut_enabled {
-            match GlobalShortcutService::register_capture(capture_shortcut) {
+            match register_global_shortcuts(capture_shortcut, &settings) {
                 Ok((service, events)) => {
                     Self::listen_for_shortcut(events, cx);
                     Some(service)
@@ -442,9 +444,17 @@ impl FlashShotApp {
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                while let Ok(ShortcutEvent::CaptureRequested) = events.recv().await {
+                while let Ok(event) = events.recv().await {
                     if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, cx| this.start_capture(cx));
+                        this.update(&mut cx, |this, cx| match event {
+                            ShortcutEvent::CaptureRequested => this.start_capture(cx),
+                            ShortcutEvent::FullScreenRequested => {
+                                this.start_full_screen_capture(cx)
+                            }
+                            ShortcutEvent::FocusedWindowRequested => {
+                                this.start_focused_window_capture(cx)
+                            }
+                        });
                     } else {
                         break;
                     }
@@ -529,6 +539,36 @@ impl FlashShotApp {
         })
         .detach();
     }
+}
+
+/// Converts persisted optional action keys into one atomic native registration request.
+fn register_global_shortcuts(
+    capture: CaptureShortcut,
+    settings: &UserSettings,
+) -> std::io::Result<(
+    GlobalShortcutService,
+    async_channel::Receiver<ShortcutEvent>,
+)> {
+    let mut bindings = vec![ShortcutBinding {
+        action: ShortcutAction::Capture,
+        shortcut: capture,
+    }];
+    for (action, configured) in [
+        (
+            ShortcutAction::FullScreen,
+            settings.full_screen_shortcut.as_deref(),
+        ),
+        (
+            ShortcutAction::FocusedWindow,
+            settings.focused_window_shortcut.as_deref(),
+        ),
+    ] {
+        if let Some(configured) = configured {
+            let shortcut = configured.parse().map_err(std::io::Error::other)?;
+            bindings.push(ShortcutBinding { action, shortcut });
+        }
+    }
+    GlobalShortcutService::register(&bindings)
 }
 
 impl EntityInputHandler for FlashShotApp {

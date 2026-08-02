@@ -141,6 +141,32 @@ impl std::error::Error for ShortcutParseError {}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShortcutEvent {
     CaptureRequested,
+    FullScreenRequested,
+    FocusedWindowRequested,
+}
+
+/// Names the user-visible capture workflow that a registered global shortcut starts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShortcutAction {
+    Capture,
+    FullScreen,
+    FocusedWindow,
+}
+
+impl ShortcutAction {
+    const fn event(self) -> ShortcutEvent {
+        match self {
+            Self::Capture => ShortcutEvent::CaptureRequested,
+            Self::FullScreen => ShortcutEvent::FullScreenRequested,
+            Self::FocusedWindow => ShortcutEvent::FocusedWindowRequested,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ShortcutBinding {
+    pub action: ShortcutAction,
+    pub shortcut: CaptureShortcut,
 }
 
 pub struct GlobalShortcutService {
@@ -148,10 +174,34 @@ pub struct GlobalShortcutService {
 }
 
 impl GlobalShortcutService {
+    /// Registers the legacy single capture action through the shared multi-action listener.
     pub fn register_capture(
         shortcut: CaptureShortcut,
     ) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
-        let (listener, events) = platform::ShortcutListener::register(shortcut)?;
+        Self::register(&[ShortcutBinding {
+            action: ShortcutAction::Capture,
+            shortcut,
+        }])
+    }
+
+    pub fn register(bindings: &[ShortcutBinding]) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
+        if bindings.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "at least one global shortcut is required",
+            ));
+        }
+        if bindings.iter().enumerate().any(|(index, binding)| {
+            bindings[index + 1..]
+                .iter()
+                .any(|other| binding.shortcut == other.shortcut)
+        }) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "global shortcut actions cannot share a key combination",
+            ));
+        }
+        let (listener, events) = platform::ShortcutListener::register(bindings)?;
         Ok((Self { listener }, events))
     }
 
@@ -162,7 +212,7 @@ impl GlobalShortcutService {
 
 #[cfg(windows)]
 mod platform {
-    use super::{CaptureShortcut, ShortcutEvent, ShortcutKey};
+    use super::{CaptureShortcut, ShortcutBinding, ShortcutEvent, ShortcutKey};
     use async_channel::Receiver;
     use std::{
         io, ptr,
@@ -180,26 +230,39 @@ mod platform {
         },
     };
 
-    const HOTKEY_ID: i32 = 1;
+    const FIRST_HOTKEY_ID: i32 = 1;
     pub struct ShortcutListener {
         thread_id: u32,
         thread: Option<JoinHandle<()>>,
     }
 
     impl ShortcutListener {
-        pub fn register(shortcut: CaptureShortcut) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
-            Self::register_key(modifiers(shortcut), virtual_key(shortcut))
+        pub fn register(
+            bindings: &[ShortcutBinding],
+        ) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
+            let registrations = bindings
+                .iter()
+                .enumerate()
+                .map(|(index, binding)| {
+                    (
+                        FIRST_HOTKEY_ID + index as i32,
+                        binding.action.event(),
+                        modifiers(binding.shortcut),
+                        virtual_key(binding.shortcut),
+                    )
+                })
+                .collect();
+            Self::register_keys(registrations)
         }
 
-        pub(super) fn register_key(
-            modifiers: u32,
-            virtual_key: u32,
+        pub(super) fn register_keys(
+            registrations: Vec<(i32, ShortcutEvent, u32, u32)>,
         ) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
             let (event_tx, event_rx) = async_channel::bounded(1);
             let (ready_tx, ready_rx) = mpsc::sync_channel(1);
             let thread = thread::Builder::new()
                 .name("flash-shot-hotkey".to_owned())
-                .spawn(move || message_loop(event_tx, ready_tx, modifiers, virtual_key))?;
+                .spawn(move || message_loop(event_tx, ready_tx, registrations))?;
 
             match ready_rx.recv() {
                 Ok(Ok(thread_id)) => Ok((
@@ -262,19 +325,28 @@ mod platform {
     fn message_loop(
         events: async_channel::Sender<ShortcutEvent>,
         ready: SyncSender<io::Result<u32>>,
-        modifiers: u32,
-        virtual_key: u32,
+        registrations: Vec<(i32, ShortcutEvent, u32, u32)>,
     ) {
         // SAFETY: called from the listener thread itself.
         let thread_id = unsafe { GetCurrentThreadId() };
-        // SAFETY: a null HWND registers a thread-level hotkey.
-        if unsafe { RegisterHotKey(ptr::null_mut(), HOTKEY_ID, modifiers, virtual_key) } == 0 {
-            let _ = ready.send(Err(io::Error::last_os_error()));
-            return;
+        let mut registered_ids = Vec::with_capacity(registrations.len());
+        for (id, _, modifiers, virtual_key) in &registrations {
+            // SAFETY: a null HWND registers a thread-level hotkey.
+            if unsafe { RegisterHotKey(ptr::null_mut(), *id, *modifiers, *virtual_key) } == 0 {
+                for registered_id in registered_ids {
+                    // SAFETY: balances a successful thread-level registration above.
+                    unsafe { UnregisterHotKey(ptr::null_mut(), registered_id) };
+                }
+                let _ = ready.send(Err(io::Error::last_os_error()));
+                return;
+            }
+            registered_ids.push(*id);
         }
         if ready.send(Ok(thread_id)).is_err() {
-            // SAFETY: balances the successful registration on this thread.
-            unsafe { UnregisterHotKey(ptr::null_mut(), HOTKEY_ID) };
+            for id in registered_ids {
+                // SAFETY: balances a successful thread-level registration above.
+                unsafe { UnregisterHotKey(ptr::null_mut(), id) };
+            }
             return;
         }
 
@@ -285,28 +357,61 @@ mod platform {
             if result <= 0 {
                 break;
             }
-            if message.message == WM_HOTKEY && message.wParam == HOTKEY_ID as usize {
-                let _ = events.try_send(ShortcutEvent::CaptureRequested);
+            if message.message == WM_HOTKEY
+                && let Some((_, event, _, _)) = registrations
+                    .iter()
+                    .find(|(id, _, _, _)| *id == message.wParam as i32)
+            {
+                let _ = events.try_send(*event);
             }
         }
-        // SAFETY: balances the successful registration on this thread.
-        unsafe { UnregisterHotKey(ptr::null_mut(), HOTKEY_ID) };
+        for id in registered_ids {
+            // SAFETY: balances a successful thread-level registration above.
+            unsafe { UnregisterHotKey(ptr::null_mut(), id) };
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::CaptureShortcut;
     #[cfg(windows)]
     use super::platform::ShortcutListener;
+    use super::{CaptureShortcut, GlobalShortcutService, ShortcutAction, ShortcutBinding};
     #[cfg(windows)]
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, VK_F24};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, VK_F23, VK_F24};
 
     #[cfg(windows)]
     #[test]
     fn capture_hotkey_registers_and_stops_cleanly() {
-        let (listener, _events) =
-            ShortcutListener::register_key(MOD_NOREPEAT, VK_F24 as u32).unwrap();
+        let (listener, _events) = ShortcutListener::register_keys(vec![(
+            1,
+            super::ShortcutEvent::CaptureRequested,
+            MOD_NOREPEAT,
+            VK_F24 as u32,
+        )])
+        .unwrap();
+        assert!(listener.is_active());
+        drop(listener);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn multiple_hotkeys_register_and_stop_on_one_listener_thread() {
+        let (listener, _events) = ShortcutListener::register_keys(vec![
+            (
+                1,
+                super::ShortcutEvent::CaptureRequested,
+                MOD_NOREPEAT,
+                VK_F23 as u32,
+            ),
+            (
+                2,
+                super::ShortcutEvent::FocusedWindowRequested,
+                MOD_NOREPEAT,
+                VK_F24 as u32,
+            ),
+        ])
+        .unwrap();
         assert!(listener.is_active());
         drop(listener);
     }
@@ -352,18 +457,36 @@ mod tests {
             assert!(shortcut.parse::<CaptureShortcut>().is_err(), "{shortcut}");
         }
     }
+
+    #[test]
+    fn multiple_actions_require_distinct_shortcuts() {
+        let shortcut = CaptureShortcut::default();
+        let result = GlobalShortcutService::register(&[
+            ShortcutBinding {
+                action: ShortcutAction::Capture,
+                shortcut,
+            },
+            ShortcutBinding {
+                action: ShortcutAction::FullScreen,
+                shortcut,
+            },
+        ]);
+        assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::InvalidInput));
+    }
 }
 
 #[cfg(not(windows))]
 mod platform {
-    use super::{CaptureShortcut, ShortcutEvent};
+    use super::{ShortcutBinding, ShortcutEvent};
     use async_channel::Receiver;
     use std::io;
 
     pub struct ShortcutListener;
 
     impl ShortcutListener {
-        pub fn register(_shortcut: CaptureShortcut) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
+        pub fn register(
+            _bindings: &[ShortcutBinding],
+        ) -> io::Result<(Self, Receiver<ShortcutEvent>)> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "global shortcuts are currently Windows-only",

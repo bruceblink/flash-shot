@@ -43,6 +43,9 @@ cargo run
 
 应用启动后默认只驻留在通知区域，不显示常驻操作窗口。使用全局快捷键即可进入截图选区；只有在选区出现后才会显示标注和导出工具。单击或右键点击托盘图标都会打开菜单，可开始自由区域截图、全屏截图、3/5/10 秒延时截图，或直接将全屏复制到剪贴板，也可开始或停止显示器录制；菜单还可切换截图是否包含鼠标指针、打开截图目录、本地图片、可编辑项目、历史记录和按需设置窗口，并在用户明确点击时检查更新。关闭设置窗口只会将其隐藏，应用会继续在后台运行。
 
+`Capture preferences` 可为区域截图、全屏截图和焦点窗口截图分别配置全局快捷键。三个
+动作使用一次原生注册，重复组合会被拒绝；将附加动作切换到 `Off` 可释放对应快捷键。
+
 录屏依赖用户本机或随应用分发的 FFmpeg。默认视频保存到 `Videos\Flash Shot`（不可用时回退到当前目录）。可通过以下环境变量显式指定可执行文件和一个可选音频源：
 
 ```powershell
@@ -143,6 +146,10 @@ The `Display` control cycles recordable monitors in primary-first order. Both di
 The capture shortcut defaults to `Ctrl+Shift+Print Screen`. Set `FLASH_SHOT_CAPTURE_HOTKEY` before launch to use a different safe global combination, for example `Ctrl+Alt+S`, `Shift+F12`, or `Ctrl+PrintScreen`. It must include `Ctrl`, `Alt`, or `Shift`, plus one letter, `F1` through `F24`, or `PrintScreen`; invalid values fall back to the default.
 
 The global capture shortcut can be disabled from the tray `System` menu or Capture settings without changing its configured key combination. The preference persists across restarts, while the tray capture commands remain available.
+
+Capture settings can configure separate global shortcuts for region capture, full-screen capture,
+and focused-window capture. They are registered as one native set; duplicate combinations are
+rejected, and setting a secondary action to `Off` releases that key.
 
 Use `Capture > Focused window` to hide Flash Shot, resolve the current external foreground window,
 and open that physical-pixel rectangle as an editable selection. If the target is partly outside the

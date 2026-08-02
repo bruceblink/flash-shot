@@ -401,6 +401,36 @@ fn capture_settings(
             ),
         ))
         .child(
+            settings_row("Full screen key", colors).child(settings_button(
+                "settings-full-screen-shortcut",
+                super::workflow::shortcut_option_label(
+                    app_state.settings.full_screen_shortcut.as_deref(),
+                ),
+                colors,
+                is_idle,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_full_screen_shortcut(cx))
+                },
+            )),
+        )
+        .child(
+            settings_row("Focused window key", colors).child(settings_button(
+                "settings-focused-window-shortcut",
+                super::workflow::shortcut_option_label(
+                    app_state.settings.focused_window_shortcut.as_deref(),
+                ),
+                colors,
+                is_idle,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| {
+                        app.update(cx, |this, cx| this.cycle_focused_window_shortcut(cx))
+                    }
+                },
+            )),
+        )
+        .child(
             settings_row("Capture delay", colors).child(div().flex().gap_1().children(
                 [0, 3, 5, 10].map(|delay_seconds| {
                     let app = app.clone();

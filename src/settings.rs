@@ -14,6 +14,12 @@ pub const DEFAULT_COLOR_FORMAT: u8 = 0;
 pub const DEFAULT_EXPORT_FORMAT: u8 = 0;
 pub const DEFAULT_SAVE_PREFIX: &str = "FlashShot";
 pub const SAVE_PREFIX_OPTIONS: [&str; 3] = [DEFAULT_SAVE_PREFIX, "Screenshot", "Capture"];
+pub const GLOBAL_SHORTCUT_OPTIONS: [&str; 4] = [
+    "Ctrl+Alt+S",
+    "Ctrl+Shift+S",
+    "Ctrl+Alt+F11",
+    "Ctrl+Shift+F12",
+];
 pub const OCR_LANGUAGE_OPTIONS: [Option<&str>; 4] =
     [None, Some("eng"), Some("chi_sim"), Some("eng+chi_sim")];
 
@@ -22,6 +28,8 @@ pub const OCR_LANGUAGE_OPTIONS: [Option<&str>; 4] =
 pub struct UserSettings {
     version: u8,
     pub capture_shortcut: Option<String>,
+    pub full_screen_shortcut: Option<String>,
+    pub focused_window_shortcut: Option<String>,
     pub capture_shortcut_enabled: bool,
     pub include_cursor: bool,
     pub capture_delay_seconds: u8,
@@ -42,6 +50,8 @@ impl Default for UserSettings {
         Self {
             version: SETTINGS_VERSION,
             capture_shortcut: None,
+            full_screen_shortcut: None,
+            focused_window_shortcut: None,
             capture_shortcut_enabled: true,
             include_cursor: false,
             capture_delay_seconds: 0,
@@ -70,6 +80,18 @@ impl UserSettings {
                     ));
                 }
                 settings.version = SETTINGS_VERSION;
+                settings.capture_shortcut =
+                    Self::normalize_capture_shortcut(settings.capture_shortcut);
+                settings.full_screen_shortcut = Self::normalize_secondary_shortcut(
+                    settings.full_screen_shortcut,
+                    settings.capture_shortcut.as_deref(),
+                    None,
+                );
+                settings.focused_window_shortcut = Self::normalize_secondary_shortcut(
+                    settings.focused_window_shortcut,
+                    settings.capture_shortcut.as_deref(),
+                    settings.full_screen_shortcut.as_deref(),
+                );
                 settings.capture_delay_seconds =
                     Self::normalize_capture_delay(settings.capture_delay_seconds);
                 settings.history_limit = Self::normalize_history_limit(settings.history_limit);
@@ -164,6 +186,52 @@ impl UserSettings {
         SAVE_PREFIX_OPTIONS[(position + 1) % SAVE_PREFIX_OPTIONS.len()].to_owned()
     }
 
+    /// Cycles an optional secondary shortcut, skipping keys already assigned to other actions.
+    pub fn next_global_shortcut<'a>(
+        current: Option<&str>,
+        occupied: impl IntoIterator<Item = Option<&'a str>>,
+    ) -> Option<String> {
+        let occupied: Vec<_> = occupied.into_iter().flatten().collect();
+        let options: Vec<Option<&str>> = std::iter::once(None)
+            .chain(GLOBAL_SHORTCUT_OPTIONS.into_iter().map(Some))
+            .filter(|candidate| candidate.is_none_or(|shortcut| !occupied.contains(&shortcut)))
+            .collect();
+        let position = options
+            .iter()
+            .position(|candidate| *candidate == current)
+            .unwrap_or(0);
+        options[(position + 1) % options.len()].map(str::to_owned)
+    }
+
+    /// Keeps persisted shortcut text parseable and prevents two actions from claiming one key.
+    fn normalize_capture_shortcut(shortcut: Option<String>) -> Option<String> {
+        shortcut.and_then(|shortcut| {
+            shortcut
+                .parse::<crate::platform::shortcut::CaptureShortcut>()
+                .ok()
+                .map(|shortcut| shortcut.to_string())
+        })
+    }
+
+    fn normalize_secondary_shortcut(
+        shortcut: Option<String>,
+        primary: Option<&str>,
+        secondary: Option<&str>,
+    ) -> Option<String> {
+        let shortcut = shortcut
+            .and_then(|shortcut| {
+                shortcut
+                    .parse::<crate::platform::shortcut::CaptureShortcut>()
+                    .ok()
+            })
+            .map(|shortcut| shortcut.to_string())?;
+        (![primary, secondary]
+            .into_iter()
+            .flatten()
+            .any(|used| used == shortcut))
+        .then_some(shortcut)
+    }
+
     /// Keeps persisted OCR choices within the small set that the settings UI can restore safely.
     pub fn normalize_ocr_language(language: Option<String>) -> Option<String> {
         language.filter(|language| {
@@ -203,6 +271,8 @@ mod tests {
         let (settings, _) = UserSettings::load(&directory).unwrap();
 
         assert_eq!(settings.capture_shortcut, None);
+        assert_eq!(settings.full_screen_shortcut, None);
+        assert_eq!(settings.focused_window_shortcut, None);
         assert!(settings.capture_shortcut_enabled);
         assert!(!settings.include_cursor);
         assert_eq!(settings.capture_delay_seconds, 0);
@@ -220,6 +290,8 @@ mod tests {
         let directory = directory("round-trip");
         let (mut settings, path) = UserSettings::load(&directory).unwrap();
         settings.capture_shortcut = Some("Ctrl+Alt+S".to_owned());
+        settings.full_screen_shortcut = Some("Ctrl+Shift+S".to_owned());
+        settings.focused_window_shortcut = Some("Ctrl+Alt+F11".to_owned());
         settings.capture_shortcut_enabled = false;
         settings.include_cursor = true;
         settings.capture_delay_seconds = 5;
@@ -233,6 +305,14 @@ mod tests {
 
         let (reopened, _) = UserSettings::load(&directory).unwrap();
         assert_eq!(reopened.capture_shortcut.as_deref(), Some("Ctrl+Alt+S"));
+        assert_eq!(
+            reopened.full_screen_shortcut.as_deref(),
+            Some("Ctrl+Shift+S")
+        );
+        assert_eq!(
+            reopened.focused_window_shortcut.as_deref(),
+            Some("Ctrl+Alt+F11")
+        );
         assert!(!reopened.capture_shortcut_enabled);
         assert!(reopened.include_cursor);
         assert_eq!(reopened.capture_delay_seconds, 5);
@@ -347,6 +427,36 @@ mod tests {
             UserSettings::next_save_prefix("Capture"),
             DEFAULT_SAVE_PREFIX
         );
+    }
+
+    #[test]
+    fn secondary_shortcut_cycle_skips_occupied_actions_and_can_disable_an_action() {
+        assert_eq!(
+            UserSettings::next_global_shortcut(None, [Some("Ctrl+Alt+S"), None]).as_deref(),
+            Some("Ctrl+Shift+S")
+        );
+        assert_eq!(
+            UserSettings::next_global_shortcut(Some("Ctrl+Shift+F12"), [None, None]),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_or_duplicate_secondary_shortcuts_are_not_loaded() {
+        let directory = directory("invalid-secondary-shortcut");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("settings.json"),
+            r#"{"version":1,"capture_shortcut":"Ctrl+Alt+S","full_screen_shortcut":"Ctrl+Alt+S","focused_window_shortcut":"invalid"}"#,
+        )
+        .unwrap();
+
+        let (settings, _) = UserSettings::load(&directory).unwrap();
+
+        assert_eq!(settings.capture_shortcut.as_deref(), Some("Ctrl+Alt+S"));
+        assert_eq!(settings.full_screen_shortcut, None);
+        assert_eq!(settings.focused_window_shortcut, None);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

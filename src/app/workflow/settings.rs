@@ -210,76 +210,127 @@ impl FlashShotApp {
                 return;
             }
         };
+        let previous_label = self.capture_shortcut.clone();
+        let previous_settings = self.settings.clone();
+        self.capture_shortcut = shortcut.to_string();
+        self.settings.capture_shortcut = Some(self.capture_shortcut.clone());
+        self.apply_shortcut_change(
+            previous_label,
+            previous_settings,
+            format!("Capture shortcut changed to {}", self.capture_shortcut),
+            cx,
+        );
+    }
+
+    /// Cycles the full-screen action key while keeping every active action distinct.
+    pub(in crate::app) fn cycle_full_screen_shortcut(&mut self, cx: &mut Context<Self>) {
+        let previous_label = self.capture_shortcut.clone();
+        let previous_settings = self.settings.clone();
+        self.settings.full_screen_shortcut = UserSettings::next_global_shortcut(
+            self.settings.full_screen_shortcut.as_deref(),
+            [
+                Some(self.capture_shortcut.as_str()),
+                self.settings.focused_window_shortcut.as_deref(),
+            ],
+        );
+        self.apply_shortcut_change(
+            previous_label,
+            previous_settings,
+            format!(
+                "Full-screen shortcut: {}",
+                shortcut_option_label(self.settings.full_screen_shortcut.as_deref())
+            ),
+            cx,
+        );
+    }
+
+    /// Cycles the focus-window action key while keeping every active action distinct.
+    pub(in crate::app) fn cycle_focused_window_shortcut(&mut self, cx: &mut Context<Self>) {
+        let previous_label = self.capture_shortcut.clone();
+        let previous_settings = self.settings.clone();
+        self.settings.focused_window_shortcut = UserSettings::next_global_shortcut(
+            self.settings.focused_window_shortcut.as_deref(),
+            [
+                Some(self.capture_shortcut.as_str()),
+                self.settings.full_screen_shortcut.as_deref(),
+            ],
+        );
+        self.apply_shortcut_change(
+            previous_label,
+            previous_settings,
+            format!(
+                "Focused-window shortcut: {}",
+                shortcut_option_label(self.settings.focused_window_shortcut.as_deref())
+            ),
+            cx,
+        );
+    }
+
+    /// Re-registers every configured action as one native set before persisting the new preference.
+    fn apply_shortcut_change(
+        &mut self,
+        previous_label: String,
+        previous_settings: UserSettings,
+        success_status: String,
+        cx: &mut Context<Self>,
+    ) {
         if !self.settings.capture_shortcut_enabled {
-            let previous_label = self.capture_shortcut.clone();
-            let previous_preference = self.settings.capture_shortcut.clone();
-            self.capture_shortcut = shortcut.to_string();
-            self.settings.capture_shortcut = Some(self.capture_shortcut.clone());
             self.status = match self.settings.save(&self.settings_path) {
-                Ok(()) => format!(
-                    "Capture shortcut changed to {}; global shortcut remains disabled",
-                    self.capture_shortcut
-                ),
+                Ok(()) => format!("{success_status}; global shortcuts remain disabled"),
                 Err(error) => {
                     self.capture_shortcut = previous_label;
-                    self.settings.capture_shortcut = previous_preference;
+                    self.settings = previous_settings;
                     format!("Could not save shortcut preference: {error}")
                 }
             };
             cx.notify();
             return;
         }
-        let previous_label = self.capture_shortcut.clone();
-        let previous_preference = self.settings.capture_shortcut.clone();
-        let previous_service = self._shortcut.take();
-        drop(previous_service);
-        let replacement = match GlobalShortcutService::register_capture(shortcut) {
+        drop(self._shortcut.take());
+        let registration = self
+            .capture_shortcut
+            .parse()
+            .map_err(std::io::Error::other)
+            .and_then(|capture| super::super::register_global_shortcuts(capture, &self.settings));
+        match registration {
             Ok((service, events)) => {
-                Self::listen_for_shortcut(events, cx);
-                service
+                if let Err(error) = self.settings.save(&self.settings_path) {
+                    drop(service);
+                    self.capture_shortcut = previous_label;
+                    self.settings = previous_settings;
+                    self.restore_global_shortcuts(cx);
+                    self.status = format!("Could not save shortcut preference: {error}");
+                } else {
+                    Self::listen_for_shortcut(events, cx);
+                    self._shortcut = Some(service);
+                    self.capture_shortcut_enabled = true;
+                    self.set_tray_capture_shortcut_enabled(true);
+                    self.status = success_status;
+                }
             }
             Err(error) => {
-                self.restore_capture_shortcut(&previous_label, cx);
+                self.capture_shortcut = previous_label;
+                self.settings = previous_settings;
+                self.restore_global_shortcuts(cx);
                 self.capture_shortcut_enabled = self._shortcut.is_some();
                 self.set_tray_capture_shortcut_enabled(self.capture_shortcut_enabled);
-                self.status = format!("Could not register {preset}: {error}");
-                cx.notify();
-                return;
-            }
-        };
-        self._shortcut = Some(replacement);
-        self.capture_shortcut_enabled = true;
-        self.capture_shortcut = shortcut.to_string();
-        self.settings.capture_shortcut = Some(self.capture_shortcut.clone());
-        match self.settings.save(&self.settings_path) {
-            Ok(()) => {
-                self.status = format!("Capture shortcut changed to {}", self.capture_shortcut);
-            }
-            Err(error) => {
-                let replacement = self._shortcut.take();
-                drop(replacement);
-                self.restore_capture_shortcut(&previous_label, cx);
-                self.capture_shortcut_enabled = self._shortcut.is_some();
-                self.capture_shortcut = previous_label;
-                self.settings.capture_shortcut = previous_preference;
-                self.status = format!("Could not save shortcut preference: {error}");
+                self.status = format!("Could not register global shortcuts: {error}");
             }
         }
-        self.set_tray_capture_shortcut_enabled(self.capture_shortcut_enabled);
         cx.notify();
     }
 
-    fn restore_capture_shortcut(&mut self, label: &str, cx: &mut Context<Self>) {
-        let Ok(shortcut) = label.parse() else {
+    fn restore_global_shortcuts(&mut self, cx: &mut Context<Self>) {
+        let Ok(capture) = self.capture_shortcut.parse() else {
             return;
         };
-        match GlobalShortcutService::register_capture(shortcut) {
+        match super::super::register_global_shortcuts(capture, &self.settings) {
             Ok((service, events)) => {
                 Self::listen_for_shortcut(events, cx);
                 self._shortcut = Some(service);
             }
             Err(error) => {
-                log::warn!(target: "flash_shot::shortcut", "capture_hotkey_restore_failed shortcut={label} error={error}");
+                log::warn!(target: "flash_shot::shortcut", "global_hotkey_restore_failed error={error}")
             }
         }
     }
@@ -311,14 +362,15 @@ impl FlashShotApp {
                 return;
             }
         };
-        let (service, events) = match GlobalShortcutService::register_capture(shortcut) {
-            Ok(registered) => registered,
-            Err(error) => {
-                self.status = format!("Could not register {}: {error}", self.capture_shortcut);
-                cx.notify();
-                return;
-            }
-        };
+        let (service, events) =
+            match super::super::register_global_shortcuts(shortcut, &self.settings) {
+                Ok(registered) => registered,
+                Err(error) => {
+                    self.status = format!("Could not register {}: {error}", self.capture_shortcut);
+                    cx.notify();
+                    return;
+                }
+            };
         self.settings.capture_shortcut_enabled = true;
         if let Err(error) = self.settings.save(&self.settings_path) {
             drop(service);
@@ -450,4 +502,8 @@ impl FlashShotApp {
         };
         cx.notify();
     }
+}
+
+pub(in crate::app) fn shortcut_option_label(shortcut: Option<&str>) -> &str {
+    shortcut.unwrap_or("Off")
 }
