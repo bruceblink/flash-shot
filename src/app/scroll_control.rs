@@ -37,6 +37,7 @@ impl Render for ManualScrollControl {
         let frame_count = app.manual_scroll.frame_count();
         let capture_in_flight = app.manual_scroll_capture_in_flight;
         let retry_available = app.manual_scroll.failure().is_some();
+        let can_finish = app.manual_scroll.can_finish();
 
         div()
             .size_full()
@@ -126,12 +127,12 @@ impl Render for ManualScrollControl {
                             .px_3()
                             .py_1()
                             .bg(colors.panel)
-                            .text_color(if capture_in_flight {
+                            .text_color(if capture_in_flight || !can_finish {
                                 colors.muted
                             } else {
                                 colors.text
                             })
-                            .when(!capture_in_flight, |button| {
+                            .when(!capture_in_flight && can_finish, |button| {
                                 button
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -141,7 +142,7 @@ impl Render for ManualScrollControl {
                                         });
                                     }))
                             })
-                            .child("Finish"),
+                            .child(manual_scroll_finish_label(can_finish)),
                     )
                     .child(
                         div()
@@ -174,14 +175,29 @@ fn manual_scroll_capture_label(capture_in_flight: bool, retry_available: bool) -
     }
 }
 
+/// Names the next required action until a second viewport makes stitching possible.
+fn manual_scroll_finish_label(can_finish: bool) -> &'static str {
+    if can_finish {
+        "Finish"
+    } else {
+        "Capture another"
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::manual_scroll_capture_label;
+    use super::{manual_scroll_capture_label, manual_scroll_finish_label};
 
     #[test]
     fn capture_action_describes_its_busy_state() {
         assert_eq!(manual_scroll_capture_label(false, false), "Capture next");
         assert_eq!(manual_scroll_capture_label(false, true), "Retry frame");
         assert_eq!(manual_scroll_capture_label(true, true), "Capturing...");
+    }
+
+    #[test]
+    fn finish_action_requires_an_overlapping_viewport() {
+        assert_eq!(manual_scroll_finish_label(false), "Capture another");
+        assert_eq!(manual_scroll_finish_label(true), "Finish");
     }
 }

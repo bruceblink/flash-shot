@@ -141,6 +141,11 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if !self.manual_scroll.can_finish() {
+            self.status = "Capture another scroll frame before finishing".to_owned();
+            cx.notify();
+            return;
+        }
         let stitched = match self.manual_scroll.finish(Default::default()) {
             Ok(stitched) => stitched,
             Err(error) => {

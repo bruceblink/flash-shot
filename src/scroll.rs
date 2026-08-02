@@ -60,6 +60,14 @@ impl ManualScrollCapture {
         self.frames.len()
     }
 
+    /// Reports whether this session has enough viewports to produce a scrolling result.
+    ///
+    /// The initial viewport establishes the capture area; one later viewport is required to
+    /// prove an overlap and add newly revealed content.
+    pub fn can_finish(&self) -> bool {
+        self.state == ManualScrollState::Collecting && self.frames.len() >= 2
+    }
+
     pub fn failure(&self) -> Option<&str> {
         self.failure.as_deref()
     }
@@ -394,7 +402,9 @@ mod tests {
 
         capture.begin(frame(0..10)).unwrap();
         assert_eq!(capture.state(), ManualScrollState::Collecting);
+        assert!(!capture.can_finish());
         assert_eq!(capture.append(frame(6..16), options()).unwrap(), 4);
+        assert!(capture.can_finish());
         let stitched = capture.finish(options()).unwrap();
 
         assert_eq!(stitched.frame.height, 16);
