@@ -679,12 +679,7 @@ impl CaptureFrame {
             ));
         }
 
-        let mut rgba = Vec::with_capacity(self.width as usize * self.height as usize * 4);
-        for row in self.pixels.chunks_exact(self.stride) {
-            for pixel in row[..self.width as usize * 4].chunks_exact(4) {
-                rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
-            }
-        }
+        let rgba = self.rgba_pixels()?;
 
         let mut encoded = Vec::new();
         {
@@ -699,14 +694,101 @@ impl CaptureFrame {
 
     pub fn save_png(&self, path: impl AsRef<Path>) -> io::Result<()> {
         let path = path.as_ref();
+        self.save_encoded(path, self.encode_png()?)
+    }
+
+    /// Saves PNG, JPEG, or WebP according to the path extension.
+    /// JPEG drops alpha, while WebP keeps it; each encoder still writes atomically.
+    pub fn save_image(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let path = path.as_ref();
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_else(|| "png".to_owned());
+        let encoded = match extension.as_str() {
+            "png" => self.encode_png()?,
+            "jpg" | "jpeg" => self.encode_raster(::image::ImageFormat::Jpeg, false)?,
+            "webp" => self.encode_raster(::image::ImageFormat::WebP, true)?,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "screenshot export must use .png, .jpg, .jpeg, or .webp",
+                ));
+            }
+        };
+        self.save_encoded(path, encoded)
+    }
+
+    fn rgba_pixels(&self) -> io::Result<Vec<u8>> {
+        self.validate()?;
+        if self.format != PixelFormat::Bgra8 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "unsupported pixel format",
+            ));
+        }
+        let mut rgba = Vec::with_capacity(self.width as usize * self.height as usize * 4);
+        for row in self.pixels.chunks_exact(self.stride) {
+            for pixel in row[..self.width as usize * 4].chunks_exact(4) {
+                rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+            }
+        }
+        Ok(rgba)
+    }
+
+    fn encode_raster(
+        &self,
+        format: ::image::ImageFormat,
+        preserve_alpha: bool,
+    ) -> io::Result<Vec<u8>> {
+        let rgba = self.rgba_pixels()?;
+        let mut output = std::io::Cursor::new(Vec::new());
+        if preserve_alpha {
+            let image =
+                ::image::RgbaImage::from_raw(self.width, self.height, rgba).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "screenshot pixels have an invalid size",
+                    )
+                })?;
+            ::image::DynamicImage::ImageRgba8(image)
+                .write_to(&mut output, format)
+                .map_err(io::Error::other)?;
+        } else {
+            let rgb: Vec<u8> = rgba
+                .chunks_exact(4)
+                .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+                .collect();
+            let image =
+                ::image::RgbImage::from_raw(self.width, self.height, rgb).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "screenshot pixels have an invalid size",
+                    )
+                })?;
+            ::image::DynamicImage::ImageRgb8(image)
+                .write_to(&mut output, format)
+                .map_err(io::Error::other)?;
+        }
+        Ok(output.into_inner())
+    }
+
+    fn save_encoded(&self, path: &Path, encoded: Vec<u8>) -> io::Result<()> {
         let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty());
         if let Some(parent) = parent {
             fs::create_dir_all(parent)?;
         }
-        let temporary = path.with_extension("png.tmp");
-        let encoded = self.encode_png()?;
+        let temporary = path.with_extension(
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .map_or_else(
+                    || "png.tmp".to_owned(),
+                    |extension| format!("{extension}.tmp"),
+                ),
+        );
         let mut file = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -847,6 +929,29 @@ mod tests {
         assert!(fs::metadata(&path).unwrap().len() > 0);
         assert_ne!(fs::read(&path).unwrap(), b"old capture");
         assert!(!path.with_extension("png.tmp").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn save_image_encodes_jpeg_and_webp_from_bgra_pixels() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-image-formats-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let jpeg = directory.join("capture.jpg");
+        let webp = directory.join("capture.webp");
+
+        test_frame().save_image(&jpeg).unwrap();
+        test_frame().save_image(&webp).unwrap();
+
+        let jpeg_bytes = fs::read(&jpeg).unwrap();
+        let webp_bytes = fs::read(&webp).unwrap();
+        assert!(jpeg_bytes.starts_with(&[0xFF, 0xD8]));
+        assert_eq!(&webp_bytes[..4], b"RIFF");
+        assert_eq!(&webp_bytes[8..12], b"WEBP");
+        assert!(!jpeg.with_extension("jpg.tmp").exists());
+        assert!(!webp.with_extension("webp.tmp").exists());
         fs::remove_dir_all(directory).unwrap();
     }
 

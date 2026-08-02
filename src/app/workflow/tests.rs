@@ -2,12 +2,12 @@ use super::{
     ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
     annotation_position, annotation_sidecar_path, claim_idle_completion, compose_captured_displays,
-    copy_annotated_frame_selection, delayed_capture_status, drawing_status, fill_alpha, fill_color,
-    format_hsl, format_recording_progress, hovered_color, intersect_rect, is_current_operation,
-    keyboard_command, load_annotation_document, next_annotation_counters,
+    copy_annotated_frame_selection, delayed_capture_status, drawing_status, export_path,
+    fill_alpha, fill_color, format_hsl, format_recording_progress, hovered_color, intersect_rect,
+    is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
     next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
     next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
-    ocr_support_status, open_annotation_project, open_image_project, pinned_size, png_path,
+    ocr_support_status, open_annotation_project, open_image_project, pinned_size,
     project_image_path, quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
     recording_audio_selection_label, recording_display_selection_label,
     recording_start_conflict_status, recording_start_failure_status, recording_support_status,
@@ -785,18 +785,22 @@ fn annotated_save_and_quick_save_encode_the_composited_selection() {
 }
 
 #[test]
-fn save_path_always_uses_a_png_extension() {
+fn export_path_defaults_to_png_and_preserves_supported_formats() {
     assert_eq!(
-        png_path(PathBuf::from("capture")),
+        export_path(PathBuf::from("capture")),
         PathBuf::from("capture.png")
     );
     assert_eq!(
-        png_path(PathBuf::from("capture.jpg")),
-        PathBuf::from("capture.png")
+        export_path(PathBuf::from("capture.jpg")),
+        PathBuf::from("capture.jpg")
     );
     assert_eq!(
-        png_path(PathBuf::from("capture.PNG")),
+        export_path(PathBuf::from("capture.PNG")),
         PathBuf::from("capture.PNG")
+    );
+    assert_eq!(
+        export_path(PathBuf::from("capture.webp")),
+        PathBuf::from("capture.webp")
     );
 }
 

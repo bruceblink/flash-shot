@@ -20,7 +20,7 @@ pub(super) fn save_annotated_frame_selection(
     frame
         .composite_annotations(document)?
         .crop(selection)?
-        .save_png(path)
+        .save_image(path)
 }
 
 pub(super) fn quick_save_annotated_frame_selection(
@@ -127,6 +127,18 @@ pub(super) fn unix_timestamp_ms() -> u128 {
         .as_millis()
 }
 
+pub(super) fn export_path(mut path: PathBuf) -> PathBuf {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    if !matches!(extension.as_deref(), Some("png" | "jpg" | "jpeg" | "webp")) {
+        path.set_extension("png");
+    }
+    path
+}
+
+/// Keeps editable-project images lossless even when a caller chooses another extension.
 pub(super) fn png_path(mut path: PathBuf) -> PathBuf {
     let is_png = path
         .extension()

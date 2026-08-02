@@ -26,7 +26,7 @@ impl FlashShotApp {
             async move {
                 let outcome = match prompt.await {
                     Ok(Ok(Some(path))) => {
-                        let path = png_path(path);
+                        let path = export_path(path);
                         let result = cx
                             .background_executor()
                             .spawn(async move {
