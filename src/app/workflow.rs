@@ -41,7 +41,7 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::{
-    FlashShotApp, HistoryFilter, RecognitionResult, RecordingAudioSelection,
+    FlashShotApp, HistoryFilter, RecognitionResult, RecognitionRetry, RecordingAudioSelection,
     RecordingDisplaySelection, SettingsSection,
     overlay::CaptureOverlay,
     pinned::PinnedImage,
@@ -289,7 +289,17 @@ impl FlashShotApp {
 
     pub(super) fn clear_recognition_result(&mut self, cx: &mut Context<Self>) {
         self.recognition_result = None;
+        self.recognition_retry = None;
         cx.notify();
+    }
+
+    /// Repeats the last failed OCR or translation request while the original selection is intact.
+    pub(super) fn retry_recognition(&mut self, retry: RecognitionRetry, cx: &mut Context<Self>) {
+        self.recognition_retry = None;
+        match retry {
+            RecognitionRetry::Ocr => self.recognize_text_selection(cx),
+            RecognitionRetry::Translation => self.translate_selection(cx),
+        }
     }
 
     pub(super) fn show_settings_window(&mut self, cx: &mut Context<Self>) {

@@ -23,7 +23,7 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 - Windows 虚拟桌面截图、混合 DPI 选区、窗口/控件识别、放大镜和键盘微调；
 - 延时截图、可选系统光标合成、复制、保存、贴图和截图历史；
 - 原生矩形、椭圆、直线、箭头、画笔、文字、模糊、马赛克、高亮、水印和序号标注；
-- 手动、辅助和滚动后自动捕获的长截图，二维码识别、可选本地 OCR 与 HTTPS 翻译；
+- 手动、辅助和滚动后自动捕获的长截图，二维码识别、可选本地 OCR 与 HTTPS 翻译及失败后原选区重试；
 - 显示器、窗口和区域录制，以及音频选择、暂停/恢复、进度与 Job Object 清理；
 - 可重复性能/资源压力工具、结构化诊断和本地质量门禁。
 
@@ -121,7 +121,7 @@ The repository currently includes:
 - virtual-desktop capture, mixed-DPI selection, window/control inspection, magnification, and keyboard nudging on Windows;
 - delayed capture, optional system-cursor compositing, copy/save, pinning, and screenshot history;
 - native rectangle, ellipse, line, arrow, pen, text, blur, mosaic, highlight, watermark, and sequence annotations;
-- manual, assisted, and scroll-then-auto-capture workflows, QR recognition, optional local OCR, and HTTPS translation;
+- manual, assisted, and scroll-then-auto-capture workflows, QR recognition, optional local OCR, HTTPS translation, and in-overlay retries after a failure;
 - display, window, and region recording with audio selection, pause/resume, progress, and Job Object cleanup;
 - repeatable performance/resource stress tooling, structured diagnostics, and local quality gates.
 

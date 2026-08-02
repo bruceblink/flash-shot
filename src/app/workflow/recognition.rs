@@ -83,6 +83,7 @@ impl FlashShotApp {
         };
 
         let ocr_language = self.settings.ocr_language.clone();
+        self.recognition_retry = None;
         self.status = format!(
             "Recognizing text locally ({})...",
             ocr_language_label(ocr_language.as_deref())
@@ -119,8 +120,12 @@ impl FlashShotApp {
             return;
         }
         self.status = match result {
-            Ok(text) if text.is_empty() => "No text found in the selection".to_owned(),
+            Ok(text) if text.is_empty() => {
+                self.recognition_retry = None;
+                "No text found in the selection".to_owned()
+            }
             Ok(text) => {
+                self.recognition_retry = None;
                 self.recognition_result = Some(RecognitionResult {
                     title: "Recognized text".to_owned(),
                     text,
@@ -128,10 +133,12 @@ impl FlashShotApp {
                 "Text recognized locally".to_owned()
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.recognition_retry = Some(RecognitionRetry::Ocr);
                 "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT."
                     .to_owned()
             }
             Err(error) => {
+                self.recognition_retry = Some(RecognitionRetry::Ocr);
                 log::warn!(target: "flash_shot::ocr", "text_recognition_failed error={error}");
                 format!("OCR failed: {error}")
             }
@@ -145,9 +152,11 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
+        self.recognition_retry = None;
         let config = match crate::translation::TranslationConfig::from_environment() {
             Ok(Some(config)) => config,
             Ok(None) => {
+                self.recognition_retry = Some(RecognitionRetry::Translation);
                 self.status =
                     "Translation is disabled. Configure FLASH_SHOT_TRANSLATION_ENDPOINT to opt in."
                         .to_owned();
@@ -155,6 +164,7 @@ impl FlashShotApp {
                 return;
             }
             Err(error) => {
+                self.recognition_retry = Some(RecognitionRetry::Translation);
                 self.status = format!("Translation is unavailable: {error}");
                 cx.notify();
                 return;
@@ -199,9 +209,11 @@ impl FlashShotApp {
         }
         self.status = match result {
             TranslationOutcome::Completed(text) if text.is_empty() => {
+                self.recognition_retry = None;
                 "No text found in the selection".to_owned()
             }
             TranslationOutcome::Completed(text) => {
+                self.recognition_retry = None;
                 self.recognition_result = Some(RecognitionResult {
                     title: "Translation".to_owned(),
                     text,
@@ -209,17 +221,21 @@ impl FlashShotApp {
                 "Translation completed".to_owned()
             }
             TranslationOutcome::PreparationFailed(error) => {
+                self.recognition_retry = Some(RecognitionRetry::Translation);
                 log::warn!(target: "flash_shot::translation", "translation_preparation_failed error={error}");
                 translation_failure_status(&TranslationOutcome::PreparationFailed(error))
             }
             TranslationOutcome::OcrUnavailable => {
+                self.recognition_retry = Some(RecognitionRetry::Translation);
                 translation_failure_status(&TranslationOutcome::OcrUnavailable)
             }
             TranslationOutcome::OcrFailed(error) => {
+                self.recognition_retry = Some(RecognitionRetry::Translation);
                 log::warn!(target: "flash_shot::translation", "translation_ocr_failed error={error}");
                 translation_failure_status(&TranslationOutcome::OcrFailed(error))
             }
             TranslationOutcome::ServiceFailed(error) => {
+                self.recognition_retry = Some(RecognitionRetry::Translation);
                 log::warn!(target: "flash_shot::translation", "translation_service_failed error={error}");
                 translation_failure_status(&TranslationOutcome::ServiceFailed(error))
             }

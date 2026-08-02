@@ -50,6 +50,7 @@ const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
     150.0, 125.0, 150.0, 100.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
 ];
 const OVERLAY_RECOGNITION_ACTION_WIDTHS: [f32; 2] = [60.0, 90.0];
+const OVERLAY_RETRY_ACTION_WIDTHS: [f32; 1] = [115.0];
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
 const ANNOTATION_FONT_SIZES: [u32; 4] = [16, 24, 32, 48];
@@ -335,6 +336,7 @@ impl Render for CaptureOverlay {
         let show_more_actions = app.overlay_more_actions;
         let show_annotation_controls = app.overlay_annotation_controls;
         let recognition_result = app.recognition_result.clone();
+        let recognition_retry = app.recognition_retry;
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
@@ -361,8 +363,13 @@ impl Render for CaptureOverlay {
         let selected_on_display =
             selection.and_then(|selection| intersect(selection, display_bounds));
         let action_layout = action_toolbar_layout(selected_on_display, transform, viewport);
-        let secondary_menu_height = action_layout
-            .map(|layout| secondary_action_menu_height(layout.width, recognition_result.is_some()));
+        let secondary_menu_height = action_layout.map(|layout| {
+            secondary_action_menu_height(
+                layout.width,
+                recognition_result.is_some(),
+                recognition_retry.is_some(),
+            )
+        });
         let secondary_menu_above = action_layout.is_some_and(|layout| {
             secondary_menu_opens_above(layout, viewport, secondary_menu_height.unwrap_or_default())
         });
@@ -1841,6 +1848,27 @@ impl Render for CaptureOverlay {
                                                 }))
                                                 .child("Record window"),
                                         )
+                                        .when_some(recognition_retry, |actions, retry| {
+                                            let retry_label = recognition_retry_label(retry);
+                                            actions.child(
+                                                div()
+                                                    .id("overlay-retry-recognition")
+                                                    .px_3()
+                                                    .py_2()
+                                                    .bg(colors.accent)
+                                                    .text_color(colors.background)
+                                                    .cursor_pointer()
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        let app = this.app.clone();
+                                                        cx.defer(move |cx| {
+                                                            app.update(cx, |app, cx| {
+                                                                app.retry_recognition(retry, cx)
+                                                            })
+                                                        });
+                                                    }))
+                                                    .child(retry_label),
+                                            )
+                                        })
                                         .when_some(recognition_result, |actions, result| {
                                             actions
                                                 .child(
@@ -2839,19 +2867,39 @@ fn secondary_menu_opens_above(
         || bottom > viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET
 }
 
-fn secondary_action_menu_height(width: f32, has_recognition_result: bool) -> f32 {
+fn secondary_action_menu_height(
+    width: f32,
+    has_recognition_result: bool,
+    has_recognition_retry: bool,
+) -> f32 {
     action_toolbar_height_for(
         width,
-        OVERLAY_MORE_ACTION_WIDTHS.into_iter().chain(
-            has_recognition_result
-                .then_some(OVERLAY_RECOGNITION_ACTION_WIDTHS)
-                .into_iter()
-                .flatten(),
-        ),
+        OVERLAY_MORE_ACTION_WIDTHS
+            .into_iter()
+            .chain(
+                has_recognition_result
+                    .then_some(OVERLAY_RECOGNITION_ACTION_WIDTHS)
+                    .into_iter()
+                    .flatten(),
+            )
+            .chain(
+                has_recognition_retry
+                    .then_some(OVERLAY_RETRY_ACTION_WIDTHS)
+                    .into_iter()
+                    .flatten(),
+            ),
     ) + if has_recognition_result {
         OVERLAY_RECOGNITION_PREVIEW_HEIGHT + OVERLAY_ACTION_ITEM_GAP
     } else {
         0.0
+    }
+}
+
+/// Gives the retry control a precise action without exposing internal failure categories.
+fn recognition_retry_label(retry: super::RecognitionRetry) -> &'static str {
+    match retry {
+        super::RecognitionRetry::Ocr => "Retry OCR",
+        super::RecognitionRetry::Translation => "Retry translation",
     }
 }
 
@@ -2977,9 +3025,9 @@ mod tests {
         annotation_layer_label, annotation_toolbar_height, arrow_head_points, capture_double_click,
         intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
-        resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
-        secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
-        visible_selection,
+        recognition_retry_label, resize_handle_points, secondary_action_menu_height,
+        secondary_action_tooltip, secondary_menu_opens_above, selection_cursor,
+        selection_dimension_label_layout, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -3447,12 +3495,13 @@ mod tests {
         assert!((layout.top - 346.0).abs() < 0.01);
         assert_eq!(layout.width, 288.0);
         assert_eq!(layout.height, 42.0);
-        assert_eq!(secondary_action_menu_height(288.0, false), 194.0);
-        assert_eq!(secondary_action_menu_height(288.0, true), 300.0);
+        assert_eq!(secondary_action_menu_height(288.0, false, false), 194.0);
+        assert_eq!(secondary_action_menu_height(288.0, true, false), 300.0);
+        assert!(secondary_action_menu_height(288.0, false, true) >= 194.0);
         assert!(secondary_menu_opens_above(
             layout,
             viewport,
-            secondary_action_menu_height(layout.width, false)
+            secondary_action_menu_height(layout.width, false, false)
         ));
     }
 
@@ -3477,6 +3526,18 @@ mod tests {
             OVERLAY_RECOGNITION_PREVIEW_LIMIT + 3
         );
         assert!(preview.ends_with("..."));
+    }
+
+    #[test]
+    fn recognition_retry_labels_name_the_failed_action() {
+        assert_eq!(
+            recognition_retry_label(super::super::RecognitionRetry::Ocr),
+            "Retry OCR"
+        );
+        assert_eq!(
+            recognition_retry_label(super::super::RecognitionRetry::Translation),
+            "Retry translation"
+        );
     }
 
     #[test]

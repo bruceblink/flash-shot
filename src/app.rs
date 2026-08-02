@@ -90,6 +90,7 @@ pub struct FlashShotApp {
     history_pin_generation: Option<u64>,
     include_cursor: bool,
     recognition_result: Option<RecognitionResult>,
+    recognition_retry: Option<RecognitionRetry>,
     overlay_more_actions: bool,
     overlay_annotation_controls: bool,
     operation_generation: u64,
@@ -183,6 +184,13 @@ pub(super) struct TextEdit {
 pub(super) struct RecognitionResult {
     pub(super) title: String,
     pub(super) text: String,
+}
+
+/// Identifies the failed selection workflow that can be rerun without losing the overlay.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RecognitionRetry {
+    Ocr,
+    Translation,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -410,6 +418,7 @@ impl FlashShotApp {
             history_pin_generation: None,
             include_cursor: settings.include_cursor,
             recognition_result: None,
+            recognition_retry: None,
             overlay_more_actions: false,
             overlay_annotation_controls: false,
             operation_generation: 0,
