@@ -276,6 +276,17 @@ fn capture_settings(
                 },
             ))
             .child(quick_action_button(
+                "settings-capture-focused-window",
+                "Focused window",
+                colors,
+                is_idle,
+                false,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.start_focused_window_capture(cx))
+                },
+            ))
+            .child(quick_action_button(
                 "settings-copy-full-screen",
                 "Copy full screen",
                 colors,

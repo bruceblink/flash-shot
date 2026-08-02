@@ -19,6 +19,7 @@ pub struct InspectionTarget {
 pub trait WindowInspector {
     fn target_at(&self, point: PhysicalPoint) -> io::Result<Option<InspectionTarget>>;
     fn window_title_at(&self, point: PhysicalPoint) -> io::Result<Option<String>>;
+    fn focused_window_target(&self) -> io::Result<Option<InspectionTarget>>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -31,6 +32,10 @@ impl WindowInspector for SystemWindowInspector {
 
     fn window_title_at(&self, point: PhysicalPoint) -> io::Result<Option<String>> {
         platform::window_title_at(point)
+    }
+
+    fn focused_window_target(&self) -> io::Result<Option<InspectionTarget>> {
+        platform::focused_window_target()
     }
 }
 
@@ -52,8 +57,8 @@ mod platform {
             UI::{
                 Accessibility::{CUIAutomation8, IUIAutomation, IUIAutomationElement},
                 WindowsAndMessaging::{
-                    EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
-                    IsWindowVisible,
+                    EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextW,
+                    GetWindowThreadProcessId, IsWindowVisible,
                 },
             },
         },
@@ -90,6 +95,32 @@ mod platform {
         }
         let title = String::from_utf16_lossy(&buffer[..length as usize]);
         Ok((!title.trim().is_empty()).then_some(title))
+    }
+
+    /// Resolves the visible foreground window without using pointer position or UI Automation.
+    pub fn focused_window_target() -> io::Result<Option<InspectionTarget>> {
+        // SAFETY: GetForegroundWindow returns either a borrowed HWND or a null handle.
+        let window = unsafe { GetForegroundWindow() };
+        if window.0.is_null() || !unsafe { IsWindowVisible(window) }.as_bool() {
+            return Ok(None);
+        }
+        let mut process_id = 0;
+        // SAFETY: process_id points to writable storage for the duration of the call.
+        unsafe { GetWindowThreadProcessId(window, Some(&mut process_id)) };
+        // SAFETY: returns the identifier of the current process.
+        if process_id == unsafe { GetCurrentProcessId() } {
+            return Ok(None);
+        }
+        let mut rect = RECT::default();
+        // SAFETY: rect is valid writable storage for GetWindowRect.
+        unsafe { GetWindowRect(window, &mut rect) }.map_err(windows_error)?;
+        let bounds = physical_rect(rect);
+        Ok(
+            (bounds.width() > 0 && bounds.height() > 0).then_some(InspectionTarget {
+                bounds,
+                kind: InspectionKind::Window,
+            }),
+        )
     }
 
     fn window_at(point: PhysicalPoint) -> io::Result<Option<(HWND, PhysicalRect)>> {
@@ -228,6 +259,10 @@ mod platform {
     }
 
     pub fn window_title_at(_point: PhysicalPoint) -> io::Result<Option<String>> {
+        Ok(None)
+    }
+
+    pub fn focused_window_target() -> io::Result<Option<InspectionTarget>> {
         Ok(None)
     }
 }

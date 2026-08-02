@@ -144,6 +144,10 @@ The capture shortcut defaults to `Ctrl+Shift+Print Screen`. Set `FLASH_SHOT_CAPT
 
 The global capture shortcut can be disabled from the tray `System` menu or Capture settings without changing its configured key combination. The preference persists across restarts, while the tray capture commands remain available.
 
+Use `Capture > Focused window` to hide Flash Shot, resolve the current external foreground window,
+and open that physical-pixel rectangle as an editable selection. If the target is partly outside the
+virtual desktop, the selection is clipped to captured pixels rather than producing an invalid crop.
+
 `Start with Windows` configures only the current user's sign-in entry. It does not require elevation, and it never removes a `Flash Shot` startup entry that points to a different executable.
 
 Use `Files > Pin clipboard image` from the tray menu to turn the current Windows clipboard image into an always-on-top reference without opening the settings window or starting a new capture.

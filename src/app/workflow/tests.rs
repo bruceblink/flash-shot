@@ -1,10 +1,11 @@
 use super::{
     ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
-    annotation_position, annotation_sidecar_path, claim_idle_completion, compose_captured_displays,
-    copy_annotated_frame_selection, delayed_capture_status, drawing_status, export_path,
-    fill_alpha, fill_color, format_hsl, format_recording_progress, hovered_color, intersect_rect,
-    is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
+    annotation_position, annotation_sidecar_path, capture::focused_window_selection,
+    claim_idle_completion, compose_captured_displays, copy_annotated_frame_selection,
+    delayed_capture_status, drawing_status, export_path, fill_alpha, fill_color, format_hsl,
+    format_recording_progress, hovered_color, intersect_rect, is_current_operation,
+    keyboard_command, load_annotation_document, next_annotation_counters,
     next_annotation_selection, next_quick_save_path_with_prefix, next_recording_audio_selection,
     next_recording_display_selection, ocr_language_label, ocr_support_status,
     open_annotation_project, open_image_project, pinned_size, project_image_path,
@@ -1400,6 +1401,34 @@ fn overlay_drag_clamps_to_virtual_desktop_edges() {
         super::clamp_physical_point(PhysicalPoint { x: -3000, y: 2000 }, bounds),
         PhysicalPoint { x: -1920, y: 1440 }
     );
+}
+
+#[test]
+fn focused_window_selection_clips_a_partly_offscreen_window_and_rejects_missing_targets() {
+    let desktop = PhysicalRect {
+        left: -1920,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    assert_eq!(
+        focused_window_selection(
+            Some(PhysicalRect {
+                left: -2100,
+                top: 100,
+                right: 400,
+                bottom: 900,
+            }),
+            desktop,
+        ),
+        Some(PhysicalRect {
+            left: -1920,
+            top: 100,
+            right: 400,
+            bottom: 900,
+        })
+    );
+    assert_eq!(focused_window_selection(None, desktop), None);
 }
 
 #[test]

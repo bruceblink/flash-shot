@@ -19,6 +19,16 @@ impl FlashShotApp {
         self.start_capture_with_options(0, true, cx);
     }
 
+    /// Hides Flash Shot, captures the active external window, and opens it as an editable selection.
+    pub(in crate::app) fn start_focused_window_capture(&mut self, cx: &mut Context<Self>) {
+        if self.delayed_capture_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return;
+        }
+        self.start_capture_immediately(false, true, cx);
+    }
+
     pub(in crate::app) fn copy_full_screen(&mut self, cx: &mut Context<Self>) {
         if self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
@@ -158,7 +168,7 @@ impl FlashShotApp {
             return;
         }
         if delay_seconds == 0 {
-            self.start_capture_immediately(preselect_full_screen, cx);
+            self.start_capture_immediately(preselect_full_screen, false, cx);
             return;
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
@@ -222,11 +232,16 @@ impl FlashShotApp {
         }
         self.delayed_capture_generation = None;
         self.delayed_capture_remaining_seconds = None;
-        self.start_capture_immediately(preselect_full_screen, cx);
+        self.start_capture_immediately(preselect_full_screen, false, cx);
         true
     }
 
-    fn start_capture_immediately(&mut self, preselect_full_screen: bool, cx: &mut Context<Self>) {
+    fn start_capture_immediately(
+        &mut self,
+        preselect_full_screen: bool,
+        preselect_focused_window: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.session.state() != CaptureSessionState::Idle {
             return;
         }
@@ -264,9 +279,25 @@ impl FlashShotApp {
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
+                // Let the hidden settings popup return foreground ownership before reading it.
+                if preselect_focused_window {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(120))
+                        .await;
+                }
                 let result = cx
                     .background_executor()
-                    .spawn(async move { capture_virtual_desktop_preview(include_cursor) })
+                    .spawn(async move {
+                        let focused_window = if preselect_focused_window {
+                            SystemWindowInspector
+                                .focused_window_target()?
+                                .map(|target| target.bounds)
+                        } else {
+                            None
+                        };
+                        capture_virtual_desktop_preview(include_cursor)
+                            .map(|capture| (capture, focused_window))
+                    })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
@@ -275,6 +306,7 @@ impl FlashShotApp {
                             started_at,
                             generation,
                             preselect_full_screen,
+                            preselect_focused_window,
                             cx,
                         )
                     });
@@ -286,10 +318,11 @@ impl FlashShotApp {
 
     fn finish_capture(
         &mut self,
-        result: std::io::Result<CapturedDesktopPreview>,
+        result: std::io::Result<(CapturedDesktopPreview, Option<PhysicalRect>)>,
         started_at: Instant,
         generation: u64,
         preselect_full_screen: bool,
+        preselect_focused_window: bool,
         cx: &mut Context<Self>,
     ) {
         if !is_current_operation(self.operation_generation, generation) {
@@ -299,7 +332,7 @@ impl FlashShotApp {
             return;
         }
         match result {
-            Ok(capture) => {
+            Ok((capture, focused_window)) => {
                 if let Err(error) = self.session.frames_ready() {
                     self.status = error.to_string();
                     cx.notify();
@@ -365,6 +398,28 @@ impl FlashShotApp {
                         return;
                     }
                     self.selection_drag.select(frame_bounds);
+                } else if preselect_focused_window {
+                    let Some(selection) = focused_window_selection(focused_window, frame_bounds)
+                    else {
+                        let message =
+                            "Could not find a focused window outside Flash Shot".to_owned();
+                        let _ = self.session.fail(message.clone());
+                        self.status = message;
+                        self.return_to_background();
+                        cx.notify();
+                        return;
+                    };
+                    if let Err(error) = self.session.select(selection) {
+                        self.status = error.to_string();
+                        cx.notify();
+                        return;
+                    }
+                    self.selection_drag.select(selection);
+                    self.status = format!(
+                        "Focused window: {} x {} physical pixels",
+                        selection.width(),
+                        selection.height()
+                    );
                 }
                 let app = cx.entity();
                 cx.defer(move |cx| open_capture_overlays(app, capture.displays, pipeline, cx));
@@ -661,4 +716,12 @@ impl FlashShotApp {
         }
         cx.notify();
     }
+}
+
+/// Clips the native foreground-window rectangle to the captured virtual desktop.
+pub(super) fn focused_window_selection(
+    focused_window: Option<PhysicalRect>,
+    frame_bounds: PhysicalRect,
+) -> Option<PhysicalRect> {
+    focused_window.and_then(|target| intersect_rect(target, frame_bounds))
 }
