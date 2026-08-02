@@ -36,7 +36,12 @@ fn main() {
             diagnostics.paths.config_dir.join("settings.json"),
         )
     });
-    let history = flash_shot::history::managed_history_directory()
+    let history_directory = settings
+        .quick_save_directory
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(flash_shot::history::managed_history_directory);
+    let history = history_directory
         .and_then(|directory| {
             flash_shot::history::ScreenshotHistory::open_with_limit(
                 directory,

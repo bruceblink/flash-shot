@@ -81,6 +81,8 @@ impl FlashShotApp {
 
         self.status = "Quick saving selection...".to_owned();
         let generation = self.operation_generation;
+        let directory = self.history.root().to_owned();
+        let prefix = self.settings.quick_save_prefix.clone();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -88,7 +90,9 @@ impl FlashShotApp {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        quick_save_annotated_frame_selection(&frame, &document, selection)
+                        quick_save_annotated_frame_selection_with_prefix(
+                            &frame, &document, selection, &directory, &prefix,
+                        )
                     })
                     .await;
                 let outcome = match result {
@@ -115,13 +119,17 @@ impl FlashShotApp {
         cx: &mut Context<Self>,
     ) {
         self.status = "Saving pinned image...".to_owned();
+        let directory = self.history.root().to_owned();
+        let prefix = self.settings.quick_save_prefix.clone();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { quick_save_full_screen_frame(&frame) })
+                    .spawn(async move {
+                        quick_save_full_screen_frame_with_prefix(&frame, &directory, &prefix)
+                    })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {

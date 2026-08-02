@@ -308,9 +308,8 @@ impl FlashShotApp {
     }
 
     pub(super) fn open_history_directory(&mut self, cx: &mut Context<Self>) {
-        self.status = match crate::history::managed_history_directory()
-            .and_then(|path| directory::open(&path).map(|()| path))
-        {
+        let path = self.history.root().to_owned();
+        self.status = match directory::open(&path).map(|()| path) {
             Ok(path) => format!("Opened screenshot folder {}", path.display()),
             Err(error) => {
                 log::warn!(target: "flash_shot::history", "history_directory_open_failed error={error}");

@@ -103,6 +103,11 @@ impl ScreenshotHistory {
         self.limit
     }
 
+    /// Returns the private root whose files this history instance is allowed to manage.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Applies a new retention limit immediately so the managed directory and
     /// its index cannot temporarily disagree about what history retains.
     pub fn set_limit(&mut self, limit: usize) -> io::Result<()> {

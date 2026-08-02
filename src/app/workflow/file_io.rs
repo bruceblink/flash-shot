@@ -23,64 +23,55 @@ pub(super) fn save_annotated_frame_selection(
         .save_image(path)
 }
 
-pub(super) fn quick_save_annotated_frame_selection(
+/// Writes a quick save using the active history root and persisted filename prefix.
+pub(super) fn quick_save_annotated_frame_selection_with_prefix(
     frame: &CaptureFrame,
     document: &AnnotationDocument,
     selection: PhysicalRect,
+    directory: &Path,
+    prefix: &str,
 ) -> std::io::Result<PathBuf> {
-    let directory = quick_save_directory()?;
-    quick_save_annotated_frame_selection_in(
+    quick_save_annotated_frame_selection_in_with_prefix(
         frame,
         document,
         selection,
-        &directory,
+        directory,
+        prefix,
         unix_timestamp_ms(),
     )
 }
 
-/// Writes an unannotated full-screen frame to the same managed directory as quick-saved selections.
-pub(super) fn quick_save_full_screen_frame(frame: &CaptureFrame) -> std::io::Result<PathBuf> {
-    let directory = quick_save_directory()?;
-    quick_save_full_screen_frame_in(frame, &directory, unix_timestamp_ms())
-}
-
-/// Saves a full capture using the caller-provided directory and timestamp.
-///
-/// Keeping the path policy here lets the tray command share the collision-safe quick-save naming
-/// scheme and allows the PNG output to be verified without depending on a user's Pictures folder.
-pub(super) fn quick_save_full_screen_frame_in(
+/// Writes a full capture into the active history root using the persisted filename prefix.
+pub(super) fn quick_save_full_screen_frame_with_prefix(
     frame: &CaptureFrame,
     directory: &Path,
+    prefix: &str,
+) -> std::io::Result<PathBuf> {
+    quick_save_full_screen_frame_in_with_prefix(frame, directory, prefix, unix_timestamp_ms())
+}
+
+pub(super) fn quick_save_full_screen_frame_in_with_prefix(
+    frame: &CaptureFrame,
+    directory: &Path,
+    prefix: &str,
     timestamp_ms: u128,
 ) -> std::io::Result<PathBuf> {
-    let path = next_quick_save_path(directory, timestamp_ms, Path::exists);
+    let path = next_quick_save_path_with_prefix(directory, prefix, timestamp_ms, Path::exists);
     frame.save_png(path.clone())?;
     Ok(path)
 }
 
-pub(super) fn quick_save_annotated_frame_selection_in(
+pub(super) fn quick_save_annotated_frame_selection_in_with_prefix(
     frame: &CaptureFrame,
     document: &AnnotationDocument,
     selection: PhysicalRect,
     directory: &Path,
+    prefix: &str,
     timestamp_ms: u128,
 ) -> std::io::Result<PathBuf> {
-    let path = next_quick_save_path(directory, timestamp_ms, Path::exists);
+    let path = next_quick_save_path_with_prefix(directory, prefix, timestamp_ms, Path::exists);
     save_annotated_frame_selection(frame, document, selection, path.clone())?;
     Ok(path)
-}
-
-pub(super) fn quick_save_directory() -> std::io::Result<PathBuf> {
-    crate::history::managed_history_directory()
-}
-
-pub(super) fn next_quick_save_path(
-    directory: &Path,
-    timestamp_ms: u128,
-    exists: impl Fn(&Path) -> bool,
-) -> PathBuf {
-    let prefix = quick_save_prefix();
-    next_quick_save_path_with_prefix(directory, &prefix, timestamp_ms, exists)
 }
 
 pub(super) fn next_quick_save_path_with_prefix(
@@ -101,23 +92,6 @@ pub(super) fn next_quick_save_path_with_prefix(
         }
     }
     unreachable!("u32 path suffixes cannot be exhausted")
-}
-
-pub(super) fn quick_save_prefix() -> String {
-    std::env::var("FLASH_SHOT_SAVE_PREFIX")
-        .ok()
-        .map(|prefix| sanitize_save_prefix(&prefix))
-        .filter(|prefix| !prefix.is_empty())
-        .unwrap_or_else(|| "FlashShot".to_owned())
-}
-
-pub(super) fn sanitize_save_prefix(prefix: &str) -> String {
-    prefix
-        .trim()
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-        .take(48)
-        .collect()
 }
 
 pub(super) fn unix_timestamp_ms() -> u128 {

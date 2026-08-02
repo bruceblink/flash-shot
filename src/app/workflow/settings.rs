@@ -3,6 +3,88 @@
 use super::*;
 
 impl FlashShotApp {
+    /// Opens a native folder picker, then swaps history only after the new private root is ready.
+    pub(in crate::app) fn choose_quick_save_directory(&mut self, cx: &mut Context<Self>) {
+        self.status = "Choose a folder for quick saves and screenshot history...".to_owned();
+        cx.notify();
+        let limit = usize::from(self.settings.history_limit);
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose quick-save folder".into()),
+        });
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = match prompt.await {
+                    Ok(Ok(Some(mut paths))) => match paths.pop() {
+                        Some(path) => {
+                            cx.background_executor()
+                                .spawn(async move {
+                                    crate::history::ScreenshotHistory::open_with_limit(path, limit)
+                                })
+                                .await
+                        }
+                        None => return,
+                    },
+                    Ok(Ok(None)) => return,
+                    Ok(Err(error)) => Err(std::io::Error::other(error)),
+                    Err(error) => Err(std::io::Error::other(error.to_string())),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        match result {
+                            Ok(history) => {
+                                let previous = this.settings.quick_save_directory.clone();
+                                this.settings.quick_save_directory =
+                                    Some(history.root().to_owned());
+                                match this.settings.save(&this.settings_path) {
+                                    Ok(()) => {
+                                        this.history = history;
+                                        this.synchronize_history_preview_cache();
+                                        this.status = format!(
+                                            "Quick saves and history now use {}",
+                                            this.history.root().display()
+                                        );
+                                    }
+                                    Err(error) => {
+                                        this.settings.quick_save_directory = previous;
+                                        this.status = format!(
+                                            "Could not save quick-save folder preference: {error}"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                this.status = format!("Could not use quick-save folder: {error}");
+                            }
+                        }
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Cycles a persisted safe filename prefix shared by selection, full-screen, and pin saves.
+    pub(in crate::app) fn cycle_quick_save_prefix(&mut self, cx: &mut Context<Self>) {
+        let previous = self.settings.quick_save_prefix.clone();
+        self.settings.quick_save_prefix = UserSettings::next_save_prefix(&previous);
+        self.status = match self.settings.save(&self.settings_path) {
+            Ok(()) => format!(
+                "Quick-save names use {}-<timestamp>.png",
+                self.settings.quick_save_prefix
+            ),
+            Err(error) => {
+                self.settings.quick_save_prefix = previous;
+                format!("Could not save quick-save naming preference: {error}")
+            }
+        };
+        cx.notify();
+    }
+
     pub(in crate::app) fn select_settings_section(
         &mut self,
         section: SettingsSection,

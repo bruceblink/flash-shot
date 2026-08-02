@@ -12,6 +12,8 @@ const SETTINGS_VERSION: u8 = 1;
 pub const DEFAULT_HISTORY_LIMIT: u16 = 30;
 pub const DEFAULT_COLOR_FORMAT: u8 = 0;
 pub const DEFAULT_EXPORT_FORMAT: u8 = 0;
+pub const DEFAULT_SAVE_PREFIX: &str = "FlashShot";
+pub const SAVE_PREFIX_OPTIONS: [&str; 3] = [DEFAULT_SAVE_PREFIX, "Screenshot", "Capture"];
 pub const OCR_LANGUAGE_OPTIONS: [Option<&str>; 4] =
     [None, Some("eng"), Some("chi_sim"), Some("eng+chi_sim")];
 
@@ -26,6 +28,10 @@ pub struct UserSettings {
     pub history_limit: u16,
     pub color_format: u8,
     pub export_format: u8,
+    /// Optional user-selected root for quick saves and the history files Flash Shot manages.
+    pub quick_save_directory: Option<PathBuf>,
+    /// Safe prefix used before the timestamp in generated quick-save file names.
+    pub quick_save_prefix: String,
     /// A standard Tesseract language selected in Settings; `None` preserves the environment fallback.
     pub ocr_language: Option<String>,
     pub theme_mode: ThemeMode,
@@ -42,6 +48,8 @@ impl Default for UserSettings {
             history_limit: DEFAULT_HISTORY_LIMIT,
             color_format: DEFAULT_COLOR_FORMAT,
             export_format: DEFAULT_EXPORT_FORMAT,
+            quick_save_directory: None,
+            quick_save_prefix: DEFAULT_SAVE_PREFIX.to_owned(),
             ocr_language: None,
             theme_mode: ThemeMode::Dark,
         }
@@ -67,6 +75,10 @@ impl UserSettings {
                 settings.history_limit = Self::normalize_history_limit(settings.history_limit);
                 settings.color_format = Self::normalize_color_format(settings.color_format);
                 settings.export_format = Self::normalize_export_format(settings.export_format);
+                settings.quick_save_directory =
+                    Self::normalize_quick_save_directory(settings.quick_save_directory);
+                settings.quick_save_prefix =
+                    Self::normalize_save_prefix(&settings.quick_save_prefix);
                 settings.ocr_language = Self::normalize_ocr_language(settings.ocr_language);
                 Ok((settings, path))
             }
@@ -122,6 +134,36 @@ impl UserSettings {
         (Self::normalize_export_format(current) + 1) % 3
     }
 
+    /// Removes unusable paths so an old or hand-edited setting cannot become a filesystem root.
+    pub fn normalize_quick_save_directory(directory: Option<PathBuf>) -> Option<PathBuf> {
+        directory.filter(|path| !path.as_os_str().is_empty())
+    }
+
+    /// Restores the default prefix when a saved value contains unsupported filename characters.
+    pub fn normalize_save_prefix(prefix: &str) -> String {
+        let prefix: String = prefix
+            .trim()
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+            .take(48)
+            .collect();
+        if prefix.is_empty() {
+            DEFAULT_SAVE_PREFIX.to_owned()
+        } else {
+            prefix
+        }
+    }
+
+    /// Advances through concise, collision-safe names without requiring text entry in the compact UI.
+    pub fn next_save_prefix(current: &str) -> String {
+        let current = Self::normalize_save_prefix(current);
+        let position = SAVE_PREFIX_OPTIONS
+            .iter()
+            .position(|candidate| *candidate == current)
+            .unwrap_or(0);
+        SAVE_PREFIX_OPTIONS[(position + 1) % SAVE_PREFIX_OPTIONS.len()].to_owned()
+    }
+
     /// Keeps persisted OCR choices within the small set that the settings UI can restore safely.
     pub fn normalize_ocr_language(language: Option<String>) -> Option<String> {
         language.filter(|language| {
@@ -144,7 +186,7 @@ impl UserSettings {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_COLOR_FORMAT, DEFAULT_HISTORY_LIMIT, UserSettings};
+    use super::{DEFAULT_COLOR_FORMAT, DEFAULT_HISTORY_LIMIT, DEFAULT_SAVE_PREFIX, UserSettings};
     use crate::theme::ThemeMode;
 
     fn directory(name: &str) -> std::path::PathBuf {
@@ -166,6 +208,8 @@ mod tests {
         assert_eq!(settings.capture_delay_seconds, 0);
         assert_eq!(settings.history_limit, DEFAULT_HISTORY_LIMIT);
         assert_eq!(settings.color_format, DEFAULT_COLOR_FORMAT);
+        assert_eq!(settings.quick_save_directory, None);
+        assert_eq!(settings.quick_save_prefix, DEFAULT_SAVE_PREFIX);
         assert_eq!(settings.ocr_language, None);
         assert_eq!(settings.theme_mode, ThemeMode::Dark);
         let _ = std::fs::remove_dir_all(directory);
@@ -181,6 +225,8 @@ mod tests {
         settings.capture_delay_seconds = 5;
         settings.history_limit = 100;
         settings.color_format = 2;
+        settings.quick_save_directory = Some(directory.join("captures"));
+        settings.quick_save_prefix = "Release_Notes".to_owned();
         settings.ocr_language = Some("eng+chi_sim".to_owned());
         settings.theme_mode = ThemeMode::Light;
         settings.save(&path).unwrap();
@@ -192,6 +238,11 @@ mod tests {
         assert_eq!(reopened.capture_delay_seconds, 5);
         assert_eq!(reopened.history_limit, 100);
         assert_eq!(reopened.color_format, 2);
+        assert_eq!(
+            reopened.quick_save_directory,
+            Some(directory.join("captures"))
+        );
+        assert_eq!(reopened.quick_save_prefix, "Release_Notes");
         assert_eq!(reopened.ocr_language.as_deref(), Some("eng+chi_sim"));
         assert_eq!(reopened.theme_mode, ThemeMode::Light);
         std::fs::remove_dir_all(directory).unwrap();
@@ -276,6 +327,26 @@ mod tests {
         assert_eq!(UserSettings::next_export_format(1), 2);
         assert_eq!(UserSettings::next_export_format(2), 0);
         assert_eq!(UserSettings::next_export_format(99), 1);
+    }
+
+    #[test]
+    fn save_prefixes_are_normalized_and_cycle_through_visible_presets() {
+        assert_eq!(
+            UserSettings::normalize_save_prefix("  Report: Q3/2026 "),
+            "ReportQ32026"
+        );
+        assert_eq!(
+            UserSettings::normalize_save_prefix("<>"),
+            DEFAULT_SAVE_PREFIX
+        );
+        assert_eq!(
+            UserSettings::next_save_prefix(DEFAULT_SAVE_PREFIX),
+            "Screenshot"
+        );
+        assert_eq!(
+            UserSettings::next_save_prefix("Capture"),
+            DEFAULT_SAVE_PREFIX
+        );
     }
 
     #[test]

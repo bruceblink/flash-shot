@@ -5,16 +5,16 @@ use super::{
     copy_annotated_frame_selection, delayed_capture_status, drawing_status, export_path,
     fill_alpha, fill_color, format_hsl, format_recording_progress, hovered_color, intersect_rect,
     is_current_operation, keyboard_command, load_annotation_document, next_annotation_counters,
-    next_annotation_selection, next_quick_save_path, next_quick_save_path_with_prefix,
-    next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
-    ocr_support_status, open_annotation_project, open_image_project, pinned_size,
-    project_image_path, quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
-    recording_audio_selection_label, recording_display_selection_label,
-    recording_start_conflict_status, recording_start_failure_status, recording_support_status,
-    recording_target_label, resolve_pointer_selection, sanitize_save_prefix,
-    save_annotated_frame_selection, save_annotation_document, save_editable_project,
-    smart_target_status, style_for_tool, text_annotation_with_content, tool_selected_status,
-    translation_failure_status, translation_support_status, with_alpha,
+    next_annotation_selection, next_quick_save_path_with_prefix, next_recording_audio_selection,
+    next_recording_display_selection, ocr_language_label, ocr_support_status,
+    open_annotation_project, open_image_project, pinned_size, project_image_path,
+    quick_save_annotated_frame_selection_in_with_prefix,
+    quick_save_full_screen_frame_in_with_prefix, recording_audio_selection_label,
+    recording_display_selection_label, recording_start_conflict_status,
+    recording_start_failure_status, recording_support_status, recording_target_label,
+    resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
+    save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
+    tool_selected_status, translation_failure_status, translation_support_status, with_alpha,
 };
 use crate::{
     domain::{
@@ -772,11 +772,12 @@ fn annotated_save_and_quick_save_encode_the_composited_selection() {
         &[0, 255, 0, 255, 0, 255, 0, 255]
     );
 
-    let quick = quick_save_annotated_frame_selection_in(
+    let quick = quick_save_annotated_frame_selection_in_with_prefix(
         &frame,
         &document,
         selection,
         &directory,
+        "FlashShot",
         1_725_000_000_123,
     )
     .unwrap();
@@ -1050,11 +1051,11 @@ fn loaded_annotation_counters_continue_existing_ids_and_sequence_numbers() {
 fn quick_save_names_are_timestamped_and_do_not_overwrite_existing_files() {
     let directory = PathBuf::from("Pictures").join("Flash Shot");
     let timestamp_ms = 1_725_000_000_123_u128;
-    let first = super::next_quick_save_path(&directory, timestamp_ms, |_| false);
+    let first = next_quick_save_path_with_prefix(&directory, "FlashShot", timestamp_ms, |_| false);
 
     assert_eq!(first, directory.join("FlashShot-1725000000123.png"));
 
-    let second = next_quick_save_path(&directory, timestamp_ms, |path| {
+    let second = next_quick_save_path_with_prefix(&directory, "FlashShot", timestamp_ms, |path| {
         path.file_name()
             .is_some_and(|name| name == "FlashShot-1725000000123.png")
     });
@@ -1062,15 +1063,17 @@ fn quick_save_names_are_timestamped_and_do_not_overwrite_existing_files() {
 }
 
 #[test]
-fn quick_save_prefix_is_safe_and_part_of_the_collision_resistant_name() {
-    assert_eq!(
-        sanitize_save_prefix("  My Report: Q3/2026  "),
-        "MyReportQ32026"
-    );
-    assert_eq!(sanitize_save_prefix("___"), "___");
-    assert_eq!(sanitize_save_prefix("<>:\\|?*"), "");
-
+fn quick_save_prefix_is_part_of_the_collision_resistant_name() {
     let directory = PathBuf::from("Pictures").join("Flash Shot");
+    assert_eq!(
+        next_quick_save_path_with_prefix(&directory, "Release_Notes", 42, |_| false),
+        directory.join("Release_Notes-42.png")
+    );
+}
+
+#[test]
+fn configured_quick_save_prefix_is_used_for_collision_safe_paths() {
+    let directory = PathBuf::from("Pictures").join("Configured Flash Shot");
     assert_eq!(
         next_quick_save_path_with_prefix(&directory, "Release_Notes", 42, |_| false),
         directory.join("Release_Notes-42.png")
@@ -1259,7 +1262,7 @@ fn quick_save_writes_the_selected_png_to_the_default_style_directory() {
     };
 
     let document = AnnotationDocument::new(frame.bounds).unwrap();
-    let path = quick_save_annotated_frame_selection_in(
+    let path = quick_save_annotated_frame_selection_in_with_prefix(
         &frame,
         &document,
         PhysicalRect {
@@ -1269,6 +1272,7 @@ fn quick_save_writes_the_selected_png_to_the_default_style_directory() {
             bottom: 1,
         },
         &directory,
+        "FlashShot",
         1_725_000_000_123,
     )
     .unwrap();
@@ -1306,7 +1310,13 @@ fn full_screen_quick_save_writes_the_entire_png_with_the_managed_name() {
         cpu_copy_count: 1,
     };
 
-    let path = quick_save_full_screen_frame_in(&frame, &directory, 1_725_000_000_123).unwrap();
+    let path = quick_save_full_screen_frame_in_with_prefix(
+        &frame,
+        &directory,
+        "FlashShot",
+        1_725_000_000_123,
+    )
+    .unwrap();
 
     assert_eq!(path, directory.join("FlashShot-1725000000123.png"));
     let decoder = png::Decoder::new(BufReader::new(std::fs::File::open(&path).unwrap()));

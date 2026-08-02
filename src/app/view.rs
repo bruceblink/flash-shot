@@ -471,66 +471,99 @@ fn file_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    settings_section("Open and history", colors).child(
-        div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .child(settings_button(
-                "settings-open-image",
-                "Open PNG",
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.open_image(cx))
-                },
-            ))
-            .child(settings_button(
-                "settings-open-project",
-                "Open Project",
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.open_editable_project(cx))
-                },
-            ))
-            .child(settings_button(
-                "settings-open-screenshot-folder",
-                "Open folder",
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.open_history_directory(cx))
-                },
-            ))
-            .child(settings_button(
-                "settings-export-format",
-                &format!("Save as {}", app_state.export_format_label()),
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_export_format(cx))
-                },
-            ))
-            .child(settings_button(
-                "settings-history-retention",
-                &app_state.history_retention_target.map_or_else(
-                    || format!("Keep {}", app_state.settings.history_limit),
-                    |limit| format!("Updating to {limit}..."),
-                ),
-                colors,
-                is_idle
-                    && !app_state.history_clear_in_flight
-                    && !app_state.history_clear_confirmation
-                    && app_state.history_deletions_in_flight.is_empty()
-                    && app_state.history_retention_target.is_none(),
-                move |_, _, cx| app.update(cx, |this, cx| this.cycle_history_limit(cx)),
-            )),
-    )
+    settings_section("Quick save", colors)
+        .child(
+            div()
+                .text_sm()
+                .text_color(colors.muted)
+                .child(app_state.history.root().display().to_string()),
+        )
+        .child(settings_row("Save folder", colors).child(settings_button(
+            "settings-quick-save-folder",
+            "Choose folder",
+            colors,
+            is_idle,
+            {
+                let app = app.clone();
+                move |_, _, cx| app.update(cx, |this, cx| this.choose_quick_save_directory(cx))
+            },
+        )))
+        .child(settings_row("File name", colors).child(settings_button(
+            "settings-quick-save-prefix",
+            &format!("{}-timestamp", app_state.settings.quick_save_prefix),
+            colors,
+            is_idle,
+            {
+                let app = app.clone();
+                move |_, _, cx| app.update(cx, |this, cx| this.cycle_quick_save_prefix(cx))
+            },
+        )))
+        .child(
+            settings_section("Open and history", colors).child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(settings_button(
+                        "settings-open-image",
+                        "Open PNG",
+                        colors,
+                        is_idle,
+                        {
+                            let app = app.clone();
+                            move |_, _, cx| app.update(cx, |this, cx| this.open_image(cx))
+                        },
+                    ))
+                    .child(settings_button(
+                        "settings-open-project",
+                        "Open Project",
+                        colors,
+                        is_idle,
+                        {
+                            let app = app.clone();
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| this.open_editable_project(cx))
+                            }
+                        },
+                    ))
+                    .child(settings_button(
+                        "settings-open-screenshot-folder",
+                        "Open folder",
+                        colors,
+                        is_idle,
+                        {
+                            let app = app.clone();
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| this.open_history_directory(cx))
+                            }
+                        },
+                    ))
+                    .child(settings_button(
+                        "settings-export-format",
+                        &format!("Save as {}", app_state.export_format_label()),
+                        colors,
+                        is_idle,
+                        {
+                            let app = app.clone();
+                            move |_, _, cx| app.update(cx, |this, cx| this.cycle_export_format(cx))
+                        },
+                    ))
+                    .child(settings_button(
+                        "settings-history-retention",
+                        &app_state.history_retention_target.map_or_else(
+                            || format!("Keep {}", app_state.settings.history_limit),
+                            |limit| format!("Updating to {limit}..."),
+                        ),
+                        colors,
+                        is_idle
+                            && !app_state.history_clear_in_flight
+                            && !app_state.history_clear_confirmation
+                            && app_state.history_deletions_in_flight.is_empty()
+                            && app_state.history_retention_target.is_none(),
+                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_history_limit(cx)),
+                    )),
+            ),
+        )
 }
 
 fn recording_settings(

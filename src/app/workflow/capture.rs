@@ -78,6 +78,8 @@ impl FlashShotApp {
         cx.notify();
 
         let include_cursor = self.include_cursor;
+        let directory = self.history.root().to_owned();
+        let prefix = self.settings.quick_save_prefix.clone();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
@@ -85,7 +87,7 @@ impl FlashShotApp {
                     .background_executor()
                     .spawn(async move {
                         let frame = capture_virtual_desktop_frame(include_cursor)?;
-                        quick_save_full_screen_frame(&frame)
+                        quick_save_full_screen_frame_with_prefix(&frame, &directory, &prefix)
                     })
                     .await;
                 if let Some(this) = this.upgrade() {
