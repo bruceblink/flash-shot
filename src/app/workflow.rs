@@ -264,6 +264,29 @@ impl FlashShotApp {
         ColorFormat::from_setting(self.settings.color_format).label()
     }
 
+    /// Cycles the suggested extension for interactive screenshot exports and persists it locally.
+    pub(super) fn cycle_export_format(&mut self, cx: &mut Context<Self>) {
+        let previous = self.settings.export_format;
+        let next = UserSettings::next_export_format(previous);
+        self.settings.export_format = next;
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.settings.export_format = previous;
+            self.status = format!("Could not save export format preference: {error}");
+            cx.notify();
+            return;
+        }
+        self.status = format!("Default export format: {}", self.export_format_label());
+        cx.notify();
+    }
+
+    pub(super) fn export_format_label(&self) -> &'static str {
+        match self.settings.export_format {
+            1 => "JPEG",
+            2 => "WebP",
+            _ => "PNG",
+        }
+    }
+
     pub(super) fn clear_recognition_result(&mut self, cx: &mut Context<Self>) {
         self.recognition_result = None;
         cx.notify();

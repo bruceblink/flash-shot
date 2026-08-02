@@ -11,6 +11,7 @@ const SETTINGS_FILE: &str = "settings.json";
 const SETTINGS_VERSION: u8 = 1;
 pub const DEFAULT_HISTORY_LIMIT: u16 = 30;
 pub const DEFAULT_COLOR_FORMAT: u8 = 0;
+pub const DEFAULT_EXPORT_FORMAT: u8 = 0;
 pub const OCR_LANGUAGE_OPTIONS: [Option<&str>; 4] =
     [None, Some("eng"), Some("chi_sim"), Some("eng+chi_sim")];
 
@@ -24,6 +25,7 @@ pub struct UserSettings {
     pub capture_delay_seconds: u8,
     pub history_limit: u16,
     pub color_format: u8,
+    pub export_format: u8,
     /// A standard Tesseract language selected in Settings; `None` preserves the environment fallback.
     pub ocr_language: Option<String>,
     pub theme_mode: ThemeMode,
@@ -39,6 +41,7 @@ impl Default for UserSettings {
             capture_delay_seconds: 0,
             history_limit: DEFAULT_HISTORY_LIMIT,
             color_format: DEFAULT_COLOR_FORMAT,
+            export_format: DEFAULT_EXPORT_FORMAT,
             ocr_language: None,
             theme_mode: ThemeMode::Dark,
         }
@@ -63,6 +66,7 @@ impl UserSettings {
                     Self::normalize_capture_delay(settings.capture_delay_seconds);
                 settings.history_limit = Self::normalize_history_limit(settings.history_limit);
                 settings.color_format = Self::normalize_color_format(settings.color_format);
+                settings.export_format = Self::normalize_export_format(settings.export_format);
                 settings.ocr_language = Self::normalize_ocr_language(settings.ocr_language);
                 Ok((settings, path))
             }
@@ -105,6 +109,17 @@ impl UserSettings {
             0..=2 => format,
             _ => DEFAULT_COLOR_FORMAT,
         }
+    }
+
+    pub const fn normalize_export_format(format: u8) -> u8 {
+        match format {
+            0..=2 => format,
+            _ => DEFAULT_EXPORT_FORMAT,
+        }
+    }
+
+    pub const fn next_export_format(current: u8) -> u8 {
+        (Self::normalize_export_format(current) + 1) % 3
     }
 
     /// Keeps persisted OCR choices within the small set that the settings UI can restore safely.
@@ -253,6 +268,14 @@ mod tests {
 
         assert_eq!(settings.color_format, DEFAULT_COLOR_FORMAT);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn export_format_cycles_between_png_jpeg_and_webp() {
+        assert_eq!(UserSettings::next_export_format(0), 1);
+        assert_eq!(UserSettings::next_export_format(1), 2);
+        assert_eq!(UserSettings::next_export_format(2), 0);
+        assert_eq!(UserSettings::next_export_format(99), 1);
     }
 
     #[test]

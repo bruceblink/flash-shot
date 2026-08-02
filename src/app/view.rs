@@ -507,6 +507,16 @@ fn file_settings(
                 },
             ))
             .child(settings_button(
+                "settings-export-format",
+                &format!("Save as {}", app_state.export_format_label()),
+                colors,
+                is_idle,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_export_format(cx))
+                },
+            ))
+            .child(settings_button(
                 "settings-history-retention",
                 &app_state.history_retention_target.map_or_else(
                     || format!("Keep {}", app_state.settings.history_limit),

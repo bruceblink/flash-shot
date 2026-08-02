@@ -138,6 +138,14 @@ pub(super) fn export_path(mut path: PathBuf) -> PathBuf {
     path
 }
 
+pub(super) const fn export_extension(format: u8) -> &'static str {
+    match format {
+        1 => "jpg",
+        2 => "webp",
+        _ => "png",
+    }
+}
+
 /// Keeps editable-project images lossless even when a caller chooses another extension.
 pub(super) fn png_path(mut path: PathBuf) -> PathBuf {
     let is_png = path
