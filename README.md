@@ -101,6 +101,7 @@ cargo run --release --bin annotation-stress -- --iterations 30 --max-p95-ms 80
 - [架构设计](docs/architecture.md)
 - [开发计划](docs/plan.md)
 - [Windows 截图技术验证报告](docs/windows-capture-validation.md)
+- [Windows 手工验收记录](docs/windows-manual-acceptance.md)
 - [Windows 分发](docs/windows-distribution.md)
 - [Linux 平台可行性验证](docs/linux-platform-validation.md)
 
