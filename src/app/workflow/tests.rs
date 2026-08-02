@@ -10,11 +10,11 @@ use super::{
     ocr_support_status, open_annotation_project, open_image_project, pinned_size, png_path,
     project_image_path, quick_save_annotated_frame_selection_in, quick_save_full_screen_frame_in,
     recording_audio_selection_label, recording_display_selection_label,
-    recording_start_failure_status, recording_support_status, recording_target_label,
-    resolve_pointer_selection, sanitize_save_prefix, save_annotated_frame_selection,
-    save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-    text_annotation_with_content, tool_selected_status, translation_failure_status,
-    translation_support_status, with_alpha,
+    recording_start_conflict_status, recording_start_failure_status, recording_support_status,
+    recording_target_label, resolve_pointer_selection, sanitize_save_prefix,
+    save_annotated_frame_selection, save_annotation_document, save_editable_project,
+    smart_target_status, style_for_tool, text_annotation_with_content, tool_selected_status,
+    translation_failure_status, translation_support_status, with_alpha,
 };
 use crate::{
     domain::{
@@ -1095,6 +1095,19 @@ fn recording_start_failures_name_the_available_recovery_path() {
 
     let unsupported = std::io::Error::new(std::io::ErrorKind::Unsupported, "ddagrab unavailable");
     assert!(recording_start_failure_status(&unsupported).contains("ddagrab or gdigrab"));
+}
+
+#[test]
+fn overlay_recording_actions_explain_active_and_starting_conflicts() {
+    assert_eq!(
+        recording_start_conflict_status(true, false),
+        Some("Stop the current recording before starting another")
+    );
+    assert_eq!(
+        recording_start_conflict_status(false, true),
+        Some("Screen recording startup is already in progress...")
+    );
+    assert_eq!(recording_start_conflict_status(false, false), None);
 }
 
 #[test]

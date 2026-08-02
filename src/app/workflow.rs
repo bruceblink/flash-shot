@@ -20,7 +20,8 @@ use windowing::*;
 #[cfg(test)]
 use recording::{
     format_recording_progress, next_recording_audio_selection, next_recording_display_selection,
-    recording_start_failure_status, recording_support_status, recording_target_label,
+    recording_start_conflict_status, recording_start_failure_status, recording_support_status,
+    recording_target_label,
 };
 pub(super) use recording::{recording_audio_selection_label, recording_display_selection_label};
 

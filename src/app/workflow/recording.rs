@@ -71,7 +71,12 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
-        if self.recording_control.is_some() || self.recording_start_in_flight {
+        if let Some(status) = recording_start_conflict_status(
+            self.recording_control.is_some(),
+            self.recording_start_in_flight,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
             return;
         }
         self.recording_start_in_flight = true;
@@ -100,7 +105,12 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
-        if self.recording_control.is_some() || self.recording_start_in_flight {
+        if let Some(status) = recording_start_conflict_status(
+            self.recording_control.is_some(),
+            self.recording_start_in_flight,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
             return;
         }
         let center = crate::domain::geometry::PhysicalPoint {
@@ -553,6 +563,20 @@ pub(super) fn recording_start_failure_status(error: &std::io::Error) -> String {
             "This FFmpeg build cannot record the selected source. Use a build with ddagrab or gdigrab: {error}"
         ),
         _ => format!("Could not start screen recording: {error}"),
+    }
+}
+
+/// Names the safe next action when a new overlay recording would overlap an active lifecycle.
+pub(super) fn recording_start_conflict_status(
+    recording_active: bool,
+    recording_starting: bool,
+) -> Option<&'static str> {
+    if recording_active {
+        Some("Stop the current recording before starting another")
+    } else if recording_starting {
+        Some("Screen recording startup is already in progress...")
+    } else {
+        None
     }
 }
 
