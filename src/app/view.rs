@@ -253,6 +253,12 @@ fn settings_header(
                     .flex()
                     .items_center()
                     .rounded_sm()
+                    .border_1()
+                    .border_color(if is_idle {
+                        colors.accent
+                    } else {
+                        colors.border
+                    })
                     .bg(if is_idle { colors.accent } else { colors.panel })
                     .text_sm()
                     .text_color(if is_idle {
@@ -262,6 +268,8 @@ fn settings_header(
                     })
                     .when(is_idle, |button| {
                         button
+                            .focusable()
+                            .focus_visible(|style| style.border_color(colors.text))
                             .cursor_pointer()
                             .hover(|style| style.bg(rgba(0x81D4FAFF)))
                             .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx)))
@@ -1337,6 +1345,8 @@ fn settings_navigation_item(
             colors.background
         })
         .text_color(if active { colors.text } else { colors.muted })
+        .focusable()
+        .focus_visible(|style| style.border_color(colors.accent))
         .hover(|style| style.bg(colors.panel).text_color(colors.text))
         .on_click(move |_, _, cx| {
             app.update(cx, |this, cx| this.select_settings_section(section, cx))
@@ -1415,6 +1425,8 @@ fn settings_button(
         .text_color(if enabled { colors.text } else { colors.muted })
         .when(enabled, |button| {
             button
+                .focusable()
+                .focus_visible(|style| style.border_color(colors.accent))
                 .cursor_pointer()
                 .hover(|style| style.bg(colors.panel))
                 .on_click(on_click)
@@ -1477,6 +1489,8 @@ fn quick_action_button(
         })
         .when(enabled, |button| {
             button
+                .focusable()
+                .focus_visible(|style| style.border_color(colors.accent))
                 .cursor_pointer()
                 .hover(move |style| {
                     style.bg(if primary {
@@ -1517,6 +1531,8 @@ fn settings_toggle(
         .border_color(colors.border)
         .when(enabled, |toggle| {
             toggle
+                .focusable()
+                .focus_visible(|style| style.border_color(colors.accent))
                 .cursor_pointer()
                 .hover(|style| style.bg(colors.accent))
                 .on_click(on_click)
