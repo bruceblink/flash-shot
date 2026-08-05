@@ -153,11 +153,12 @@ impl gpui::Render for FlashShotApp {
                     .border_color(colors.border)
                     .text_sm()
                     .text_color(colors.muted)
-                    .child(div().size(px(7.0)).rounded_full().bg(if is_idle {
-                        colors.success
-                    } else {
-                        colors.accent
-                    }))
+                    .child(
+                        div()
+                            .size(px(7.0))
+                            .rounded_full()
+                            .bg(status_indicator_color(&self.status, is_idle, colors)),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -166,6 +167,48 @@ impl gpui::Render for FlashShotApp {
                             .child(self.status.clone()),
                     ),
             )
+    }
+}
+
+/// Chooses a semantic status color so failures cannot look like a healthy idle state.
+fn status_indicator_color(
+    status: &str,
+    is_idle: bool,
+    colors: crate::theme::ThemeColors,
+) -> gpui::Hsla {
+    let normalized = status.to_ascii_lowercase();
+    let failure = [
+        "could not",
+        "failed",
+        "unavailable",
+        "error",
+        "invalid",
+        "cannot",
+        "not found",
+        "needs attention",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker));
+    if failure {
+        return colors.danger;
+    }
+    let busy = [
+        "checking",
+        "recognizing",
+        "translating",
+        "capturing",
+        "saving",
+        "opening",
+        "starting",
+        "preparing",
+        "updating",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker));
+    if !is_idle || busy {
+        colors.accent
+    } else {
+        colors.success
     }
 }
 
@@ -1497,10 +1540,12 @@ mod tests {
     use super::{
         capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
         history_entry_label, history_entry_matches, history_visibility_label,
-        relative_timestamp_label, settings_page_intro, visible_history_entries,
+        relative_timestamp_label, settings_page_intro, status_indicator_color,
+        visible_history_entries,
     };
     use crate::app::{HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
+    use crate::theme::ThemeColors;
     use std::collections::VecDeque;
     use std::path::PathBuf;
 
@@ -1564,6 +1609,23 @@ mod tests {
         let colors = crate::theme::ThemeColors::default();
         let _ = super::settings_row("Audio", colors);
         let _ = super::settings_row("Start with Windows", colors);
+    }
+
+    #[test]
+    fn status_indicator_colors_follow_operation_outcomes() {
+        let colors = ThemeColors::default();
+        assert_eq!(
+            status_indicator_color("Saved screenshot", true, colors),
+            colors.success
+        );
+        assert_eq!(
+            status_indicator_color("Capturing virtual desktop...", true, colors),
+            colors.accent
+        );
+        assert_eq!(
+            status_indicator_color("Could not save screenshot", true, colors),
+            colors.danger
+        );
     }
 
     #[test]
