@@ -1,7 +1,8 @@
 //! Small movable controller used while a user manually scrolls the target content.
 
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, Render, Subscription, Window, div, prelude::*,
+    Context, Entity, FocusHandle, Focusable, FontWeight, Render, Subscription, Window, div,
+    prelude::*, px,
 };
 
 use super::FlashShotApp;
@@ -29,6 +30,67 @@ impl Focusable for ManualScrollControl {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ManualScrollButtonTone {
+    Neutral,
+    Primary,
+    Success,
+    Destructive,
+}
+
+/// Builds one scroll command with a stable size and an explicit enabled/disabled state.
+fn manual_scroll_button(
+    id: &'static str,
+    label: impl Into<String>,
+    colors: crate::theme::ThemeColors,
+    enabled: bool,
+    tone: ManualScrollButtonTone,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let (active_background, active_text) = match tone {
+        ManualScrollButtonTone::Neutral => (colors.panel, colors.text),
+        ManualScrollButtonTone::Primary => (colors.accent, colors.background),
+        ManualScrollButtonTone::Success => (colors.success, colors.background),
+        ManualScrollButtonTone::Destructive => (colors.panel, colors.danger),
+    };
+    div()
+        .id(id)
+        .h(px(32.0))
+        .px_3()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .border_1()
+        .border_color(if enabled {
+            match tone {
+                ManualScrollButtonTone::Neutral => colors.border,
+                ManualScrollButtonTone::Primary => colors.accent,
+                ManualScrollButtonTone::Success => colors.success,
+                ManualScrollButtonTone::Destructive => colors.danger,
+            }
+        } else {
+            colors.border
+        })
+        .bg(if enabled {
+            active_background
+        } else {
+            colors.panel
+        })
+        .text_color(if enabled { active_text } else { colors.muted })
+        .text_sm()
+        .font_weight(FontWeight::SEMIBOLD)
+        .when(enabled, |button| {
+            button
+                .focusable()
+                .focus_visible(|style| style.border_color(colors.accent))
+                .cursor_pointer()
+                .hover(|style| style.bg(colors.background).text_color(colors.text))
+                .on_click(on_click)
+        })
+        .child(label.into())
+}
+
 impl Render for ManualScrollControl {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let app = self.app.read(cx);
@@ -50,6 +112,7 @@ impl Render for ManualScrollControl {
             .bg(colors.background)
             .border_1()
             .border_color(colors.border)
+            .rounded_lg()
             .child(
                 div()
                     .flex()
@@ -58,11 +121,16 @@ impl Render for ManualScrollControl {
                     .child(
                         div()
                             .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(colors.text)
                             .child("Manual scroll"),
                     )
                     .child(
                         div()
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(colors.panel)
                             .text_xs()
                             .text_color(colors.muted)
                             .child(format!("{frame_count} frames")),
@@ -71,123 +139,92 @@ impl Render for ManualScrollControl {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap_2()
-                    .child(
-                        div()
-                            .id("scroll-assist-down")
-                            .px_3()
-                            .py_1()
-                            .bg(colors.panel)
-                            .text_color(if controls_busy {
-                                colors.muted
-                            } else {
-                                colors.text
-                            })
-                            .when(!controls_busy, |button| {
-                                button
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.assist_manual_scroll(cx))
-                                        });
-                                    }))
-                            })
-                            .child("Scroll down"),
-                    )
-                    .child(
-                        div()
-                            .id("scroll-auto-capture-next")
-                            .px_3()
-                            .py_1()
-                            .bg(colors.panel)
-                            .text_color(if controls_busy {
-                                colors.muted
-                            } else {
-                                colors.text
-                            })
-                            .when(!controls_busy, |button| {
-                                button
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.auto_capture_manual_scroll_frame(cx)
-                                            })
-                                        });
-                                    }))
-                            })
-                            .child(auto_scroll_capture_label(auto_capture_pending)),
-                    )
-                    .child(
-                        div()
-                            .id("scroll-capture-next")
-                            .px_3()
-                            .py_1()
-                            .bg(colors.accent)
-                            .text_color(if controls_busy {
-                                colors.muted
-                            } else {
-                                colors.background
-                            })
-                            .when(!controls_busy, |button| {
-                                button
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.capture_manual_scroll_frame(cx)
-                                            })
-                                        });
-                                    }))
-                            })
-                            .child(manual_scroll_capture_label(
-                                capture_in_flight,
-                                retry_available,
-                            )),
-                    )
-                    .child(
-                        div()
-                            .id("scroll-finish")
-                            .px_3()
-                            .py_1()
-                            .bg(colors.panel)
-                            .text_color(if controls_busy || !can_finish {
-                                colors.muted
-                            } else {
-                                colors.text
-                            })
-                            .when(!controls_busy && can_finish, |button| {
-                                button
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.finish_manual_scroll(cx))
-                                        });
-                                    }))
-                            })
-                            .child(manual_scroll_finish_label(can_finish)),
-                    )
-                    .child(
-                        div()
-                            .id("scroll-cancel")
-                            .px_3()
-                            .py_1()
-                            .text_color(colors.muted)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.cancel_manual_scroll(cx))
-                                });
-                            }))
-                            .child("Cancel"),
-                    ),
+                    .child(manual_scroll_button(
+                        "scroll-assist-down",
+                        "Scroll down",
+                        colors,
+                        !controls_busy,
+                        ManualScrollButtonTone::Neutral,
+                        cx.listener(|this, _, _, cx| {
+                            let app = this.app.clone();
+                            cx.defer(move |cx| {
+                                app.update(cx, |app, cx| app.assist_manual_scroll(cx))
+                            });
+                        }),
+                    ))
+                    .child(manual_scroll_button(
+                        "scroll-auto-capture-next",
+                        auto_scroll_capture_label(auto_capture_pending),
+                        colors,
+                        !controls_busy,
+                        ManualScrollButtonTone::Neutral,
+                        cx.listener(|this, _, _, cx| {
+                            let app = this.app.clone();
+                            cx.defer(move |cx| {
+                                app.update(cx, |app, cx| app.auto_capture_manual_scroll_frame(cx))
+                            });
+                        }),
+                    ))
+                    .child(manual_scroll_button(
+                        "scroll-capture-next",
+                        manual_scroll_capture_label(capture_in_flight, retry_available),
+                        colors,
+                        !controls_busy,
+                        if controls_busy {
+                            ManualScrollButtonTone::Neutral
+                        } else {
+                            ManualScrollButtonTone::Primary
+                        },
+                        cx.listener(|this, _, _, cx| {
+                            let app = this.app.clone();
+                            cx.defer(move |cx| {
+                                app.update(cx, |app, cx| app.capture_manual_scroll_frame(cx))
+                            });
+                        }),
+                    ))
+                    .child(manual_scroll_button(
+                        "scroll-finish",
+                        manual_scroll_finish_label(can_finish),
+                        colors,
+                        !controls_busy && can_finish,
+                        if can_finish {
+                            ManualScrollButtonTone::Success
+                        } else {
+                            ManualScrollButtonTone::Neutral
+                        },
+                        cx.listener(|this, _, _, cx| {
+                            let app = this.app.clone();
+                            cx.defer(move |cx| {
+                                app.update(cx, |app, cx| app.finish_manual_scroll(cx))
+                            });
+                        }),
+                    ))
+                    .child(manual_scroll_button(
+                        "scroll-cancel",
+                        "Cancel",
+                        colors,
+                        true,
+                        ManualScrollButtonTone::Destructive,
+                        cx.listener(|this, _, _, cx| {
+                            let app = this.app.clone();
+                            cx.defer(move |cx| {
+                                app.update(cx, |app, cx| app.cancel_manual_scroll(cx))
+                            });
+                        }),
+                    )),
             )
-            .child(div().text_xs().text_color(colors.muted).child(status))
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(colors.panel)
+                    .text_xs()
+                    .text_color(colors.muted)
+                    .child(status),
+            )
     }
 }
 

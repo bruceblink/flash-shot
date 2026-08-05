@@ -2,8 +2,9 @@
 
 use super::*;
 
-// Keeps every manual-scroll command on one row after the incomplete-session guidance was added.
-const MANUAL_SCROLL_CONTROL_WIDTH: f32 = 440.0;
+// Keeps every manual-scroll command on one stable row without squeezing labels into symbols.
+const MANUAL_SCROLL_CONTROL_WIDTH: f32 = 520.0;
+const MANUAL_SCROLL_CONTROL_HEIGHT: f32 = 136.0;
 
 pub(super) fn open_capture_overlays(
     app: gpui::Entity<FlashShotApp>,
@@ -146,7 +147,10 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
     match cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::centered(
-                size(px(MANUAL_SCROLL_CONTROL_WIDTH), px(120.0)),
+                size(
+                    px(MANUAL_SCROLL_CONTROL_WIDTH),
+                    px(MANUAL_SCROLL_CONTROL_HEIGHT),
+                ),
                 cx,
             )),
             titlebar: Some(gpui::TitlebarOptions {
