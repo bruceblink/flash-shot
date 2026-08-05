@@ -1,8 +1,8 @@
 //! The small, on-demand settings window for the background capture service.
 
 use gpui::{
-    CursorStyle, ElementInputHandler, FocusHandle, KeyDownEvent, ObjectFit, Window, canvas, div,
-    img, prelude::*, px, rgba,
+    CursorStyle, ElementInputHandler, FocusHandle, FontWeight, KeyDownEvent, ObjectFit, Window,
+    canvas, div, img, prelude::*, px, rgba,
 };
 
 use super::{
@@ -223,9 +223,9 @@ fn settings_header(
     cx: &mut gpui::Context<FlashShotApp>,
 ) -> gpui::Div {
     div()
-        .h(px(56.0))
+        .h(px(72.0))
         .flex_none()
-        .px_5()
+        .px_6()
         .flex()
         .items_center()
         .justify_between()
@@ -234,25 +234,48 @@ fn settings_header(
         .child(
             div()
                 .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_lg().child("Flash Shot"))
+                .items_center()
+                .gap_3()
                 .child(
                     div()
-                        .text_sm()
-                        .text_color(colors.muted)
-                        .child("Capture center"),
+                        .size(px(32.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_md()
+                        .bg(colors.accent)
+                        .text_color(colors.background)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("F"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Flash Shot"),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(colors.muted)
+                                .child("Capture workspace"),
+                        ),
                 ),
         )
         .child(
             div().flex().items_center().gap_2().child(
                 div()
                     .id("settings-capture")
-                    .h(px(32.0))
-                    .px_3()
+                    .h(px(36.0))
+                    .px_4()
                     .flex()
                     .items_center()
-                    .rounded_sm()
+                    .rounded_md()
                     .border_1()
                     .border_color(if is_idle {
                         colors.accent
@@ -261,6 +284,7 @@ fn settings_header(
                     })
                     .bg(if is_idle { colors.accent } else { colors.panel })
                     .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(if is_idle {
                         colors.background
                     } else {
@@ -1274,17 +1298,28 @@ fn settings_navigation(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id("settings-navigation")
-        .w(px(132.0))
-        .p_3()
+        .w(px(164.0))
+        .p_4()
         .border_r_1()
         .border_color(colors.border)
+        .bg(colors.panel)
         .flex()
         .flex_col()
-        .gap_1()
+        .gap_2()
+        .child(
+            div()
+                .px_2()
+                .pb_2()
+                .text_xs()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(colors.muted)
+                .child("WORKSPACE"),
+        )
         .children([
             settings_navigation_item(
                 "settings-nav-capture",
                 "Actions",
+                "Capture, annotate, export",
                 SettingsSection::Capture,
                 selected,
                 colors,
@@ -1293,6 +1328,7 @@ fn settings_navigation(
             settings_navigation_item(
                 "settings-nav-files",
                 "Files",
+                "History and output",
                 SettingsSection::Files,
                 selected,
                 colors,
@@ -1301,6 +1337,7 @@ fn settings_navigation(
             settings_navigation_item(
                 "settings-nav-recording",
                 "Recording",
+                "Screen and audio",
                 SettingsSection::Recording,
                 selected,
                 colors,
@@ -1309,6 +1346,7 @@ fn settings_navigation(
             settings_navigation_item(
                 "settings-nav-system",
                 "System",
+                "Theme and startup",
                 SettingsSection::System,
                 selected,
                 colors,
@@ -1320,6 +1358,7 @@ fn settings_navigation(
 fn settings_navigation_item(
     id: &'static str,
     label: &'static str,
+    description: &'static str,
     section: SettingsSection,
     selected: SettingsSection,
     colors: crate::theme::ThemeColors,
@@ -1329,46 +1368,87 @@ fn settings_navigation_item(
     div()
         .id(id)
         .w_full()
+        .min_h(px(52.0))
         .px_3()
         .py_2()
-        .border_l_2()
-        .border_color(if active {
-            colors.accent
-        } else {
-            colors.background
-        })
+        .flex()
+        .flex_col()
+        .justify_center()
+        .gap_1()
+        .rounded_md()
+        .border_1()
+        .border_color(if active { colors.accent } else { colors.panel })
         .text_sm()
         .cursor_pointer()
-        .bg(if active {
-            colors.panel
-        } else {
+        .bg(if active { colors.accent } else { colors.panel })
+        .text_color(if active {
             colors.background
+        } else {
+            colors.text
         })
-        .text_color(if active { colors.text } else { colors.muted })
         .focusable()
         .focus_visible(|style| style.border_color(colors.accent))
-        .hover(|style| style.bg(colors.panel).text_color(colors.text))
+        .hover(move |style| {
+            style
+                .bg(if active {
+                    gpui::Hsla::from(rgba(0x81D4FAFF))
+                } else {
+                    colors.background
+                })
+                .border_color(if active { colors.accent } else { colors.border })
+                .text_color(if active {
+                    colors.background
+                } else {
+                    colors.text
+                })
+        })
         .on_click(move |_, _, cx| {
             app.update(cx, |this, cx| this.select_settings_section(section, cx))
         })
-        .child(label)
+        .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
+        .child(
+            div()
+                .text_xs()
+                .text_color(if active {
+                    colors.background.opacity(0.78)
+                } else {
+                    colors.muted
+                })
+                .child(description),
+        )
 }
 
 /// Gives every section a stable task-oriented title.
 fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColors) -> gpui::Div {
-    let title = match section {
-        SettingsSection::Capture => "Quick actions",
-        SettingsSection::Files => "Files",
-        SettingsSection::Recording => "Recording",
-        SettingsSection::System => "System",
+    let (title, description) = match section {
+        SettingsSection::Capture => (
+            "Quick actions",
+            "Capture, annotate, and export without leaving the main workflow.",
+        ),
+        SettingsSection::Files => (
+            "Files",
+            "Choose where captures go and manage recent history.",
+        ),
+        SettingsSection::Recording => (
+            "Recording",
+            "Configure display, audio, and recording controls.",
+        ),
+        SettingsSection::System => ("System", "Tune appearance, startup, and update checks."),
     };
     div()
-        .pb_3()
+        .pb_4()
         .border_b_1()
         .border_color(colors.border)
         .flex()
         .flex_col()
-        .child(div().text_lg().child(title))
+        .gap_1()
+        .child(
+            div()
+                .text_lg()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
+        .child(div().text_sm().text_color(colors.muted).child(description))
 }
 
 fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
@@ -1381,8 +1461,9 @@ fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div
         .gap_3()
         .child(
             div()
-                .text_sm()
-                .text_color(colors.text)
+                .text_xs()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(colors.muted)
                 .child(label.to_owned()),
         )
 }
@@ -1395,8 +1476,12 @@ fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
         .items_center()
         .justify_between()
         .gap_3()
+        .min_h(px(40.0))
+        .py_1()
         .child(
             div()
+                .flex_1()
+                .min_w(px(120.0))
                 .text_sm()
                 .text_color(colors.muted)
                 .child(label.to_owned()),
@@ -1412,23 +1497,24 @@ fn settings_button(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
-        .h(px(32.0))
+        .h(px(34.0))
         .px_3()
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
         .border_color(colors.border)
-        .bg(colors.background)
+        .bg(colors.panel)
         .text_sm()
+        .font_weight(FontWeight::SEMIBOLD)
         .text_color(if enabled { colors.text } else { colors.muted })
         .when(enabled, |button| {
             button
                 .focusable()
                 .focus_visible(|style| style.border_color(colors.accent))
                 .cursor_pointer()
-                .hover(|style| style.bg(colors.panel))
+                .hover(|style| style.bg(colors.background))
                 .on_click(on_click)
         })
         .child(label.to_owned())
@@ -1460,14 +1546,14 @@ fn quick_action_button(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
-        .h(px(42.0))
+        .h(px(44.0))
         .when(primary, |button| button.w_full())
         .when(!primary, |button| button.flex_1().min_w(px(140.0)))
         .px_3()
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
         .border_color(if primary {
             colors.accent
@@ -1480,6 +1566,7 @@ fn quick_action_button(
             colors.panel
         })
         .text_sm()
+        .font_weight(FontWeight::SEMIBOLD)
         .text_color(if primary && enabled {
             colors.background
         } else if enabled {
