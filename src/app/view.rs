@@ -2,7 +2,7 @@
 
 use gpui::{
     CursorStyle, ElementInputHandler, FocusHandle, FontWeight, KeyDownEvent, ObjectFit, Window,
-    canvas, div, img, prelude::*, px, rgba,
+    canvas, div, img, prelude::*, px,
 };
 
 use super::{
@@ -295,7 +295,7 @@ fn settings_header(
                             .focusable()
                             .focus_visible(|style| style.border_color(colors.text))
                             .cursor_pointer()
-                            .hover(|style| style.bg(rgba(0x81D4FAFF)))
+                            .hover(|style| style.bg(colors.panel).text_color(colors.text))
                             .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx)))
                     })
                     .child(capture_command_label(delayed_capture_remaining_seconds)),
@@ -1412,7 +1412,7 @@ fn settings_navigation_item(
         .hover(move |style| {
             style
                 .bg(if active {
-                    gpui::Hsla::from(rgba(0x81D4FAFF))
+                    colors.accent
                 } else {
                     colors.background
                 })
@@ -1601,11 +1601,13 @@ fn quick_action_button(
                 .focus_visible(|style| style.border_color(colors.accent))
                 .cursor_pointer()
                 .hover(move |style| {
-                    style.bg(if primary {
-                        gpui::Hsla::from(rgba(0x81D4FAFF))
-                    } else {
-                        colors.background
-                    })
+                    style
+                        .bg(if primary {
+                            colors.panel
+                        } else {
+                            colors.background
+                        })
+                        .text_color(colors.text)
                 })
                 .on_click(on_click)
         })

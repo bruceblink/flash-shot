@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, FontWeight, Hsla,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels,
-    Render, RenderImage, Subscription, TextAlign, TextRun, Window, canvas, div, fill, img, point,
+    Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render,
+    RenderImage, Subscription, TextAlign, TextRun, Window, canvas, div, fill, img, point,
     prelude::*, px, rgba, size,
 };
 
@@ -617,7 +617,7 @@ impl Render for CaptureOverlay {
                         .max_h(px(annotation_layer_max_height))
                         .overflow_y_scroll()
                         .p_2()
-                        .bg(rgba(0x111827E6))
+                        .bg(colors.panel)
                         .border_1()
                         .border_color(colors.border)
                         .flex()
@@ -1328,11 +1328,17 @@ impl Render for CaptureOverlay {
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(move |style| {
-                                        style.bg(if show_annotation_controls {
-                                            rgba(0x81D4FAFF)
-                                        } else {
-                                            rgba(0x3A4049FF)
-                                        })
+                                        style
+                                            .bg(if show_annotation_controls {
+                                                colors.accent
+                                            } else {
+                                                colors.background
+                                            })
+                                            .text_color(if show_annotation_controls {
+                                                colors.background
+                                            } else {
+                                                colors.text
+                                            })
                                     })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
@@ -1363,7 +1369,7 @@ impl Render for CaptureOverlay {
                                     .text_color(colors.text)
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .hover(|style| style.bg(colors.background))
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| OverlayTooltip("Pin selection", colors)).into()
                                     })
@@ -1388,7 +1394,7 @@ impl Render for CaptureOverlay {
                                     .text_color(colors.background)
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(rgba(0x81D4FAFF)))
+                                    .hover(|style| style.bg(colors.accent))
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(primary_action_tooltip("copy"), colors)
@@ -1416,7 +1422,7 @@ impl Render for CaptureOverlay {
                                     .text_color(colors.text)
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .hover(|style| style.bg(colors.background))
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(primary_action_tooltip("save"), colors)
@@ -1441,14 +1447,14 @@ impl Render for CaptureOverlay {
                                     .justify_center()
                                     .rounded_md()
                                     .bg(if show_more_actions {
-                                        Hsla::from(rgba(0x3A4049FF))
+                                        colors.background
                                     } else {
                                         colors.panel
                                     })
                                     .text_color(colors.text)
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .hover(|style| style.bg(colors.background))
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(
@@ -1481,11 +1487,11 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .justify_center()
                                     .rounded_md()
-                                    .bg(rgba(0x2A2023FF))
-                                    .text_color(rgba(0xFFB4ABFF))
+                                    .bg(colors.danger)
+                                    .text_color(colors.background)
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(rgba(0x493035FF)))
+                                    .hover(|style| style.bg(colors.panel).text_color(colors.danger))
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(primary_action_tooltip("cancel"), colors)
@@ -1530,7 +1536,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-save-annotations")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -1548,7 +1554,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-save-editable-project")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -1566,7 +1572,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-open-annotations")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -1584,7 +1590,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-quick-save")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -1602,7 +1608,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-manual-scroll")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .tooltip(move |_, cx| {
@@ -1629,7 +1635,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-qr")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .tooltip(move |_, cx| {
@@ -1656,7 +1662,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-ocr")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .tooltip(move |_, cx| {
@@ -1683,7 +1689,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-copy-color")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -1701,7 +1707,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-translate")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .tooltip(move |_, cx| {
@@ -1728,7 +1734,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-record-area")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .tooltip(move |_, cx| {
@@ -1755,7 +1761,7 @@ impl Render for CaptureOverlay {
                                                 .id("overlay-record-window")
                                                 .px_3()
                                                 .py_2()
-                                                .bg(rgba(0x111827E6))
+                                                .bg(colors.panel)
                                                 .text_color(colors.text)
                                                 .cursor_pointer()
                                                 .tooltip(move |_, cx| {
@@ -1835,7 +1841,7 @@ impl Render for CaptureOverlay {
                                                         .id("overlay-copy-recognition")
                                                         .px_3()
                                                         .py_2()
-                                                        .bg(rgba(0x111827E6))
+                                                        .bg(colors.panel)
                                                         .text_color(colors.text)
                                                         .cursor_pointer()
                                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -1853,7 +1859,7 @@ impl Render for CaptureOverlay {
                                                         .id("overlay-clear-recognition")
                                                         .px_3()
                                                         .py_2()
-                                                        .bg(rgba(0x111827E6))
+                                                        .bg(colors.panel)
                                                         .text_color(colors.text)
                                                         .cursor_pointer()
                                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -1876,7 +1882,7 @@ impl Render for CaptureOverlay {
                                 .id("overlay-cancel")
                                 .px_3()
                                 .py_2()
-                                .bg(rgba(0x111827E6))
+                                .bg(colors.panel)
                                 .text_color(colors.text)
                                 .cursor_pointer()
                                 .on_click(cx.listener(|this, _, _, cx| {
