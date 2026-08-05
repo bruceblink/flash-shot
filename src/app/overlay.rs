@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, Hsla, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render,
-    RenderImage, Subscription, TextAlign, TextRun, Window, canvas, div, fill, img, point,
+    Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, FontWeight, Hsla,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels,
+    Render, RenderImage, Subscription, TextAlign, TextRun, Window, canvas, div, fill, img, point,
     prelude::*, px, rgba, size,
 };
 
@@ -29,9 +29,10 @@ const OVERLAY_EDGE_INSET: f32 = 18.0;
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
 const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
 const OVERLAY_ACTION_BAR_GAP: f32 = 12.0;
-const OVERLAY_ACTION_ITEM_GAP: f32 = 4.0;
-const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 34.0;
-const OVERLAY_ACTION_BAR_PADDING: f32 = 4.0;
+const OVERLAY_ACTION_ITEM_GAP: f32 = 6.0;
+const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 36.0;
+const OVERLAY_ACTION_BAR_PADDING: f32 = 6.0;
+const OVERLAY_ACTION_BAR_BORDER: f32 = 1.0;
 const OVERLAY_SECONDARY_MENU_GAP: f32 = 8.0;
 const OVERLAY_RECOGNITION_PREVIEW_HEIGHT: f32 = 64.0;
 const OVERLAY_RECOGNITION_PREVIEW_LIMIT: usize = 240;
@@ -43,9 +44,9 @@ const ANNOTATION_TOOL_ROW_HEIGHT: f32 = 34.0;
 const ANNOTATION_TOOL_GAP: f32 = 8.0;
 const ANNOTATION_TOOLBAR_PADDING: f32 = 4.0;
 const ANNOTATION_STYLE_ROW_GAP: f32 = 30.0;
-// Keep the terminal screenshot actions on one compact row while optional
-// actions expand only after the user asks for them.
-const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 34.0, 34.0];
+// Keep the core screenshot actions compact while optional actions use wider,
+// self-explanatory labels when they are expanded.
+const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 48.0, 58.0];
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
     150.0, 125.0, 150.0, 100.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
 ];
@@ -543,11 +544,14 @@ impl Render for CaptureOverlay {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(rgba(0x111827E6))
+                        .rounded_sm()
+                        .bg(rgba(0x0B0D10E6))
                         .border_1()
                         .border_color(colors.accent)
                         .text_color(colors.text)
                         .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .shadow_lg()
                         .child(format!("{} x {} px", selection.width(), selection.height())),
                 )
             })
@@ -1349,9 +1353,13 @@ impl Render for CaptureOverlay {
                     .bottom(px(status_bottom_inset(action_layout.is_none())))
                     .px_3()
                     .py_2()
-                    .bg(rgba(0x111827D9))
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgba(0xFFFFFF24))
+                    .bg(rgba(0x0B0D10E6))
                     .text_color(colors.text)
                     .text_sm()
+                    .shadow_lg()
                     .child(status),
             )
             .child(
@@ -1371,14 +1379,17 @@ impl Render for CaptureOverlay {
                     })
                     .flex()
                     .flex_wrap()
+                    .items_center()
                     .justify_end()
-                    .gap_1()
-                    .p_1()
-                    .rounded_md()
+                    .gap(px(OVERLAY_ACTION_ITEM_GAP))
+                    .p(px(OVERLAY_ACTION_BAR_PADDING))
+                    .rounded_lg()
                     .border_1()
-                    .border_color(rgba(0xFFFFFF24))
-                    .bg(rgba(0x15171BF5))
+                    .border_color(rgba(0xFFFFFF38))
+                    .bg(rgba(0x0B0D10F2))
                     .shadow_lg()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
                     .when(can_export, |actions| {
                         actions
                             .child(
@@ -1389,7 +1400,7 @@ impl Render for CaptureOverlay {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded_sm()
+                                    .rounded_md()
                                     .bg(if show_annotation_controls {
                                         colors.accent
                                     } else {
@@ -1402,7 +1413,13 @@ impl Render for CaptureOverlay {
                                     })
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(rgba(0x3A4049FF)))
+                                    .hover(move |style| {
+                                        style.bg(if show_annotation_controls {
+                                            rgba(0x81D4FAFF)
+                                        } else {
+                                            rgba(0x3A4049FF)
+                                        })
+                                    })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(primary_action_tooltip("draw"), colors)
@@ -1427,7 +1444,7 @@ impl Render for CaptureOverlay {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded_sm()
+                                    .rounded_md()
                                     .bg(colors.panel)
                                     .text_color(colors.text)
                                     .text_sm()
@@ -1452,7 +1469,7 @@ impl Render for CaptureOverlay {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded_sm()
+                                    .rounded_md()
                                     .bg(colors.accent)
                                     .text_color(colors.background)
                                     .text_sm()
@@ -1480,7 +1497,7 @@ impl Render for CaptureOverlay {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded_sm()
+                                    .rounded_md()
                                     .bg(colors.panel)
                                     .text_color(colors.text)
                                     .text_sm()
@@ -1503,12 +1520,12 @@ impl Render for CaptureOverlay {
                             .child(
                                 div()
                                     .id("overlay-more-actions")
-                                    .w(px(34.0))
+                                    .w(px(48.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded_sm()
+                                    .rounded_md()
                                     .bg(if show_more_actions {
                                         Hsla::from(rgba(0x3A4049FF))
                                     } else {
@@ -1539,17 +1556,17 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
-                                    .child(if show_more_actions { "-" } else { "..." }),
+                                    .child(if show_more_actions { "Less" } else { "More" }),
                             )
                             .child(
                                 div()
                                     .id("overlay-cancel")
-                                    .w(px(34.0))
+                                    .w(px(58.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded_sm()
+                                    .rounded_md()
                                     .bg(rgba(0x2A2023FF))
                                     .text_color(rgba(0xFFB4ABFF))
                                     .text_sm()
@@ -1565,7 +1582,7 @@ impl Render for CaptureOverlay {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
                                     }))
-                                    .child("X"),
+                                    .child("Cancel"),
                             )
                             .when(show_more_actions, |actions| {
                                 actions.child(
@@ -1584,15 +1601,15 @@ impl Render for CaptureOverlay {
                                                 + OVERLAY_ACTION_BAR_PADDING * 2.0
                                                 + OVERLAY_SECONDARY_MENU_GAP))
                                         })
-                                        .p_1()
+                                        .p(px(OVERLAY_ACTION_BAR_PADDING))
                                         .flex()
                                         .flex_wrap()
                                         .justify_end()
-                                        .gap_1()
-                                        .rounded_md()
+                                        .gap(px(OVERLAY_ACTION_ITEM_GAP))
+                                        .rounded_lg()
                                         .border_1()
-                                        .border_color(rgba(0xFFFFFF24))
-                                        .bg(rgba(0x15171BF5))
+                                        .border_color(rgba(0xFFFFFF38))
+                                        .bg(rgba(0x0B0D10F2))
                                         .shadow_lg()
                                         .child(
                                             div()
@@ -2948,6 +2965,7 @@ fn action_toolbar_natural_width(show_more_actions: bool, has_recognition_result:
     item_width
         + count.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
         + OVERLAY_ACTION_BAR_PADDING * 2.0
+        + OVERLAY_ACTION_BAR_BORDER * 2.0
 }
 
 fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_result: bool) -> f32 {
@@ -2971,7 +2989,8 @@ fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_re
 fn action_toolbar_height_for(width: f32, widths: impl IntoIterator<Item = f32>) -> f32 {
     let mut rows = 1_u32;
     let mut row_width = 0.0;
-    let content_width = (width - OVERLAY_ACTION_BAR_PADDING * 2.0).max(1.0);
+    let content_width =
+        (width - OVERLAY_ACTION_BAR_PADDING * 2.0 - OVERLAY_ACTION_BAR_BORDER * 2.0).max(1.0);
     for item_width in widths {
         let next_width = if row_width == 0.0 {
             item_width
@@ -2988,6 +3007,7 @@ fn action_toolbar_height_for(width: f32, widths: impl IntoIterator<Item = f32>) 
     rows as f32 * OVERLAY_ACTION_ITEM_HEIGHT
         + rows.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
         + OVERLAY_ACTION_BAR_PADDING * 2.0
+        + OVERLAY_ACTION_BAR_BORDER * 2.0
 }
 
 /// Chooses pointer feedback without letting selection movement override an active drawing tool.
@@ -3436,10 +3456,10 @@ mod tests {
         assert_eq!(
             action_toolbar_layout(Some(selection), transform, viewport),
             Some(ActionToolbarLayout {
-                left: 912.0,
-                top: 526.0,
-                width: 288.0,
-                height: 42.0,
+                left: 858.0,
+                top: 518.0,
+                width: 342.0,
+                height: 50.0,
             })
         );
     }
@@ -3497,16 +3517,17 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false, false), 42.0);
-        assert_eq!(action_toolbar_natural_width(false, false), 288.0);
+        assert_eq!(action_toolbar_height(324.0, false, false), 92.0);
+        assert_eq!(action_toolbar_height(288.0, false, false), 92.0);
+        assert_eq!(action_toolbar_natural_width(false, false), 342.0);
         let layout = action_toolbar_layout(Some(selection), transform, viewport).unwrap();
-        assert_eq!(layout.left, 52.0);
-        assert!((layout.top - 346.0).abs() < 0.01);
-        assert_eq!(layout.width, 288.0);
-        assert_eq!(layout.height, 42.0);
-        assert_eq!(secondary_action_menu_height(288.0, false, false), 194.0);
-        assert_eq!(secondary_action_menu_height(288.0, true, false), 300.0);
-        assert!(secondary_action_menu_height(288.0, false, true) >= 194.0);
+        assert_eq!(layout.left, 18.0);
+        assert!((layout.top - 296.0).abs() < 0.01);
+        assert_eq!(layout.width, 324.0);
+        assert_eq!(layout.height, 92.0);
+        assert_eq!(secondary_action_menu_height(324.0, false, false), 218.0);
+        assert_eq!(secondary_action_menu_height(324.0, true, false), 288.0);
+        assert!(secondary_action_menu_height(324.0, false, true) >= 196.0);
         assert!(secondary_menu_opens_above(
             layout,
             viewport,
