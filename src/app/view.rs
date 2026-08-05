@@ -1120,7 +1120,7 @@ fn history_row(
                         .border_color(colors.border)
                         .bg(colors.panel)
                         .when_some(thumbnail, |preview, thumbnail| {
-                            preview.child(img(thumbnail).size_full().object_fit(ObjectFit::Cover))
+                            preview.child(img(thumbnail).size_full().object_fit(ObjectFit::Contain))
                         }),
                 )
                 .child(
