@@ -1,5 +1,6 @@
 //! Saving, export, history mutation, and workflow cleanup.
 
+use super::super::HistoryClearScope;
 use super::*;
 
 impl FlashShotApp {
@@ -367,20 +368,26 @@ impl FlashShotApp {
             self.request_history_clear(cx);
             return;
         }
+        let scope = self.history_clear_scope;
+        let paths = std::mem::take(&mut self.history_clear_paths);
         let snapshot = self.history.clone();
         self.history_clear_in_flight = true;
         self.history_clear_confirmation = false;
-        self.status = format!("Clearing {} saved capture(s)...", snapshot.entries().len());
+        self.history_clear_scope = HistoryClearScope::default();
+        self.history_clear_count = 0;
+        self.status = format!("Clearing {} saved capture(s)...", paths.len());
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { snapshot.delete_snapshot_files() })
+                    .spawn(async move { snapshot.delete_managed_paths(paths) })
                     .await;
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| this.finish_clear_history(result, cx));
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_clear_history(scope, result, cx)
+                    });
                 }
             }
         })
@@ -389,6 +396,7 @@ impl FlashShotApp {
 
     fn finish_clear_history(
         &mut self,
+        scope: HistoryClearScope,
         deletion: crate::history::HistoryFileDeletion,
         cx: &mut Context<Self>,
     ) {
@@ -399,7 +407,12 @@ impl FlashShotApp {
             log::warn!(target: "flash_shot::history", "history_file_delete_failed path={} error={error}", path.display());
         }
         self.status = match self.history.forget_deleted(&deletion.deleted) {
-            Ok(()) if failure_count == 0 => "Screenshot history cleared".to_owned(),
+            Ok(()) if failure_count == 0 && scope == HistoryClearScope::All => {
+                "Screenshot history cleared".to_owned()
+            }
+            Ok(()) if failure_count == 0 => {
+                format!("Cleared {deleted_count} filtered capture(s)")
+            }
             Ok(()) => {
                 format!("Cleared {deleted_count} capture(s); {failure_count} could not be deleted")
             }
@@ -408,7 +421,9 @@ impl FlashShotApp {
                 format!("Capture files were cleared, but history could not be updated: {error}")
             }
         };
-        self.history_expanded = false;
+        if scope == HistoryClearScope::All {
+            self.history_expanded = false;
+        }
         self.synchronize_history_preview_cache();
         cx.notify();
     }

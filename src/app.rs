@@ -111,6 +111,9 @@ pub struct FlashShotApp {
     history_filter: HistoryFilter,
     history_search: HistorySearch,
     history_clear_confirmation: bool,
+    history_clear_scope: HistoryClearScope,
+    history_clear_count: usize,
+    history_clear_paths: Vec<PathBuf>,
     history_clear_in_flight: bool,
     history_retention_target: Option<u16>,
     history_deletions_in_flight: HashSet<PathBuf>,
@@ -142,6 +145,23 @@ pub(super) enum HistoryFilter {
     Pinned,
 }
 
+/// Names which part of the history list a destructive clear request targets.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum HistoryClearScope {
+    #[default]
+    All,
+    Filtered,
+}
+
+impl HistoryClearScope {
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Filtered => "filtered",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct HistorySearch {
     content: String,
@@ -170,6 +190,27 @@ impl HistoryFilter {
             Self::Pinned => matches!(source, crate::history::HistorySource::Pinned),
         }
     }
+}
+
+/// Applies the same source and filename rules to rendering and filtered deletion.
+pub(super) fn history_entry_matches(
+    entry: &crate::history::HistoryEntry,
+    filter: HistoryFilter,
+    query: &str,
+) -> bool {
+    if !filter.matches(entry.source) {
+        return false;
+    }
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    entry
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.to_lowercase().contains(&query))
+        || entry.source.label().to_lowercase().contains(&query)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -439,6 +480,9 @@ impl FlashShotApp {
             history_filter: HistoryFilter::All,
             history_search: HistorySearch::default(),
             history_clear_confirmation: false,
+            history_clear_scope: HistoryClearScope::default(),
+            history_clear_count: 0,
+            history_clear_paths: Vec::new(),
             history_clear_in_flight: false,
             history_retention_target: None,
             history_deletions_in_flight: HashSet::new(),

@@ -1,5 +1,6 @@
 //! Settings, support checks, and update workflow orchestration.
 
+use super::super::{HistoryClearScope, history_entry_matches};
 use super::*;
 
 impl FlashShotApp {
@@ -121,27 +122,69 @@ impl FlashShotApp {
 
     /// Requires a deliberate second action before removing every managed screenshot.
     pub(in crate::app) fn request_history_clear(&mut self, cx: &mut Context<Self>) {
+        self.request_history_clear_scope(HistoryClearScope::All, cx);
+    }
+
+    /// Starts the same guarded flow for only the captures currently visible through history filters.
+    pub(in crate::app) fn request_filtered_history_clear(&mut self, cx: &mut Context<Self>) {
+        self.request_history_clear_scope(HistoryClearScope::Filtered, cx);
+    }
+
+    /// Captures the exact deletion set before asking for confirmation so later list changes cannot
+    /// silently widen a destructive filtered-history operation.
+    fn request_history_clear_scope(&mut self, scope: HistoryClearScope, cx: &mut Context<Self>) {
         if self.history_clear_in_flight
             || self.history_retention_target.is_some()
             || !self.history_deletions_in_flight.is_empty()
         {
             return;
         }
-        if self.history.entries().is_empty() {
+        let paths = match scope {
+            HistoryClearScope::All => self
+                .history
+                .entries()
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect(),
+            HistoryClearScope::Filtered => self.filtered_history_paths(),
+        };
+        if paths.is_empty() {
+            self.history_clear_scope = HistoryClearScope::default();
+            self.history_clear_count = 0;
+            self.history_clear_paths.clear();
             self.status = "Screenshot history is already empty".to_owned();
         } else {
+            self.history_clear_scope = scope;
+            self.history_clear_count = paths.len();
+            self.history_clear_paths = paths;
             self.history_clear_confirmation = true;
             self.status = format!(
-                "Confirm deletion of {} saved capture(s)",
-                self.history.entries().len()
+                "Confirm deletion of {} {} saved capture(s)",
+                self.history_clear_count,
+                scope.label(),
             );
         }
         cx.notify();
     }
 
+    /// Resolves the current filter and query into paths that the history store may safely delete.
+    fn filtered_history_paths(&self) -> Vec<std::path::PathBuf> {
+        self.history
+            .entries()
+            .iter()
+            .filter(|entry| {
+                history_entry_matches(entry, self.history_filter, self.history_search_query())
+            })
+            .map(|entry| entry.path.clone())
+            .collect()
+    }
+
     /// Leaves every managed screenshot untouched after an accidental clear request.
     pub(in crate::app) fn cancel_history_clear(&mut self, cx: &mut Context<Self>) {
         self.history_clear_confirmation = false;
+        self.history_clear_scope = HistoryClearScope::default();
+        self.history_clear_count = 0;
+        self.history_clear_paths.clear();
         self.status = "Screenshot history clear cancelled".to_owned();
         cx.notify();
     }

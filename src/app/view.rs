@@ -5,7 +5,9 @@ use gpui::{
     img, prelude::*, px, rgba,
 };
 
-use super::{FlashShotApp, HistoryFilter, SettingsSection};
+use super::{
+    FlashShotApp, HistoryClearScope, HistoryFilter, SettingsSection, history_entry_matches,
+};
 use crate::{domain::session::CaptureSessionState, platform::shortcut::CaptureShortcut};
 
 const HISTORY_PREVIEW_LIMIT: usize = 5;
@@ -123,6 +125,8 @@ impl gpui::Render for FlashShotApp {
                                         expanded: self.history_expanded,
                                         filter: self.history_filter,
                                         clear_confirmation: self.history_clear_confirmation,
+                                        clear_scope: self.history_clear_scope,
+                                        clear_count: self.history_clear_count,
                                         clear_in_flight: self.history_clear_in_flight,
                                         retention_in_flight: self
                                             .history_retention_target
@@ -774,6 +778,8 @@ struct HistoryViewState {
     expanded: bool,
     filter: HistoryFilter,
     clear_confirmation: bool,
+    clear_scope: HistoryClearScope,
+    clear_count: usize,
     clear_in_flight: bool,
     retention_in_flight: bool,
     deletion_in_flight: bool,
@@ -795,6 +801,8 @@ fn history_settings(
         expanded,
         filter,
         clear_confirmation,
+        clear_scope,
+        clear_count,
         clear_in_flight,
         retention_in_flight,
         deletion_in_flight,
@@ -875,6 +883,27 @@ fn history_settings(
                     )),
             )
         })
+        .when(
+            filtered_entries > 0
+                && (filter != HistoryFilter::All || !search_query.trim().is_empty()),
+            |section| {
+                let filtered_app = app.clone();
+                let filtered_label = format!("Delete {filtered_entries} filtered");
+                section.child(settings_danger_button(
+                    "settings-clear-filtered-history",
+                    &filtered_label,
+                    colors,
+                    is_idle
+                        && !clear_in_flight
+                        && !clear_confirmation
+                        && !retention_in_flight
+                        && !deletion_in_flight,
+                    move |_, _, cx| {
+                        filtered_app.update(cx, |this, cx| this.request_filtered_history_clear(cx))
+                    },
+                ))
+            },
+        )
         .when(is_empty, |section| {
             section.child(
                 div()
@@ -980,7 +1009,7 @@ fn history_settings(
                         div()
                             .text_sm()
                             .text_color(colors.muted)
-                            .child(history_clear_confirmation_label(total_entries)),
+                            .child(history_clear_confirmation_label(clear_count, clear_scope)),
                     )
                     .child(settings_danger_button(
                         "settings-confirm-clear-history",
@@ -1088,8 +1117,11 @@ fn history_search_box(
 }
 
 /// Makes the destructive confirmation name its exact scope instead of relying on a generic warning.
-fn history_clear_confirmation_label(total_entries: usize) -> String {
-    format!("Delete all {total_entries} saved capture(s)?")
+fn history_clear_confirmation_label(count: usize, scope: HistoryClearScope) -> String {
+    match scope {
+        HistoryClearScope::All => format!("Delete all {count} saved capture(s)?"),
+        HistoryClearScope::Filtered => format!("Delete {count} filtered saved capture(s)?"),
+    }
 }
 
 /// Separates preview metadata from its commands so narrow settings windows can wrap actions safely.
@@ -1170,26 +1202,6 @@ fn visible_history_entries(
         .take(limit)
         .cloned()
         .collect()
-}
-
-fn history_entry_matches(
-    entry: &crate::history::HistoryEntry,
-    filter: HistoryFilter,
-    query: &str,
-) -> bool {
-    if !filter.matches(entry.source) {
-        return false;
-    }
-    let query = query.trim();
-    if query.is_empty() {
-        return true;
-    }
-    entry
-        .path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.to_lowercase().contains(query))
-        || entry.source.label().to_lowercase().contains(query)
 }
 
 /// Describes whether the history settings page is showing its bounded preview or every retained item.
@@ -1576,7 +1588,7 @@ mod tests {
         history_visibility_label, relative_timestamp_label, settings_page_intro,
         status_indicator_color, visible_history_entries,
     };
-    use crate::app::{HistoryFilter, SettingsSection};
+    use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
     use crate::theme::ThemeColors;
     use std::collections::VecDeque;
@@ -1603,8 +1615,12 @@ mod tests {
     #[test]
     fn history_clear_confirmation_names_the_exact_number_of_captures() {
         assert_eq!(
-            history_clear_confirmation_label(12),
+            history_clear_confirmation_label(12, HistoryClearScope::All),
             "Delete all 12 saved capture(s)?"
+        );
+        assert_eq!(
+            history_clear_confirmation_label(3, HistoryClearScope::Filtered),
+            "Delete 3 filtered saved capture(s)?"
         );
     }
 
@@ -1758,6 +1774,11 @@ mod tests {
             &entry,
             HistoryFilter::All,
             "quarterly"
+        ));
+        assert!(history_entry_matches(
+            &entry,
+            HistoryFilter::All,
+            "QUARTERLY"
         ));
         assert!(history_entry_matches(&entry, HistoryFilter::All, "pinned"));
         assert!(!history_entry_matches(

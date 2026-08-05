@@ -189,12 +189,6 @@ impl ScreenshotHistory {
         self.write_index()
     }
 
-    /// Deletes the files represented by this immutable snapshot without changing a live index.
-    /// A caller can perform this work off the UI thread, then merge only the completed deletions.
-    pub(crate) fn delete_snapshot_files(&self) -> HistoryFileDeletion {
-        self.delete_managed_paths(self.entries.iter().map(|entry| entry.path.clone()))
-    }
-
     pub(crate) fn delete_managed_paths(
         &self,
         paths: impl IntoIterator<Item = PathBuf>,
@@ -498,7 +492,8 @@ mod tests {
         history
             .record_with_source(second.clone(), HistorySource::Pinned)
             .unwrap();
-        let deletion = snapshot.delete_snapshot_files();
+        let deletion = snapshot
+            .delete_managed_paths(snapshot.entries().iter().map(|entry| entry.path.clone()));
         assert!(deletion.failures.is_empty());
         history.forget_deleted(&deletion.deleted).unwrap();
 
