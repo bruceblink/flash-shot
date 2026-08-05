@@ -832,6 +832,17 @@ fn history_settings(
                     )
                 })),
         )
+        .child(
+            div()
+                .text_xs()
+                .text_color(colors.muted)
+                .child(history_result_summary(
+                    total_entries,
+                    filtered_entries,
+                    filter,
+                    &search_query,
+                )),
+        )
         .when(filtered_entries > HISTORY_PREVIEW_LIMIT, |section| {
             let remaining = filtered_entries.saturating_sub(HISTORY_PREVIEW_LIMIT);
             let toggle_app = app.clone();
@@ -1190,6 +1201,28 @@ fn history_visibility_label(total_entries: usize, expanded: bool) -> String {
     }
 }
 
+/// Keeps search and source-filter feedback visible even when the preview list is short or empty.
+fn history_result_summary(
+    total_entries: usize,
+    filtered_entries: usize,
+    filter: HistoryFilter,
+    query: &str,
+) -> String {
+    let query = query.trim();
+    if !query.is_empty() {
+        return format!("{} match(es) for \"{query}\"", filtered_entries);
+    }
+    if filter == HistoryFilter::All {
+        format!("{total_entries} capture(s)")
+    } else {
+        format!(
+            "{} {} capture(s)",
+            filtered_entries,
+            filter.label().to_ascii_lowercase()
+        )
+    }
+}
+
 /// Adds a concise age to a history item so users can scan recent captures quickly.
 fn history_entry_label(entry: &crate::history::HistoryEntry, now_ms: u128) -> String {
     let name = entry
@@ -1539,9 +1572,9 @@ fn settings_delay_button(
 mod tests {
     use super::{
         capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
-        history_entry_label, history_entry_matches, history_visibility_label,
-        relative_timestamp_label, settings_page_intro, status_indicator_color,
-        visible_history_entries,
+        history_entry_label, history_entry_matches, history_result_summary,
+        history_visibility_label, relative_timestamp_label, settings_page_intro,
+        status_indicator_color, visible_history_entries,
     };
     use crate::app::{HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -1625,6 +1658,22 @@ mod tests {
         assert_eq!(
             status_indicator_color("Could not save screenshot", true, colors),
             colors.danger
+        );
+    }
+
+    #[test]
+    fn history_result_summary_explains_filters_and_queries() {
+        assert_eq!(
+            history_result_summary(12, 12, HistoryFilter::All, ""),
+            "12 capture(s)"
+        );
+        assert_eq!(
+            history_result_summary(12, 3, HistoryFilter::Pinned, ""),
+            "3 pinned capture(s)"
+        );
+        assert_eq!(
+            history_result_summary(12, 2, HistoryFilter::All, "invoice"),
+            "2 match(es) for \"invoice\""
         );
     }
 
