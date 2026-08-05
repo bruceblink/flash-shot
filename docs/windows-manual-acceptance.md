@@ -51,6 +51,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --lib
 cargo run --release --bin capture-stress -- --output target/capture-stress.json
 cargo run --release --bin annotation-stress -- --iterations 30
+cargo run --release --bin windows-acceptance-probe -- --output target/windows-acceptance-environment.json
 ```
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交

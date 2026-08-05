@@ -95,6 +95,13 @@ cargo run --release --bin annotation-stress -- --iterations 30
 cargo run --release --bin annotation-stress -- --iterations 30 --max-p95-ms 80
 ```
 
+Collect the display geometry, DPI and FFmpeg capability snapshot used by the Windows manual
+acceptance record without opening a capture or recording session:
+
+```powershell
+cargo run --release --bin windows-acceptance-probe -- --output target/windows-acceptance-environment.json
+```
+
 ### 文档
 
 - [产品需求](docs/requirements.md)
