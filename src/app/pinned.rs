@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, KeyDownEvent, Keystroke, Render, Window,
+    Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, Keystroke, Render, Window,
     WindowControlArea, div, img, prelude::*, px,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -26,6 +26,8 @@ impl Render for PinnedTooltip {
             .bg(self.1.panel)
             .border_1()
             .border_color(self.1.border)
+            .rounded_sm()
+            .shadow_lg()
             .text_color(self.1.text)
             .text_xs()
             .child(self.0)
@@ -271,6 +273,80 @@ fn native_window_handle(window: &Window) -> Option<isize> {
         })
 }
 
+#[derive(Clone, Copy)]
+enum PinnedButtonTone {
+    Neutral,
+    Selected,
+    Primary,
+    Destructive,
+}
+
+/// Builds one consistent pin control with readable state, focus, hover, and tooltip feedback.
+fn pinned_tool_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<String>,
+    control: &'static str,
+    colors: crate::theme::ThemeColors,
+    tone: PinnedButtonTone,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let emphasized = matches!(tone, PinnedButtonTone::Selected | PinnedButtonTone::Primary);
+    let destructive = matches!(tone, PinnedButtonTone::Destructive);
+    div()
+        .id(id)
+        .h(px(30.0))
+        .px_3()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .border_1()
+        .border_color(if destructive {
+            colors.danger
+        } else if emphasized {
+            colors.accent
+        } else {
+            colors.border
+        })
+        .bg(if emphasized {
+            colors.accent
+        } else {
+            colors.background
+        })
+        .text_color(if emphasized {
+            colors.background
+        } else if destructive {
+            colors.danger
+        } else {
+            colors.text
+        })
+        .text_xs()
+        .font_weight(FontWeight::SEMIBOLD)
+        .focusable()
+        .focus_visible(|style| style.border_color(colors.accent))
+        .cursor_pointer()
+        .hover(move |style| {
+            style
+                .bg(colors.panel)
+                .border_color(if destructive {
+                    colors.danger
+                } else {
+                    colors.accent
+                })
+                .text_color(if destructive {
+                    colors.danger
+                } else {
+                    colors.text
+                })
+        })
+        .tooltip(move |_, cx| {
+            cx.new(|_| PinnedTooltip(pinned_control_tooltip(control), colors))
+                .into()
+        })
+        .on_click(on_click)
+        .child(label.into())
+}
+
 impl Render for PinnedImage {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let colors = self.colors;
@@ -294,15 +370,16 @@ impl Render for PinnedImage {
             .top(px(8.0))
             .left(px(8.0))
             .right(px(8.0))
-            .p_1()
+            .p_2()
             .flex()
             .flex_wrap()
             .items_center()
-            .gap_1()
+            .gap_2()
             .bg(colors.panel)
             .border_1()
             .border_color(colors.border)
-            .rounded_md()
+            .rounded_lg()
+            .shadow_lg()
             .invisible()
             .group_hover("pinned-window", |toolbar| toolbar.visible())
             .child(
@@ -313,195 +390,94 @@ impl Render for PinnedImage {
                     .gap_1()
                     .child(
                         div()
+                            .h(px(30.0))
                             .px_2()
+                            .flex()
+                            .items_center()
+                            .rounded_md()
+                            .bg(colors.background)
                             .text_xs()
                             .text_color(colors.muted)
                             .child(self.status),
                     )
-                    .child(
-                        div()
-                            .id("pinned-save")
-                            .px_3()
-                            .py_1()
-                            .bg(colors.background)
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(colors.text)
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| PinnedTooltip(pinned_control_tooltip("save"), colors))
-                                    .into()
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| this.save_image(cx)))
-                            .child("Save"),
-                    )
-                    .child(
-                        div()
-                            .id("pinned-zoom-out")
-                            .w(px(24.0))
-                            .py_1()
-                            .bg(colors.background)
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(colors.text)
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| {
-                                    PinnedTooltip(pinned_control_tooltip("zoom-out"), colors)
-                                })
-                                .into()
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| this.zoom(0.8, window, cx)))
-                            .child("-"),
-                    )
-                    .child(
-                        div()
-                            .id("pinned-zoom-in")
-                            .w(px(24.0))
-                            .py_1()
-                            .bg(colors.background)
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(colors.text)
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| PinnedTooltip(pinned_control_tooltip("zoom-in"), colors))
-                                    .into()
-                            })
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.zoom(1.25, window, cx)),
-                            )
-                            .child("+"),
-                    )
-                    .child(
-                        div()
-                            .id("pinned-opacity")
-                            .w(px(40.0))
-                            .py_1()
-                            .bg(colors.background)
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(colors.text)
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| PinnedTooltip(pinned_control_tooltip("opacity"), colors))
-                                    .into()
-                            })
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.cycle_opacity(window, cx)),
-                            )
-                            .child(format!("{}%", opacity_percentage(self.opacity))),
-                    )
-                    .child(
-                        div()
-                            .id("pinned-mouse-through")
-                            .px_2()
-                            .py_1()
-                            .bg(if self.mouse_through {
-                                colors.accent
-                            } else {
-                                colors.background
-                            })
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(if self.mouse_through {
-                                colors.background
-                            } else {
-                                colors.text
-                            })
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| {
-                                    PinnedTooltip(pinned_control_tooltip("mouse-through"), colors)
-                                })
-                                .into()
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_mouse_through(window, cx)
-                            }))
-                            .child("Pass"),
-                    )
-                    .child(
-                        div()
-                            .id("pinned-solo")
-                            .px_2()
-                            .py_1()
-                            .bg(colors.background)
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(colors.text)
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| PinnedTooltip(pinned_control_tooltip("solo"), colors))
-                                    .into()
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.hide_other_pinned_images(window, cx)
-                            }))
-                            .child("Solo"),
-                    )
-                    .child(
-                        div()
-                            .id("pinned-show-all")
-                            .px_2()
-                            .py_1()
-                            .bg(colors.background)
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(colors.text)
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| {
-                                    PinnedTooltip(pinned_control_tooltip("show-all"), colors)
-                                })
-                                .into()
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| this.show_all_pinned_images(cx)))
-                            .child("All"),
-                    )
-                    .child(
-                        div()
-                            .id("pinned-copy")
-                            .px_3()
-                            .py_1()
-                            .bg(colors.background)
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(colors.text)
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| PinnedTooltip(pinned_control_tooltip("copy"), colors))
-                                    .into()
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| this.copy_image(cx)))
-                            .child("Copy"),
-                    )
-                    .child(
-                        div()
-                            .id("pinned-close")
-                            .w(px(24.0))
-                            .py_1()
-                            .bg(colors.background)
-                            .border_1()
-                            .border_color(colors.border)
-                            .text_color(colors.text)
-                            .text_xs()
-                            .cursor_pointer()
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| PinnedTooltip(pinned_control_tooltip("close"), colors))
-                                    .into()
-                            })
-                            .on_click(cx.listener(|this, _, window, _| this.close(window)))
-                            .child("X"),
-                    ),
+                    .child(pinned_tool_button(
+                        "pinned-save",
+                        "Save",
+                        "save",
+                        colors,
+                        PinnedButtonTone::Neutral,
+                        cx.listener(|this, _, _, cx| this.save_image(cx)),
+                    ))
+                    .child(pinned_tool_button(
+                        "pinned-zoom-out",
+                        "-",
+                        "zoom-out",
+                        colors,
+                        PinnedButtonTone::Neutral,
+                        cx.listener(|this, _, window, cx| this.zoom(0.8, window, cx)),
+                    ))
+                    .child(pinned_tool_button(
+                        "pinned-zoom-in",
+                        "+",
+                        "zoom-in",
+                        colors,
+                        PinnedButtonTone::Neutral,
+                        cx.listener(|this, _, window, cx| this.zoom(1.25, window, cx)),
+                    ))
+                    .child(pinned_tool_button(
+                        "pinned-opacity",
+                        format!("{}%", opacity_percentage(self.opacity)),
+                        "opacity",
+                        colors,
+                        PinnedButtonTone::Neutral,
+                        cx.listener(|this, _, window, cx| this.cycle_opacity(window, cx)),
+                    ))
+                    .child(pinned_tool_button(
+                        "pinned-mouse-through",
+                        "Pass",
+                        "mouse-through",
+                        colors,
+                        if self.mouse_through {
+                            PinnedButtonTone::Selected
+                        } else {
+                            PinnedButtonTone::Neutral
+                        },
+                        cx.listener(|this, _, window, cx| this.toggle_mouse_through(window, cx)),
+                    ))
+                    .child(pinned_tool_button(
+                        "pinned-solo",
+                        "Solo",
+                        "solo",
+                        colors,
+                        PinnedButtonTone::Neutral,
+                        cx.listener(|this, _, window, cx| {
+                            this.hide_other_pinned_images(window, cx)
+                        }),
+                    ))
+                    .child(pinned_tool_button(
+                        "pinned-show-all",
+                        "Show all",
+                        "show-all",
+                        colors,
+                        PinnedButtonTone::Neutral,
+                        cx.listener(|this, _, _, cx| this.show_all_pinned_images(cx)),
+                    ))
+                    .child(pinned_tool_button(
+                        "pinned-copy",
+                        "Copy",
+                        "copy",
+                        colors,
+                        PinnedButtonTone::Primary,
+                        cx.listener(|this, _, _, cx| this.copy_image(cx)),
+                    ))
+                    .child(pinned_tool_button(
+                        "pinned-close",
+                        "Close",
+                        "close",
+                        colors,
+                        PinnedButtonTone::Destructive,
+                        cx.listener(|this, _, window, _| this.close(window)),
+                    )),
             );
         let image = div()
             .id("pinned-image")
