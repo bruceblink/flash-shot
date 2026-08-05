@@ -937,12 +937,10 @@ fn history_settings(
             },
         )
         .when(is_empty, |section| {
-            section.child(
-                div()
-                    .text_sm()
-                    .text_color(colors.muted)
-                    .child(empty_history_message(total_entries, filter, &search_query)),
-            )
+            section.child(empty_history_state(
+                empty_history_message(total_entries, filter, &search_query),
+                colors,
+            ))
         })
         .children(entries.into_iter().map(|(entry, thumbnail, deleting)| {
             let label = history_entry_label(&entry, now_ms);
@@ -1081,7 +1079,7 @@ fn history_search_box(
         .flex()
         .items_center()
         .gap_2()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
         .border_color(if active { colors.accent } else { colors.border })
         .bg(colors.panel)
@@ -1136,7 +1134,10 @@ fn history_search_box(
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.panel)
                     .text_color(colors.muted)
                     .cursor_pointer()
                     .hover(|style| style.bg(colors.background).text_color(colors.text))
@@ -1163,12 +1164,15 @@ fn history_row(
     colors: crate::theme::ThemeColors,
 ) -> gpui::Div {
     div()
+        .p_3()
         .flex()
         .flex_col()
         .gap_2()
-        .pb_3()
-        .border_b_1()
+        .rounded_md()
+        .border_1()
         .border_color(colors.border)
+        .bg(colors.panel)
+        .hover(|style| style.border_color(colors.accent))
         .child(
             div()
                 .flex()
@@ -1182,6 +1186,7 @@ fn history_row(
                         .overflow_hidden()
                         .border_1()
                         .border_color(colors.border)
+                        .rounded_sm()
                         .bg(colors.panel)
                         .when_some(thumbnail, |preview, thumbnail| {
                             preview.child(img(thumbnail).size_full().object_fit(ObjectFit::Contain))
@@ -1191,7 +1196,8 @@ fn history_row(
                     div()
                         .flex_1()
                         .text_sm()
-                        .text_color(colors.muted)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(colors.text)
                         .child(label.to_owned()),
                 ),
         )
@@ -1213,6 +1219,21 @@ fn empty_history_message(total_entries: usize, filter: HistoryFilter, query: &st
     } else {
         format!("No {} captures yet.", filter.label().to_lowercase())
     }
+}
+
+/// Gives an empty or filtered history result a deliberate visual state instead of a loose label.
+fn empty_history_state(message: String, colors: crate::theme::ThemeColors) -> gpui::Div {
+    div()
+        .p_4()
+        .flex()
+        .items_center()
+        .rounded_md()
+        .border_1()
+        .border_color(colors.border)
+        .bg(colors.panel)
+        .text_sm()
+        .text_color(colors.muted)
+        .child(message)
 }
 
 /// Returns the lightweight default history preview or the explicit full list.
