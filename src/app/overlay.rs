@@ -1346,7 +1346,7 @@ impl Render for CaptureOverlay {
                 div()
                     .absolute()
                     .left(px(18.0))
-                    .bottom(px(OVERLAY_BOTTOM_SAFE_INSET))
+                    .bottom(px(status_bottom_inset(action_layout.is_none())))
                     .px_3()
                     .py_2()
                     .bg(rgba(0x111827D9))
@@ -2867,6 +2867,15 @@ fn secondary_menu_opens_above(
         || bottom > viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET
 }
 
+/// Lifts status feedback above the fallback action bar so narrow overlays stay readable.
+fn status_bottom_inset(uses_fallback_action_bar: bool) -> f32 {
+    if uses_fallback_action_bar {
+        OVERLAY_BOTTOM_SAFE_INSET + OVERLAY_ACTION_ITEM_HEIGHT + OVERLAY_ACTION_BAR_GAP
+    } else {
+        OVERLAY_BOTTOM_SAFE_INSET
+    }
+}
+
 fn secondary_action_menu_height(
     width: f32,
     has_recognition_result: bool,
@@ -3019,15 +3028,15 @@ fn selection_cursor(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
-        OVERLAY_RECOGNITION_PREVIEW_LIMIT, SelectionCursor, SelectionDimensionLayout,
-        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
-        annotation_layer_label, annotation_toolbar_height, arrow_head_points, capture_double_click,
-        intersect, is_text_annotation, magnifier_origin, outline_shape_bounds,
-        owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
-        recognition_retry_label, resize_handle_points, secondary_action_menu_height,
-        secondary_action_tooltip, secondary_menu_opens_above, selection_cursor,
-        selection_dimension_label_layout, visible_selection,
+        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
+        OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
+        SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
+        action_toolbar_natural_width, annotation_layer_label, annotation_toolbar_height,
+        arrow_head_points, capture_double_click, intersect, is_text_annotation, magnifier_origin,
+        outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip,
+        recognition_result_preview, recognition_retry_label, resize_handle_points,
+        secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
+        selection_cursor, selection_dimension_label_layout, status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -3513,6 +3522,15 @@ mod tests {
         assert_eq!(annotation_toolbar_height(wide, 12), 42.0);
         assert_eq!(annotation_toolbar_height(narrow, 12), 252.0);
         assert!(annotation_toolbar_height(narrow, 20) > 252.0);
+    }
+
+    #[test]
+    fn status_feedback_moves_above_the_fallback_action_bar() {
+        assert_eq!(
+            status_bottom_inset(true),
+            OVERLAY_BOTTOM_SAFE_INSET + OVERLAY_ACTION_ITEM_HEIGHT + OVERLAY_ACTION_BAR_GAP
+        );
+        assert_eq!(status_bottom_inset(false), OVERLAY_BOTTOM_SAFE_INSET);
     }
 
     #[test]
