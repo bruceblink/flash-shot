@@ -409,7 +409,6 @@ impl Render for CaptureOverlay {
         let can_redo = app.annotation_history.redo_len() > 0;
         let status = app.status.clone();
         let show_more_actions = app.overlay_more_actions;
-        let show_annotation_controls = app.overlay_annotation_controls;
         let recognition_result = app.recognition_result.clone();
         let recognition_retry = app.recognition_retry;
         let hover_pixel = app.hover_pixel;
@@ -425,6 +424,10 @@ impl Render for CaptureOverlay {
         let transform = self.transform(viewport);
         let selected_on_display =
             selection.and_then(|selection| intersect(selection, display_bounds));
+        let owns_action_toolbar =
+            selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds));
+        let show_annotation_controls =
+            annotation_controls_visible(app.overlay_annotation_controls, selection, display_bounds);
         let base_action_layout = action_toolbar_layout(selected_on_display, transform, viewport);
         let annotation_style_height = annotation_style_panel_height(can_adjust_font_size);
         let annotation_layout = show_annotation_controls
@@ -452,9 +455,11 @@ impl Render for CaptureOverlay {
             .unwrap_or(OVERLAY_EDGE_INSET);
         let annotation_style_left = annotation_style_panel_left + ANNOTATION_STYLE_PANEL_GAP;
         let annotation_style_top = annotation_style_panel_top + ANNOTATION_STYLE_PANEL_GAP;
-        let annotation_layer_layout =
-            annotation_layout.and_then(|layout| annotation_layer_layout(layout, viewport));
-        let show_annotation_layers = !layer_annotations.is_empty()
+        let annotation_layer_layout = owns_action_toolbar
+            .then(|| annotation_layout.and_then(|layout| annotation_layer_layout(layout, viewport)))
+            .flatten();
+        let show_annotation_layers = owns_action_toolbar
+            && !layer_annotations.is_empty()
             && (!show_annotation_controls || annotation_layer_layout.is_some());
         let annotation_layer_top = annotation_layer_layout
             .map(|layout| layout.top)
@@ -500,8 +505,6 @@ impl Render for CaptureOverlay {
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
             .flatten();
         let has_selection = selection.is_some();
-        let owns_action_toolbar =
-            selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds));
         let can_export = has_selection && owns_action_toolbar;
         let show_action_toolbar = !has_selection || owns_action_toolbar;
         let selection_cursor = selection_cursor(
@@ -3049,6 +3052,16 @@ fn owns_selection_toolbar(selection: PhysicalRect, display_bounds: PhysicalRect)
         })
 }
 
+/// Limits annotation controls to the display that owns the committed selection's export actions.
+fn annotation_controls_visible(
+    requested: bool,
+    selection: Option<PhysicalRect>,
+    display_bounds: PhysicalRect,
+) -> bool {
+    requested
+        && selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds))
+}
+
 /// Chooses the side with room for the detached secondary menu without moving the main toolbar.
 fn secondary_menu_opens_above(
     toolbar: ActionToolbarLayout,
@@ -3229,9 +3242,9 @@ mod tests {
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
         OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
         SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
-        action_toolbar_natural_width, annotation_layer_label, annotation_style_panel_height,
-        annotation_toolbar_height, annotation_toolbar_layout, arrow_head_points,
-        capture_double_click, intersect, is_text_annotation, magnifier_origin,
+        action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
+        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_layout,
+        arrow_head_points, capture_double_click, intersect, is_text_annotation, magnifier_origin,
         outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip,
         recognition_result_preview, recognition_retry_label, resize_handle_points,
         secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
@@ -3293,6 +3306,45 @@ mod tests {
 
         assert!(!owns_selection_toolbar(selection, left_display));
         assert!(owns_selection_toolbar(selection, right_display));
+    }
+
+    #[test]
+    fn cross_display_marking_controls_have_one_owner() {
+        let left_display = PhysicalRect {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        let right_display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let selection = PhysicalRect {
+            left: -420,
+            top: 160,
+            right: 320,
+            bottom: 680,
+        };
+
+        assert!(!annotation_controls_visible(
+            true,
+            Some(selection),
+            left_display
+        ));
+        assert!(annotation_controls_visible(
+            true,
+            Some(selection),
+            right_display
+        ));
+        assert!(!annotation_controls_visible(
+            false,
+            Some(selection),
+            right_display
+        ));
+        assert!(!annotation_controls_visible(true, None, right_display));
     }
 
     #[test]
