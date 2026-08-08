@@ -60,7 +60,7 @@ impl gpui::Render for FlashShotApp {
             .size_full()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                this.handle_history_search_key(&event.keystroke, cx);
+                this.handle_history_key(&event.keystroke, cx);
             }))
             .flex()
             .flex_col()
@@ -890,6 +890,7 @@ struct HistoryViewState {
 
 /// Renders search, bulk actions, and previews for recent captures.
 /// Summary text and its action stay adjacent so their relationship remains clear on wide windows.
+/// A pending deletion confirmation stays beside the batch actions instead of below a long list.
 fn history_settings(
     state: HistoryViewState,
     colors: crate::theme::ThemeColors,
@@ -1011,6 +1012,40 @@ fn history_settings(
                             },
                         ))
                     }),
+            )
+        })
+        .when(clear_confirmation, |section| {
+            let confirm_app = app.clone();
+            let cancel_app = app.clone();
+            section.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(colors.muted)
+                            .child(history_clear_confirmation_label(clear_count, clear_scope)),
+                    )
+                    .child(settings_danger_button(
+                        "settings-confirm-clear-history",
+                        "Delete captures",
+                        colors,
+                        is_idle && !retention_in_flight,
+                        move |_, _, cx| confirm_app.update(cx, |this, cx| this.clear_history(cx)),
+                    ))
+                    .child(settings_button(
+                        "settings-cancel-clear-history",
+                        "Cancel",
+                        colors,
+                        true,
+                        move |_, _, cx| {
+                            cancel_app.update(cx, |this, cx| this.cancel_history_clear(cx))
+                        },
+                    )),
             )
         })
         .when(filtered_entries > HISTORY_PREVIEW_LIMIT, |section| {
@@ -1189,37 +1224,6 @@ fn history_settings(
                     && !deletion_in_flight,
                 move |_, _, cx| clear_app.update(cx, |this, cx| this.request_history_clear(cx)),
             ))
-        })
-        .when(clear_confirmation, |section| {
-            let confirm_app = app.clone();
-            section.child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(colors.muted)
-                            .child(history_clear_confirmation_label(clear_count, clear_scope)),
-                    )
-                    .child(settings_danger_button(
-                        "settings-confirm-clear-history",
-                        "Delete captures",
-                        colors,
-                        is_idle && !retention_in_flight,
-                        move |_, _, cx| confirm_app.update(cx, |this, cx| this.clear_history(cx)),
-                    ))
-                    .child(settings_button(
-                        "settings-cancel-clear-history",
-                        "Cancel",
-                        colors,
-                        true,
-                        move |_, _, cx| app.update(cx, |this, cx| this.cancel_history_clear(cx)),
-                    )),
-            )
         })
 }
 
