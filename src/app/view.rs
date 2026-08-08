@@ -12,12 +12,15 @@ use crate::{domain::session::CaptureSessionState, platform::shortcut::CaptureSho
 
 const HISTORY_PREVIEW_LIMIT: usize = 5;
 const SETTINGS_CONTENT_MAX_WIDTH: f32 = 960.0;
+const COMPACT_SETTINGS_NAVIGATION_BREAKPOINT: f32 = 640.0;
 
 impl gpui::Render for FlashShotApp {
     /// Renders the tray service's settings workspace with a readable content column.
     /// Keeping the column bounded prevents wide windows from separating a preference label from its control.
-    fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let colors = self.colors;
+        let compact_navigation =
+            uses_compact_settings_navigation(f32::from(window.bounds().size.width));
         let is_idle = self.session.state() == CaptureSessionState::Idle;
         let recording_active = self.recording_control.is_some();
         let recording_starting = self.recording_start_in_flight;
@@ -78,10 +81,12 @@ impl gpui::Render for FlashShotApp {
                     .flex_1()
                     .min_h(px(0.0))
                     .flex()
+                    .when(compact_navigation, |workspace| workspace.flex_col())
                     .child(settings_navigation(
                         self.settings_section,
                         colors,
                         app.clone(),
+                        compact_navigation,
                     ))
                     .child(
                         div()
@@ -1489,90 +1494,141 @@ fn relative_timestamp_label(created_at_ms: u128, now_ms: u128) -> String {
     }
 }
 
+/// Switches the section picker above the content when a side rail would starve it of width.
+fn uses_compact_settings_navigation(window_width: f32) -> bool {
+    window_width < COMPACT_SETTINGS_NAVIGATION_BREAKPOINT
+}
+
+/// Renders a vertical navigation rail on roomy windows and a compact section row on narrow ones.
 fn settings_navigation(
     selected: SettingsSection,
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
+    compact: bool,
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id("settings-navigation")
-        .w(px(164.0))
-        .p_4()
-        .border_r_1()
-        .border_color(colors.border)
         .bg(colors.panel)
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(
-            div()
-                .px_2()
-                .pb_2()
-                .text_xs()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(colors.muted)
-                .child("WORKSPACE"),
-        )
+        .when(compact, |navigation| {
+            navigation
+                .w_full()
+                .flex_none()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(colors.border)
+                .flex()
+                .items_center()
+                .gap_2()
+        })
+        .when(!compact, |navigation| {
+            navigation
+                .w(px(164.0))
+                .p_4()
+                .border_r_1()
+                .border_color(colors.border)
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .px_2()
+                        .pb_2()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(colors.muted)
+                        .child("WORKSPACE"),
+                )
+        })
         .children([
             settings_navigation_item(
-                "settings-nav-capture",
-                "Actions",
-                "Capture, annotate, export",
-                SettingsSection::Capture,
+                SettingsNavigationItem {
+                    id: "settings-nav-capture",
+                    label: "Actions",
+                    description: "Capture, annotate, export",
+                    section: SettingsSection::Capture,
+                },
                 selected,
                 colors,
                 app.clone(),
+                compact,
             ),
             settings_navigation_item(
-                "settings-nav-files",
-                "Files",
-                "History and output",
-                SettingsSection::Files,
+                SettingsNavigationItem {
+                    id: "settings-nav-files",
+                    label: "Files",
+                    description: "History and output",
+                    section: SettingsSection::Files,
+                },
                 selected,
                 colors,
                 app.clone(),
+                compact,
             ),
             settings_navigation_item(
-                "settings-nav-recording",
-                "Recording",
-                "Screen and audio",
-                SettingsSection::Recording,
+                SettingsNavigationItem {
+                    id: "settings-nav-recording",
+                    label: "Recording",
+                    description: "Screen and audio",
+                    section: SettingsSection::Recording,
+                },
                 selected,
                 colors,
                 app.clone(),
+                compact,
             ),
             settings_navigation_item(
-                "settings-nav-system",
-                "System",
-                "Theme and startup",
-                SettingsSection::System,
+                SettingsNavigationItem {
+                    id: "settings-nav-system",
+                    label: "System",
+                    description: "Theme and startup",
+                    section: SettingsSection::System,
+                },
                 selected,
                 colors,
                 app,
+                compact,
             ),
         ])
 }
 
-fn settings_navigation_item(
+#[derive(Clone, Copy)]
+struct SettingsNavigationItem {
     id: &'static str,
     label: &'static str,
     description: &'static str,
     section: SettingsSection,
+}
+
+/// Keeps each section reachable at the minimum window size without taking a second line for detail text.
+fn settings_navigation_item(
+    item: SettingsNavigationItem,
     selected: SettingsSection,
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
+    compact: bool,
 ) -> gpui::Stateful<gpui::Div> {
-    let active = selected == section;
+    let active = selected == item.section;
     div()
-        .id(id)
-        .w_full()
-        .min_h(px(52.0))
-        .px_3()
-        .py_2()
+        .id(item.id)
         .flex()
-        .flex_col()
-        .justify_center()
-        .gap_1()
+        .when(compact, |item| {
+            item.flex_1()
+                .min_w(px(0.0))
+                .h(px(36.0))
+                .px_2()
+                .items_center()
+                .justify_center()
+        })
+        .when(!compact, |item| {
+            item.w_full()
+                .min_h(px(52.0))
+                .px_3()
+                .py_2()
+                .flex_col()
+                .justify_center()
+                .gap_1()
+        })
         .rounded_md()
         .border_1()
         .border_color(if active { colors.accent } else { colors.panel })
@@ -1601,19 +1657,29 @@ fn settings_navigation_item(
                 })
         })
         .on_click(move |_, _, cx| {
-            app.update(cx, |this, cx| this.select_settings_section(section, cx))
+            app.update(cx, |this, cx| {
+                this.select_settings_section(item.section, cx)
+            })
         })
-        .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
         .child(
             div()
-                .text_xs()
-                .text_color(if active {
-                    colors.background.opacity(0.78)
-                } else {
-                    colors.muted
-                })
-                .child(description),
+                .min_w(px(0.0))
+                .when(compact, |label| label.text_ellipsis())
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(item.label),
         )
+        .when(!compact, |element| {
+            element.child(
+                div()
+                    .text_xs()
+                    .text_color(if active {
+                        colors.background.opacity(0.78)
+                    } else {
+                        colors.muted
+                    })
+                    .child(item.description),
+            )
+        })
 }
 
 /// Gives every section a stable task-oriented title.
@@ -1950,7 +2016,8 @@ mod tests {
         capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
         history_entry_label, history_entry_matches, history_result_summary,
         history_retention_label, history_visibility_label, relative_timestamp_label,
-        settings_page_intro, settings_path_label, status_indicator_color, visible_history_entries,
+        settings_page_intro, settings_path_label, status_indicator_color,
+        uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2026,6 +2093,12 @@ mod tests {
         let colors = crate::theme::ThemeColors::default();
         let _ = super::settings_row("Audio", colors);
         let _ = super::settings_row("Start with Windows", colors);
+    }
+
+    #[test]
+    fn settings_navigation_compacts_before_the_content_column_becomes_too_narrow() {
+        assert!(uses_compact_settings_navigation(639.0));
+        assert!(!uses_compact_settings_navigation(640.0));
     }
 
     #[test]
