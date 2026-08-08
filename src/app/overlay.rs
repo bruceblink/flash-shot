@@ -8,6 +8,7 @@ use gpui::{
     RenderImage, Subscription, TextAlign, TextRun, Window, canvas, div, fill, img, point,
     prelude::*, px, rgba, size,
 };
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::FlashShotApp;
 use crate::{
@@ -44,6 +45,12 @@ const ANNOTATION_TOOL_ROW_HEIGHT: f32 = 34.0;
 const ANNOTATION_TOOL_GAP: f32 = 8.0;
 const ANNOTATION_TOOLBAR_PADDING: f32 = 4.0;
 const ANNOTATION_STYLE_ROW_GAP: f32 = 30.0;
+const ANNOTATION_STYLE_PANEL_WIDTH: f32 = 164.0;
+const ANNOTATION_STYLE_PANEL_GAP: f32 = 8.0;
+const ANNOTATION_LAYERS_WIDTH: f32 = 180.0;
+const ANNOTATION_LAYERS_PREFERRED_HEIGHT: f32 = 200.0;
+const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 900.0;
+const ANNOTATION_TOOLBAR_MIN_CONTENT_WIDTH: f32 = 320.0;
 // Keep the core screenshot actions compact while optional actions use wider,
 // self-explanatory labels when they are expanded.
 const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 48.0, 58.0];
@@ -76,7 +83,7 @@ fn secondary_action_tooltip(action_id: &str) -> &'static str {
 /// Keeps the primary capture commands and their keyboard equivalents discoverable.
 fn primary_action_tooltip(action_id: &str) -> &'static str {
     match action_id {
-        "draw" => "Show drawing and annotation controls",
+        "draw" => "Show marking tools for this selection",
         "copy" => "Copy selection to clipboard (Enter)",
         "save" => "Save selection as a PNG",
         "cancel" => "Cancel capture (Escape)",
@@ -165,6 +172,7 @@ pub(super) struct CaptureOverlay {
     display: DisplayInfo,
     preview: Arc<RenderImage>,
     focus_handle: FocusHandle,
+    topmost_requested: bool,
     _app_observation: Subscription,
 }
 
@@ -181,6 +189,7 @@ impl CaptureOverlay {
             display,
             preview,
             focus_handle: cx.focus_handle(),
+            topmost_requested: false,
             _app_observation: observation,
         }
     }
@@ -324,6 +333,20 @@ impl Focusable for CaptureOverlay {
 
 impl Render for CaptureOverlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.topmost_requested
+            && let Ok(handle) = window.window_handle()
+            && let RawWindowHandle::Win32(handle) = handle.as_raw()
+        {
+            self.topmost_requested = true;
+            let hwnd = handle.hwnd.get();
+            // Keep the active capture overlay above ordinary application windows so its
+            // selection controls remain available until the capture is completed or cancelled.
+            cx.defer(move |_| {
+                if let Err(error) = crate::platform::window_visibility::make_topmost(hwnd) {
+                    log::warn!(target: "flash_shot::overlay", "overlay_topmost_failed error={error}");
+                }
+            });
+        }
         let display_bounds = self.display.physical_bounds;
         let app = self.app.read(cx);
         let colors = app.colors;
@@ -399,22 +422,49 @@ impl Render for CaptureOverlay {
             + usize::from(can_edit_text)
             + usize::from(selected_number.is_some()) * 3
             + usize::from(can_rotate);
-        let annotation_toolbar_height =
-            annotation_toolbar_height(viewport, annotation_toolbar_items);
-        let annotation_style_top =
-            OVERLAY_EDGE_INSET + annotation_toolbar_height + ANNOTATION_TOOL_GAP;
-        let annotation_layer_top = if show_annotation_controls {
-            annotation_style_top
-        } else {
-            OVERLAY_EDGE_INSET
-        };
-        let annotation_layer_max_height =
-            (view_rect(viewport).height - annotation_layer_top - OVERLAY_BOTTOM_SAFE_INSET)
-                .max(80.0);
         let transform = self.transform(viewport);
         let selected_on_display =
             selection.and_then(|selection| intersect(selection, display_bounds));
-        let action_layout = action_toolbar_layout(selected_on_display, transform, viewport);
+        let base_action_layout = action_toolbar_layout(selected_on_display, transform, viewport);
+        let annotation_style_height = annotation_style_panel_height(can_adjust_font_size);
+        let annotation_layout = show_annotation_controls
+            .then(|| {
+                annotation_toolbar_layout(
+                    selected_on_display,
+                    transform,
+                    viewport,
+                    base_action_layout,
+                    annotation_toolbar_items,
+                    annotation_style_height,
+                )
+            })
+            .flatten();
+        let action_layout = annotation_layout
+            .map(|layout| layout.action_toolbar)
+            .or(base_action_layout);
+        let annotation_style_is_side_by_side =
+            annotation_layout.is_some_and(|layout| layout.tools_width < layout.width);
+        let annotation_style_panel_left = annotation_layout
+            .map(|layout| layout.style_left)
+            .unwrap_or(OVERLAY_EDGE_INSET);
+        let annotation_style_panel_top = annotation_layout
+            .map(|layout| layout.style_top)
+            .unwrap_or(OVERLAY_EDGE_INSET);
+        let annotation_style_left = annotation_style_panel_left + ANNOTATION_STYLE_PANEL_GAP;
+        let annotation_style_top = annotation_style_panel_top + ANNOTATION_STYLE_PANEL_GAP;
+        let annotation_layer_layout =
+            annotation_layout.and_then(|layout| annotation_layer_layout(layout, viewport));
+        let show_annotation_layers = !layer_annotations.is_empty()
+            && (!show_annotation_controls || annotation_layer_layout.is_some());
+        let annotation_layer_top = annotation_layer_layout
+            .map(|layout| layout.top)
+            .unwrap_or(OVERLAY_EDGE_INSET);
+        let annotation_layer_max_height = annotation_layer_layout
+            .map(|layout| layout.max_height)
+            .unwrap_or_else(|| {
+                (view_rect(viewport).height - annotation_layer_top - OVERLAY_BOTTOM_SAFE_INSET)
+                    .max(80.0)
+            });
         let secondary_menu_height = action_layout.map(|layout| {
             secondary_action_menu_height(
                 layout.width,
@@ -423,7 +473,21 @@ impl Render for CaptureOverlay {
             )
         });
         let secondary_menu_above = action_layout.is_some_and(|layout| {
-            secondary_menu_opens_above(layout, viewport, secondary_menu_height.unwrap_or_default())
+            let menu_height = secondary_menu_height.unwrap_or_default();
+            if let Some(marking) = annotation_layout {
+                let viewport = view_rect(viewport);
+                let above = layout.top - OVERLAY_SECONDARY_MENU_GAP - menu_height;
+                let below = layout.top + layout.height + OVERLAY_SECONDARY_MENU_GAP + menu_height;
+                if marking.actions_above_tools && above >= viewport.top + OVERLAY_EDGE_INSET {
+                    return true;
+                }
+                if !marking.actions_above_tools
+                    && below <= viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET
+                {
+                    return false;
+                }
+            }
+            secondary_menu_opens_above(layout, viewport, menu_height)
         });
         let dimension_layout = selection_dimension_label_layout(
             selected_on_display,
@@ -606,14 +670,35 @@ impl Render for CaptureOverlay {
                         .child(format!("{} x {} px", selection.width(), selection.height())),
                 )
             })
-            .when(!layer_annotations.is_empty(), |overlay| {
+            .when_some(annotation_layout, |overlay, layout| {
+                overlay.child(
+                    div()
+                        .id("overlay-marking-panel")
+                        .absolute()
+                        .left(px(layout.left))
+                        .top(px(layout.top))
+                        .w(px(layout.width))
+                        .h(px(layout.height))
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(rgba(0xFFFFFF38))
+                        .bg(rgba(0x0B0D10F2))
+                        .shadow_lg(),
+                )
+            })
+            .when(show_annotation_layers, |overlay| {
                 overlay.child(
                     div()
                         .id("overlay-layers")
                         .absolute()
-                        .right(px(18.0))
+                        .when_some(annotation_layer_layout, |layers, layout| {
+                            layers.left(px(layout.left))
+                        })
+                        .when(annotation_layer_layout.is_none(), |layers| {
+                            layers.right(px(OVERLAY_EDGE_INSET))
+                        })
                         .top(px(annotation_layer_top))
-                        .w(px(180.0))
+                        .w(px(ANNOTATION_LAYERS_WIDTH))
                         .max_h(px(annotation_layer_max_height))
                         .overflow_y_scroll()
                         .p_2()
@@ -664,34 +749,36 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .absolute()
-                        .left(px(10.0))
-                        .top(px(annotation_style_top - 8.0))
-                        .w(px(164.0))
-                        .h(px(if can_adjust_font_size { 158.0 } else { 128.0 }))
-                        .rounded_md()
-                        .border_1()
-                        .border_color(rgba(0xFFFFFF24))
-                        .bg(rgba(0x15171BE8))
-                        .shadow_lg(),
+                        .left(px(annotation_style_panel_left))
+                        .top(px(annotation_style_panel_top))
+                        .w(px(ANNOTATION_STYLE_PANEL_WIDTH))
+                        .h(px(annotation_style_height)),
                 )
             })
             .when(show_annotation_controls, |overlay| {
                 overlay.child(
                     div()
                         .absolute()
-                        .left(px(OVERLAY_EDGE_INSET))
-                        .right(px(OVERLAY_EDGE_INSET))
-                        .top(px(OVERLAY_EDGE_INSET))
+                        .when_some(annotation_layout, |tools, layout| {
+                            tools
+                                .left(px(layout.left))
+                                .top(px(layout.tools_top))
+                                .w(px(layout.tools_width))
+                        })
+                        .when(annotation_layout.is_none(), |tools| {
+                            tools
+                                .left(px(OVERLAY_EDGE_INSET))
+                                .right(px(OVERLAY_EDGE_INSET))
+                                .top(px(OVERLAY_EDGE_INSET))
+                        })
                         .flex()
                         .flex_wrap()
                         .items_center()
                         .gap_2()
                         .p_1()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(rgba(0xFFFFFF38))
-                        .bg(rgba(0x0B0D10F2))
-                        .shadow_lg()
+                        .when(annotation_style_is_side_by_side, |tools| {
+                            tools.pr_2().border_r_1().border_color(rgba(0xFFFFFF24))
+                        })
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .when(can_undo, |tools| {
@@ -1086,7 +1173,7 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .absolute()
-                        .left(px(18.0))
+                        .left(px(annotation_style_left))
                         .top(px(annotation_style_top))
                         .flex()
                         .gap_2()
@@ -1120,7 +1207,7 @@ impl Render for CaptureOverlay {
                     overlay.child(
                         div()
                             .absolute()
-                            .left(px(18.0))
+                            .left(px(annotation_style_left))
                             .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 4.0))
                             .flex()
                             .gap_2()
@@ -1159,7 +1246,7 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .absolute()
-                        .left(px(18.0))
+                        .left(px(annotation_style_left))
                         .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 2.0))
                         .px_3()
                         .py_2()
@@ -1188,7 +1275,7 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .absolute()
-                        .left(px(18.0))
+                        .left(px(annotation_style_left))
                         .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP))
                         .flex()
                         .gap_2()
@@ -1226,7 +1313,7 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .absolute()
-                        .left(px(18.0))
+                        .left(px(annotation_style_left))
                         .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 3.0))
                         .flex()
                         .gap_2()
@@ -1297,11 +1384,14 @@ impl Render for CaptureOverlay {
                     .justify_end()
                     .gap(px(OVERLAY_ACTION_ITEM_GAP))
                     .p(px(OVERLAY_ACTION_BAR_PADDING))
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(rgba(0xFFFFFF38))
-                    .bg(rgba(0x0B0D10F2))
-                    .shadow_lg()
+                    .when(!show_annotation_controls, |actions| {
+                        actions
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(rgba(0xFFFFFF38))
+                            .bg(rgba(0x0B0D10F2))
+                            .shadow_lg()
+                    })
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .when(can_export, |actions| {
@@ -1354,7 +1444,7 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
-                                    .child("Draw"),
+                                    .child("Mark"),
                             )
                             .child(
                                 div()
@@ -2672,19 +2762,55 @@ struct ActionToolbarLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+struct AnnotationToolbarLayout {
+    left: f32,
+    top: f32,
+    width: f32,
+    height: f32,
+    tools_width: f32,
+    tools_height: f32,
+    tools_top: f32,
+    style_left: f32,
+    style_top: f32,
+    style_height: f32,
+    action_toolbar: ActionToolbarLayout,
+    actions_above_tools: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AnnotationLayerLayout {
+    left: f32,
+    top: f32,
+    max_height: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct SelectionDimensionLayout {
     left: f32,
     top: f32,
 }
 
+/// Keeps style controls at a stable height while revealing text-only sizing choices when needed.
+fn annotation_style_panel_height(can_adjust_font_size: bool) -> f32 {
+    if can_adjust_font_size { 158.0 } else { 128.0 }
+}
+
 /// Reserves enough vertical space for the annotation toolbar before style controls are placed.
 /// Widths are deliberately conservative so localized or contextual labels cannot overlap the
 /// rows below even when GPUI wraps them earlier than expected.
+#[cfg(test)]
 fn annotation_toolbar_height(viewport: Bounds<Pixels>, item_count: usize) -> f32 {
     let viewport = view_rect(viewport);
-    let available_width =
-        (viewport.width - OVERLAY_EDGE_INSET * 2.0 - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
-    let columns = (((available_width + ANNOTATION_TOOL_GAP)
+    annotation_toolbar_height_for_width(
+        (viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0),
+        item_count,
+    )
+}
+
+/// Measures wrapped marking tools for the bounded panel that follows a selection.
+fn annotation_toolbar_height_for_width(width: f32, item_count: usize) -> f32 {
+    let content_width = (width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
+    let columns = (((content_width + ANNOTATION_TOOL_GAP)
         / (ANNOTATION_TOOL_ESTIMATED_WIDTH + ANNOTATION_TOOL_GAP))
         .floor() as usize)
         .max(1);
@@ -2692,6 +2818,138 @@ fn annotation_toolbar_height(viewport: Bounds<Pixels>, item_count: usize) -> f32
     rows as f32 * ANNOTATION_TOOL_ROW_HEIGHT
         + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
         + ANNOTATION_TOOLBAR_PADDING * 2.0
+}
+
+/// Keeps marking modes, style controls, and selection commands in one dock beside the selection.
+fn annotation_toolbar_layout(
+    selection: Option<PhysicalRect>,
+    transform: Option<PreviewTransform>,
+    viewport: Bounds<Pixels>,
+    action_toolbar: Option<ActionToolbarLayout>,
+    item_count: usize,
+    style_height: f32,
+) -> Option<AnnotationToolbarLayout> {
+    let selection = selection?;
+    let transform = transform?;
+    let action_toolbar = action_toolbar?;
+    let viewport = view_rect(viewport);
+    let width =
+        (viewport.width - OVERLAY_EDGE_INSET * 2.0).clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH);
+    let side_by_side = width
+        >= ANNOTATION_STYLE_PANEL_WIDTH
+            + ANNOTATION_STYLE_PANEL_GAP
+            + ANNOTATION_TOOLBAR_MIN_CONTENT_WIDTH;
+    let tools_width = if side_by_side {
+        width - ANNOTATION_STYLE_PANEL_WIDTH - ANNOTATION_STYLE_PANEL_GAP
+    } else {
+        width
+    };
+    let tools_height = annotation_toolbar_height_for_width(tools_width, item_count);
+    let tools_and_style_height = if side_by_side {
+        tools_height.max(style_height)
+    } else {
+        tools_height + ANNOTATION_STYLE_PANEL_GAP + style_height
+    };
+    let total_height = tools_and_style_height + ANNOTATION_STYLE_PANEL_GAP + action_toolbar.height;
+    let top_left = transform.physical_to_view(PhysicalPoint {
+        x: selection.left,
+        y: selection.top,
+    });
+    let bottom_right = transform.physical_to_view(PhysicalPoint {
+        x: selection.right,
+        y: selection.bottom,
+    });
+    let left_min = viewport.left + OVERLAY_EDGE_INSET;
+    let left_max = (viewport.right() - OVERLAY_EDGE_INSET - width).max(left_min);
+    let left = (bottom_right.x - width).clamp(left_min, left_max);
+    let top_min = viewport.top + OVERLAY_EDGE_INSET;
+    let top_max = (viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - total_height).max(top_min);
+    let below_selection = bottom_right.y + OVERLAY_ACTION_BAR_GAP;
+    let above_selection = top_left.y - OVERLAY_ACTION_BAR_GAP - total_height;
+    let can_fit_below = below_selection <= top_max;
+    let can_fit_above = above_selection >= top_min;
+    let (top, actions_above_tools) = if can_fit_below {
+        (below_selection, false)
+    } else if can_fit_above {
+        (above_selection, true)
+    } else {
+        let room_below = viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - below_selection;
+        let room_above = top_left.y - OVERLAY_ACTION_BAR_GAP - top_min;
+        if room_below >= room_above {
+            (below_selection.clamp(top_min, top_max), false)
+        } else {
+            (above_selection.clamp(top_min, top_max), true)
+        }
+    };
+    let tools_top = if actions_above_tools {
+        top + action_toolbar.height + ANNOTATION_STYLE_PANEL_GAP
+    } else {
+        top
+    };
+    let action_top = if actions_above_tools {
+        top
+    } else {
+        top + tools_and_style_height + ANNOTATION_STYLE_PANEL_GAP
+    };
+    let style_left = if side_by_side {
+        left + width - ANNOTATION_STYLE_PANEL_WIDTH
+    } else {
+        left
+    };
+    let style_top = if side_by_side {
+        tools_top
+    } else {
+        tools_top + tools_height + ANNOTATION_STYLE_PANEL_GAP
+    };
+    Some(AnnotationToolbarLayout {
+        left,
+        top,
+        width,
+        height: total_height,
+        tools_width,
+        tools_height,
+        tools_top,
+        style_left,
+        style_top,
+        style_height,
+        action_toolbar: ActionToolbarLayout {
+            left: left + width - action_toolbar.width,
+            top: action_top,
+            width: action_toolbar.width,
+            height: action_toolbar.height,
+        },
+        actions_above_tools,
+    })
+}
+
+/// Places layer management after the marking panel so it never covers tool or style controls.
+fn annotation_layer_layout(
+    toolbar: AnnotationToolbarLayout,
+    viewport: Bounds<Pixels>,
+) -> Option<AnnotationLayerLayout> {
+    let viewport = view_rect(viewport);
+    let requested_left = toolbar.left + toolbar.width - ANNOTATION_LAYERS_WIDTH;
+    let left_min = viewport.left + OVERLAY_EDGE_INSET;
+    let left_max = (viewport.right() - OVERLAY_EDGE_INSET - ANNOTATION_LAYERS_WIDTH).max(left_min);
+    let top_min = viewport.top + OVERLAY_EDGE_INSET;
+    let safe_bottom = viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET;
+    let below_top = toolbar.top + toolbar.height + ANNOTATION_STYLE_PANEL_GAP;
+    let (top, max_height) = if below_top + 80.0 <= safe_bottom {
+        (below_top, safe_bottom - below_top)
+    } else {
+        let available_above = toolbar.top - ANNOTATION_STYLE_PANEL_GAP - top_min;
+        if available_above < 80.0 {
+            return None;
+        }
+        let top = (toolbar.top - ANNOTATION_STYLE_PANEL_GAP - ANNOTATION_LAYERS_PREFERRED_HEIGHT)
+            .max(top_min);
+        (top, toolbar.top - ANNOTATION_STYLE_PANEL_GAP - top)
+    };
+    Some(AnnotationLayerLayout {
+        left: requested_left.clamp(left_min, left_max),
+        top,
+        max_height: max_height.max(80.0),
+    })
 }
 
 /// Positions the pixel-size readout near the selection without covering export controls.
@@ -2971,8 +3229,9 @@ mod tests {
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
         OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
         SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
-        action_toolbar_natural_width, annotation_layer_label, annotation_toolbar_height,
-        arrow_head_points, capture_double_click, intersect, is_text_annotation, magnifier_origin,
+        action_toolbar_natural_width, annotation_layer_label, annotation_style_panel_height,
+        annotation_toolbar_height, annotation_toolbar_layout, arrow_head_points,
+        capture_double_click, intersect, is_text_annotation, magnifier_origin,
         outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip,
         recognition_result_preview, recognition_retry_label, resize_handle_points,
         secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
@@ -3381,6 +3640,106 @@ mod tests {
                 width: 342.0,
                 height: 50.0,
             })
+        );
+    }
+
+    #[test]
+    fn marking_toolbar_groups_selection_actions_under_nearby_tools() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let transform = PreviewTransform::contain(
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 1280,
+                bottom: 720,
+            },
+            super::view_rect(viewport),
+        );
+        let selection = PhysicalRect {
+            left: 300,
+            top: 200,
+            right: 1000,
+            bottom: 400,
+        };
+        let primary_actions = ActionToolbarLayout {
+            left: 658.0,
+            top: 412.0,
+            width: 342.0,
+            height: 50.0,
+        };
+
+        let layout = annotation_toolbar_layout(
+            Some(selection),
+            transform,
+            viewport,
+            Some(primary_actions),
+            12,
+            annotation_style_panel_height(false),
+        )
+        .expect("selection with actions should position marking tools");
+
+        assert_eq!(layout.left, 100.0);
+        assert_eq!(layout.width, 900.0);
+        assert_eq!(layout.tools_width, 728.0);
+        assert_eq!(layout.tools_height, 84.0);
+        assert_eq!(layout.height, 186.0);
+        assert!((layout.top - 412.0).abs() < 0.01);
+        assert_eq!(layout.tools_top, layout.top);
+        assert_eq!(layout.style_top, layout.tools_top);
+        assert_eq!(layout.style_left, 836.0);
+        assert_eq!(layout.action_toolbar.left, 658.0);
+        assert!((layout.action_toolbar.top - 548.0).abs() < 0.01);
+        assert_eq!(layout.action_toolbar.width, primary_actions.width);
+        assert_eq!(layout.action_toolbar.height, primary_actions.height);
+        assert!(!layout.actions_above_tools);
+        assert!((layout.top - (selection.bottom as f32 + OVERLAY_ACTION_BAR_GAP)).abs() < 0.01);
+        assert!(layout.top + layout.height <= 720.0 - OVERLAY_BOTTOM_SAFE_INSET);
+    }
+
+    #[test]
+    fn marking_toolbar_flips_above_a_bottom_edge_selection() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let transform = PreviewTransform::contain(
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 1280,
+                bottom: 720,
+            },
+            super::view_rect(viewport),
+        );
+        let selection = PhysicalRect {
+            left: 900,
+            top: 580,
+            right: 1200,
+            bottom: 700,
+        };
+        let primary_actions = ActionToolbarLayout {
+            left: 858.0,
+            top: 518.0,
+            width: 342.0,
+            height: 50.0,
+        };
+
+        let layout = annotation_toolbar_layout(
+            Some(selection),
+            transform,
+            viewport,
+            Some(primary_actions),
+            12,
+            annotation_style_panel_height(false),
+        )
+        .expect("selection with actions should position marking tools");
+
+        assert_eq!(layout.top, 382.0);
+        assert_eq!(layout.tools_top, 440.0);
+        assert_eq!(layout.style_top, layout.tools_top);
+        assert_eq!(layout.action_toolbar.top, layout.top);
+        assert!(layout.actions_above_tools);
+        assert!(layout.top >= 18.0);
+        assert_eq!(
+            layout.tools_top + annotation_style_panel_height(false) + OVERLAY_ACTION_BAR_GAP,
+            selection.top as f32
         );
     }
 
