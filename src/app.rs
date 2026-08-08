@@ -114,6 +114,7 @@ pub struct FlashShotApp {
     history_clear_scope: HistoryClearScope,
     history_clear_count: usize,
     history_clear_paths: Vec<PathBuf>,
+    history_selected_paths: HashSet<PathBuf>,
     history_clear_in_flight: bool,
     history_retention_target: Option<u16>,
     history_deletions_in_flight: HashSet<PathBuf>,
@@ -151,6 +152,7 @@ pub(super) enum HistoryClearScope {
     #[default]
     All,
     Filtered,
+    Selected,
 }
 
 impl HistoryClearScope {
@@ -158,6 +160,7 @@ impl HistoryClearScope {
         match self {
             Self::All => "all",
             Self::Filtered => "filtered",
+            Self::Selected => "selected",
         }
     }
 }
@@ -211,6 +214,23 @@ pub(super) fn history_entry_matches(
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.to_lowercase().contains(&query))
         || entry.source.label().to_lowercase().contains(&query)
+}
+
+/// Returns selected history paths that still belong to the current filtered list.
+/// Keeping this snapshot derived from the history store prevents a stale selection from
+/// widening a later batch deletion after files or filters have changed.
+pub(super) fn selected_history_paths(
+    entries: &std::collections::VecDeque<crate::history::HistoryEntry>,
+    selected: &HashSet<PathBuf>,
+    filter: HistoryFilter,
+    query: &str,
+) -> Vec<PathBuf> {
+    entries
+        .iter()
+        .filter(|entry| selected.contains(&entry.path))
+        .filter(|entry| history_entry_matches(entry, filter, query))
+        .map(|entry| entry.path.clone())
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -483,6 +503,7 @@ impl FlashShotApp {
             history_clear_scope: HistoryClearScope::default(),
             history_clear_count: 0,
             history_clear_paths: Vec::new(),
+            history_selected_paths: HashSet::new(),
             history_clear_in_flight: false,
             history_retention_target: None,
             history_deletions_in_flight: HashSet::new(),
@@ -782,7 +803,14 @@ impl Focusable for FlashShotApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{byte_range_to_utf16_range, utf16_range_to_byte_range};
+    use super::{
+        HistoryFilter, byte_range_to_utf16_range, selected_history_paths, utf16_range_to_byte_range,
+    };
+    use crate::history::{HistoryEntry, HistorySource};
+    use std::{
+        collections::{HashSet, VecDeque},
+        path::PathBuf,
+    };
 
     #[test]
     fn utf16_ranges_round_trip_for_mixed_language_and_surrogate_pair_text() {
@@ -799,6 +827,31 @@ mod tests {
         assert_eq!(
             utf16_range_to_byte_range(text, &emoji_utf16),
             emoji_start..text.len()
+        );
+    }
+
+    #[test]
+    fn selected_history_paths_keep_only_current_matches_in_history_order() {
+        let first = PathBuf::from("F:/captures/invoice.png");
+        let second = PathBuf::from("F:/captures/pinned.png");
+        let stale = PathBuf::from("F:/captures/removed.png");
+        let entries = VecDeque::from([
+            HistoryEntry {
+                path: first.clone(),
+                created_at_ms: 3,
+                source: HistorySource::Selection,
+            },
+            HistoryEntry {
+                path: second,
+                created_at_ms: 2,
+                source: HistorySource::Pinned,
+            },
+        ]);
+        let selected = HashSet::from([first.clone(), stale]);
+
+        assert_eq!(
+            selected_history_paths(&entries, &selected, HistoryFilter::All, "invoice"),
+            vec![first]
         );
     }
 }

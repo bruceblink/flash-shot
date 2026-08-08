@@ -406,9 +406,14 @@ impl FlashShotApp {
         for (path, error) in &deletion.failures {
             log::warn!(target: "flash_shot::history", "history_file_delete_failed path={} error={error}", path.display());
         }
+        self.history_selected_paths
+            .retain(|path| !deletion.deleted.contains(path));
         self.status = match self.history.forget_deleted(&deletion.deleted) {
             Ok(()) if failure_count == 0 && scope == HistoryClearScope::All => {
                 "Screenshot history cleared".to_owned()
+            }
+            Ok(()) if failure_count == 0 && scope == HistoryClearScope::Selected => {
+                format!("Deleted {deleted_count} selected capture(s)")
             }
             Ok(()) if failure_count == 0 => {
                 format!("Cleared {deleted_count} filtered capture(s)")
@@ -489,7 +494,7 @@ impl FlashShotApp {
         cx.notify();
     }
 
-    /// Drops decoded previews and retry state as soon as retention removes their history entries.
+    /// Drops decoded previews and stale batch selections as soon as history entries disappear.
     pub(super) fn synchronize_history_preview_cache(&mut self) {
         let retained = self
             .history
@@ -497,6 +502,8 @@ impl FlashShotApp {
             .iter()
             .map(|entry| entry.path.clone())
             .collect::<std::collections::HashSet<_>>();
+        self.history_selected_paths
+            .retain(|path| retained.contains(path));
         self.history_thumbnails
             .retain(|path, _| retained.contains(path));
         self.history_thumbnail_loading

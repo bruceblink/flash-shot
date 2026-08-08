@@ -1,6 +1,6 @@
 //! Settings, support checks, and update workflow orchestration.
 
-use super::super::{HistoryClearScope, history_entry_matches};
+use super::super::{HistoryClearScope, history_entry_matches, selected_history_paths};
 use super::*;
 
 impl FlashShotApp {
@@ -120,6 +120,76 @@ impl FlashShotApp {
         }
     }
 
+    /// Toggles one managed history path while keeping batch actions independent from thumbnails.
+    pub(in crate::app) fn toggle_history_selection(
+        &mut self,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history_clear_in_flight
+            || self.history_clear_confirmation
+            || self.history_retention_target.is_some()
+            || !self
+                .history
+                .entries()
+                .iter()
+                .any(|entry| entry.path == path)
+        {
+            return;
+        }
+        if self.history_selected_paths.remove(&path) {
+            self.status = "Capture removed from selection".to_owned();
+        } else {
+            self.history_selected_paths.insert(path);
+            self.status = format!("{} capture(s) selected", self.history_selected_paths.len());
+        }
+        cx.notify();
+    }
+
+    /// Adds every current filter match to the selection without deleting anything implicitly.
+    pub(in crate::app) fn select_filtered_history(&mut self, cx: &mut Context<Self>) {
+        if self.history_clear_in_flight
+            || self.history_clear_confirmation
+            || self.history_retention_target.is_some()
+            || !self.history_deletions_in_flight.is_empty()
+        {
+            return;
+        }
+        let paths = selected_history_paths(
+            self.history.entries(),
+            &self.history_selected_paths,
+            self.history_filter,
+            self.history_search_query(),
+        );
+        let matching_paths = self.filtered_history_paths();
+        let previous_count = self.history_selected_paths.len();
+        self.history_selected_paths.extend(matching_paths);
+        let added = self
+            .history_selected_paths
+            .len()
+            .saturating_sub(previous_count);
+        self.status = if added == 0 {
+            if paths.is_empty() {
+                "No captures match the current filter".to_owned()
+            } else {
+                format!("{} capture(s) already selected", paths.len())
+            }
+        } else {
+            format!("Selected {added} additional capture(s)")
+        };
+        cx.notify();
+    }
+
+    /// Clears only the in-memory selection, leaving every saved file untouched.
+    pub(in crate::app) fn clear_history_selection(&mut self, cx: &mut Context<Self>) {
+        if self.history_selected_paths.is_empty() {
+            return;
+        }
+        self.history_selected_paths.clear();
+        self.status = "History selection cleared".to_owned();
+        cx.notify();
+    }
+
     /// Requires a deliberate second action before removing every managed screenshot.
     pub(in crate::app) fn request_history_clear(&mut self, cx: &mut Context<Self>) {
         self.request_history_clear_scope(HistoryClearScope::All, cx);
@@ -130,10 +200,16 @@ impl FlashShotApp {
         self.request_history_clear_scope(HistoryClearScope::Filtered, cx);
     }
 
+    /// Starts the guarded confirmation flow for the exact paths the user selected.
+    pub(in crate::app) fn request_selected_history_clear(&mut self, cx: &mut Context<Self>) {
+        self.request_history_clear_scope(HistoryClearScope::Selected, cx);
+    }
+
     /// Captures the exact deletion set before asking for confirmation so later list changes cannot
     /// silently widen a destructive filtered-history operation.
     fn request_history_clear_scope(&mut self, scope: HistoryClearScope, cx: &mut Context<Self>) {
         if self.history_clear_in_flight
+            || self.history_clear_confirmation
             || self.history_retention_target.is_some()
             || !self.history_deletions_in_flight.is_empty()
         {
@@ -147,12 +223,22 @@ impl FlashShotApp {
                 .map(|entry| entry.path.clone())
                 .collect(),
             HistoryClearScope::Filtered => self.filtered_history_paths(),
+            HistoryClearScope::Selected => self
+                .history
+                .entries()
+                .iter()
+                .filter(|entry| self.history_selected_paths.contains(&entry.path))
+                .map(|entry| entry.path.clone())
+                .collect(),
         };
         if paths.is_empty() {
             self.history_clear_scope = HistoryClearScope::default();
             self.history_clear_count = 0;
             self.history_clear_paths.clear();
-            self.status = "Screenshot history is already empty".to_owned();
+            self.status = match scope {
+                HistoryClearScope::Selected => "Select at least one capture first".to_owned(),
+                _ => "Screenshot history is already empty".to_owned(),
+            };
         } else {
             self.history_clear_scope = scope;
             self.history_clear_count = paths.len();

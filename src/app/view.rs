@@ -31,6 +31,12 @@ impl gpui::Render for FlashShotApp {
             .iter()
             .filter(|entry| history_entry_matches(entry, self.history_filter, &history_query))
             .count();
+        let history_selected_count = self
+            .history
+            .entries()
+            .iter()
+            .filter(|entry| self.history_selected_paths.contains(&entry.path))
+            .count();
         let history_entries: Vec<_> = visible_history_entries(
             self.history.entries(),
             self.history_expanded,
@@ -41,7 +47,8 @@ impl gpui::Render for FlashShotApp {
         .map(|entry| {
             let thumbnail = self.history_thumbnail(&entry.path, cx);
             let deleting = self.history_deletions_in_flight.contains(&entry.path);
-            (entry, thumbnail, deleting)
+            let selected = self.history_selected_paths.contains(&entry.path);
+            (entry, thumbnail, deleting, selected)
         })
         .collect();
         let app = cx.entity();
@@ -137,6 +144,7 @@ impl gpui::Render for FlashShotApp {
                                         search_query: self.history_search_query().to_owned(),
                                         search_active: self.history_search_is_active(),
                                         search_focus: self.focus_handle.clone(),
+                                        selected_entries: history_selected_count,
                                     },
                                     colors,
                                     is_idle,
@@ -804,6 +812,7 @@ struct HistoryViewState {
         crate::history::HistoryEntry,
         Option<std::sync::Arc<gpui::RenderImage>>,
         bool,
+        bool,
     )>,
     total_entries: usize,
     filtered_entries: usize,
@@ -818,6 +827,7 @@ struct HistoryViewState {
     search_query: String,
     search_active: bool,
     search_focus: FocusHandle,
+    selected_entries: usize,
 }
 
 fn history_settings(
@@ -841,6 +851,7 @@ fn history_settings(
         search_query,
         search_active,
         search_focus,
+        selected_entries,
     } = state;
     let now_ms = current_timestamp_ms();
     let is_empty = entries.is_empty();
@@ -883,6 +894,64 @@ fn history_settings(
                     &search_query,
                 )),
         )
+        .when(filtered_entries > 0 || selected_entries > 0, |section| {
+            let actions_enabled = is_idle
+                && !clear_in_flight
+                && !clear_confirmation
+                && !retention_in_flight
+                && !deletion_in_flight;
+            let select_app = app.clone();
+            let clear_selection_app = app.clone();
+            let delete_selected_app = app.clone();
+            section.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(140.0))
+                            .text_xs()
+                            .text_color(colors.muted)
+                            .child(format!("{selected_entries} selected")),
+                    )
+                    .when(filtered_entries > 0, |bar| {
+                        bar.child(settings_button(
+                            "settings-select-filtered-history",
+                            "Select all filtered",
+                            colors,
+                            actions_enabled,
+                            move |_, _, cx| {
+                                select_app.update(cx, |this, cx| this.select_filtered_history(cx))
+                            },
+                        ))
+                    })
+                    .when(selected_entries > 0, |bar| {
+                        bar.child(settings_button(
+                            "settings-clear-history-selection",
+                            "Clear selection",
+                            colors,
+                            actions_enabled,
+                            move |_, _, cx| {
+                                clear_selection_app
+                                    .update(cx, |this, cx| this.clear_history_selection(cx))
+                            },
+                        ))
+                        .child(settings_danger_button(
+                            "settings-delete-selected-history",
+                            "Delete selected",
+                            colors,
+                            actions_enabled,
+                            move |_, _, cx| {
+                                delete_selected_app
+                                    .update(cx, |this, cx| this.request_selected_history_clear(cx))
+                            },
+                        ))
+                    }),
+            )
+        })
         .when(filtered_entries > HISTORY_PREVIEW_LIMIT, |section| {
             let remaining = filtered_entries.saturating_sub(HISTORY_PREVIEW_LIMIT);
             let toggle_app = app.clone();
@@ -942,73 +1011,105 @@ fn history_settings(
                 colors,
             ))
         })
-        .children(entries.into_iter().map(|(entry, thumbnail, deleting)| {
-            let label = history_entry_label(&entry, now_ms);
-            history_row(&label, thumbnail, colors).child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(settings_button(
-                        format!("settings-open-history-{}", entry.created_at_ms),
-                        "Open",
-                        colors,
-                        is_idle && !deleting,
-                        {
-                            let app = app.clone();
-                            let path = entry.path.clone();
-                            move |_, _, cx| {
-                                app.update(cx, |this, cx| this.open_history_image(path.clone(), cx))
-                            }
-                        },
-                    ))
-                    .child(settings_button(
-                        format!("settings-copy-history-{}", entry.created_at_ms),
-                        "Copy",
-                        colors,
-                        is_idle && !deleting,
-                        {
-                            let app = app.clone();
-                            let path = entry.path.clone();
-                            move |_, _, cx| {
-                                app.update(cx, |this, cx| this.copy_history_image(path.clone(), cx))
-                            }
-                        },
-                    ))
-                    .child(settings_button(
-                        format!("settings-pin-history-{}", entry.created_at_ms),
-                        "Pin",
-                        colors,
-                        is_idle && !deleting,
-                        {
-                            let app = app.clone();
-                            let path = entry.path.clone();
-                            move |_, _, cx| {
-                                app.update(cx, |this, cx| this.pin_history_image(path.clone(), cx))
-                            }
-                        },
-                    ))
-                    .child(settings_danger_button(
-                        format!("settings-remove-history-{}", entry.created_at_ms),
-                        if deleting { "Removing..." } else { "Remove" },
-                        colors,
-                        is_idle
-                            && !deleting
-                            && !clear_confirmation
-                            && !clear_in_flight
-                            && !retention_in_flight,
-                        {
-                            let app = app.clone();
-                            let path = entry.path.clone();
-                            move |_, _, cx| {
-                                app.update(cx, |this, cx| {
-                                    this.remove_history_image(path.clone(), cx)
-                                })
-                            }
-                        },
-                    )),
-            )
-        }))
+        .children(
+            entries
+                .into_iter()
+                .map(|(entry, thumbnail, deleting, selected)| {
+                    let label = history_entry_label(&entry, now_ms);
+                    let selection_enabled = is_idle
+                        && !deleting
+                        && !clear_confirmation
+                        && !clear_in_flight
+                        && !retention_in_flight
+                        && !deletion_in_flight;
+                    history_row(&label, thumbnail, selected, colors).child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(history_selection_button(
+                                format!("settings-select-history-{}", entry.created_at_ms),
+                                if selected { "Selected" } else { "Select" },
+                                selected,
+                                colors,
+                                selection_enabled,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.toggle_history_selection(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                            .child(settings_button(
+                                format!("settings-open-history-{}", entry.created_at_ms),
+                                "Open",
+                                colors,
+                                is_idle && !deleting,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.open_history_image(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                            .child(settings_button(
+                                format!("settings-copy-history-{}", entry.created_at_ms),
+                                "Copy",
+                                colors,
+                                is_idle && !deleting,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.copy_history_image(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                            .child(settings_button(
+                                format!("settings-pin-history-{}", entry.created_at_ms),
+                                "Pin",
+                                colors,
+                                is_idle && !deleting,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.pin_history_image(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                            .child(settings_danger_button(
+                                format!("settings-remove-history-{}", entry.created_at_ms),
+                                if deleting { "Removing..." } else { "Remove" },
+                                colors,
+                                is_idle
+                                    && !deleting
+                                    && !clear_confirmation
+                                    && !clear_in_flight
+                                    && !retention_in_flight,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.remove_history_image(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            )),
+                    )
+                }),
+        )
         .when(!clear_confirmation, |section| {
             let clear_app = app.clone();
             section.child(settings_danger_button(
@@ -1154,6 +1255,7 @@ fn history_clear_confirmation_label(count: usize, scope: HistoryClearScope) -> S
     match scope {
         HistoryClearScope::All => format!("Delete all {count} saved capture(s)?"),
         HistoryClearScope::Filtered => format!("Delete {count} filtered saved capture(s)?"),
+        HistoryClearScope::Selected => format!("Delete {count} selected saved capture(s)?"),
     }
 }
 
@@ -1161,6 +1263,7 @@ fn history_clear_confirmation_label(count: usize, scope: HistoryClearScope) -> S
 fn history_row(
     label: &str,
     thumbnail: Option<std::sync::Arc<gpui::RenderImage>>,
+    selected: bool,
     colors: crate::theme::ThemeColors,
 ) -> gpui::Div {
     div()
@@ -1170,7 +1273,11 @@ fn history_row(
         .gap_2()
         .rounded_md()
         .border_1()
-        .border_color(colors.border)
+        .border_color(if selected {
+            colors.accent
+        } else {
+            colors.border
+        })
         .bg(colors.panel)
         .hover(|style| style.border_color(colors.accent))
         .child(
@@ -1675,6 +1782,35 @@ fn settings_segment_button(
         })
 }
 
+/// Renders a history row's binary selection state while preserving disabled-operation feedback.
+fn history_selection_button(
+    id: impl Into<gpui::ElementId>,
+    label: &str,
+    selected: bool,
+    colors: crate::theme::ThemeColors,
+    enabled: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    settings_button(id, label, colors, enabled, on_click)
+        .border_color(if selected && enabled {
+            colors.accent
+        } else {
+            colors.border
+        })
+        .bg(if selected && enabled {
+            colors.accent
+        } else {
+            colors.panel
+        })
+        .text_color(if selected && enabled {
+            colors.background
+        } else if enabled {
+            colors.text
+        } else {
+            colors.muted
+        })
+}
+
 fn settings_delay_button(
     id: impl Into<gpui::ElementId>,
     delay_seconds: u8,
@@ -1747,6 +1883,10 @@ mod tests {
         assert_eq!(
             history_clear_confirmation_label(3, HistoryClearScope::Filtered),
             "Delete 3 filtered saved capture(s)?"
+        );
+        assert_eq!(
+            history_clear_confirmation_label(2, HistoryClearScope::Selected),
+            "Delete 2 selected saved capture(s)?"
         );
     }
 
