@@ -87,6 +87,7 @@ impl gpui::Render for FlashShotApp {
                         div()
                             .id("settings-content")
                             .flex_1()
+                            .min_w(px(0.0))
                             .min_h(px(0.0))
                             .overflow_y_scroll()
                             .p_5()
@@ -94,6 +95,7 @@ impl gpui::Render for FlashShotApp {
                                 div()
                                     .id("settings-content-column")
                                     .w_full()
+                                    .min_w(px(0.0))
                                     .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
                                     .mx_auto()
                                     .flex()
@@ -367,6 +369,7 @@ fn capture_settings(
 ) -> gpui::Div {
     let quick_actions = settings_section("Screenshot", colors).child(
         div()
+            .w_full()
             .flex()
             .flex_wrap()
             .gap_2()
@@ -632,6 +635,9 @@ fn file_settings(
     settings_section("Quick save", colors)
         .child(
             div()
+                .w_full()
+                .min_w(px(0.0))
+                .text_ellipsis_start()
                 .text_sm()
                 .text_color(colors.muted)
                 .child(settings_path_label(app_state.history.root())),
@@ -658,7 +664,9 @@ fn file_settings(
         )))
         .child(
             settings_section("Open and history", colors).child(
+                // Own the available width so narrow windows wrap actions instead of clipping them.
                 div()
+                    .w_full()
                     .flex()
                     .flex_wrap()
                     .gap_2()
@@ -741,6 +749,7 @@ fn history_retention_label(current_limit: u16, target: Option<u16>) -> String {
     )
 }
 
+/// Renders recording choices and commands, wrapping the command row before a narrow window clips it.
 fn recording_settings(
     colors: crate::theme::ThemeColors,
     recording_active: bool,
@@ -773,7 +782,9 @@ fn recording_settings(
         )))
         .child(
             div()
+                .w_full()
                 .flex()
+                .flex_wrap()
                 .gap_2()
                 .child(settings_button(
                     "settings-check-recording-support",
@@ -914,6 +925,7 @@ fn history_settings(
         ))
         .child(
             div()
+                .w_full()
                 .flex()
                 .flex_wrap()
                 .gap_1()
@@ -954,6 +966,7 @@ fn history_settings(
             let delete_selected_app = app.clone();
             section.child(
                 div()
+                    .w_full()
                     .flex()
                     .flex_wrap()
                     .items_center()
@@ -1010,6 +1023,7 @@ fn history_settings(
             };
             section.child(
                 div()
+                    .w_full()
                     .flex()
                     .flex_wrap()
                     .items_center()
@@ -1071,6 +1085,7 @@ fn history_settings(
                         && !deletion_in_flight;
                     history_row(&label, thumbnail, selected, colors).child(
                         div()
+                            .w_full()
                             .flex()
                             .flex_wrap()
                             .gap_2()
@@ -1179,6 +1194,7 @@ fn history_settings(
             let confirm_app = app.clone();
             section.child(
                 div()
+                    .w_full()
                     .flex()
                     .flex_wrap()
                     .items_center()
@@ -1646,6 +1662,7 @@ fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div
 /// Keeps labels in a stable column so controls stay nearby on wide windows and wrap below on narrow ones.
 fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
     div()
+        .w_full()
         .flex()
         .flex_wrap()
         .items_center()
