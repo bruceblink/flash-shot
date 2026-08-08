@@ -62,6 +62,7 @@ cargo run --release --bin windows-acceptance-probe -- --output target/windows-ac
 | 日期 | 提交 | 自动门禁 | 手工矩阵 | 说明 |
 | --- | --- | --- | --- | --- |
 | 2026-08-02 | `88ed32e` | 313 项库测试、Clippy、格式检查、100 次连续截图和 4K 标注压力测试通过；Release 启动 p95 为 264.24ms（上限 500ms），快捷键到覆盖层 p95 为 96.38ms（上限 100ms）。 | 待执行 | 当前机器只提供单显示器压力测试证据；负坐标双屏、混合 DPI 和 FFmpeg 实机结果尚未记录。 |
+| 2026-08-09 | `23d4c31` | 324 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；`windows-acceptance-probe` 输出保存为 `target/windows-acceptance-environment-20260809.json`。 | 待执行 | 当前会话探测到一块 2560x1440、100% 显示器，FFmpeg 不可用；因此未把双屏、混合 DPI、录屏或完整单屏交互矩阵标为通过。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
