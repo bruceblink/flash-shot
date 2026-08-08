@@ -14,6 +14,14 @@ const HISTORY_PREVIEW_LIMIT: usize = 5;
 const SETTINGS_CONTENT_MAX_WIDTH: f32 = 960.0;
 const COMPACT_SETTINGS_NAVIGATION_BREAKPOINT: f32 = 640.0;
 
+type HistoryEntryView = (
+    crate::history::HistoryEntry,
+    Option<std::sync::Arc<gpui::RenderImage>>,
+    bool,
+    bool,
+    bool,
+);
+
 impl gpui::Render for FlashShotApp {
     /// Renders the tray service's settings workspace with a readable content column.
     /// Keeping the column bounded prevents wide windows from separating a preference label from its control.
@@ -54,7 +62,8 @@ impl gpui::Render for FlashShotApp {
             let thumbnail = self.history_thumbnail(&entry.path, cx);
             let deleting = self.history_deletions_in_flight.contains(&entry.path);
             let selected = self.history_selected_paths.contains(&entry.path);
-            (entry, thumbnail, deleting, selected)
+            let focused = self.history_keyboard_focus.as_ref() == Some(&entry.path);
+            (entry, thumbnail, deleting, selected, focused)
         })
         .collect();
         let app = cx.entity();
@@ -871,12 +880,7 @@ fn system_settings(
 }
 
 struct HistoryViewState {
-    entries: Vec<(
-        crate::history::HistoryEntry,
-        Option<std::sync::Arc<gpui::RenderImage>>,
-        bool,
-        bool,
-    )>,
+    entries: Vec<HistoryEntryView>,
     total_entries: usize,
     filtered_entries: usize,
     expanded: bool,
@@ -1115,7 +1119,7 @@ fn history_settings(
         .children(
             entries
                 .into_iter()
-                .map(|(entry, thumbnail, deleting, selected)| {
+                .map(|(entry, thumbnail, deleting, selected, focused)| {
                     let label = history_entry_label(&entry, now_ms);
                     let selection_enabled = is_idle
                         && !deleting
@@ -1123,7 +1127,7 @@ fn history_settings(
                         && !clear_in_flight
                         && !retention_in_flight
                         && !deletion_in_flight;
-                    history_row(&label, thumbnail, selected, colors).child(
+                    history_row(&label, thumbnail, selected, focused, colors).child(
                         div()
                             .w_full()
                             .flex()
@@ -1337,6 +1341,7 @@ fn history_row(
     label: &str,
     thumbnail: Option<std::sync::Arc<gpui::RenderImage>>,
     selected: bool,
+    focused: bool,
     colors: crate::theme::ThemeColors,
 ) -> gpui::Div {
     div()
@@ -1346,7 +1351,9 @@ fn history_row(
         .gap_2()
         .rounded_md()
         .border_1()
-        .border_color(if selected {
+        .border_color(if focused {
+            colors.text
+        } else if selected {
             colors.accent
         } else {
             colors.border

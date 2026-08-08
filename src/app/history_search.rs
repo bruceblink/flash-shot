@@ -12,6 +12,9 @@ enum HistoryKeyboardCommand {
     SelectAllFiltered,
     Escape,
     DeleteSelection,
+    MoveFocus { forward: bool },
+    FocusBoundary { last: bool },
+    ToggleFocused,
 }
 
 impl FlashShotApp {
@@ -69,8 +72,54 @@ impl FlashShotApp {
                 }
             }
             HistoryKeyboardCommand::DeleteSelection => self.request_selected_history_clear(cx),
+            HistoryKeyboardCommand::MoveFocus { forward } => self.move_history_focus(forward, cx),
+            HistoryKeyboardCommand::FocusBoundary { last } => self.focus_history_boundary(last, cx),
+            HistoryKeyboardCommand::ToggleFocused => self.toggle_focused_history(cx),
         }
         true
+    }
+
+    /// Moves the keyboard focus through the current filtered history without changing selection.
+    fn move_history_focus(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let paths = self.filtered_history_paths();
+        self.history_keyboard_focus =
+            history_focus_index(&paths, self.history_keyboard_focus.as_ref(), forward)
+                .and_then(|index| paths.get(index).cloned());
+        if self.history_keyboard_focus.is_some() {
+            // Keyboard navigation may move beyond the five-row preview, so reveal the full list
+            // only after the user explicitly starts navigating it.
+            self.history_expanded = true;
+        }
+        cx.notify();
+    }
+
+    /// Jumps to the first or last filtered capture so long lists remain keyboard reachable.
+    fn focus_history_boundary(&mut self, last: bool, cx: &mut Context<Self>) {
+        let paths = self.filtered_history_paths();
+        self.history_keyboard_focus = if last {
+            paths.last().cloned()
+        } else {
+            paths.first().cloned()
+        };
+        if self.history_keyboard_focus.is_some() {
+            self.history_expanded = true;
+        }
+        cx.notify();
+    }
+
+    /// Toggles the focused capture, choosing the first filtered row when focus is not set yet.
+    fn toggle_focused_history(&mut self, cx: &mut Context<Self>) {
+        let paths = self.filtered_history_paths();
+        let Some(index) = history_focus_index(&paths, self.history_keyboard_focus.as_ref(), true)
+        else {
+            self.status = "No captures match the current filter".to_owned();
+            cx.notify();
+            return;
+        };
+        let path = paths[index].clone();
+        self.history_keyboard_focus = Some(path.clone());
+        self.history_expanded = true;
+        self.toggle_history_selection(path, cx);
     }
 
     pub(super) fn handle_history_search_key(
@@ -212,8 +261,32 @@ fn history_keyboard_command(keystroke: &Keystroke) -> Option<HistoryKeyboardComm
     match keystroke.key.as_str() {
         "escape" => Some(HistoryKeyboardCommand::Escape),
         "delete" => Some(HistoryKeyboardCommand::DeleteSelection),
+        "down" => Some(HistoryKeyboardCommand::MoveFocus { forward: true }),
+        "up" => Some(HistoryKeyboardCommand::MoveFocus { forward: false }),
+        "home" => Some(HistoryKeyboardCommand::FocusBoundary { last: false }),
+        "end" => Some(HistoryKeyboardCommand::FocusBoundary { last: true }),
+        "space" => Some(HistoryKeyboardCommand::ToggleFocused),
         _ => None,
     }
+}
+
+/// Returns the next filtered row index, wrapping at either end for uninterrupted keyboard use.
+fn history_focus_index(
+    paths: &[std::path::PathBuf],
+    focused: Option<&std::path::PathBuf>,
+    forward: bool,
+) -> Option<usize> {
+    if paths.is_empty() {
+        return None;
+    }
+    let current = focused.and_then(|path| paths.iter().position(|candidate| candidate == path));
+    Some(match current {
+        Some(index) if forward => (index + 1) % paths.len(),
+        Some(0) => paths.len() - 1,
+        Some(index) => index - 1,
+        None if forward => 0,
+        None => paths.len() - 1,
+    })
 }
 
 fn previous_char_boundary(text: &str, offset: usize) -> usize {
@@ -234,7 +307,8 @@ fn next_char_boundary(text: &str, offset: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{HistoryKeyboardCommand, history_keyboard_command};
+    use super::{HistoryKeyboardCommand, history_focus_index, history_keyboard_command};
+    use std::path::PathBuf;
 
     fn key(key: &str, modifiers: gpui::Modifiers) -> gpui::Keystroke {
         gpui::Keystroke {
@@ -279,6 +353,36 @@ mod tests {
         );
         assert_eq!(history_keyboard_command(&key("delete", control)), None);
         assert_eq!(
+            history_keyboard_command(&key("down", Default::default())),
+            Some(HistoryKeyboardCommand::MoveFocus { forward: true })
+        );
+        assert_eq!(
+            history_keyboard_command(&key("up", Default::default())),
+            Some(HistoryKeyboardCommand::MoveFocus { forward: false })
+        );
+        assert_eq!(
+            history_keyboard_command(&key("home", Default::default())),
+            Some(HistoryKeyboardCommand::FocusBoundary { last: false })
+        );
+        assert_eq!(
+            history_keyboard_command(&key("end", Default::default())),
+            Some(HistoryKeyboardCommand::FocusBoundary { last: true })
+        );
+        assert_eq!(
+            history_keyboard_command(&key("space", Default::default())),
+            Some(HistoryKeyboardCommand::ToggleFocused)
+        );
+        assert_eq!(
+            history_keyboard_command(&key(
+                "space",
+                gpui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                }
+            )),
+            None
+        );
+        assert_eq!(
             history_keyboard_command(&key(
                 "a",
                 gpui::Modifiers {
@@ -289,5 +393,28 @@ mod tests {
             )),
             None
         );
+    }
+
+    #[test]
+    fn history_focus_wraps_and_recovers_when_the_current_row_is_filtered_out() {
+        let paths = vec![
+            PathBuf::from("F:/captures/first.png"),
+            PathBuf::from("F:/captures/second.png"),
+            PathBuf::from("F:/captures/third.png"),
+        ];
+
+        assert_eq!(history_focus_index(&paths, None, true), Some(0));
+        assert_eq!(history_focus_index(&paths, None, false), Some(2));
+        assert_eq!(history_focus_index(&paths, Some(&paths[0]), false), Some(2));
+        assert_eq!(history_focus_index(&paths, Some(&paths[2]), true), Some(0));
+        assert_eq!(
+            history_focus_index(
+                &paths,
+                Some(&PathBuf::from("F:/captures/missing.png")),
+                true
+            ),
+            Some(0)
+        );
+        assert_eq!(history_focus_index(&[], None, true), None);
     }
 }

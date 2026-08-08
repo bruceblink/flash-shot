@@ -96,6 +96,7 @@ impl FlashShotApp {
             if section != SettingsSection::Files {
                 self.history_search.active = false;
                 self.history_search.marked_range = None;
+                self.history_keyboard_focus = None;
             }
             cx.notify();
         }
@@ -137,6 +138,7 @@ impl FlashShotApp {
         {
             return;
         }
+        self.history_keyboard_focus = Some(path.clone());
         if self.history_selected_paths.remove(&path) {
             self.status = "Capture removed from selection".to_owned();
         } else {
@@ -254,7 +256,7 @@ impl FlashShotApp {
     }
 
     /// Resolves the current filter and query into paths that the history store may safely delete.
-    fn filtered_history_paths(&self) -> Vec<std::path::PathBuf> {
+    pub(in crate::app) fn filtered_history_paths(&self) -> Vec<std::path::PathBuf> {
         self.history
             .entries()
             .iter()

@@ -504,6 +504,13 @@ impl FlashShotApp {
             .collect::<std::collections::HashSet<_>>();
         self.history_selected_paths
             .retain(|path| retained.contains(path));
+        if self
+            .history_keyboard_focus
+            .as_ref()
+            .is_some_and(|path| !retained.contains(path))
+        {
+            self.history_keyboard_focus = None;
+        }
         self.history_thumbnails
             .retain(|path, _| retained.contains(path));
         self.history_thumbnail_loading
