@@ -1326,7 +1326,8 @@ fn history_clear_confirmation_label(count: usize, scope: HistoryClearScope) -> S
     }
 }
 
-/// Separates preview metadata from its commands so narrow settings windows can wrap actions safely.
+/// Separates preview metadata from its commands so narrow settings windows wrap actions safely.
+/// The metadata column may shrink, but it uses an ellipsis instead of clipping a filename mid-word.
 fn history_row(
     label: &str,
     thumbnail: Option<std::sync::Arc<gpui::RenderImage>>,
@@ -1369,6 +1370,8 @@ fn history_row(
                 .child(
                     div()
                         .flex_1()
+                        .min_w(px(0.0))
+                        .text_ellipsis()
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(colors.text)
