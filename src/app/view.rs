@@ -11,8 +11,11 @@ use super::{
 use crate::{domain::session::CaptureSessionState, platform::shortcut::CaptureShortcut};
 
 const HISTORY_PREVIEW_LIMIT: usize = 5;
+const SETTINGS_CONTENT_MAX_WIDTH: f32 = 960.0;
 
 impl gpui::Render for FlashShotApp {
+    /// Renders the tray service's settings workspace with a readable content column.
+    /// Keeping the column bounded prevents wide windows from separating a preference label from its control.
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let colors = self.colors;
         let is_idle = self.session.state() == CaptureSessionState::Idle;
@@ -87,70 +90,97 @@ impl gpui::Render for FlashShotApp {
                             .min_h(px(0.0))
                             .overflow_y_scroll()
                             .p_5()
-                            .flex()
-                            .flex_col()
-                            .gap_5()
-                            .child(settings_page_intro(self.settings_section, colors))
-                            .when(
-                                self.settings_section == SettingsSection::Capture,
-                                |content| {
-                                    content.child(capture_settings(
-                                        self,
-                                        colors,
-                                        is_idle,
-                                        app.clone(),
-                                    ))
-                                },
-                            )
-                            .when(self.settings_section == SettingsSection::Files, |content| {
-                                content.child(file_settings(self, colors, is_idle, app.clone()))
-                            })
-                            .when(
-                                self.settings_section == SettingsSection::Recording,
-                                |content| {
-                                    content.child(recording_settings(
-                                        colors,
-                                        recording_active,
-                                        recording_starting,
-                                        recording_paused,
-                                        &recording_display,
-                                        &recording_audio,
-                                        app.clone(),
-                                    ))
-                                },
-                            )
-                            .when(
-                                self.settings_section == SettingsSection::System,
-                                |content| content.child(system_settings(self, colors, app.clone())),
-                            )
-                            .when(self.settings_section == SettingsSection::Files, |content| {
-                                content.child(history_settings(
-                                    HistoryViewState {
-                                        entries: history_entries,
-                                        total_entries: history_total,
-                                        filtered_entries: filtered_history_total,
-                                        expanded: self.history_expanded,
-                                        filter: self.history_filter,
-                                        clear_confirmation: self.history_clear_confirmation,
-                                        clear_scope: self.history_clear_scope,
-                                        clear_count: self.history_clear_count,
-                                        clear_in_flight: self.history_clear_in_flight,
-                                        retention_in_flight: self
-                                            .history_retention_target
-                                            .is_some(),
-                                        deletion_in_flight: !self
-                                            .history_deletions_in_flight
-                                            .is_empty(),
-                                        search_query: self.history_search_query().to_owned(),
-                                        search_active: self.history_search_is_active(),
-                                        search_focus: self.focus_handle.clone(),
-                                        selected_entries: history_selected_count,
-                                    },
-                                    colors,
-                                    is_idle,
-                                    app.clone(),
-                                ))
-                            }),
+                            .child(
+                                div()
+                                    .id("settings-content-column")
+                                    .w_full()
+                                    .max_w(px(SETTINGS_CONTENT_MAX_WIDTH))
+                                    .mx_auto()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_5()
+                                    .child(settings_page_intro(self.settings_section, colors))
+                                    .when(
+                                        self.settings_section == SettingsSection::Capture,
+                                        |content| {
+                                            content.child(capture_settings(
+                                                self,
+                                                colors,
+                                                is_idle,
+                                                app.clone(),
+                                            ))
+                                        },
+                                    )
+                                    .when(
+                                        self.settings_section == SettingsSection::Files,
+                                        |content| {
+                                            content.child(file_settings(
+                                                self,
+                                                colors,
+                                                is_idle,
+                                                app.clone(),
+                                            ))
+                                        },
+                                    )
+                                    .when(
+                                        self.settings_section == SettingsSection::Recording,
+                                        |content| {
+                                            content.child(recording_settings(
+                                                colors,
+                                                recording_active,
+                                                recording_starting,
+                                                recording_paused,
+                                                &recording_display,
+                                                &recording_audio,
+                                                app.clone(),
+                                            ))
+                                        },
+                                    )
+                                    .when(
+                                        self.settings_section == SettingsSection::System,
+                                        |content| {
+                                            content.child(system_settings(
+                                                self,
+                                                colors,
+                                                app.clone(),
+                                            ))
+                                        },
+                                    )
+                                    .when(
+                                        self.settings_section == SettingsSection::Files,
+                                        |content| {
+                                            content.child(history_settings(
+                                                HistoryViewState {
+                                                    entries: history_entries,
+                                                    total_entries: history_total,
+                                                    filtered_entries: filtered_history_total,
+                                                    expanded: self.history_expanded,
+                                                    filter: self.history_filter,
+                                                    clear_confirmation: self
+                                                        .history_clear_confirmation,
+                                                    clear_scope: self.history_clear_scope,
+                                                    clear_count: self.history_clear_count,
+                                                    clear_in_flight: self.history_clear_in_flight,
+                                                    retention_in_flight: self
+                                                        .history_retention_target
+                                                        .is_some(),
+                                                    deletion_in_flight: !self
+                                                        .history_deletions_in_flight
+                                                        .is_empty(),
+                                                    search_query: self
+                                                        .history_search_query()
+                                                        .to_owned(),
+                                                    search_active: self.history_search_is_active(),
+                                                    search_focus: self.focus_handle.clone(),
+                                                    selected_entries: history_selected_count,
+                                                },
+                                                colors,
+                                                is_idle,
+                                                app.clone(),
+                                            ))
+                                        },
+                                    ),
+                            ),
                     ),
             )
             .child(
@@ -604,7 +634,7 @@ fn file_settings(
             div()
                 .text_sm()
                 .text_color(colors.muted)
-                .child(app_state.history.root().display().to_string()),
+                .child(settings_path_label(app_state.history.root())),
         )
         .child(settings_row("Save folder", colors).child(settings_button(
             "settings-quick-save-folder",
@@ -678,9 +708,9 @@ fn file_settings(
                     ))
                     .child(settings_button(
                         "settings-history-retention",
-                        &app_state.history_retention_target.map_or_else(
-                            || format!("Keep {}", app_state.settings.history_limit),
-                            |limit| format!("Updating to {limit}..."),
+                        &history_retention_label(
+                            app_state.settings.history_limit,
+                            app_state.history_retention_target,
                         ),
                         colors,
                         is_idle
@@ -692,6 +722,23 @@ fn file_settings(
                     )),
             ),
         )
+}
+
+/// Formats a local folder without exposing Windows' internal extended-path prefix in the UI.
+fn settings_path_label(path: &std::path::Path) -> String {
+    let label = path.to_string_lossy();
+    label
+        .strip_prefix(r"\\?\")
+        .unwrap_or(label.as_ref())
+        .to_owned()
+}
+
+/// Makes the retention action explicit so a user knows the number refers to saved captures.
+fn history_retention_label(current_limit: u16, target: Option<u16>) -> String {
+    target.map_or_else(
+        || format!("Keep {current_limit} captures"),
+        |limit| format!("Updating to {limit} captures..."),
+    )
 }
 
 fn recording_settings(
@@ -830,6 +877,8 @@ struct HistoryViewState {
     selected_entries: usize,
 }
 
+/// Renders search, bulk actions, and previews for recent captures.
+/// Summary text and its action stay adjacent so their relationship remains clear on wide windows.
 fn history_settings(
     state: HistoryViewState,
     colors: crate::theme::ThemeColors,
@@ -911,8 +960,7 @@ fn history_settings(
                     .gap_2()
                     .child(
                         div()
-                            .flex_1()
-                            .min_w(px(140.0))
+                            .min_w(px(100.0))
                             .text_xs()
                             .text_color(colors.muted)
                             .child(format!("{selected_entries} selected")),
@@ -965,7 +1013,6 @@ fn history_settings(
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .justify_between()
                     .gap_2()
                     .child(
                         div()
@@ -1596,20 +1643,20 @@ fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div
         )
 }
 
-/// Keeps a preference label and its control readable when the settings window narrows.
+/// Keeps labels in a stable column so controls stay nearby on wide windows and wrap below on narrow ones.
 fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
     div()
         .flex()
         .flex_wrap()
         .items_center()
-        .justify_between()
         .gap_3()
         .min_h(px(40.0))
         .py_1()
         .child(
             div()
                 .flex_1()
-                .min_w(px(120.0))
+                .min_w(px(160.0))
+                .max_w(px(220.0))
                 .text_sm()
                 .text_color(colors.muted)
                 .child(label.to_owned()),
@@ -1791,17 +1838,27 @@ fn history_selection_button(
     enabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
-    settings_button(id, label, colors, enabled, on_click)
+    div()
+        .id(id)
+        .h(px(34.0))
+        .px_3()
+        .flex()
+        .items_center()
+        .justify_center()
         .border_color(if selected && enabled {
             colors.accent
         } else {
             colors.border
         })
+        .border_1()
+        .rounded_md()
         .bg(if selected && enabled {
             colors.accent
         } else {
             colors.panel
         })
+        .text_sm()
+        .font_weight(FontWeight::SEMIBOLD)
         .text_color(if selected && enabled {
             colors.background
         } else if enabled {
@@ -1809,6 +1866,27 @@ fn history_selection_button(
         } else {
             colors.muted
         })
+        .when(enabled, |button| {
+            button
+                .focusable()
+                .focus_visible(|style| style.border_color(colors.accent))
+                .cursor_pointer()
+                .hover(|style| {
+                    style
+                        .bg(if selected {
+                            colors.accent
+                        } else {
+                            colors.background
+                        })
+                        .text_color(if selected {
+                            colors.background
+                        } else {
+                            colors.text
+                        })
+                })
+                .on_click(on_click)
+        })
+        .child(label.to_owned())
 }
 
 fn settings_delay_button(
@@ -1847,14 +1925,14 @@ mod tests {
     use super::{
         capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
         history_entry_label, history_entry_matches, history_result_summary,
-        history_visibility_label, relative_timestamp_label, settings_page_intro,
-        status_indicator_color, visible_history_entries,
+        history_retention_label, history_visibility_label, relative_timestamp_label,
+        settings_page_intro, settings_path_label, status_indicator_color, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
     use crate::theme::ThemeColors;
     use std::collections::VecDeque;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn capture_header_turns_into_a_delay_cancellation_command() {
@@ -1924,6 +2002,20 @@ mod tests {
         let colors = crate::theme::ThemeColors::default();
         let _ = super::settings_row("Audio", colors);
         let _ = super::settings_row("Start with Windows", colors);
+    }
+
+    #[test]
+    fn file_settings_labels_explain_retention_and_hide_internal_path_prefixes() {
+        assert_eq!(history_retention_label(30, None), "Keep 30 captures");
+        assert_eq!(
+            history_retention_label(30, Some(100)),
+            "Updating to 100 captures..."
+        );
+        assert_eq!(
+            settings_path_label(Path::new(r"\\?\C:\captures")),
+            r"C:\captures"
+        );
+        assert_eq!(settings_path_label(Path::new("F:/captures")), "F:/captures");
     }
 
     #[test]
