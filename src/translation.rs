@@ -1,10 +1,11 @@
 //! Explicitly configured translation service boundary.
 
-use std::{env, io};
+use std::{env, error::Error as _, io, time::Duration};
 
 const ENDPOINT_ENV: &str = "FLASH_SHOT_TRANSLATION_ENDPOINT";
 const TOKEN_ENV: &str = "FLASH_SHOT_TRANSLATION_TOKEN";
 const TARGET_LANGUAGE_ENV: &str = "FLASH_SHOT_TRANSLATION_TARGET";
+const TRANSLATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TranslationConfig {
@@ -50,7 +51,13 @@ pub fn translate(config: &TranslationConfig, text: &str) -> io::Result<String> {
     if text.trim().is_empty() {
         return Ok(String::new());
     }
-    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    // Bound both connection setup and the complete request so an unavailable service
+    // cannot leave the background recognition task blocked indefinitely.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(TRANSLATION_REQUEST_TIMEOUT)
+        .timeout(TRANSLATION_REQUEST_TIMEOUT)
+        .redirects(0)
+        .build();
     let request = agent
         .post(config.endpoint())
         .set("content-type", "application/json")
@@ -65,7 +72,7 @@ pub fn translate(config: &TranslationConfig, text: &str) -> io::Result<String> {
             "target_language": config.target_language(),
         }))
         .map_err(translation_error)?;
-    translation_from_response(response.into_json().map_err(translation_error)?)
+    translation_from_response(response.into_json().map_err(translation_body_error)?)
 }
 
 fn validate_endpoint(endpoint: &str) -> io::Result<()> {
@@ -92,13 +99,37 @@ fn translation_from_response(value: serde_json::Value) -> io::Result<String> {
         })
 }
 
-fn translation_error(error: impl std::fmt::Display) -> io::Error {
-    io::Error::other(format!("translation service request failed: {error}"))
+fn translation_error(error: ureq::Error) -> io::Error {
+    let kind = match &error {
+        ureq::Error::Transport(transport) => transport
+            .source()
+            .and_then(|source| source.downcast_ref::<io::Error>())
+            .map(|source| source.kind())
+            .unwrap_or(io::ErrorKind::Other),
+        ureq::Error::Status(_, _) => io::ErrorKind::Other,
+    };
+    io::Error::new(kind, format!("translation service request failed: {error}"))
+}
+
+fn translation_body_error(error: io::Error) -> io::Error {
+    let kind = error.kind();
+    io::Error::new(
+        kind,
+        format!("translation response could not be decoded: {error}"),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{translation_from_response, validate_endpoint};
+    use super::{TRANSLATION_REQUEST_TIMEOUT, translation_from_response, validate_endpoint};
+
+    #[test]
+    fn translation_requests_have_a_bounded_timeout() {
+        assert_eq!(
+            TRANSLATION_REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(15)
+        );
+    }
 
     #[test]
     fn configuration_requires_an_https_endpoint() {
