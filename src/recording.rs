@@ -1149,7 +1149,7 @@ fn parse_input_formats(output: &str) -> Vec<String> {
         for input in name
             .split(',')
             .map(str::trim)
-            .filter(|name| !name.is_empty())
+            .filter(|name| !name.is_empty() && *name != "=")
         {
             let input = input.to_ascii_lowercase();
             if !inputs.contains(&input) {
@@ -1209,6 +1209,7 @@ mod tests {
 
     const FORMATS: &str = "\
  File formats:\n\
+  D  =                 Demuxing supported\n\
   D  ddagrab          Windows Desktop Duplication API\n\
   D  gdigrab          GDI API Windows frame grabber\n\
   D  dshow            DirectShow capture\n\
