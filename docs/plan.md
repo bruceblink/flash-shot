@@ -95,7 +95,8 @@ Tauri/WebView/Excalidraw 架构。后续优先级只围绕快捷键到截图导�
 - [x] Windows 便携版构建与校验。
 - [x] Windows 安装包构建与签名校验脚本。
 - [x] 发布资产清单与 SHA-256 验证。
-- [ ] 更新发布策略与实际发布验收（本机便携包、启动冒烟、manifest、fixture 门禁已通过；真实签名与干净 Windows profile 验收待发布时执行）。
+- [x] 更新发布策略与本地预发布验收（便携包、隔离 profile 启动冒烟、manifest、SHA-256、fixture 和安装器配置门禁均已通过）。
+- [ ] 发布时真实验收（签名、安装器和干净 Windows 用户账户仍需在发布环境执行）。
 - macOS 截图与平台实现，以及权限交互。
 - 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 
