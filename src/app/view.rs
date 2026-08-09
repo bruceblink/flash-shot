@@ -22,6 +22,14 @@ type HistoryEntryView = (
     bool,
 );
 
+#[derive(Clone, Copy)]
+struct RecordingViewState {
+    active: bool,
+    starting: bool,
+    paused: bool,
+    progress: crate::recording::RecordingProgress,
+}
+
 impl gpui::Render for FlashShotApp {
     /// Renders the tray service's settings workspace with a readable content column.
     /// Keeping the column bounded prevents wide windows from separating a preference label from its control.
@@ -30,9 +38,12 @@ impl gpui::Render for FlashShotApp {
         let compact_navigation =
             uses_compact_settings_navigation(f32::from(window.bounds().size.width));
         let is_idle = self.session.state() == CaptureSessionState::Idle;
-        let recording_active = self.recording_control.is_some();
-        let recording_starting = self.recording_start_in_flight;
-        let recording_paused = self.recording_paused;
+        let recording_state = RecordingViewState {
+            active: self.recording_control.is_some(),
+            starting: self.recording_start_in_flight,
+            paused: self.recording_paused,
+            progress: self.recording_progress,
+        };
         let recording_audio =
             super::workflow::recording_audio_selection_label(&self.recording_audio);
         let recording_display =
@@ -143,9 +154,7 @@ impl gpui::Render for FlashShotApp {
                                         |content| {
                                             content.child(recording_settings(
                                                 colors,
-                                                recording_active,
-                                                recording_starting,
-                                                recording_paused,
+                                                recording_state,
                                                 &recording_display,
                                                 &recording_audio,
                                                 app.clone(),
@@ -766,9 +775,7 @@ fn history_retention_label(current_limit: u16, target: Option<u16>) -> String {
 /// Renders recording choices and commands, wrapping the command row before a narrow window clips it.
 fn recording_settings(
     colors: crate::theme::ThemeColors,
-    recording_active: bool,
-    recording_starting: bool,
-    recording_paused: bool,
+    state: RecordingViewState,
     display: &str,
     audio: &str,
     app: gpui::Entity<FlashShotApp>,
@@ -778,7 +785,7 @@ fn recording_settings(
             "settings-recording-display",
             display,
             colors,
-            !recording_active && !recording_starting,
+            !state.active && !state.starting,
             {
                 let app = app.clone();
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_display(cx))
@@ -788,7 +795,7 @@ fn recording_settings(
             "settings-recording-audio",
             audio,
             colors,
-            !recording_active && !recording_starting,
+            !state.active && !state.starting,
             {
                 let app = app.clone();
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_audio(cx))
@@ -804,7 +811,7 @@ fn recording_settings(
                     "settings-check-recording-support",
                     "Check support",
                     colors,
-                    !recording_active && !recording_starting,
+                    !state.active && !state.starting,
                     {
                         let app = app.clone();
                         move |_, _, cx| app.update(cx, |this, cx| this.check_recording_support(cx))
@@ -812,30 +819,70 @@ fn recording_settings(
                 ))
                 .child(settings_button(
                     "settings-record-display",
-                    if recording_starting {
+                    if state.starting {
                         "Preparing..."
-                    } else if recording_active {
+                    } else if state.active {
                         "Stop recording"
                     } else {
                         "Record display"
                     },
                     colors,
-                    !recording_starting,
+                    !state.starting,
                     {
                         let app = app.clone();
                         move |_, _, cx| app.update(cx, |this, cx| this.toggle_display_recording(cx))
                     },
                 ))
-                .when(recording_active && !recording_starting, |row| {
+                .when(state.active && !state.starting, |row| {
                     row.child(settings_button(
                         "settings-pause-recording",
-                        if recording_paused { "Resume" } else { "Pause" },
+                        if state.paused { "Resume" } else { "Pause" },
                         colors,
                         true,
                         move |_, _, cx| app.update(cx, |this, cx| this.toggle_recording_pause(cx)),
                     ))
                 }),
         )
+        .when(state.starting || state.active, |section| {
+            section.child(
+                settings_row("Status", colors).child(
+                    div()
+                        .flex_1()
+                        .min_w(px(160.0))
+                        .text_sm()
+                        .text_color(colors.text)
+                        .child(recording_progress_label(
+                            state.active,
+                            state.starting,
+                            state.paused,
+                            state.progress,
+                        )),
+                ),
+            )
+        })
+}
+
+/// Summarizes recording lifecycle and FFmpeg progress in the settings page while a capture runs.
+fn recording_progress_label(
+    recording_active: bool,
+    recording_starting: bool,
+    recording_paused: bool,
+    progress: crate::recording::RecordingProgress,
+) -> String {
+    if recording_starting {
+        return "Preparing recording...".to_owned();
+    }
+    if !recording_active {
+        return "Recording is idle".to_owned();
+    }
+    let seconds = progress.output_time_us.unwrap_or_default() / 1_000_000;
+    let frames = progress.frame.unwrap_or_default();
+    let state = if recording_paused {
+        "Paused"
+    } else {
+        "Recording"
+    };
+    format!("{state} - {seconds}s, {frames} frames")
 }
 
 fn system_settings(
@@ -2012,12 +2059,14 @@ mod tests {
     use super::{
         capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
         history_entry_label, history_entry_matches, history_result_summary,
-        history_retention_label, history_visibility_label, relative_timestamp_label,
-        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
-        status_indicator_color, uses_compact_settings_navigation, visible_history_entries,
+        history_retention_label, history_visibility_label, recording_progress_label,
+        relative_timestamp_label, settings_navigation_items, settings_page_copy,
+        settings_page_intro, settings_path_label, status_indicator_color,
+        uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
+    use crate::recording::RecordingProgress;
     use crate::theme::ThemeColors;
     use std::collections::VecDeque;
     use std::path::{Path, PathBuf};
@@ -2137,6 +2186,40 @@ mod tests {
         let colors = crate::theme::ThemeColors::default();
         let _ = super::settings_row("Audio", colors);
         let _ = super::settings_row("Start with Windows", colors);
+    }
+
+    #[test]
+    fn recording_progress_label_explains_start_pause_and_live_progress() {
+        assert_eq!(
+            recording_progress_label(false, true, false, RecordingProgress::default()),
+            "Preparing recording..."
+        );
+        assert_eq!(
+            recording_progress_label(
+                true,
+                false,
+                false,
+                RecordingProgress {
+                    output_time_us: Some(2_000_000),
+                    frame: Some(48),
+                    finished: false,
+                }
+            ),
+            "Recording - 2s, 48 frames"
+        );
+        assert_eq!(
+            recording_progress_label(
+                true,
+                false,
+                true,
+                RecordingProgress {
+                    output_time_us: Some(2_000_000),
+                    frame: Some(48),
+                    finished: false,
+                }
+            ),
+            "Paused - 2s, 48 frames"
+        );
     }
 
     #[test]
