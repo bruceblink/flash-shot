@@ -13,7 +13,7 @@ use flash_shot::{
     platform::display::{DisplayProvider, SystemDisplayProvider},
     recording::{RecordingEvent, RecordingRequest, RecordingTarget, discover, start_recording},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(20);
 const ACTIVE_CAPTURE_DELAY: Duration = Duration::from_millis(900);
@@ -74,10 +74,40 @@ struct AcceptanceReport {
     ffmpeg_version: String,
     output: PathBuf,
     output_bytes: u64,
+    codec_name: String,
+    width: u32,
+    height: u32,
     duration_seconds: f64,
     pause_observed: bool,
     resume_observed: bool,
     maximum_progress_frame: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeOutput {
+    #[serde(default)]
+    streams: Vec<ProbeStream>,
+    format: Option<ProbeFormat>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeStream {
+    codec_name: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeFormat {
+    duration: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+struct MediaMetadata {
+    codec_name: String,
+    width: u32,
+    height: u32,
+    duration_seconds: f64,
 }
 
 #[derive(Default)]
@@ -151,14 +181,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if metadata.len() == 0 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "recorded MP4 is empty").into());
     }
-    let duration_seconds = probe_duration(capabilities.executable(), &output)?;
+    let media = probe_media(capabilities.executable(), &output)?;
     let report = AcceptanceReport {
-        schema_version: 1,
+        schema_version: 2,
         target: target_name,
         ffmpeg_version: capabilities.version().to_owned(),
         output,
         output_bytes: metadata.len(),
-        duration_seconds,
+        codec_name: media.codec_name,
+        width: media.width,
+        height: media.height,
+        duration_seconds: media.duration_seconds,
         pause_observed: observed.pause,
         resume_observed: observed.resume,
         maximum_progress_frame: observed.maximum_progress_frame,
@@ -271,8 +304,8 @@ fn wait_for_event(
     }
 }
 
-/// Uses the FFprobe installed beside FFmpeg to prove the finalized MP4 is readable.
-fn probe_duration(ffmpeg: &Path, output: &Path) -> io::Result<f64> {
+/// Uses the FFprobe installed beside FFmpeg to prove the finalized MP4's media metadata.
+fn probe_media(ffmpeg: &Path, output: &Path) -> io::Result<MediaMetadata> {
     let ffprobe = ffmpeg.with_file_name(if cfg!(windows) {
         "ffprobe.exe"
     } else {
@@ -282,10 +315,12 @@ fn probe_duration(ffmpeg: &Path, output: &Path) -> io::Result<f64> {
         .args([
             "-v",
             "error",
+            "-select_streams",
+            "v:0",
             "-show_entries",
-            "format=duration",
+            "stream=codec_name,width,height:format=duration",
             "-of",
-            "default=noprint_wrappers=1:nokey=1",
+            "json",
         ])
         .arg(output)
         .stdin(Stdio::null())
@@ -296,8 +331,40 @@ fn probe_duration(ffmpeg: &Path, output: &Path) -> io::Result<f64> {
             String::from_utf8_lossy(&result.stderr).trim()
         )));
     }
-    let duration = String::from_utf8_lossy(&result.stdout)
-        .trim()
+    parse_media_probe(&result.stdout)
+}
+
+/// Parses and validates the small FFprobe JSON contract written into acceptance reports.
+fn parse_media_probe(stdout: &[u8]) -> io::Result<MediaMetadata> {
+    let probe: ProbeOutput = serde_json::from_slice(stdout).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid FFprobe JSON: {error}"),
+        )
+    })?;
+    let stream = probe.streams.into_iter().next().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "FFprobe found no video stream")
+    })?;
+    let codec_name = stream
+        .codec_name
+        .filter(|codec| !codec.trim().is_empty())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "FFprobe reported no codec"))?;
+    let width = stream.width.filter(|width| *width > 0).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "FFprobe reported no video width",
+        )
+    })?;
+    let height = stream.height.filter(|height| *height > 0).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "FFprobe reported no video height",
+        )
+    })?;
+    let duration = probe
+        .format
+        .and_then(|format| format.duration)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "FFprobe reported no duration"))?
         .parse::<f64>()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid FFprobe duration"))?;
     if !duration.is_finite() || duration <= 0.0 {
@@ -306,12 +373,17 @@ fn probe_duration(ffmpeg: &Path, output: &Path) -> io::Result<f64> {
             "FFprobe reported an empty recording",
         ));
     }
-    Ok(duration)
+    Ok(MediaMetadata {
+        codec_name,
+        width,
+        height,
+        duration_seconds: duration,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::centered_region;
+    use super::{centered_region, parse_media_probe};
     use flash_shot::domain::geometry::PhysicalRect;
 
     #[test]
@@ -334,5 +406,27 @@ mod tests {
                 bottom: 730,
             }
         );
+    }
+
+    #[test]
+    fn media_probe_requires_a_valid_video_stream_and_duration() {
+        let metadata = parse_media_probe(
+            br#"{"streams":[{"codec_name":"h264","width":520,"height":640}],"format":{"duration":"2.8"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            metadata,
+            super::MediaMetadata {
+                codec_name: "h264".to_owned(),
+                width: 520,
+                height: 640,
+                duration_seconds: 2.8,
+            }
+        );
+        assert!(parse_media_probe(br#"{"streams":[],"format":{"duration":"2.8"}}"#).is_err());
+        assert!(parse_media_probe(
+            br#"{"streams":[{"codec_name":"h264","width":520,"height":640}],"format":{"duration":"0"}}"#
+        )
+        .is_err());
     }
 }
