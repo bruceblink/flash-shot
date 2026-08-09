@@ -56,10 +56,14 @@ cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acce
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
 cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
 cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
+# 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
+cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
+cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-200.png 1500 0 2.0
 ```
 
 `settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含物理窗口边界、Windows DPI
-和缩放比例；150%/200% 验收必须保留 `scale_factor` 为 `1.5` 或 `2.0` 的对应证据。
+和缩放比例。提供最后一个 `expected-scale` 参数时，命令只有在 `scale_match` 为 `true`
+时才成功；150%/200% 验收必须保留 `scale_factor` 为 `1.5` 或 `2.0` 的对应证据。
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
@@ -81,6 +85,7 @@ cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scr
 | 2026-08-10 | `7f27ca4` | 334 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；滚动控制器新增未修饰 `Escape` 取消回归测试。 | 待执行 | 滚动截图已有首帧、手动/辅助追加、重叠校验、失败重试和拼接导出链路；控制窗口获得焦点后按 `Escape` 会取消会话并清理临时状态。滚动与 OCR/翻译的真实 UI 手工矩阵仍待执行。 |
 | 2026-08-10 | `68aad53` | 334 项库测试、严格 Clippy、格式检查、全目标编译和 Release 原生截图探针通过。 | 待执行 | `settings-p1-scale-metadata-520x640-20260810.png` 的同名 JSON 报告 DPI 96、缩放 1.0，并记录窗口物理边界。探针现已能为未来 150%/200% 运行保留可审计的缩放证据；当前机器没有该环境，设置页 P1 实机项仍待执行。 |
 | 2026-08-10 | `52cdb90` | 当前提交的 Release 原生设置页截图探针在深色 980x760 与浅色 520x640 窗口成功运行。 | 待执行 | 人工检查 `target/ui-acceptance/settings-p1-current-dark-980x760.png` 与 `target/ui-acceptance/settings-p1-current-light-520x640.png`：100% DPI 下未发现文字截断、按钮重叠或底部状态栏遮挡；浅色窄窗切换为顶部导航并保持主要动作可达。150%/200% 缩放仍待真实 Windows 环境验收。 |
+| 2026-08-10 | `3ae9a2e` | `settings-ui-acceptance` 新增 `expected-scale` 守卫与 6 项探针测试；334 项库测试、严格 Clippy、格式检查和全目标编译通过。 | 待执行 | 当前 100% 环境要求 `1.5` 时命令按预期失败，并在 JSON 中记录 `scale_factor: 1.0`、`scale_match: false`；未来 150%/200% 运行必须以 `scale_match: true` 作为机器可读门禁。 |
 | 2026-08-10 | `edb5e48` | 334 项库测试、严格 Clippy、格式检查和全目标编译通过；`scroll-acceptance` 确定性滚动拼接验收探针通过。 | 待执行 | 6 帧合成视口使用 90 像素重叠，输出 96x630，5 个重叠区均匹配，像素校验和为 `2267123376996061824`；报告写入 `target/ui-acceptance/scroll-acceptance-20260810.json`。这补充滚动算法的机器可读证据，不替代 OCR/翻译/滚动真实 UI 手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
