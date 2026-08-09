@@ -36,6 +36,7 @@ const OVERLAY_ACTION_BAR_PADDING: f32 = 6.0;
 const OVERLAY_ACTION_BAR_BORDER: f32 = 1.0;
 const OVERLAY_SECONDARY_MENU_GAP: f32 = 8.0;
 const OVERLAY_RECOGNITION_PREVIEW_HEIGHT: f32 = 64.0;
+const OVERLAY_RECOGNITION_STATUS_HEIGHT: f32 = 30.0;
 const OVERLAY_RECOGNITION_PREVIEW_LIMIT: usize = 240;
 const OVERLAY_DIMENSION_LABEL_WIDTH: f32 = 112.0;
 const OVERLAY_DIMENSION_LABEL_HEIGHT: f32 = 26.0;
@@ -428,6 +429,7 @@ impl Render for CaptureOverlay {
         let show_more_actions = app.overlay_more_actions;
         let recognition_result = app.recognition_result.clone();
         let recognition_retry = app.recognition_retry;
+        let recognition_in_flight = app.recognition_in_flight;
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
@@ -495,6 +497,7 @@ impl Render for CaptureOverlay {
                 layout.width,
                 recognition_result.is_some(),
                 recognition_retry.is_some(),
+                recognition_in_flight,
             )
         });
         let secondary_menu_above = action_layout.is_some_and(|layout| {
@@ -1989,6 +1992,22 @@ impl Render for CaptureOverlay {
                                                 }))
                                                 .child("Record window"),
                                         )
+                                        .when(recognition_in_flight, |actions| {
+                                            actions.child(
+                                                div()
+                                                    .id("overlay-recognition-progress")
+                                                    .w_full()
+                                                    .h(px(OVERLAY_RECOGNITION_STATUS_HEIGHT))
+                                                    .px_2()
+                                                    .flex()
+                                                    .items_center()
+                                                    .rounded_sm()
+                                                    .bg(colors.panel)
+                                                    .text_xs()
+                                                    .text_color(colors.muted)
+                                                    .child("Recognizing selection..."),
+                                            )
+                                        })
                                         .when_some(recognition_retry, |actions, retry| {
                                             let retry_label = recognition_retry_label(retry);
                                             actions.child(
@@ -3251,10 +3270,12 @@ fn status_bottom_inset(uses_fallback_action_bar: bool) -> f32 {
     }
 }
 
+/// Computes the menu height so recognition feedback has room without covering the capture toolbar.
 fn secondary_action_menu_height(
     width: f32,
     has_recognition_result: bool,
     has_recognition_retry: bool,
+    recognition_in_flight: bool,
 ) -> f32 {
     action_toolbar_height_for(
         width,
@@ -3274,6 +3295,10 @@ fn secondary_action_menu_height(
             ),
     ) + if has_recognition_result {
         OVERLAY_RECOGNITION_PREVIEW_HEIGHT + OVERLAY_ACTION_ITEM_GAP
+    } else {
+        0.0
+    } + if recognition_in_flight {
+        OVERLAY_RECOGNITION_STATUS_HEIGHT + OVERLAY_ACTION_ITEM_GAP
     } else {
         0.0
     }
@@ -4024,13 +4049,23 @@ mod tests {
         assert!((layout.top - 296.0).abs() < 0.01);
         assert_eq!(layout.width, 324.0);
         assert_eq!(layout.height, 92.0);
-        assert_eq!(secondary_action_menu_height(324.0, false, false), 218.0);
-        assert_eq!(secondary_action_menu_height(324.0, true, false), 288.0);
-        assert!(secondary_action_menu_height(324.0, false, true) >= 196.0);
+        assert_eq!(
+            secondary_action_menu_height(324.0, false, false, false),
+            218.0
+        );
+        assert_eq!(
+            secondary_action_menu_height(324.0, true, false, false),
+            288.0
+        );
+        assert!(secondary_action_menu_height(324.0, false, true, false) >= 196.0);
+        assert_eq!(
+            secondary_action_menu_height(324.0, false, false, true),
+            254.0
+        );
         assert!(secondary_menu_opens_above(
             layout,
             viewport,
-            secondary_action_menu_height(layout.width, false, false)
+            secondary_action_menu_height(layout.width, false, false, false)
         ));
     }
 
