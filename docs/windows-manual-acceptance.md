@@ -65,6 +65,7 @@ cargo run --release --bin windows-acceptance-probe -- --output target/windows-ac
 | 2026-08-09 | `23d4c31` | 324 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；`windows-acceptance-probe` 输出保存为 `target/windows-acceptance-environment-20260809.json`。 | 待执行 | 当前会话探测到一块 2560x1440、100% 显示器，FFmpeg 不可用；因此未把双屏、混合 DPI、录屏或完整单屏交互矩阵标为通过。 |
 | 2026-08-09 | `32096da` | 326 项库测试、严格 Clippy、格式检查和设置页宽窄截图复核通过；用户级 FFmpeg 探测结果保存为 `target/windows-acceptance-environment-20260809-ffmpeg.json`。 | 待执行 | Capture/Library/Record/App 导航在 980x760 和 520x640 窗口中无截断或重叠，证据位于 `target/ui-acceptance/settings-p1-task-navigation-*.png`。FFmpeg 已探测到 `gdigrab`，但 MP4 录制矩阵尚未执行。 |
 | 2026-08-09 | `c4e90f4` | 326 项库测试、严格 Clippy、格式检查和真实覆盖层截图复核通过。 | 待执行 | Undo/Redo 在无历史时保持固定低对比禁用态，Select/Mark 选中反馈清楚，主动作与样式控件未越出 2560x1440 屏幕；证据位于 `target/ui-acceptance/annotation-p1-stable-history-controls-*.png`。 |
+| 2026-08-09 | `2c966f7` | 300 个真实 PNG 与 300 条历史索引完成调试构建重启验收；默认页面仅渲染 5 条预览。 | 待执行 | 隐藏窗口 998ms 内就绪，Library 自动打开后工作集约 68 MiB，数秒后保持稳定；截图显示 `Showing 5 of 300 captures`，证据位于 `target/ui-acceptance/history-p1-300-*.png`。该记录关闭历史长列表 P1 差距，不替代 Release 性能门禁。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
