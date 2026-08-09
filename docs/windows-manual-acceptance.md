@@ -93,6 +93,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `6c09c39` | Release `scroll-acceptance` 确定性滚动拼接验收探针通过。 | 待执行 | 6 帧合成视口使用 90 像素重叠，输出 96x630，5 个重叠区均匹配，像素校验和为 `2267123376996061824`；当前报告写入 `target/ui-acceptance/scroll-acceptance-20260810-current.json`。这证明滚动合成链路可用，不替代滚动真实 UI 手工矩阵。 |
 | 2026-08-10 | `P1-420x420` | Release 原生设置页截图探针在深色/浅色最小 `420x420` 窗口成功运行；设置探针 6 项单测通过。 | 待执行 | `settings-p1-min-dark-420x420-20260810.png` 与 `settings-p1-min-light-420x420-20260810.png` 均显示紧凑导航、主要动作和固定状态栏；内容区保持可滚动且没有可见文字截断或控件重叠。证据的物理边界为 `436x459`、DPI 96；150%/200% 缩放仍待真实 Windows 环境验收。 |
 | 2026-08-10 | `f33acdb` | Release 启动与覆盖层性能脚本改为至少 20 次采样；当前 20 次采样全部通过。 | 待执行 | `release-startup-performance-20260810-20.json` 的启动 p95 为 `233.21ms`（上限 500ms）；`release-capture-performance-20260810-default.json` 的 frame-ready p95 为 `56.14ms`、覆盖层 p95 为 `80.02ms`（上限均 100ms）。10 次采样曾受一次 `205.70ms` 离群值影响，现已禁止低于 20 次的门禁运行；真实混合 DPI p95 仍待硬件验收。 |
+| 2026-08-10 | `8cbfac2` | 336 项库测试、严格 Clippy、格式检查、全目标编译通过；快速保存失效目录回退测试通过。 | 待执行 | 选择截图、全屏快捷保存和 Pin 保存会在首选历史目录不可写时回退到托管 `Pictures/Flash Shot`，成功后切换历史根并清除失效目录配置；真实不同 Windows profile 权限仍待手工验收。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
