@@ -25,6 +25,14 @@ struct TranslationReadiness {
     error: Option<String>,
 }
 
+/// Describes optional readiness requirements without making the default probe network-bound.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ProbeOptions {
+    output: Option<PathBuf>,
+    require_ocr: bool,
+    require_translation: bool,
+}
+
 #[derive(Serialize)]
 struct AcceptanceReport {
     schema_version: u32,
@@ -32,6 +40,8 @@ struct AcceptanceReport {
     timestamp_unix_ms: u128,
     ocr: OcrReadiness,
     translation: TranslationReadiness,
+    require_ocr: bool,
+    require_translation: bool,
     passed: bool,
 }
 
@@ -44,18 +54,24 @@ fn main() {
 
 /// Probes optional dependencies without creating screenshots or making a translation request.
 fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
-    let output = parse_output(args)?;
+    let options = parse_options(args)?;
+    let ocr = probe_ocr();
+    let translation = probe_translation();
+    let passed = (!options.require_ocr || ocr.available)
+        && (!options.require_translation || translation.configured);
     let report = AcceptanceReport {
-        schema_version: 1,
+        schema_version: 2,
         test: "recognition_readiness",
         timestamp_unix_ms: unix_timestamp_ms(),
-        ocr: probe_ocr(),
-        translation: probe_translation(),
-        passed: true,
+        ocr,
+        translation,
+        require_ocr: options.require_ocr,
+        require_translation: options.require_translation,
+        passed,
     };
     let encoded = serde_json::to_vec_pretty(&report).map_err(io::Error::other)?;
     println!("{}", String::from_utf8_lossy(&encoded));
-    if let Some(output) = output {
+    if let Some(output) = options.output {
         if let Some(parent) = output
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -64,7 +80,21 @@ fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
         }
         std::fs::write(output, encoded)?;
     }
-    Ok(())
+    if passed {
+        Ok(())
+    } else {
+        let mut missing = Vec::new();
+        if options.require_ocr && !report.ocr.available {
+            missing.push("OCR");
+        }
+        if options.require_translation && !report.translation.configured {
+            missing.push("translation");
+        }
+        Err(io::Error::other(format!(
+            "required recognition dependencies are not ready: {}",
+            missing.join(", ")
+        )))
+    }
 }
 
 /// Converts an OCR support result into a report that never exposes a local executable path.
@@ -111,13 +141,14 @@ fn probe_translation() -> TranslationReadiness {
     }
 }
 
-fn parse_output(args: impl IntoIterator<Item = String>) -> io::Result<Option<PathBuf>> {
-    let mut output = None;
+/// Parses output and optional readiness gates while rejecting duplicate flags early.
+fn parse_options(args: impl IntoIterator<Item = String>) -> io::Result<ProbeOptions> {
+    let mut options = ProbeOptions::default();
     let mut arguments = args.into_iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--output" => {
-                if output.is_some() {
+                if options.output.is_some() {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
                         "--output may only be provided once",
@@ -126,7 +157,25 @@ fn parse_output(args: impl IntoIterator<Item = String>) -> io::Result<Option<Pat
                 let value = arguments.next().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "--output requires a path")
                 })?;
-                output = Some(PathBuf::from(value));
+                options.output = Some(PathBuf::from(value));
+            }
+            "--require-ocr" => {
+                if options.require_ocr {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--require-ocr may only be provided once",
+                    ));
+                }
+                options.require_ocr = true;
+            }
+            "--require-translation" => {
+                if options.require_translation {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--require-translation may only be provided once",
+                    ));
+                }
+                options.require_translation = true;
             }
             _ => {
                 return Err(io::Error::new(
@@ -136,7 +185,7 @@ fn parse_output(args: impl IntoIterator<Item = String>) -> io::Result<Option<Pat
             }
         }
     }
-    Ok(output)
+    Ok(options)
 }
 
 fn unix_timestamp_ms() -> u128 {
@@ -148,25 +197,55 @@ fn unix_timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_output;
+    use super::{ProbeOptions, parse_options};
     use std::path::PathBuf;
 
     #[test]
-    fn output_argument_is_optional_and_bounded() {
-        assert!(parse_output(std::iter::empty()).unwrap().is_none());
+    fn readiness_requirements_and_output_argument_are_bounded() {
         assert_eq!(
-            parse_output(["--output".to_owned(), "report.json".to_owned()].into_iter()).unwrap(),
-            Some(PathBuf::from("report.json"))
+            parse_options(std::iter::empty()).unwrap(),
+            ProbeOptions::default()
         );
-        assert!(parse_output(["--output".to_owned()].into_iter()).is_err());
-        assert!(parse_output(["--unknown".to_owned()].into_iter()).is_err());
+        assert_eq!(
+            parse_options(
+                [
+                    "--output".to_owned(),
+                    "report.json".to_owned(),
+                    "--require-ocr".to_owned(),
+                    "--require-translation".to_owned(),
+                ]
+                .into_iter()
+            )
+            .unwrap(),
+            ProbeOptions {
+                output: Some(PathBuf::from("report.json")),
+                require_ocr: true,
+                require_translation: true,
+            }
+        );
+        assert!(parse_options(["--output".to_owned()].into_iter()).is_err());
+        assert!(parse_options(["--unknown".to_owned()].into_iter()).is_err());
         assert!(
-            parse_output(
+            parse_options(
                 [
                     "--output".to_owned(),
                     "one.json".to_owned(),
                     "--output".to_owned(),
                     "two.json".to_owned(),
+                ]
+                .into_iter()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_options(["--require-ocr".to_owned(), "--require-ocr".to_owned()].into_iter())
+                .is_err()
+        );
+        assert!(
+            parse_options(
+                [
+                    "--require-translation".to_owned(),
+                    "--require-translation".to_owned(),
                 ]
                 .into_iter()
             )
