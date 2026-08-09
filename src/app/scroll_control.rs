@@ -34,14 +34,19 @@ impl Focusable for ManualScrollControl {
 }
 
 impl ManualScrollControl {
-    /// Cancels the active scroll session from the focused controller without affecting global shortcuts.
+    /// Dispatches focused-controller shortcuts without affecting global application shortcuts.
     fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        if !manual_scroll_cancel_key(&event.keystroke) {
+        let Some(shortcut) = manual_scroll_shortcut(&event.keystroke) else {
             return;
-        }
+        };
         let app = self.app.clone();
         cx.defer(move |cx| {
-            app.update(cx, |app, cx| app.cancel_manual_scroll(cx));
+            app.update(cx, |app, cx| match shortcut {
+                ManualScrollShortcut::Cancel => app.cancel_manual_scroll(cx),
+                ManualScrollShortcut::Capture => app.capture_manual_scroll_frame(cx),
+                ManualScrollShortcut::AutoCapture => app.auto_capture_manual_scroll_frame(cx),
+                ManualScrollShortcut::Finish => app.finish_manual_scroll(cx),
+            });
         });
     }
 }
@@ -52,6 +57,14 @@ enum ManualScrollButtonTone {
     Primary,
     Success,
     Destructive,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManualScrollShortcut {
+    Cancel,
+    Capture,
+    AutoCapture,
+    Finish,
 }
 
 /// Builds one scroll command with a stable size and an explicit enabled/disabled state.
@@ -247,9 +260,24 @@ impl Render for ManualScrollControl {
     }
 }
 
-/// Limits Escape cancellation to an unmodified key so text and system shortcuts remain isolated.
-fn manual_scroll_cancel_key(keystroke: &Keystroke) -> bool {
-    keystroke.key == "escape" && !keystroke.modifiers.modified()
+/// Maps focused-controller keys to one scrolling action while leaving modified system keys alone.
+fn manual_scroll_shortcut(keystroke: &Keystroke) -> Option<ManualScrollShortcut> {
+    let plain = !keystroke.modifiers.modified();
+    let without_system_modifiers = !keystroke.modifiers.secondary()
+        && !keystroke.modifiers.platform
+        && !keystroke.modifiers.alt
+        && !keystroke.modifiers.function;
+    match keystroke.key.as_str() {
+        "escape" if plain => Some(ManualScrollShortcut::Cancel),
+        "enter" if plain => Some(ManualScrollShortcut::Finish),
+        "space" if without_system_modifiers && !keystroke.modifiers.shift => {
+            Some(ManualScrollShortcut::Capture)
+        }
+        "space" if without_system_modifiers && keystroke.modifiers.shift => {
+            Some(ManualScrollShortcut::AutoCapture)
+        }
+        _ => None,
+    }
 }
 
 /// Keeps the primary action explicit while one scroll frame is being captured.
@@ -298,8 +326,8 @@ fn manual_scroll_frame_count_label(frame_count: usize, can_finish: bool) -> Stri
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_scroll_capture_label, manual_scroll_cancel_key, manual_scroll_capture_label,
-        manual_scroll_finish_label, manual_scroll_frame_count_label,
+        ManualScrollShortcut, auto_scroll_capture_label, manual_scroll_capture_label,
+        manual_scroll_finish_label, manual_scroll_frame_count_label, manual_scroll_shortcut,
     };
     use gpui::Keystroke;
 
@@ -339,24 +367,39 @@ mod tests {
     }
 
     #[test]
-    fn escape_cancels_only_without_shift() {
-        assert!(manual_scroll_cancel_key(
-            &Keystroke::parse("escape").unwrap()
-        ));
-        assert!(!manual_scroll_cancel_key(
-            &Keystroke::parse("shift-escape").unwrap()
-        ));
-        assert!(!manual_scroll_cancel_key(
-            &Keystroke::parse("ctrl-escape").unwrap()
-        ));
-        assert!(!manual_scroll_cancel_key(
-            &Keystroke::parse("alt-escape").unwrap()
-        ));
-        assert!(!manual_scroll_cancel_key(
-            &Keystroke::parse("cmd-escape").unwrap()
-        ));
-        assert!(!manual_scroll_cancel_key(
-            &Keystroke::parse("fn-escape").unwrap()
-        ));
+    fn focused_keys_keep_modified_shortcuts_isolated() {
+        assert_eq!(
+            manual_scroll_shortcut(&Keystroke::parse("escape").unwrap()),
+            Some(ManualScrollShortcut::Cancel)
+        );
+        assert_eq!(
+            manual_scroll_shortcut(&Keystroke::parse("space").unwrap()),
+            Some(ManualScrollShortcut::Capture)
+        );
+        assert_eq!(
+            manual_scroll_shortcut(&Keystroke::parse("shift-space").unwrap()),
+            Some(ManualScrollShortcut::AutoCapture)
+        );
+        assert_eq!(
+            manual_scroll_shortcut(&Keystroke::parse("enter").unwrap()),
+            Some(ManualScrollShortcut::Finish)
+        );
+        for key in [
+            "shift-escape",
+            "ctrl-escape",
+            "alt-escape",
+            "cmd-escape",
+            "fn-escape",
+            "ctrl-space",
+            "alt-space",
+            "cmd-space",
+            "shift-enter",
+        ] {
+            assert_eq!(
+                manual_scroll_shortcut(&Keystroke::parse(key).unwrap()),
+                None,
+                "{key}"
+            );
+        }
     }
 }
