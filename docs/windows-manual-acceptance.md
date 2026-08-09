@@ -115,6 +115,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `40a3126` | 340 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；OCR、翻译和二维码请求新增忙状态保护，重复点击不会启动第二个异步任务覆盖首个结果。 | 待执行 | 识别请求冲突文案由回归测试覆盖；OCR/翻译真实依赖与失败后 UI 重试仍待手工矩阵。 |
 | 2026-08-10 | `042fe15` | 340 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；选区工具栏的“更多操作”菜单在识别任务运行时显示 `Recognizing selection...` 状态行，并预留对应高度防止菜单遮挡工具栏。 | 待执行 | 识别进行中状态的布局逻辑和菜单高度回归测试已通过；OCR/翻译真实 UI 与失败后重试仍待手工矩阵。 |
 | 2026-08-10 | `current-P1-acceptance` | 当前 Release 探针串行运行通过：滚动拼接 6 帧、5 个 90 像素重叠区，输出 96x630 且像素校验和匹配；环境探测识别单屏 2560x1440、DPI 96、FFmpeg 9.0，并确认 `gdigrab`、窗口和区域输入可用。 | 待执行 | 当前 100% 环境下重新截图复核深色 Capture 520x640 与浅色 Record 520x640，未发现文字截断、控件重叠或状态栏遮挡；真实滚动 UI、150%/200% 缩放、双屏和录屏完整 UI 矩阵仍待执行。证据位于 `target/ui-acceptance/settings-current-dark-520x640.png`、`target/ui-acceptance/settings-current-light-520x640.png`、`target/ui-acceptance/scroll-acceptance-current.json` 和 `target/windows-acceptance-environment-20260810-current.json`。 |
+| 2026-08-10 | `197d520` | 341 项库测试、严格 Clippy、格式检查、工作区全目标编译和 Release `scroll-acceptance` 验收通过；滚动控制窗在捕获期间临时隐藏，取消/关闭时推进 generation，避免控制窗进入帧或晚到结果污染新会话。 | 待执行 | 6 帧、5 个 90 像素重叠区的输出仍为 96x630，像素校验和为 `2267123376996061824`；真实滚动 UI 与双屏/混合 DPI 手工矩阵仍待执行。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
