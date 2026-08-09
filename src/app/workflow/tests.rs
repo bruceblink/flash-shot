@@ -5,8 +5,9 @@ use super::{
     claim_idle_completion, compose_captured_displays, copy_annotated_frame_selection,
     delayed_capture_status, drawing_status, export_path, fill_alpha, fill_color, format_hsl,
     format_recording_progress, hovered_color, intersect_rect, is_current_operation,
-    keyboard_command, load_annotation_document, next_annotation_counters,
-    next_annotation_selection, next_quick_save_path_with_prefix, next_recording_audio_selection,
+    keyboard_command, load_annotation_document, manual_scroll_control_bounds,
+    manual_scroll_control_rect, next_annotation_counters, next_annotation_selection,
+    next_quick_save_path_with_prefix, next_recording_audio_selection,
     next_recording_display_selection, ocr_language_label, ocr_support_status,
     open_annotation_project, open_image_project, pinned_size, project_image_path,
     quick_save_annotated_frame_selection_in_with_prefix,
@@ -1386,6 +1387,108 @@ fn display_window_bounds_convert_physical_pixels_with_monitor_scale() {
     assert_eq!(f32::from(bounds.origin.y), -200.0 / 1.5);
     assert_eq!(f32::from(bounds.size.width), 2560.0 / 1.5);
     assert_eq!(f32::from(bounds.size.height), 1440.0 / 1.5);
+}
+
+#[test]
+fn manual_scroll_controls_prefer_space_below_the_selected_viewport() {
+    let work_area = PhysicalRect {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1040,
+    };
+    let selection = PhysicalRect {
+        left: 100,
+        top: 100,
+        right: 800,
+        bottom: 600,
+    };
+
+    let controls = manual_scroll_control_rect(selection, work_area, 520, 136);
+
+    assert_eq!(controls.top, 612);
+    assert_eq!(controls.bottom, 748);
+    assert_eq!(controls.left, 190);
+    assert_eq!(controls.right, 710);
+}
+
+#[test]
+fn manual_scroll_controls_move_above_a_viewport_near_the_taskbar() {
+    let work_area = PhysicalRect {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1040,
+    };
+    let selection = PhysicalRect {
+        left: 600,
+        top: 700,
+        right: 1300,
+        bottom: 1000,
+    };
+
+    let controls = manual_scroll_control_rect(selection, work_area, 520, 136);
+
+    assert_eq!(controls.top, 552);
+    assert_eq!(controls.bottom, 688);
+    assert!(controls.right <= work_area.right);
+    assert!(controls.bottom <= work_area.bottom);
+}
+
+#[test]
+fn manual_scroll_controls_stay_inside_the_work_area_when_selection_fills_it() {
+    let work_area = PhysicalRect {
+        left: -1920,
+        top: 0,
+        right: 0,
+        bottom: 1040,
+    };
+
+    let controls = manual_scroll_control_rect(work_area, work_area, 520, 136);
+
+    assert!(controls.left >= work_area.left);
+    assert!(controls.top >= work_area.top);
+    assert!(controls.right <= work_area.right);
+    assert!(controls.bottom <= work_area.bottom);
+}
+
+#[test]
+fn manual_scroll_control_bounds_keep_logical_size_on_scaled_displays() {
+    let display = DisplayInfo {
+        id: "scaled".to_owned(),
+        platform_id: 8,
+        physical_bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1440,
+        },
+        work_area: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1392,
+        },
+        dpi_x: 144,
+        dpi_y: 144,
+        scale_factor: 1.5,
+        rotation: DisplayRotation::Landscape,
+        bits_per_pixel: 32,
+        primary: true,
+    };
+    let selection = PhysicalRect {
+        left: 300,
+        top: 150,
+        right: 1500,
+        bottom: 900,
+    };
+
+    let bounds = manual_scroll_control_bounds(selection, &[display]).unwrap();
+
+    assert_eq!(f32::from(bounds.origin.x), 340.0);
+    assert_eq!(f32::from(bounds.origin.y), 608.0);
+    assert_eq!(f32::from(bounds.size.width), 520.0);
+    assert_eq!(f32::from(bounds.size.height), 136.0);
 }
 
 #[test]

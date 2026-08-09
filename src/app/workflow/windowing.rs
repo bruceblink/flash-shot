@@ -5,6 +5,7 @@ use super::*;
 // Keeps every manual-scroll command on one stable row without squeezing labels into symbols.
 const MANUAL_SCROLL_CONTROL_WIDTH: f32 = 520.0;
 const MANUAL_SCROLL_CONTROL_HEIGHT: f32 = 136.0;
+const MANUAL_SCROLL_CONTROL_GAP: i32 = 12;
 
 pub(super) fn open_capture_overlays(
     app: gpui::Entity<FlashShotApp>,
@@ -143,16 +144,29 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
     if app.read(cx).manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
         return;
     }
-    let control_app = app.clone();
-    match cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::centered(
+    let control_bounds = app
+        .read(cx)
+        .manual_scroll_selection
+        .and_then(|selection| {
+            SystemDisplayProvider
+                .displays()
+                .ok()
+                .and_then(|displays| manual_scroll_control_bounds(selection, &displays))
+        })
+        .map(WindowBounds::Windowed)
+        .unwrap_or_else(|| {
+            WindowBounds::centered(
                 size(
                     px(MANUAL_SCROLL_CONTROL_WIDTH),
                     px(MANUAL_SCROLL_CONTROL_HEIGHT),
                 ),
                 cx,
-            )),
+            )
+        });
+    let control_app = app.clone();
+    match cx.open_window(
+        WindowOptions {
+            window_bounds: Some(control_bounds),
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Flash Shot - Manual Scroll".into()),
                 ..Default::default()
@@ -192,6 +206,124 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
             log::warn!(target: "flash_shot::scroll", "manual_scroll_control_open_failed error={error}");
         }
     }
+}
+
+/// Places the movable scroll controller beside the selected viewport when its display is known.
+///
+/// The controller must stay out of the captured pixels; otherwise a later frame could contain
+/// the controls instead of the page that the user scrolled.
+pub(super) fn manual_scroll_control_bounds(
+    selection: PhysicalRect,
+    displays: &[crate::platform::display::DisplayInfo],
+) -> Option<Bounds<Pixels>> {
+    let target = scroll_control_display(selection, displays)?;
+    let scale = target.scale_factor.max(1.0);
+    let width = (MANUAL_SCROLL_CONTROL_WIDTH * scale).round() as i32;
+    let height = (MANUAL_SCROLL_CONTROL_HEIGHT * scale).round() as i32;
+    let bounds = manual_scroll_control_rect(selection, target.work_area, width, height);
+
+    Some(Bounds::new(
+        point(
+            px(bounds.left as f32 / scale),
+            px(bounds.top as f32 / scale),
+        ),
+        size(
+            px(bounds.width() as f32 / scale),
+            px(bounds.height() as f32 / scale),
+        ),
+    ))
+}
+
+/// Chooses the display containing the selection center, falling back to the largest overlap.
+fn scroll_control_display(
+    selection: PhysicalRect,
+    displays: &[crate::platform::display::DisplayInfo],
+) -> Option<&crate::platform::display::DisplayInfo> {
+    let center = PhysicalPoint {
+        x: selection.left + selection.width() as i32 / 2,
+        y: selection.top + selection.height() as i32 / 2,
+    };
+    displays
+        .iter()
+        .find(|display| display.work_area.contains(center))
+        .or_else(|| {
+            displays
+                .iter()
+                .max_by_key(|display| rect_overlap_area(selection, display.work_area))
+        })
+}
+
+/// Picks the nearest work-area-clamped control position with the least selected-pixel overlap.
+pub(super) fn manual_scroll_control_rect(
+    selection: PhysicalRect,
+    work_area: PhysicalRect,
+    requested_width: i32,
+    requested_height: i32,
+) -> PhysicalRect {
+    let width = requested_width.clamp(1, work_area.width() as i32);
+    let height = requested_height.clamp(1, work_area.height() as i32);
+    let centered_x = selection.left + (selection.width() as i32 - width) / 2;
+    let centered_y = selection.top + (selection.height() as i32 - height) / 2;
+    let candidates = [
+        PhysicalPoint {
+            x: centered_x,
+            y: selection.bottom.saturating_add(MANUAL_SCROLL_CONTROL_GAP),
+        },
+        PhysicalPoint {
+            x: centered_x,
+            y: selection
+                .top
+                .saturating_sub(height + MANUAL_SCROLL_CONTROL_GAP),
+        },
+        PhysicalPoint {
+            x: selection.right.saturating_add(MANUAL_SCROLL_CONTROL_GAP),
+            y: centered_y,
+        },
+        PhysicalPoint {
+            x: selection
+                .left
+                .saturating_sub(width + MANUAL_SCROLL_CONTROL_GAP),
+            y: centered_y,
+        },
+    ];
+
+    candidates
+        .into_iter()
+        .map(|origin| clamp_scroll_control_rect(origin, work_area, width, height))
+        .min_by_key(|candidate| rect_overlap_area(*candidate, selection))
+        .expect("manual scroll control has placement candidates")
+}
+
+/// Keeps a controller fully inside the target display's work area, excluding taskbar space.
+fn clamp_scroll_control_rect(
+    origin: PhysicalPoint,
+    work_area: PhysicalRect,
+    width: i32,
+    height: i32,
+) -> PhysicalRect {
+    let max_left = work_area.right.saturating_sub(width).max(work_area.left);
+    let max_top = work_area.bottom.saturating_sub(height).max(work_area.top);
+    let left = origin.x.clamp(work_area.left, max_left);
+    let top = origin.y.clamp(work_area.top, max_top);
+    PhysicalRect {
+        left,
+        top,
+        right: left.saturating_add(width),
+        bottom: top.saturating_add(height),
+    }
+}
+
+/// Returns the shared physical-pixel area used to rank control positions and displays.
+fn rect_overlap_area(left: PhysicalRect, right: PhysicalRect) -> i64 {
+    let width = left
+        .right
+        .min(right.right)
+        .saturating_sub(left.left.max(right.left));
+    let height = left
+        .bottom
+        .min(right.bottom)
+        .saturating_sub(left.top.max(right.top));
+    i64::from(width.max(0)) * i64::from(height.max(0))
 }
 
 pub(super) fn close_overlay_windows(
