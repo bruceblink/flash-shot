@@ -39,6 +39,7 @@ const DSHOW_AUDIO_DEVICE_ARGUMENTS: &[&str] = &[
 
 /// Maximum time a recording process gets to finalize its container after receiving `q`.
 pub const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const FFMPEG_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 
 /// Read-only capabilities exposed by an installed FFmpeg executable.
@@ -1102,18 +1103,7 @@ fn audio_source_from_config(
 }
 
 fn run_probe(executable: &OsStr, arguments: &[&str]) -> io::Result<Output> {
-    let output = Command::new(executable)
-        .args(arguments)
-        .output()
-        .map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!(
-                    "could not start FFmpeg '{}': {error}",
-                    executable.to_string_lossy()
-                ),
-            )
-        })?;
+    let output = run_probe_output(executable, arguments)?;
     if output.status.success() {
         return Ok(output);
     }
@@ -1129,9 +1119,18 @@ fn run_probe(executable: &OsStr, arguments: &[&str]) -> io::Result<Output> {
 }
 
 fn run_listing_probe(executable: &Path, arguments: &[&str]) -> io::Result<String> {
-    let output = Command::new(executable)
+    Ok(combined_output(&run_probe_output(
+        executable.as_os_str(),
+        arguments,
+    )?))
+}
+
+fn run_probe_output(executable: &OsStr, arguments: &[&str]) -> io::Result<Output> {
+    let mut child = Command::new(executable)
         .args(arguments)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| {
             io::Error::new(
                 error.kind(),
@@ -1141,7 +1140,35 @@ fn run_listing_probe(executable: &Path, arguments: &[&str]) -> io::Result<String
                 ),
             )
         })?;
-    Ok(combined_output(&output))
+    wait_for_probe_child(&mut child, FFMPEG_PROBE_TIMEOUT)?;
+    child.wait_with_output()
+}
+
+/// Polls a read-only FFmpeg probe and kills it if discovery exceeds its time budget.
+fn wait_for_probe_child(child: &mut Child, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "FFmpeg probe exceeded {} ms and was terminated",
+                        timeout.as_millis()
+                    ),
+                ));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        }
+    }
 }
 
 fn combined_output(output: &Output) -> String {
@@ -1223,15 +1250,22 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioSource, DEVICE_ARGUMENTS, FORMAT_ARGUMENTS, FfmpegCapabilities, FfmpegCommand,
-        GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingAudioConfig, RecordingCommands,
-        RecordingProcess, RecordingProgress, RecordingRequest, RecordingSession, RecordingState,
-        RecordingTarget, VERSION_ARGUMENTS, audio_source_from_config, build_recording_command,
-        diagnostic_suffix, executable_from, first_diagnostic_line, graceful_stop_input,
-        parse_dshow_audio_devices, parse_input_formats, parse_version, read_bounded_diagnostics,
+        AudioSource, DEVICE_ARGUMENTS, FFMPEG_PROBE_TIMEOUT, FORMAT_ARGUMENTS, FfmpegCapabilities,
+        FfmpegCommand, GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingAudioConfig,
+        RecordingCommands, RecordingProcess, RecordingProgress, RecordingRequest, RecordingSession,
+        RecordingState, RecordingTarget, VERSION_ARGUMENTS, audio_source_from_config,
+        build_recording_command, diagnostic_suffix, executable_from, first_diagnostic_line,
+        graceful_stop_input, parse_dshow_audio_devices, parse_input_formats, parse_version,
+        read_bounded_diagnostics, wait_for_probe_child,
     };
     use crate::domain::geometry::PhysicalRect;
-    use std::{ffi::OsString, io::Cursor, path::PathBuf, time::Duration};
+    use std::{
+        ffi::OsString,
+        io::Cursor,
+        path::PathBuf,
+        process::{Command, Stdio},
+        time::Duration,
+    };
 
     const FORMATS: &str = "\
  File formats:\n\
@@ -1251,6 +1285,33 @@ mod tests {
 [dshow @ 000001]  \"Microphone (USB Audio)\"\n\
 [dshow @ 000001]  \"Line In\"\n\
 ";
+
+    #[test]
+    fn ffmpeg_probes_have_a_bounded_timeout() {
+        assert_eq!(FFMPEG_PROBE_TIMEOUT, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn stuck_ffmpeg_probes_are_terminated_at_the_deadline() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "ping -n 5 127.0.0.1 >NUL"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 2"]);
+            command
+        };
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let error = wait_for_probe_child(&mut child, Duration::from_millis(100)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(child.try_wait().unwrap().is_some());
+    }
 
     #[test]
     fn probe_arguments_are_read_only_and_hide_banner_noise() {

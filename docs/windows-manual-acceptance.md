@@ -130,6 +130,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `7034a07` | `recognition-acceptance` 探针升级为 schema 2；默认模式只读探测并保持非阻塞，`--require-ocr` 与 `--require-translation` 可分别把依赖就绪状态作为机器可读退出门禁。 | 待执行 | 当前默认报告 `target/ui-acceptance/recognition-acceptance-default-current.json` 中 OCR 为 `program not found`、翻译端点未配置且 `passed: true`；显式 `--require-ocr` 与 `--require-translation` 分别在 `target/ui-acceptance/recognition-acceptance-required-ocr-current.json`、`target/ui-acceptance/recognition-acceptance-required-translation-current.json` 写入 `passed: false` 并以退出码 1 结束。未安装 Tesseract 或未配置翻译服务时，不将 OCR/翻译真实 UI 矩阵标为通过。 |
 | 2026-08-10 | `current-ocr-timeout` | 347 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；本地 OCR 子进程增加 20 秒有界等待，正常退出会回收输出，超时会终止进程并返回 `TimedOut`，相关生命周期回归测试通过。 | 待执行 | 这补充 OCR 失败恢复的自动证据，不替代含文字选区的真实 OCR UI、翻译服务失败后重试和滚动截图手工矩阵；当前机器仍未安装 Tesseract，真实依赖门禁保持未通过。 |
 | 2026-08-10 | `current-update-timeout` | 更新 manifest 请求增加 15 秒连接与总超时，并保留传输超时错误类型；更新配置与 manifest 校验测试通过，严格 Clippy、格式检查和全目标编译通过。 | 待执行 | 这是显式更新检查的失败恢复自动证据；当前未配置 `FLASH_SHOT_UPDATE_ENDPOINT`，因此未进行外部发布端点实测。 |
+| 2026-08-10 | `current-ffmpeg-probe-timeout` | 350 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；FFmpeg 版本、格式、设备和音频枚举探测增加 10 秒有界等待，卡住的探测进程会被终止并回收。 | 待执行 | 这补充录屏环境检查的自动失败恢复证据；本机 FFmpeg 9.0 的三种录制目标仍由既有 `recording-acceptance` 报告验证，完整录屏 UI 手工矩阵仍待执行。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
