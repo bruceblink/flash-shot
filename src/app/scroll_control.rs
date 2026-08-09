@@ -1,4 +1,4 @@
-//! Small movable controller used while a user manually scrolls the target content.
+//! Small movable controller used while a user captures scrolling content.
 
 use gpui::{
     Context, Entity, FocusHandle, Focusable, FontWeight, Render, Subscription, Window, div,
@@ -123,7 +123,7 @@ impl Render for ManualScrollControl {
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(colors.text)
-                            .child("Manual scroll"),
+                            .child("Scrolling screenshot"),
                     )
                     .child(
                         div()
@@ -142,24 +142,11 @@ impl Render for ManualScrollControl {
                     .flex_wrap()
                     .gap_2()
                     .child(manual_scroll_button(
-                        "scroll-assist-down",
-                        "Scroll down",
-                        colors,
-                        !controls_busy,
-                        ManualScrollButtonTone::Neutral,
-                        cx.listener(|this, _, _, cx| {
-                            let app = this.app.clone();
-                            cx.defer(move |cx| {
-                                app.update(cx, |app, cx| app.assist_manual_scroll(cx))
-                            });
-                        }),
-                    ))
-                    .child(manual_scroll_button(
                         "scroll-auto-capture-next",
                         auto_scroll_capture_label(auto_capture_pending),
                         colors,
                         !controls_busy,
-                        ManualScrollButtonTone::Neutral,
+                        ManualScrollButtonTone::Primary,
                         cx.listener(|this, _, _, cx| {
                             let app = this.app.clone();
                             cx.defer(move |cx| {
@@ -172,11 +159,7 @@ impl Render for ManualScrollControl {
                         manual_scroll_capture_label(capture_in_flight, retry_available),
                         colors,
                         !controls_busy,
-                        if controls_busy {
-                            ManualScrollButtonTone::Neutral
-                        } else {
-                            ManualScrollButtonTone::Primary
-                        },
+                        ManualScrollButtonTone::Neutral,
                         cx.listener(|this, _, _, cx| {
                             let app = this.app.clone();
                             cx.defer(move |cx| {
@@ -233,9 +216,9 @@ fn manual_scroll_capture_label(capture_in_flight: bool, retry_available: bool) -
     if capture_in_flight {
         "Capturing..."
     } else if retry_available {
-        "Retry frame"
+        "Retry current"
     } else {
-        "Capture next"
+        "Capture current"
     }
 }
 
@@ -265,8 +248,8 @@ mod tests {
 
     #[test]
     fn capture_action_describes_its_busy_state() {
-        assert_eq!(manual_scroll_capture_label(false, false), "Capture next");
-        assert_eq!(manual_scroll_capture_label(false, true), "Retry frame");
+        assert_eq!(manual_scroll_capture_label(false, false), "Capture current");
+        assert_eq!(manual_scroll_capture_label(false, true), "Retry current");
         assert_eq!(manual_scroll_capture_label(true, true), "Capturing...");
     }
 

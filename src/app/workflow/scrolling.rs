@@ -1,4 +1,4 @@
-//! Manual scrolling-capture workflow.
+//! Scrolling-screenshot workflow with assisted and manual frame capture.
 
 use super::*;
 
@@ -7,7 +7,7 @@ const AUTO_SCROLL_SETTLE_DELAY: Duration = Duration::from_millis(400);
 impl FlashShotApp {
     pub(in crate::app) fn start_manual_scroll(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = self.session.selection() else {
-            self.status = "Select an area before starting manual scroll capture".to_owned();
+            self.status = "Select an area before starting a scrolling screenshot".to_owned();
             cx.notify();
             return;
         };
@@ -19,13 +19,13 @@ impl FlashShotApp {
         let first = match frame.crop(selection) {
             Ok(frame) => frame,
             Err(error) => {
-                self.status = format!("Could not start manual scroll: {error}");
+                self.status = format!("Could not start scrolling screenshot: {error}");
                 cx.notify();
                 return;
             }
         };
         if self.manual_scroll.state() == crate::scroll::ManualScrollState::Collecting {
-            self.status = "Manual scroll capture is already active".to_owned();
+            self.status = "A scrolling screenshot is already active".to_owned();
             cx.notify();
             return;
         }
@@ -33,13 +33,12 @@ impl FlashShotApp {
             let _ = self.manual_scroll.reset();
         }
         if let Err(error) = self.manual_scroll.begin(first) {
-            self.status = format!("Could not start manual scroll: {error}");
+            self.status = format!("Could not start scrolling screenshot: {error}");
             cx.notify();
             return;
         }
         self.manual_scroll_selection = Some(selection);
-        self.status =
-            "Manual scroll started. Scroll the target, then capture the next frame.".to_owned();
+        self.status = "Scrolling screenshot ready. One frame captured.".to_owned();
         self.close_capture_overlays(cx);
         let app = cx.entity();
         cx.defer(move |cx| open_manual_scroll_control(app, cx));
@@ -48,12 +47,12 @@ impl FlashShotApp {
 
     pub(in crate::app) fn capture_manual_scroll_frame(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = self.manual_scroll_selection else {
-            self.status = "Manual scroll capture is not active".to_owned();
+            self.status = "Scrolling screenshot is not active".to_owned();
             cx.notify();
             return;
         };
         if self.manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
-            self.status = "Manual scroll capture is not collecting frames".to_owned();
+            self.status = "Scrolling screenshot is not collecting frames".to_owned();
             cx.notify();
             return;
         }
@@ -89,12 +88,12 @@ impl FlashShotApp {
     /// new workflow, so delayed input never appends a frame to the wrong scrolling session.
     pub(in crate::app) fn auto_capture_manual_scroll_frame(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = self.manual_scroll_selection else {
-            self.status = "Manual scroll capture is not active".to_owned();
+            self.status = "Scrolling screenshot is not active".to_owned();
             cx.notify();
             return;
         };
         if self.manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
-            self.status = "Manual scroll capture is not collecting frames".to_owned();
+            self.status = "Scrolling screenshot is not collecting frames".to_owned();
             cx.notify();
             return;
         }
@@ -133,31 +132,6 @@ impl FlashShotApp {
             }
         })
         .detach();
-    }
-
-    pub(in crate::app) fn assist_manual_scroll(&mut self, cx: &mut Context<Self>) {
-        let Some(selection) = self.manual_scroll_selection else {
-            self.status = "Manual scroll capture is not active".to_owned();
-            cx.notify();
-            return;
-        };
-        if self.manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
-            self.status = "Manual scroll capture is not collecting frames".to_owned();
-            cx.notify();
-            return;
-        }
-        let target = scroll_target(selection);
-        match crate::platform::scroll::scroll_notches_at(
-            target,
-            crate::platform::scroll::DEFAULT_SCROLL_NOTCHES,
-        ) {
-            Ok(()) => {
-                self.status =
-                    "Scrolled target content. Capture the next frame when it settles.".to_owned()
-            }
-            Err(error) => self.status = format!("Could not assist scroll: {error}"),
-        }
-        cx.notify();
     }
 
     /// Claims only the matching delayed request before beginning the normal capture pipeline.
@@ -212,7 +186,7 @@ impl FlashShotApp {
         let stitched = match self.manual_scroll.finish(Default::default()) {
             Ok(stitched) => stitched,
             Err(error) => {
-                self.status = format!("Could not finish manual scroll: {error}");
+                self.status = format!("Could not finish scrolling screenshot: {error}");
                 cx.notify();
                 return;
             }
@@ -241,7 +215,7 @@ impl FlashShotApp {
         match result {
             Ok(()) => {
                 self.status = format!(
-                    "Manual scroll stitched {} frames with {} overlap joins",
+                    "Scrolling screenshot stitched {} frames with {} overlap joins",
                     self.manual_scroll.frame_count(),
                     stitched.overlaps.len()
                 );
@@ -258,7 +232,7 @@ impl FlashShotApp {
     pub(in crate::app) fn cancel_manual_scroll(&mut self, cx: &mut Context<Self>) {
         self.abandon_manual_scroll();
         self.close_manual_scroll_window(cx);
-        self.status = "Manual scroll capture cancelled".to_owned();
+        self.status = "Scrolling screenshot cancelled".to_owned();
         self.return_to_background();
         cx.notify();
     }
@@ -266,7 +240,7 @@ impl FlashShotApp {
     pub(in crate::app) fn manual_scroll_control_closed(&mut self, cx: &mut Context<Self>) {
         self.abandon_manual_scroll();
         self.scroll_window = None;
-        self.status = "Manual scroll capture cancelled".to_owned();
+        self.status = "Scrolling screenshot cancelled".to_owned();
         self.return_to_background();
         cx.notify();
     }

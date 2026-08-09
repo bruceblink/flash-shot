@@ -75,7 +75,7 @@ const MAGNIFIER_GAP: f32 = 18.0;
 /// Names the less-frequent actions at the exact point where users discover them.
 fn secondary_action_tooltip(action_id: &str) -> &'static str {
     match action_id {
-        "scroll" => "Capture a long page one scroll at a time",
+        "scroll" => "Capture a long page by scrolling and stitching viewports",
         "qr" => "Read QR codes from the selection",
         "ocr" => "Recognize text locally with Tesseract",
         "translate" => "Recognize text, then use the configured translation service",
@@ -1832,7 +1832,7 @@ impl Render for CaptureOverlay {
                                                         })
                                                     });
                                                 }))
-                                                .child("Scroll"),
+                                                .child("Scroll shot"),
                                         )
                                         .child(
                                             div()

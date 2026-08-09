@@ -2,9 +2,9 @@
 
 use super::*;
 
-// Keeps every manual-scroll command on one stable row without squeezing labels into symbols.
+// Keeps every scrolling-screenshot command on one stable row without squeezing labels.
 const MANUAL_SCROLL_CONTROL_WIDTH: f32 = 520.0;
-// Leaves room for the title bar, two wrapped action rows, and a readable status line.
+// Leaves room for the title bar, one action row, and a wrapped failure status.
 const MANUAL_SCROLL_CONTROL_HEIGHT: f32 = 176.0;
 const MANUAL_SCROLL_CONTROL_GAP: i32 = 12;
 
@@ -169,7 +169,7 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
         WindowOptions {
             window_bounds: Some(control_bounds),
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Flash Shot - Manual Scroll".into()),
+                title: Some("Flash Shot - Scrolling Screenshot".into()),
                 ..Default::default()
             }),
             focus: true,
@@ -200,7 +200,7 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
                 app.manual_scroll_selection = None;
                 app.manual_scroll_capture_in_flight = false;
                 app.manual_scroll_auto_capture_generation = None;
-                app.status = format!("Could not open manual scroll controls: {error}");
+                app.status = format!("Could not open scrolling screenshot controls: {error}");
                 app.return_to_background();
                 cx.notify();
             });
