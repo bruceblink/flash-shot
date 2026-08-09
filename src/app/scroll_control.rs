@@ -230,7 +230,7 @@ impl Render for ManualScrollControl {
 
 /// Limits Escape cancellation to an unmodified key so text and system shortcuts remain isolated.
 fn manual_scroll_cancel_key(keystroke: &Keystroke) -> bool {
-    keystroke.key == "escape" && !keystroke.modifiers.shift
+    keystroke.key == "escape" && !keystroke.modifiers.modified()
 }
 
 /// Keeps the primary action explicit while one scroll frame is being captured.
@@ -296,6 +296,18 @@ mod tests {
         ));
         assert!(!manual_scroll_cancel_key(
             &Keystroke::parse("shift-escape").unwrap()
+        ));
+        assert!(!manual_scroll_cancel_key(
+            &Keystroke::parse("ctrl-escape").unwrap()
+        ));
+        assert!(!manual_scroll_cancel_key(
+            &Keystroke::parse("alt-escape").unwrap()
+        ));
+        assert!(!manual_scroll_cancel_key(
+            &Keystroke::parse("cmd-escape").unwrap()
+        ));
+        assert!(!manual_scroll_cancel_key(
+            &Keystroke::parse("fn-escape").unwrap()
         ));
     }
 }
