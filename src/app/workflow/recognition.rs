@@ -14,8 +14,8 @@ impl FlashShotApp {
             return;
         };
 
+        let generation = self.begin_recognition_operation();
         self.status = "Recognizing QR code locally...".to_owned();
-        let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -83,12 +83,11 @@ impl FlashShotApp {
         };
 
         let ocr_language = self.settings.ocr_language.clone();
-        self.recognition_retry = None;
+        let generation = self.begin_recognition_operation();
         self.status = format!(
             "Recognizing text locally ({})...",
             ocr_language_label(ocr_language.as_deref())
         );
-        let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -152,7 +151,7 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
-        self.recognition_retry = None;
+        let generation = self.begin_recognition_operation();
         let config = match crate::translation::TranslationConfig::from_environment() {
             Ok(Some(config)) => config,
             Ok(None) => {
@@ -177,7 +176,6 @@ impl FlashShotApp {
         let ocr_language = self.settings.ocr_language.clone();
 
         self.status = "Recognizing and translating text...".to_owned();
-        let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -196,6 +194,14 @@ impl FlashShotApp {
             }
         })
         .detach();
+    }
+
+    /// Starts one recognition request, clearing stale output and invalidating older async tasks.
+    fn begin_recognition_operation(&mut self) -> u64 {
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        self.recognition_result = None;
+        self.recognition_retry = None;
+        self.operation_generation
     }
 
     fn finish_translation(
