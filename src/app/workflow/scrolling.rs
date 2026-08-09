@@ -186,6 +186,9 @@ impl FlashShotApp {
         let stitched = match self.manual_scroll.finish(Default::default()) {
             Ok(stitched) => stitched,
             Err(error) => {
+                self.abandon_manual_scroll();
+                self.close_manual_scroll_window(cx);
+                self.return_to_background();
                 self.status = format!("Could not finish scrolling screenshot: {error}");
                 cx.notify();
                 return;
@@ -224,7 +227,14 @@ impl FlashShotApp {
                 let app = cx.entity();
                 cx.defer(move |cx| open_image_overlay(app, bounds, cx));
             }
-            Err(error) => self.status = format!("Could not open stitched capture: {error}"),
+            Err(error) => {
+                // A completed session cannot be captured again, so close the controller and
+                // return to the tray instead of leaving the user with disabled actions.
+                self.abandon_manual_scroll();
+                self.close_manual_scroll_window(cx);
+                self.return_to_background();
+                self.status = format!("Could not open stitched capture: {error}");
+            }
         }
         cx.notify();
     }
