@@ -107,6 +107,9 @@ pub struct FlashShotApp {
     status: String,
     performance: PerformanceRecorder,
     history: ScreenshotHistory,
+    // Tracks the workflow that produced the current editable frame so managed quick saves keep
+    // scrolling screenshots distinguishable from ordinary selections in history.
+    history_source: crate::history::HistorySource,
     history_expanded: bool,
     history_filter: HistoryFilter,
     history_search: HistorySearch,
@@ -143,6 +146,7 @@ pub(super) enum HistoryFilter {
     #[default]
     All,
     Selection,
+    Scrolling,
     FullScreen,
     Pinned,
 }
@@ -175,12 +179,19 @@ pub(super) struct HistorySearch {
 }
 
 impl HistoryFilter {
-    pub(super) const ALL: [Self; 4] = [Self::All, Self::Selection, Self::FullScreen, Self::Pinned];
+    pub(super) const ALL: [Self; 5] = [
+        Self::All,
+        Self::Selection,
+        Self::Scrolling,
+        Self::FullScreen,
+        Self::Pinned,
+    ];
 
     pub(super) const fn label(self) -> &'static str {
         match self {
             Self::All => "All",
             Self::Selection => "Selections",
+            Self::Scrolling => "Scrolling",
             Self::FullScreen => "Full screen",
             Self::Pinned => "Pinned",
         }
@@ -190,6 +201,7 @@ impl HistoryFilter {
         match self {
             Self::All => true,
             Self::Selection => matches!(source, crate::history::HistorySource::Selection),
+            Self::Scrolling => matches!(source, crate::history::HistorySource::Scrolling),
             Self::FullScreen => matches!(source, crate::history::HistorySource::FullScreen),
             Self::Pinned => matches!(source, crate::history::HistorySource::Pinned),
         }
@@ -497,6 +509,7 @@ impl FlashShotApp {
             status,
             performance,
             history,
+            history_source: crate::history::HistorySource::Selection,
             history_expanded: false,
             history_filter: HistoryFilter::All,
             history_search: HistorySearch::default(),
@@ -806,7 +819,8 @@ impl Focusable for FlashShotApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        HistoryFilter, byte_range_to_utf16_range, selected_history_paths, utf16_range_to_byte_range,
+        HistoryFilter, byte_range_to_utf16_range, history_entry_matches, selected_history_paths,
+        utf16_range_to_byte_range,
     };
     use crate::history::{HistoryEntry, HistorySource};
     use std::{
@@ -855,5 +869,18 @@ mod tests {
             selected_history_paths(&entries, &selected, HistoryFilter::All, "invoice"),
             vec![first]
         );
+    }
+
+    #[test]
+    fn scrolling_history_filter_matches_only_scrolling_captures() {
+        let entry = HistoryEntry {
+            path: PathBuf::from("F:/captures/long-page.png"),
+            created_at_ms: 1,
+            source: HistorySource::Scrolling,
+        };
+
+        assert!(history_entry_matches(&entry, HistoryFilter::Scrolling, ""));
+        assert!(!history_entry_matches(&entry, HistoryFilter::Selection, ""));
+        assert_eq!(HistorySource::Scrolling.label(), "Scrolling screenshot");
     }
 }

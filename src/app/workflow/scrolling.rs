@@ -203,6 +203,7 @@ impl FlashShotApp {
             self.preview = Some(preview.image);
             self.frame = Some(frame);
             self.annotation_document = Some(document);
+            self.history_source = crate::history::HistorySource::Scrolling;
             self.annotation_history = Default::default();
             self.annotation_editor = Default::default();
             self.annotation_tool = None;

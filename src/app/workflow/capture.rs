@@ -258,6 +258,7 @@ impl FlashShotApp {
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let generation = self.operation_generation;
+        self.history_source = crate::history::HistorySource::Selection;
         self.frame = None;
         self.annotation_document = None;
         self.annotation_history = Default::default();
@@ -466,6 +467,7 @@ impl FlashShotApp {
         self.full_screen_pin_generation = None;
         self.clipboard_pin_generation = None;
         self.history_pin_generation = None;
+        self.history_source = crate::history::HistorySource::Selection;
         self.frame = None;
         self.annotation_document = None;
         self.annotation_history = Default::default();

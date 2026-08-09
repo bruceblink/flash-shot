@@ -36,6 +36,7 @@ pub enum HistorySource {
     #[default]
     Unknown,
     Selection,
+    Scrolling,
     FullScreen,
     Pinned,
 }
@@ -46,6 +47,7 @@ impl HistorySource {
         match self {
             Self::Unknown => "Saved capture",
             Self::Selection => "Selection",
+            Self::Scrolling => "Scrolling screenshot",
             Self::FullScreen => "Full screen",
             Self::Pinned => "Pinned image",
         }

@@ -327,6 +327,7 @@ impl FlashShotApp {
                     let (next_annotation_id, next_sequence_number) =
                         next_annotation_counters(&document);
                     self.session.select(bounds).map_err(std::io::Error::other)?;
+                    self.history_source = crate::history::HistorySource::Selection;
                     self.preview = Some(preview.image);
                     self.frame = Some(frame);
                     self.annotation_document = Some(document);

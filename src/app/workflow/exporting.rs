@@ -338,14 +338,13 @@ impl FlashShotApp {
                     self.status = error.to_string();
                 } else {
                     let history_status = managed
-                        .then(|| {
-                            self.record_managed_save_with_recovery(
-                                &path,
-                                crate::history::HistorySource::Selection,
-                            )
-                        })
+                        .then(|| self.record_managed_save_with_recovery(&path, self.history_source))
                         .flatten();
-                    self.status = format!("Selection saved to {}", path.display());
+                    self.status = format!(
+                        "{} saved to {}",
+                        self.history_source.label(),
+                        path.display()
+                    );
                     if let Some(history_status) = history_status {
                         self.status.push_str(&history_status);
                     }
