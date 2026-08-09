@@ -52,6 +52,9 @@ cargo test --lib
 cargo run --release --bin capture-stress -- --output target/capture-stress.json
 cargo run --release --bin annotation-stress -- --iterations 30
 cargo run --release --bin windows-acceptance-probe -- --output target/windows-acceptance-environment.json
+cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acceptance/settings-light-980x760.png
+cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
+cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
 ```
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
@@ -69,6 +72,7 @@ cargo run --release --bin windows-acceptance-probe -- --output target/windows-ac
 | 2026-08-09 | `a7c9edb` | 327 项库测试、严格 Clippy、格式检查和全目标编译通过；`target/windows-acceptance-environment-20260809-ffmpeg9.json` 识别 FFmpeg 9.0 与 `gdigrab`。 | 待执行 | 受限 640x360 桌面区域已录制为 2 秒 H.264 MP4，并由 `ffprobe` 验证后删除临时内容。此冒烟测试证明本机 FFmpeg 可生成 MP4；Flash Shot 应用内显示器、窗口、区域录制及暂停/恢复/停止矩阵仍待执行。 |
 | 2026-08-09 | `cfeec74` | 331 项库测试、严格 Clippy、格式检查和全目标编译通过。 | 待执行 | 在 2560x1440、100% 显示器上创建 Arrow 后从 Layers 选中它；Selected 组保持 Delete/Duplicate/Arrange，展开 Arrange 后 Rotate 90 与全部层级命令仍清晰可点，面板翻到选区上方且没有遮挡标注。证据位于 `target/ui-acceptance/annotation-p1-selection-context-20260809.png` 与 `target/ui-acceptance/annotation-p1-arrange-context-20260809.png`。这关闭标注高密度上下文的 P1 差距，不替代窄选区或混合 DPI 的 P0 验收。 |
 | 2026-08-10 | `e71230a` | 332 项库测试、严格 Clippy、格式检查和浅色主题语义色对比度门禁通过；环境探测保存为 `target/windows-acceptance-environment-20260810.json`。 | 待执行 | 浅色主题的 muted、accent、success 前景色均调整到在 background/panel 上至少 4.5:1。本机会话仍只有一块 2560x1440、100% 显示器，未执行 150%/200% 或新的浅色主题截图，因此设置页 P1 实机项保持待执行。 |
+| 2026-08-10 | `c3dd07a` | Release 原生设置页截图探针在深色/浅色与 980x760/520x640 组合运行成功；332 项库测试、严格 Clippy、格式检查和全目标编译通过。 | 待执行 | 深色 980x760、浅色 980x760 和浅色 520x640 均无文字截断、控件重叠或导航跳动，证据位于 `target/ui-acceptance/settings-p1-dark-980x760-20260810.png`、`target/ui-acceptance/settings-p1-light-980x760-20260810.png` 与 `target/ui-acceptance/settings-p1-light-520x640-20260810.png`。深浅主题 100% 项通过；本机没有 150%/200% 环境，设置页 P1 仍不整体标为通过。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
