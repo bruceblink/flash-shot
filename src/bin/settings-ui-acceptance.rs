@@ -2,7 +2,7 @@
 
 use std::{
     fs, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process, thread,
     time::{Duration, Instant},
 };
@@ -20,8 +20,11 @@ use std::ffi::c_void;
 use windows_sys::Win32::{
     Foundation::{LPARAM, RECT},
     System::Threading::GetCurrentProcessId,
-    UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible,
+    UI::{
+        HiDpi::GetDpiForWindow,
+        WindowsAndMessaging::{
+            EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible,
+        },
     },
 };
 #[cfg(windows)]
@@ -29,6 +32,28 @@ use windows_sys::core::BOOL;
 
 const DEFAULT_RENDER_SETTLE_DELAY: Duration = Duration::from_millis(1_500);
 const DEFAULT_LINGER_DELAY: Duration = Duration::ZERO;
+const DEFAULT_WINDOWS_DPI: u32 = 96;
+
+#[derive(serde::Serialize)]
+struct ScreenshotMetadata {
+    screenshot: String,
+    physical_bounds: ScreenshotBounds,
+    dpi: u32,
+    scale_factor: f32,
+}
+
+#[derive(serde::Serialize)]
+struct ScreenshotBounds {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+struct VisibleProcessWindow {
+    bounds: flash_shot::domain::geometry::PhysicalRect,
+    dpi: u32,
+}
 
 #[derive(Debug)]
 struct Options {
@@ -163,9 +188,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn spawn_screenshot_worker(output: PathBuf, settle_delay: Duration, linger_delay: Duration) {
     thread::spawn(move || {
         thread::sleep(settle_delay);
-        let result = visible_process_window_bounds().and_then(|bounds| {
-            let frame = SystemCaptureBackend.capture(bounds)?;
-            frame.save_png(output)
+        let result = visible_process_window().and_then(|window| {
+            let frame = SystemCaptureBackend.capture(window.bounds)?;
+            frame.save_png(&output)?;
+            write_screenshot_metadata(&output, &window)
         });
         match result {
             Ok(()) => {
@@ -180,12 +206,12 @@ fn spawn_screenshot_worker(output: PathBuf, settle_delay: Duration, linger_delay
     });
 }
 
-/// Finds the first visible top-level HWND owned by this acceptance process.
+/// Finds this process's visible native window together with its active DPI scaling.
 #[cfg(windows)]
-fn visible_process_window_bounds() -> io::Result<flash_shot::domain::geometry::PhysicalRect> {
+fn visible_process_window() -> io::Result<VisibleProcessWindow> {
     struct Search {
         process_id: u32,
-        rect: Option<RECT>,
+        window: Option<VisibleProcessWindow>,
     }
 
     unsafe extern "system" fn callback(window: *mut c_void, parameter: LPARAM) -> BOOL {
@@ -197,7 +223,18 @@ fn visible_process_window_bounds() -> io::Result<flash_shot::domain::geometry::P
         }
         let mut rect = RECT::default();
         if unsafe { GetWindowRect(window, &mut rect) } != 0 {
-            search.rect = Some(rect);
+            // A visible top-level window should always report its monitor DPI. Keep 96 as a
+            // conservative fallback for older or transient Windows window handles.
+            let dpi = unsafe { GetDpiForWindow(window) }.max(DEFAULT_WINDOWS_DPI);
+            search.window = Some(VisibleProcessWindow {
+                bounds: flash_shot::domain::geometry::PhysicalRect {
+                    left: rect.left,
+                    top: rect.top,
+                    right: rect.right,
+                    bottom: rect.bottom,
+                },
+                dpi,
+            });
             return 0;
         }
         1
@@ -205,24 +242,51 @@ fn visible_process_window_bounds() -> io::Result<flash_shot::domain::geometry::P
 
     let mut search = Search {
         process_id: unsafe { GetCurrentProcessId() },
-        rect: None,
+        window: None,
     };
     unsafe { EnumWindows(Some(callback), &mut search as *mut Search as LPARAM) };
-    let rect = search.rect.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound, "visible settings window not found")
-    })?;
-    Ok(flash_shot::domain::geometry::PhysicalRect {
-        left: rect.left,
-        top: rect.top,
-        right: rect.right,
-        bottom: rect.bottom,
-    })
+    search
+        .window
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "visible settings window not found"))
+}
+
+/// Writes machine-readable scale evidence beside a native screenshot without changing its pixels.
+fn write_screenshot_metadata(output: &Path, window: &VisibleProcessWindow) -> io::Result<()> {
+    let metadata = ScreenshotMetadata {
+        screenshot: output
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("settings-ui.png")
+            .to_owned(),
+        physical_bounds: ScreenshotBounds {
+            left: window.bounds.left,
+            top: window.bounds.top,
+            right: window.bounds.right,
+            bottom: window.bounds.bottom,
+        },
+        dpi: window.dpi,
+        scale_factor: scale_factor_for_dpi(window.dpi),
+    };
+    let encoded = serde_json::to_vec_pretty(&metadata).map_err(io::Error::other)?;
+    fs::write(screenshot_metadata_path(output), encoded)
+}
+
+/// Maps Windows DPI values to the logical-to-physical scale used by the screenshot window.
+fn scale_factor_for_dpi(dpi: u32) -> f32 {
+    dpi.max(DEFAULT_WINDOWS_DPI) as f32 / DEFAULT_WINDOWS_DPI as f32
+}
+
+/// Keeps evidence pairs easy to find by using the screenshot's filename with a JSON extension.
+fn screenshot_metadata_path(output: &Path) -> PathBuf {
+    output.with_extension("json")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_linger_delay, parse_settle_delay};
-    use std::{ffi::OsString, time::Duration};
+    use super::{
+        parse_linger_delay, parse_settle_delay, scale_factor_for_dpi, screenshot_metadata_path,
+    };
+    use std::{ffi::OsString, path::Path, time::Duration};
 
     #[test]
     fn acceptance_linger_delay_is_bounded_and_optional() {
@@ -241,10 +305,26 @@ mod tests {
             Duration::from_millis(1500)
         );
     }
+
+    #[test]
+    fn dpi_metadata_uses_standard_windows_scale_factors() {
+        assert_eq!(scale_factor_for_dpi(96), 1.0);
+        assert_eq!(scale_factor_for_dpi(144), 1.5);
+        assert_eq!(scale_factor_for_dpi(192), 2.0);
+        assert_eq!(scale_factor_for_dpi(0), 1.0);
+    }
+
+    #[test]
+    fn screenshot_metadata_is_written_beside_the_png() {
+        assert_eq!(
+            screenshot_metadata_path(Path::new("target/ui-acceptance/settings.png")),
+            Path::new("target/ui-acceptance/settings.json")
+        );
+    }
 }
 
 #[cfg(not(windows))]
-fn visible_process_window_bounds() -> io::Result<flash_shot::domain::geometry::PhysicalRect> {
+fn visible_process_window() -> io::Result<VisibleProcessWindow> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "settings UI screenshots are currently Windows-only",
