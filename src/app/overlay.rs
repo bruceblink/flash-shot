@@ -431,8 +431,9 @@ impl Render for CaptureOverlay {
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
-        let show_annotation_arrange_actions =
-            selected_annotation.is_some_and(|id| self.annotation_arrange_actions_for == Some(id));
+        self.annotation_arrange_actions_for =
+            arrange_context_for_selection(self.annotation_arrange_actions_for, selected_annotation);
+        let show_annotation_arrange_actions = self.annotation_arrange_actions_for.is_some();
         let annotation_toolbar_items = annotation_toolbar_items(
             can_delete,
             can_edit_text,
@@ -2914,6 +2915,15 @@ fn annotation_style_panel_height(can_adjust_font_size: bool) -> f32 {
     if can_adjust_font_size { 158.0 } else { 128.0 }
 }
 
+/// Retains the expanded Arrange group only while its originating annotation remains selected.
+/// This prevents a later selection from unexpectedly opening a dense group of layer commands.
+fn arrange_context_for_selection(
+    expanded_for: Option<AnnotationId>,
+    selected_annotation: Option<AnnotationId>,
+) -> Option<AnnotationId> {
+    expanded_for.filter(|id| Some(*id) == selected_annotation)
+}
+
 /// Counts the contextual controls that belong beside a selected annotation.
 /// The drawing palette remains a separate stable section; arrange controls only consume space
 /// after the user explicitly expands them.
@@ -2963,13 +2973,19 @@ fn annotation_toolbar_height_for_width(width: f32, items: AnnotationToolbarItems
     };
     let section_count =
         1 + usize::from(items.selection_context > 0) + usize::from(items.arrange_context > 0);
+    let selection_context_height = if items.selection_context > 0 {
+        section_height(items.selection_context)
+    } else {
+        0.0
+    };
+    let arrange_context_height = if items.arrange_context > 0 {
+        section_height(items.arrange_context)
+    } else {
+        0.0
+    };
     section_height(ANNOTATION_TOOL_PALETTE_ITEMS)
-        + (items.selection_context > 0)
-            .then(|| section_height(items.selection_context))
-            .unwrap_or_default()
-        + (items.arrange_context > 0)
-            .then(|| section_height(items.arrange_context))
-            .unwrap_or_default()
+        + selection_context_height
+        + arrange_context_height
         + section_count.saturating_sub(1) as f32 * ANNOTATION_CONTEXT_SECTION_GAP
         + ANNOTATION_TOOLBAR_PADDING * 2.0
 }
@@ -3395,12 +3411,12 @@ mod tests {
         SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
         action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
         annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_items,
-        annotation_toolbar_layout, arrow_head_points, capture_double_click, intersect,
-        is_text_annotation, magnifier_origin, outline_shape_bounds, owns_selection_toolbar,
-        primary_action_tooltip, recognition_result_preview, recognition_retry_label,
-        resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
-        secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
-        status_bottom_inset, visible_selection,
+        annotation_toolbar_layout, arrange_context_for_selection, arrow_head_points,
+        capture_double_click, intersect, is_text_annotation, magnifier_origin,
+        outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip,
+        recognition_result_preview, recognition_retry_label, resize_handle_points,
+        secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
+        selection_cursor, selection_dimension_label_layout, status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -4035,6 +4051,23 @@ mod tests {
         assert_eq!(annotation_toolbar_height(narrow, stable_items), 294.0);
         assert_eq!(annotation_toolbar_height(narrow, selected_items), 471.0);
         assert!(annotation_toolbar_height(narrow, expanded_items) > 471.0);
+    }
+
+    #[test]
+    fn arrange_context_closes_when_annotation_selection_changes() {
+        let first = AnnotationId::new(1);
+        let second = AnnotationId::new(2);
+
+        assert_eq!(
+            arrange_context_for_selection(Some(first), Some(first)),
+            Some(first)
+        );
+        assert_eq!(
+            arrange_context_for_selection(Some(first), Some(second)),
+            None
+        );
+        assert_eq!(arrange_context_for_selection(Some(first), None), None);
+        assert_eq!(arrange_context_for_selection(None, Some(first)), None);
     }
 
     #[test]
