@@ -114,6 +114,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `e5e69e0` | 339 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；录屏设置页新增启动、录制、暂停状态与 FFmpeg 秒数/帧数反馈。 | 待执行 | Release 原生 Record 页 520x640 截图 `target/ui-acceptance/recording-progress-idle-520x640.png` 已复核，空闲布局无文字截断或控件重叠；启动/暂停/实时进度文案由单测覆盖。应用内完整录屏 UI 手工矩阵仍待执行。 |
 | 2026-08-10 | `40a3126` | 340 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；OCR、翻译和二维码请求新增忙状态保护，重复点击不会启动第二个异步任务覆盖首个结果。 | 待执行 | 识别请求冲突文案由回归测试覆盖；OCR/翻译真实依赖与失败后 UI 重试仍待手工矩阵。 |
 | 2026-08-10 | `042fe15` | 340 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；选区工具栏的“更多操作”菜单在识别任务运行时显示 `Recognizing selection...` 状态行，并预留对应高度防止菜单遮挡工具栏。 | 待执行 | 识别进行中状态的布局逻辑和菜单高度回归测试已通过；OCR/翻译真实 UI 与失败后重试仍待手工矩阵。 |
+| 2026-08-10 | `current-P1-acceptance` | 当前 Release 探针串行运行通过：滚动拼接 6 帧、5 个 90 像素重叠区，输出 96x630 且像素校验和匹配；环境探测识别单屏 2560x1440、DPI 96、FFmpeg 9.0，并确认 `gdigrab`、窗口和区域输入可用。 | 待执行 | 当前 100% 环境下重新截图复核深色 Capture 520x640 与浅色 Record 520x640，未发现文字截断、控件重叠或状态栏遮挡；真实滚动 UI、150%/200% 缩放、双屏和录屏完整 UI 矩阵仍待执行。证据位于 `target/ui-acceptance/settings-current-dark-520x640.png`、`target/ui-acceptance/settings-current-light-520x640.png`、`target/ui-acceptance/scroll-acceptance-current.json` 和 `target/windows-acceptance-environment-20260810-current.json`。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
