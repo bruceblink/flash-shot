@@ -91,6 +91,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `edb5e48` | 334 项库测试、严格 Clippy、格式检查和全目标编译通过；`scroll-acceptance` 确定性滚动拼接验收探针通过。 | 待执行 | 6 帧合成视口使用 90 像素重叠，输出 96x630，5 个重叠区均匹配，像素校验和为 `2267123376996061824`；报告写入 `target/ui-acceptance/scroll-acceptance-20260810.json`。这补充滚动算法的机器可读证据，不替代 OCR/翻译/滚动真实 UI 手工矩阵。 |
 | 2026-08-10 | `6c09c39` | 334 项库测试、严格 Clippy、格式检查、全目标编译通过；Release 便携包构建、SHA-256、manifest 校验和启动冒烟通过。 | 待执行 | 首次启动遇到不可用的历史目录时会自动回退到托管目录或应用数据目录，并清除失效的首选路径；`FlashShot-0.1.0-windows-x86_64.zip` 实测保持运行 5 秒。真实签名与干净 Windows profile 仍待执行。 |
 | 2026-08-10 | `6c09c39` | Release `scroll-acceptance` 确定性滚动拼接验收探针通过。 | 待执行 | 6 帧合成视口使用 90 像素重叠，输出 96x630，5 个重叠区均匹配，像素校验和为 `2267123376996061824`；当前报告写入 `target/ui-acceptance/scroll-acceptance-20260810-current.json`。这证明滚动合成链路可用，不替代滚动真实 UI 手工矩阵。 |
+| 2026-08-10 | `P1-420x420` | Release 原生设置页截图探针在深色/浅色最小 `420x420` 窗口成功运行；设置探针 6 项单测通过。 | 待执行 | `settings-p1-min-dark-420x420-20260810.png` 与 `settings-p1-min-light-420x420-20260810.png` 均显示紧凑导航、主要动作和固定状态栏；内容区保持可滚动且没有可见文字截断或控件重叠。证据的物理边界为 `436x459`、DPI 96；150%/200% 缩放仍待真实 Windows 环境验收。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
