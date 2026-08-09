@@ -63,9 +63,9 @@ impl ThemeColors {
                 panel: Hsla::from(rgb(0xffffff)),
                 border: Hsla::from(rgb(0xd9dee5)),
                 text: Hsla::from(rgb(0x1b2430)),
-                muted: Hsla::from(rgb(0x64748b)),
-                accent: Hsla::from(rgb(0x1689c7)),
-                success: Hsla::from(rgb(0x168558)),
+                muted: Hsla::from(rgb(0x5f6f84)),
+                accent: Hsla::from(rgb(0x0f75b5)),
+                success: Hsla::from(rgb(0x117a4f)),
                 danger: Hsla::from(rgb(0xc53b3b)),
             },
         }
@@ -74,7 +74,32 @@ impl ThemeColors {
 
 #[cfg(test)]
 mod tests {
+    use gpui::{Hsla, Rgba};
+
     use super::{ThemeColors, ThemeMode};
+
+    /// Converts an sRGB channel to linear light before WCAG luminance is calculated.
+    fn linear_channel(channel: f32) -> f32 {
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    /// Returns the WCAG contrast ratio for two opaque GPUI colors.
+    fn contrast_ratio(left: Hsla, right: Hsla) -> f32 {
+        fn luminance(color: Hsla) -> f32 {
+            let color = Rgba::from(color);
+            0.2126 * linear_channel(color.r)
+                + 0.7152 * linear_channel(color.g)
+                + 0.0722 * linear_channel(color.b)
+        }
+
+        let left = luminance(left);
+        let right = luminance(right);
+        (left.max(right) + 0.05) / (left.min(right) + 0.05)
+    }
 
     #[test]
     fn theme_mode_cycles_between_dark_and_light() {
@@ -96,6 +121,33 @@ mod tests {
             let colors = ThemeColors::for_mode(mode);
             assert_ne!(colors.danger, colors.accent);
             assert_ne!(colors.danger, colors.success);
+        }
+    }
+
+    #[test]
+    fn semantic_foregrounds_meet_normal_text_contrast_on_every_surface() {
+        const MINIMUM_CONTRAST: f32 = 4.5;
+
+        for mode in [ThemeMode::Dark, ThemeMode::Light] {
+            let colors = ThemeColors::for_mode(mode);
+            let foregrounds = [
+                ("text", colors.text),
+                ("muted", colors.muted),
+                ("accent", colors.accent),
+                ("success", colors.success),
+                ("danger", colors.danger),
+            ];
+            let surfaces = [("background", colors.background), ("panel", colors.panel)];
+
+            for (foreground_name, foreground) in foregrounds {
+                for (surface_name, surface) in surfaces {
+                    let contrast = contrast_ratio(foreground, surface);
+                    assert!(
+                        contrast >= MINIMUM_CONTRAST,
+                        "{mode:?} {foreground_name} on {surface_name} contrast {contrast:.2} is below {MINIMUM_CONTRAST:.1}:1"
+                    );
+                }
+            }
         }
     }
 }
