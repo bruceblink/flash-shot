@@ -67,6 +67,7 @@ cargo run --release --bin windows-acceptance-probe -- --output target/windows-ac
 | 2026-08-09 | `c4e90f4` | 326 项库测试、严格 Clippy、格式检查和真实覆盖层截图复核通过。 | 待执行 | Undo/Redo 在无历史时保持固定低对比禁用态，Select/Mark 选中反馈清楚，主动作与样式控件未越出 2560x1440 屏幕；证据位于 `target/ui-acceptance/annotation-p1-stable-history-controls-*.png`。 |
 | 2026-08-09 | `2c966f7` | 300 个真实 PNG 与 300 条历史索引完成调试构建重启验收；默认页面仅渲染 5 条预览。 | 待执行 | 隐藏窗口 998ms 内就绪，Library 自动打开后工作集约 68 MiB，数秒后保持稳定；截图显示 `Showing 5 of 300 captures`，证据位于 `target/ui-acceptance/history-p1-300-*.png`。该记录关闭历史长列表 P1 差距，不替代 Release 性能门禁。 |
 | 2026-08-09 | `a7c9edb` | 327 项库测试、严格 Clippy、格式检查和全目标编译通过；`target/windows-acceptance-environment-20260809-ffmpeg9.json` 识别 FFmpeg 9.0 与 `gdigrab`。 | 待执行 | 受限 640x360 桌面区域已录制为 2 秒 H.264 MP4，并由 `ffprobe` 验证后删除临时内容。此冒烟测试证明本机 FFmpeg 可生成 MP4；Flash Shot 应用内显示器、窗口、区域录制及暂停/恢复/停止矩阵仍待执行。 |
+| 2026-08-09 | `cfeec74` | 331 项库测试、严格 Clippy、格式检查和全目标编译通过。 | 待执行 | 在 2560x1440、100% 显示器上创建 Arrow 后从 Layers 选中它；Selected 组保持 Delete/Duplicate/Arrange，展开 Arrange 后 Rotate 90 与全部层级命令仍清晰可点，面板翻到选区上方且没有遮挡标注。证据位于 `target/ui-acceptance/annotation-p1-selection-context-20260809.png` 与 `target/ui-acceptance/annotation-p1-arrange-context-20260809.png`。这关闭标注高密度上下文的 P1 差距，不替代窄选区或混合 DPI 的 P0 验收。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
