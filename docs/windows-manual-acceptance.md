@@ -57,6 +57,9 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
 ```
 
+`settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含物理窗口边界、Windows DPI
+和缩放比例；150%/200% 验收必须保留 `scale_factor` 为 `1.5` 或 `2.0` 的对应证据。
+
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
 
@@ -75,6 +78,7 @@ cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-accep
 | 2026-08-10 | `c3dd07a` | Release 原生设置页截图探针在深色/浅色与 980x760/520x640 组合运行成功；332 项库测试、严格 Clippy、格式检查和全目标编译通过。 | 待执行 | 深色 980x760、浅色 980x760 和浅色 520x640 均无文字截断、控件重叠或导航跳动，证据位于 `target/ui-acceptance/settings-p1-dark-980x760-20260810.png`、`target/ui-acceptance/settings-p1-light-980x760-20260810.png` 与 `target/ui-acceptance/settings-p1-light-520x640-20260810.png`。深浅主题 100% 项通过；本机没有 150%/200% 环境，设置页 P1 仍不整体标为通过。 |
 | 2026-08-10 | `79fbd77` | 333 项库测试、严格 Clippy、格式检查和 `recording-acceptance` 验收探针通过；显示器、窗口、区域三种目标均生成 H.264 MP4，并由 `ffprobe` 验证时长、编码和尺寸；暂停/恢复/停止事件均观察到，最终进度帧分别为 31、36、29，录制结束后无 FFmpeg 子进程。 | 待执行 | 生产录屏后端证据位于 `target/ui-acceptance/recording-p2-display-20260810-progress.json`、`target/ui-acceptance/recording-p2-window-20260810-progress.json` 与 `target/ui-acceptance/recording-p2-region-20260810-progress.json`；完整 UI 手工矩阵仍待执行。窗口验收使用可见的 `Flash Shot` 设置窗口，截图证据为 `target/ui-acceptance/recording-window-settings-progress.png`。 |
 | 2026-08-10 | `7f27ca4` | 334 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；滚动控制器新增未修饰 `Escape` 取消回归测试。 | 待执行 | 滚动截图已有首帧、手动/辅助追加、重叠校验、失败重试和拼接导出链路；控制窗口获得焦点后按 `Escape` 会取消会话并清理临时状态。滚动与 OCR/翻译的真实 UI 手工矩阵仍待执行。 |
+| 2026-08-10 | `68aad53` | 334 项库测试、严格 Clippy、格式检查、全目标编译和 Release 原生截图探针通过。 | 待执行 | `settings-p1-scale-metadata-520x640-20260810.png` 的同名 JSON 报告 DPI 96、缩放 1.0，并记录窗口物理边界。探针现已能为未来 150%/200% 运行保留可审计的缩放证据；当前机器没有该环境，设置页 P1 实机项仍待执行。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
