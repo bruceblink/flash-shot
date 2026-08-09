@@ -1663,6 +1663,14 @@ fn stale_background_completion_is_ignored_after_a_new_operation_starts() {
 }
 
 #[test]
+fn cancelling_scroll_advances_the_operation_generation() {
+    let cancelled_generation = super::scrolling::next_operation_generation(4);
+
+    assert_eq!(cancelled_generation, 5);
+    assert!(!is_current_operation(cancelled_generation, 4));
+}
+
+#[test]
 fn translation_failure_messages_identify_the_recovery_step() {
     assert!(
         translation_failure_status(&TranslationOutcome::OcrUnavailable)

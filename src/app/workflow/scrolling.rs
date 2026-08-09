@@ -63,6 +63,7 @@ impl FlashShotApp {
         }
         self.manual_scroll_capture_in_flight = true;
         self.status = "Capturing next scroll frame...".to_owned();
+        self.set_scroll_control_visibility(false, cx);
         let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -116,6 +117,7 @@ impl FlashShotApp {
 
         let generation = self.operation_generation;
         self.manual_scroll_auto_capture_generation = Some(generation);
+        self.set_scroll_control_visibility(false, cx);
         self.status = "Scrolled target content. Capturing when it settles...".to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -156,6 +158,7 @@ impl FlashShotApp {
             return;
         }
         self.manual_scroll_capture_in_flight = false;
+        self.set_scroll_control_visibility(true, cx);
         self.status = match result {
             Ok(frame) => match self.manual_scroll.append(frame, Default::default()) {
                 Ok(overlap) => format!(
@@ -256,7 +259,37 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Hides the movable controller while a frame is captured so it can never enter the screenshot.
+    fn set_scroll_control_visibility(&mut self, visible: bool, cx: &mut Context<Self>) {
+        let Some(window) = self.scroll_window.as_ref() else {
+            return;
+        };
+        let action = if visible { "show" } else { "hide" };
+        let result = window.update(cx, |_, window, _| {
+            let handle = native_window_handle(window)
+                .ok_or_else(|| "scroll control window handle is unavailable".to_owned())?;
+            if visible {
+                window_visibility::show(handle).map_err(|error| error.to_string())
+            } else {
+                window_visibility::hide(handle).map_err(|error| error.to_string())
+            }
+        });
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => log::warn!(
+                target: "flash_shot::scroll",
+                "scroll_control_{action}_failed error={error}"
+            ),
+            Err(error) => log::debug!(
+                target: "flash_shot::scroll",
+                "scroll_control_{action}_stale error={error}"
+            ),
+        }
+    }
+
     fn abandon_manual_scroll(&mut self) {
+        // Invalidate queued frame completions before clearing the session they belong to.
+        self.operation_generation = next_operation_generation(self.operation_generation);
         if self.manual_scroll.state() == crate::scroll::ManualScrollState::Collecting {
             let _ = self.manual_scroll.cancel();
         }
@@ -267,6 +300,11 @@ impl FlashShotApp {
         self.manual_scroll_capture_in_flight = false;
         self.manual_scroll_auto_capture_generation = None;
     }
+}
+
+/// Advances the operation token so a completion from a cancelled scroll session cannot apply.
+pub(super) fn next_operation_generation(generation: u64) -> u64 {
+    generation.wrapping_add(1)
 }
 
 /// Calculates the physical viewport center used for deliberate wheel input.
