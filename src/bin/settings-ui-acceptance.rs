@@ -27,7 +27,7 @@ use windows_sys::Win32::{
 #[cfg(windows)]
 use windows_sys::core::BOOL;
 
-const RENDER_SETTLE_DELAY: Duration = Duration::from_millis(1_500);
+const DEFAULT_RENDER_SETTLE_DELAY: Duration = Duration::from_millis(1_500);
 
 #[derive(Debug)]
 struct Options {
@@ -35,6 +35,7 @@ struct Options {
     width: f32,
     height: f32,
     output: PathBuf,
+    settle_delay: Duration,
 }
 
 impl Options {
@@ -48,6 +49,11 @@ impl Options {
         let width = parse_extent(arguments.next(), "width")?;
         let height = parse_extent(arguments.next(), "height")?;
         let output = arguments.next().map(PathBuf::from).ok_or_else(usage)?;
+        let settle_delay = arguments
+            .next()
+            .map(parse_settle_delay)
+            .transpose()?
+            .unwrap_or(DEFAULT_RENDER_SETTLE_DELAY);
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -61,12 +67,14 @@ impl Options {
             width,
             height,
             output,
+            settle_delay,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png>".to_owned()
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms]"
+        .to_owned()
 }
 
 fn parse_extent(value: Option<std::ffi::OsString>, name: &str) -> Result<f32, String> {
@@ -80,6 +88,18 @@ fn parse_extent(value: Option<std::ffi::OsString>, name: &str) -> Result<f32, St
         return Err(format!("{name} must be at least 420"));
     }
     Ok(extent)
+}
+
+fn parse_settle_delay(value: std::ffi::OsString) -> Result<Duration, String> {
+    let milliseconds = value
+        .into_string()
+        .map_err(|_| "settle-ms must be a number".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| "settle-ms must be a number".to_owned())?;
+    if !(500..=60_000).contains(&milliseconds) {
+        return Err("settle-ms must be between 500 and 60000".to_owned());
+    }
+    Ok(Duration::from_millis(milliseconds))
 }
 
 fn main() {
@@ -106,7 +126,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut settings = UserSettings::default();
     settings.theme_mode = options.theme;
 
-    spawn_screenshot_worker(output);
+    spawn_screenshot_worker(output, options.settle_delay);
     flash_shot::run_settings_ui_acceptance(
         Instant::now(),
         performance,
@@ -119,9 +139,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Waits for GPUI to paint, captures this process's visible top-level window, then exits.
-fn spawn_screenshot_worker(output: PathBuf) {
+fn spawn_screenshot_worker(output: PathBuf, settle_delay: Duration) {
     thread::spawn(move || {
-        thread::sleep(RENDER_SETTLE_DELAY);
+        thread::sleep(settle_delay);
         let result = visible_process_window_bounds().and_then(|bounds| {
             let frame = SystemCaptureBackend.capture(bounds)?;
             frame.save_png(output)
