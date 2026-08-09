@@ -4,6 +4,7 @@ use gpui::{
     Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, Keystroke, Render,
     Subscription, Window, div, prelude::*, px,
 };
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::FlashShotApp;
 
@@ -11,6 +12,7 @@ pub(super) struct ManualScrollControl {
     app: Entity<FlashShotApp>,
     focus_handle: FocusHandle,
     _app_observation: Subscription,
+    topmost_requested: bool,
 }
 
 impl ManualScrollControl {
@@ -20,6 +22,7 @@ impl ManualScrollControl {
             app,
             focus_handle: cx.focus_handle(),
             _app_observation: observation,
+            topmost_requested: false,
         }
     }
 }
@@ -105,7 +108,22 @@ fn manual_scroll_button(
 }
 
 impl Render for ManualScrollControl {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.topmost_requested
+            && let Ok(handle) = window.window_handle()
+            && let RawWindowHandle::Win32(handle) = handle.as_raw()
+        {
+            self.topmost_requested = true;
+            let hwnd = handle.hwnd.get();
+            // Keep scrolling controls above the target application so each capture action stays
+            // available while the user moves through the page. The deferred call avoids re-entering
+            // GPUI's native window dispatch from inside the render callback.
+            cx.defer(move |_| {
+                if let Err(error) = crate::platform::window_visibility::make_topmost(hwnd) {
+                    log::warn!(target: "flash_shot::scroll", "scroll_control_topmost_failed error={error}");
+                }
+            });
+        }
         let app = self.app.read(cx);
         let colors = app.colors;
         let status = app.status.clone();
