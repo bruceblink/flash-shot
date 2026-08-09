@@ -96,6 +96,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `f33acdb` | Release 启动与覆盖层性能脚本改为至少 20 次采样；当前 20 次采样全部通过。 | 待执行 | `release-startup-performance-20260810-20.json` 的启动 p95 为 `233.21ms`（上限 500ms）；`release-capture-performance-20260810-default.json` 的 frame-ready p95 为 `56.14ms`、覆盖层 p95 为 `80.02ms`（上限均 100ms）。10 次采样曾受一次 `205.70ms` 离群值影响，现已禁止低于 20 次的门禁运行；真实混合 DPI p95 仍待硬件验收。 |
 | 2026-08-10 | `8cbfac2` | 336 项库测试、严格 Clippy、格式检查、全目标编译通过；快速保存失效目录回退测试通过。 | 待执行 | 选择截图、全屏快捷保存和 Pin 保存会在首选历史目录不可写时回退到托管 `Pictures/Flash Shot`，成功后切换历史根并清除失效目录配置；真实不同 Windows profile 权限仍待手工验收。 |
 | 2026-08-10 | `18de6de` | 336 项库测试、严格 Clippy、格式检查、全目标编译和 Release 构建通过；`scroll-acceptance` 通过 6 帧、5 个 90 像素重叠区的确定性拼接验收，输出 96x630，像素校验和为 `2267123376996061824`；本机 FFmpeg 9.0 可用并识别 `gdigrab`。 | 待执行 | 滚动控制器现在只接受未修饰的 `Escape` 取消，Ctrl/Alt/平台键/Fn 组合不会误取消；报告写入 `target/ui-acceptance/scroll-acceptance-20260810-current.json`。真实滚动 UI、双屏/混合 DPI 和录屏手工矩阵仍待执行。 |
+| 2026-08-10 | `036c450` | 336 项库测试、严格 Clippy、格式检查、全目标编译通过；Release `recognition-acceptance` 探针通过并输出 OCR/翻译可选依赖状态。 | 待执行 | 报告位于 `target/ui-acceptance/recognition-acceptance-20260810-current.json`：OCR 为 `program not found`，翻译端点未配置；探针不创建截图、不发起网络请求。OCR/翻译真实 UI 与失败后重试仍待手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
