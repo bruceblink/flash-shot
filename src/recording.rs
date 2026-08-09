@@ -465,6 +465,12 @@ fn recording_worker(
         if commands.stop_requested() {
             match process.stop_gracefully(GRACEFUL_STOP_TIMEOUT) {
                 Ok(exit) if exit.success => {
+                    if let Err(error) = emit_final_progress(&process, &mut last_progress, &events) {
+                        let _ = events.try_send(RecordingEvent::Failed {
+                            message: error.to_string(),
+                        });
+                        return;
+                    }
                     let _ = events.try_send(RecordingEvent::Finished { output });
                 }
                 Ok(_) => {
@@ -500,6 +506,12 @@ fn recording_worker(
         }
         match process.try_wait_for_exit() {
             Ok(Some(exit)) if exit.success => {
+                if let Err(error) = emit_final_progress(&process, &mut last_progress, &events) {
+                    let _ = events.try_send(RecordingEvent::Failed {
+                        message: error.to_string(),
+                    });
+                    return;
+                }
                 let _ = events.try_send(RecordingEvent::Finished { output });
                 return;
             }
@@ -527,6 +539,20 @@ fn recording_worker(
         }
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Publishes the last FFmpeg progress snapshot after the child has been fully reaped.
+fn emit_final_progress(
+    process: &RecordingProcess,
+    last_progress: &mut RecordingProgress,
+    events: &async_channel::Sender<RecordingEvent>,
+) -> io::Result<()> {
+    let progress = process.progress()?;
+    if progress != *last_progress {
+        *last_progress = progress;
+        let _ = events.try_send(RecordingEvent::Progress(progress));
+    }
+    Ok(())
 }
 
 /// The latest machine-readable progress information emitted by FFmpeg's `-progress` pipe.
