@@ -28,6 +28,7 @@ use windows_sys::Win32::{
 use windows_sys::core::BOOL;
 
 const DEFAULT_RENDER_SETTLE_DELAY: Duration = Duration::from_millis(1_500);
+const DEFAULT_LINGER_DELAY: Duration = Duration::ZERO;
 
 #[derive(Debug)]
 struct Options {
@@ -36,6 +37,7 @@ struct Options {
     height: f32,
     output: PathBuf,
     settle_delay: Duration,
+    linger_delay: Duration,
 }
 
 impl Options {
@@ -54,6 +56,11 @@ impl Options {
             .map(parse_settle_delay)
             .transpose()?
             .unwrap_or(DEFAULT_RENDER_SETTLE_DELAY);
+        let linger_delay = arguments
+            .next()
+            .map(parse_linger_delay)
+            .transpose()?
+            .unwrap_or(DEFAULT_LINGER_DELAY);
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -68,12 +75,13 @@ impl Options {
             height,
             output,
             settle_delay,
+            linger_delay,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms]"
         .to_owned()
 }
 
@@ -102,6 +110,19 @@ fn parse_settle_delay(value: std::ffi::OsString) -> Result<Duration, String> {
     Ok(Duration::from_millis(milliseconds))
 }
 
+/// Parses an optional post-screenshot lifetime for acceptance windows used as recording targets.
+fn parse_linger_delay(value: std::ffi::OsString) -> Result<Duration, String> {
+    let milliseconds = value
+        .into_string()
+        .map_err(|_| "linger-ms must be a number".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| "linger-ms must be a number".to_owned())?;
+    if milliseconds > 300_000 {
+        return Err("linger-ms must be between 0 and 300000".to_owned());
+    }
+    Ok(Duration::from_millis(milliseconds))
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -126,7 +147,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut settings = UserSettings::default();
     settings.theme_mode = options.theme;
 
-    spawn_screenshot_worker(output, options.settle_delay);
+    spawn_screenshot_worker(output, options.settle_delay, options.linger_delay);
     flash_shot::run_settings_ui_acceptance(
         Instant::now(),
         performance,
@@ -138,8 +159,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     )
 }
 
-/// Waits for GPUI to paint, captures this process's visible top-level window, then exits.
-fn spawn_screenshot_worker(output: PathBuf, settle_delay: Duration) {
+/// Waits for GPUI to paint, captures the window, optionally keeps it alive, then exits.
+fn spawn_screenshot_worker(output: PathBuf, settle_delay: Duration, linger_delay: Duration) {
     thread::spawn(move || {
         thread::sleep(settle_delay);
         let result = visible_process_window_bounds().and_then(|bounds| {
@@ -147,7 +168,10 @@ fn spawn_screenshot_worker(output: PathBuf, settle_delay: Duration) {
             frame.save_png(output)
         });
         match result {
-            Ok(()) => process::exit(0),
+            Ok(()) => {
+                thread::sleep(linger_delay);
+                process::exit(0);
+            }
             Err(error) => {
                 eprintln!("settings UI screenshot failed: {error}");
                 process::exit(1);
@@ -193,6 +217,30 @@ fn visible_process_window_bounds() -> io::Result<flash_shot::domain::geometry::P
         right: rect.right,
         bottom: rect.bottom,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_linger_delay, parse_settle_delay};
+    use std::{ffi::OsString, time::Duration};
+
+    #[test]
+    fn acceptance_linger_delay_is_bounded_and_optional() {
+        assert_eq!(
+            parse_linger_delay(OsString::from("120000")).unwrap(),
+            Duration::from_secs(120)
+        );
+        assert!(parse_linger_delay(OsString::from("300001")).is_err());
+    }
+
+    #[test]
+    fn acceptance_settle_delay_rejects_an_unstable_short_wait() {
+        assert!(parse_settle_delay(OsString::from("499")).is_err());
+        assert_eq!(
+            parse_settle_delay(OsString::from("1500")).unwrap(),
+            Duration::from_millis(1500)
+        );
+    }
 }
 
 #[cfg(not(windows))]
