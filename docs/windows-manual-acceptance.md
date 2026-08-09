@@ -56,6 +56,7 @@ cargo run --release --bin recognition-acceptance -- --output target/ui-acceptanc
 cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acceptance/settings-light-980x760.png
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
 cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
+cargo run --release --bin settings-ui-acceptance -- dark 520 640 target/ui-acceptance/recording-settings-520x640.png 1500 1000 1.0 record
 cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
 # 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
@@ -94,6 +95,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `6c09c39` | Release `scroll-acceptance` 确定性滚动拼接验收探针通过。 | 待执行 | 6 帧合成视口使用 90 像素重叠，输出 96x630，5 个重叠区均匹配，像素校验和为 `2267123376996061824`；当前报告写入 `target/ui-acceptance/scroll-acceptance-20260810-current.json`。这证明滚动合成链路可用，不替代滚动真实 UI 手工矩阵。 |
 | 2026-08-10 | `P1-420x420` | Release 原生设置页截图探针在深色/浅色最小 `420x420` 窗口成功运行；设置探针 6 项单测通过。 | 待执行 | `settings-p1-min-dark-420x420-20260810.png` 与 `settings-p1-min-light-420x420-20260810.png` 均显示紧凑导航、主要动作和固定状态栏；内容区保持可滚动且没有可见文字截断或控件重叠。证据的物理边界为 `436x459`、DPI 96；150%/200% 缩放仍待真实 Windows 环境验收。 |
 | 2026-08-10 | `P1-420x420-current` | 当前 Release 原生设置页截图探针在深色最小 `420x420` 窗口运行成功；物理边界 `436x459`、DPI 96、`scale_match: true`。 | 待执行 | 视觉复核 `target/ui-acceptance/settings-p1-current-dark-420x420-20260810.png`：顶部 Capture/Library/Record/App 导航、Capture 主动作和状态栏均可见，未发现文字截断或控件重叠；150%/200% 缩放仍待真实 Windows 环境验收。 |
+| 2026-08-10 | `77137fd` | 当前 Release 设置页探针支持按 `capture|library|record|app` 选择初始页面；336 项库测试、严格 Clippy、格式检查和全目标编译通过。 | 待执行 | Record 页 520x640 截图 `target/ui-acceptance/recording-p2-current-settings-20260810.png` 已复核：显示器、音频、支持检查、录制按钮和状态栏均可见且无重叠；真实录制 UI 的暂停/恢复/停止交互仍待手工矩阵。 |
 | 2026-08-10 | `f33acdb` | Release 启动与覆盖层性能脚本改为至少 20 次采样；当前 20 次采样全部通过。 | 待执行 | `release-startup-performance-20260810-20.json` 的启动 p95 为 `233.21ms`（上限 500ms）；`release-capture-performance-20260810-default.json` 的 frame-ready p95 为 `56.14ms`、覆盖层 p95 为 `80.02ms`（上限均 100ms）。10 次采样曾受一次 `205.70ms` 离群值影响，现已禁止低于 20 次的门禁运行；真实混合 DPI p95 仍待硬件验收。 |
 | 2026-08-10 | `8cbfac2` | 336 项库测试、严格 Clippy、格式检查、全目标编译通过；快速保存失效目录回退测试通过。 | 待执行 | 选择截图、全屏快捷保存和 Pin 保存会在首选历史目录不可写时回退到托管 `Pictures/Flash Shot`，成功后切换历史根并清除失效目录配置；真实不同 Windows profile 权限仍待手工验收。 |
 | 2026-08-10 | `18de6de` | 336 项库测试、严格 Clippy、格式检查、全目标编译和 Release 构建通过；`scroll-acceptance` 通过 6 帧、5 个 90 像素重叠区的确定性拼接验收，输出 96x630，像素校验和为 `2267123376996061824`；本机 FFmpeg 9.0 可用并识别 `gdigrab`。 | 待执行 | 滚动控制器现在只接受未修饰的 `Escape` 取消，Ctrl/Alt/平台键/Fn 组合不会误取消；报告写入 `target/ui-acceptance/scroll-acceptance-20260810-current.json`。真实滚动 UI、双屏/混合 DPI 和录屏手工矩阵仍待执行。 |
