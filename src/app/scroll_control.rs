@@ -133,6 +133,7 @@ impl Render for ManualScrollControl {
         let controls_busy = capture_in_flight || auto_capture_pending;
         let retry_available = app.manual_scroll.failure().is_some();
         let can_finish = app.manual_scroll.can_finish();
+        let frame_count_label = manual_scroll_frame_count_label(frame_count, can_finish);
 
         div()
             .size_full()
@@ -168,7 +169,7 @@ impl Render for ManualScrollControl {
                             .bg(colors.panel)
                             .text_xs()
                             .text_color(colors.muted)
-                            .child(format!("{frame_count} frames")),
+                            .child(frame_count_label),
                     ),
             )
             .child(
@@ -280,11 +281,25 @@ fn manual_scroll_finish_label(can_finish: bool) -> &'static str {
     }
 }
 
+/// Summarizes the session stage next to the frame count so the next action is obvious.
+fn manual_scroll_frame_count_label(frame_count: usize, can_finish: bool) -> String {
+    let count = match frame_count {
+        0 => "No frames".to_owned(),
+        1 => "1 frame".to_owned(),
+        count => format!("{count} frames"),
+    };
+    if can_finish {
+        format!("{count} - ready to finish")
+    } else {
+        format!("{count} - capture another")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         auto_scroll_capture_label, manual_scroll_cancel_key, manual_scroll_capture_label,
-        manual_scroll_finish_label,
+        manual_scroll_finish_label, manual_scroll_frame_count_label,
     };
     use gpui::Keystroke;
 
@@ -299,6 +314,22 @@ mod tests {
     fn finish_action_requires_an_overlapping_viewport() {
         assert_eq!(manual_scroll_finish_label(false), "Capture another");
         assert_eq!(manual_scroll_finish_label(true), "Finish");
+    }
+
+    #[test]
+    fn frame_count_badge_explains_when_the_session_can_finish() {
+        assert_eq!(
+            manual_scroll_frame_count_label(1, false),
+            "1 frame - capture another"
+        );
+        assert_eq!(
+            manual_scroll_frame_count_label(2, true),
+            "2 frames - ready to finish"
+        );
+        assert_eq!(
+            manual_scroll_frame_count_label(0, false),
+            "No frames - capture another"
+        );
     }
 
     #[test]
