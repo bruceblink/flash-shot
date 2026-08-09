@@ -41,6 +41,53 @@ pub(super) fn quick_save_annotated_frame_selection_with_prefix(
     )
 }
 
+/// Retries a quick save in a managed fallback directory when the selected root is no longer
+/// writable. The closure owns the actual image encoding so every save variant shares this rule.
+pub(super) fn quick_save_with_fallback(
+    directory: &Path,
+    fallback_directory: Option<&Path>,
+    save: impl Fn(&Path) -> std::io::Result<PathBuf>,
+) -> std::io::Result<PathBuf> {
+    match save(directory) {
+        Ok(path) => Ok(path),
+        Err(primary_error) => {
+            let Some(fallback_directory) = fallback_directory else {
+                return Err(primary_error);
+            };
+            if fallback_directory == directory {
+                return Err(primary_error);
+            }
+            save(fallback_directory).map_err(|fallback_error| {
+                std::io::Error::other(format!(
+                    "selected quick-save folder failed: {primary_error}; fallback folder failed: {fallback_error}"
+                ))
+            })
+        }
+    }
+}
+
+/// Resolves the managed Pictures/Flash Shot root unless it is already the active root.
+pub(super) fn managed_history_fallback(preferred: &Path) -> Option<PathBuf> {
+    let managed = crate::history::managed_history_directory().ok()?;
+    let managed = managed.canonicalize().unwrap_or(managed);
+    (managed != preferred).then_some(managed)
+}
+
+pub(super) fn quick_save_annotated_frame_selection_with_fallback(
+    frame: &CaptureFrame,
+    document: &AnnotationDocument,
+    selection: PhysicalRect,
+    directory: &Path,
+    fallback_directory: Option<&Path>,
+    prefix: &str,
+) -> std::io::Result<PathBuf> {
+    quick_save_with_fallback(directory, fallback_directory, |directory| {
+        quick_save_annotated_frame_selection_with_prefix(
+            frame, document, selection, directory, prefix,
+        )
+    })
+}
+
 /// Writes a full capture into the active history root using the persisted filename prefix.
 pub(super) fn quick_save_full_screen_frame_with_prefix(
     frame: &CaptureFrame,
@@ -48,6 +95,17 @@ pub(super) fn quick_save_full_screen_frame_with_prefix(
     prefix: &str,
 ) -> std::io::Result<PathBuf> {
     quick_save_full_screen_frame_in_with_prefix(frame, directory, prefix, unix_timestamp_ms())
+}
+
+pub(super) fn quick_save_full_screen_frame_with_fallback(
+    frame: &CaptureFrame,
+    directory: &Path,
+    fallback_directory: Option<&Path>,
+    prefix: &str,
+) -> std::io::Result<PathBuf> {
+    quick_save_with_fallback(directory, fallback_directory, |directory| {
+        quick_save_full_screen_frame_with_prefix(frame, directory, prefix)
+    })
 }
 
 pub(super) fn quick_save_full_screen_frame_in_with_prefix(

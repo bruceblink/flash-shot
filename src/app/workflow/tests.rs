@@ -11,12 +11,14 @@ use super::{
     next_recording_display_selection, ocr_language_label, ocr_support_status,
     open_annotation_project, open_image_project, pinned_size, project_image_path,
     quick_save_annotated_frame_selection_in_with_prefix,
-    quick_save_full_screen_frame_in_with_prefix, recording_audio_selection_label,
-    recording_display_selection_label, recording_start_conflict_status,
-    recording_start_failure_status, recording_support_status, recording_target_label,
-    resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
-    save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-    tool_selected_status, translation_failure_status, translation_support_status, with_alpha,
+    quick_save_annotated_frame_selection_with_fallback,
+    quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
+    recording_audio_selection_label, recording_display_selection_label,
+    recording_start_conflict_status, recording_start_failure_status, recording_support_status,
+    recording_target_label, resolve_pointer_selection, save_annotated_frame_selection,
+    save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+    text_annotation_with_content, tool_selected_status, translation_failure_status,
+    translation_support_status, with_alpha,
 };
 use crate::{
     domain::{
@@ -1062,6 +1064,75 @@ fn quick_save_names_are_timestamped_and_do_not_overwrite_existing_files() {
             .is_some_and(|name| name == "FlashShot-1725000000123.png")
     });
     assert_eq!(second, directory.join("FlashShot-1725000000123-2.png"));
+}
+
+#[test]
+fn quick_save_retries_in_a_fallback_directory_after_the_selected_root_fails() {
+    let root = std::env::temp_dir().join(format!(
+        "flash-shot-quick-save-fallback-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let selected = root.join("selected");
+    let fallback = root.join("fallback");
+
+    let result = quick_save_with_fallback(&selected, Some(&fallback), |directory| {
+        if directory == selected {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "selected root unavailable",
+            ));
+        }
+        std::fs::create_dir_all(directory)?;
+        Ok(directory.join("FlashShot-1.png"))
+    })
+    .unwrap();
+
+    assert_eq!(result, fallback.join("FlashShot-1.png"));
+    assert!(!selected.exists());
+    assert!(fallback.is_dir());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn annotated_quick_save_fallback_writes_the_capture_to_the_recovery_root() {
+    let root = std::env::temp_dir().join(format!(
+        "flash-shot-annotated-fallback-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let selected = root.join("selected").join("missing\0root");
+    let fallback = root.join("fallback");
+    let frame = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1,
+            bottom: 1,
+        },
+        width: 1,
+        height: 1,
+        stride: 4,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from([1, 2, 3, 255]),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    let document = AnnotationDocument::new(frame.bounds).unwrap();
+
+    let path = quick_save_annotated_frame_selection_with_fallback(
+        &frame,
+        &document,
+        frame.bounds,
+        &selected,
+        Some(&fallback),
+        "FlashShot",
+    )
+    .unwrap();
+
+    assert_eq!(path.parent(), Some(fallback.as_path()));
+    assert!(path.is_file());
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

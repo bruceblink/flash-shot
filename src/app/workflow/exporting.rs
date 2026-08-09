@@ -91,8 +91,14 @@ impl FlashShotApp {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        quick_save_annotated_frame_selection_with_prefix(
-                            &frame, &document, selection, &directory, &prefix,
+                        let fallback = managed_history_fallback(&directory);
+                        quick_save_annotated_frame_selection_with_fallback(
+                            &frame,
+                            &document,
+                            selection,
+                            &directory,
+                            fallback.as_deref(),
+                            &prefix,
                         )
                     })
                     .await;
@@ -129,17 +135,23 @@ impl FlashShotApp {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        quick_save_full_screen_frame_with_prefix(&frame, &directory, &prefix)
+                        let fallback = managed_history_fallback(&directory);
+                        quick_save_full_screen_frame_with_fallback(
+                            &frame,
+                            &directory,
+                            fallback.as_deref(),
+                            &prefix,
+                        )
                     })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         match result {
                             Ok(path) => {
-                                let history_note = this.history.record_with_source(path.clone(), crate::history::HistorySource::Pinned).err().map(|error| {
-                                    log::warn!(target: "flash_shot::history", "pinned_save_history_record_failed error={error}");
-                                    format!("; history unavailable: {error}")
-                                });
+                                let history_note = this.record_managed_save_with_recovery(
+                                    &path,
+                                    crate::history::HistorySource::Pinned,
+                                );
                                 this.status = format!("Pinned image saved to {}", path.display());
                                 if let Some(history_note) = history_note {
                                     this.status.push_str(&history_note);
@@ -325,10 +337,14 @@ impl FlashShotApp {
                 if let Err(error) = self.session.export_completed() {
                     self.status = error.to_string();
                 } else {
-                    let history_status = managed.then(|| self.history.record_with_source(path.clone(), crate::history::HistorySource::Selection)).transpose().err().map(|error| {
-                        log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
-                        format!("; history unavailable: {error}")
-                    });
+                    let history_status = managed
+                        .then(|| {
+                            self.record_managed_save_with_recovery(
+                                &path,
+                                crate::history::HistorySource::Selection,
+                            )
+                        })
+                        .flatten();
                     self.status = format!("Selection saved to {}", path.display());
                     if let Some(history_status) = history_status {
                         self.status.push_str(&history_status);
@@ -355,6 +371,57 @@ impl FlashShotApp {
             }
         }
         cx.notify();
+    }
+
+    /// Records a managed save and adopts its parent when a configured history root became stale.
+    /// The image is already safe on disk; this keeps the history index and future quick saves
+    /// aligned with the recovery directory instead of reporting a false save failure.
+    fn record_managed_save_with_recovery(
+        &mut self,
+        path: &Path,
+        source: crate::history::HistorySource,
+    ) -> Option<String> {
+        if path.starts_with(self.history.root()) {
+            return self
+                .history
+                .record_with_source(path.to_owned(), source)
+                .err()
+                .map(|error| {
+                    log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
+                    format!("; history unavailable: {error}")
+                });
+        }
+
+        let Some(parent) = path.parent() else {
+            return Some("; history unavailable: saved path has no parent".to_owned());
+        };
+        let mut recovered = match crate::history::ScreenshotHistory::open_with_limit(
+            parent,
+            self.history.limit(),
+        ) {
+            Ok(history) => history,
+            Err(error) => {
+                log::warn!(target: "flash_shot::history", "history_recovery_open_failed error={error}");
+                return Some(format!("; history unavailable: {error}"));
+            }
+        };
+        if let Err(error) = recovered.record_with_source(path.to_owned(), source) {
+            log::warn!(target: "flash_shot::history", "history_recovery_record_failed error={error}");
+            return Some(format!("; history unavailable: {error}"));
+        }
+        self.history = recovered;
+
+        let mut note = format!(
+            "; quick-save folder unavailable; using {}",
+            self.history.root().display()
+        );
+        if self.settings.quick_save_directory.take().is_some()
+            && let Err(error) = self.settings.save(&self.settings_path)
+        {
+            log::warn!(target: "flash_shot::history", "history_recovery_preference_clear_failed error={error}");
+            note.push_str(&format!(" (could not persist fallback: {error})"));
+        }
+        Some(note)
     }
 
     pub(in crate::app) fn clear_history(&mut self, cx: &mut Context<Self>) {
@@ -625,10 +692,10 @@ impl FlashShotApp {
         }
         match result {
             Ok(path) => {
-                let history_status = self.history.record_with_source(path.clone(), crate::history::HistorySource::FullScreen).err().map(|error| {
-                    log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
-                    format!("; history unavailable: {error}")
-                });
+                let history_status = self.record_managed_save_with_recovery(
+                    &path,
+                    crate::history::HistorySource::FullScreen,
+                );
                 self.status = format!("Full screen saved to {}", path.display());
                 if let Some(history_status) = history_status {
                     self.status.push_str(&history_status);

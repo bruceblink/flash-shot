@@ -97,7 +97,13 @@ impl FlashShotApp {
                     .background_executor()
                     .spawn(async move {
                         let frame = capture_virtual_desktop_frame(include_cursor)?;
-                        quick_save_full_screen_frame_with_prefix(&frame, &directory, &prefix)
+                        let fallback = managed_history_fallback(&directory);
+                        quick_save_full_screen_frame_with_fallback(
+                            &frame,
+                            &directory,
+                            fallback.as_deref(),
+                            &prefix,
+                        )
                     })
                     .await;
                 if let Some(this) = this.upgrade() {
