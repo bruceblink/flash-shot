@@ -52,6 +52,7 @@ cargo test --lib
 cargo run --release --bin capture-stress -- --output target/capture-stress.json
 cargo run --release --bin annotation-stress -- --iterations 30
 cargo run --release --bin windows-acceptance-probe -- --output target/windows-acceptance-environment.json
+cargo run --release --bin recognition-acceptance -- --output target/ui-acceptance/recognition-acceptance.json
 cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acceptance/settings-light-980x760.png
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
 cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
