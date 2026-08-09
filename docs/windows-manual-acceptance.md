@@ -89,6 +89,8 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `3ae9a2e` | `settings-ui-acceptance` 新增 `expected-scale` 守卫与 6 项探针测试；334 项库测试、严格 Clippy、格式检查和全目标编译通过。 | 待执行 | 当前 100% 环境要求 `1.5` 时命令按预期失败，并在 JSON 中记录 `scale_factor: 1.0`、`scale_match: false`；未来 150%/200% 运行必须以 `scale_match: true` 作为机器可读门禁。 |
 | 2026-08-10 | `f5ac5e4` | 334 项库测试、严格 Clippy、格式检查和全目标编译通过；OCR、翻译和二维码请求统一推进 operation generation。 | 待执行 | 新识别请求会清理旧结果，晚到的异步结果不会覆盖当前请求；OCR/翻译真实外部环境和失败后 UI 重试仍待手工矩阵。 |
 | 2026-08-10 | `edb5e48` | 334 项库测试、严格 Clippy、格式检查和全目标编译通过；`scroll-acceptance` 确定性滚动拼接验收探针通过。 | 待执行 | 6 帧合成视口使用 90 像素重叠，输出 96x630，5 个重叠区均匹配，像素校验和为 `2267123376996061824`；报告写入 `target/ui-acceptance/scroll-acceptance-20260810.json`。这补充滚动算法的机器可读证据，不替代 OCR/翻译/滚动真实 UI 手工矩阵。 |
+| 2026-08-10 | `6c09c39` | 334 项库测试、严格 Clippy、格式检查、全目标编译通过；Release 便携包构建、SHA-256、manifest 校验和启动冒烟通过。 | 待执行 | 首次启动遇到不可用的历史目录时会自动回退到托管目录或应用数据目录，并清除失效的首选路径；`FlashShot-0.1.0-windows-x86_64.zip` 实测保持运行 5 秒。真实签名与干净 Windows profile 仍待执行。 |
+| 2026-08-10 | `6c09c39` | Release `scroll-acceptance` 确定性滚动拼接验收探针通过。 | 待执行 | 6 帧合成视口使用 90 像素重叠，输出 96x630，5 个重叠区均匹配，像素校验和为 `2267123376996061824`；当前报告写入 `target/ui-acceptance/scroll-acceptance-20260810-current.json`。这证明滚动合成链路可用，不替代滚动真实 UI 手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
