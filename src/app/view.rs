@@ -1544,59 +1544,14 @@ fn settings_navigation(
                         .text_xs()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(colors.muted)
-                        .child("WORKSPACE"),
+                        .child("WORKFLOW"),
                 )
         })
-        .children([
-            settings_navigation_item(
-                SettingsNavigationItem {
-                    id: "settings-nav-capture",
-                    label: "Actions",
-                    description: "Capture, annotate, export",
-                    section: SettingsSection::Capture,
-                },
-                selected,
-                colors,
-                app.clone(),
-                compact,
-            ),
-            settings_navigation_item(
-                SettingsNavigationItem {
-                    id: "settings-nav-files",
-                    label: "Files",
-                    description: "History and output",
-                    section: SettingsSection::Files,
-                },
-                selected,
-                colors,
-                app.clone(),
-                compact,
-            ),
-            settings_navigation_item(
-                SettingsNavigationItem {
-                    id: "settings-nav-recording",
-                    label: "Recording",
-                    description: "Screen and audio",
-                    section: SettingsSection::Recording,
-                },
-                selected,
-                colors,
-                app.clone(),
-                compact,
-            ),
-            settings_navigation_item(
-                SettingsNavigationItem {
-                    id: "settings-nav-system",
-                    label: "System",
-                    description: "Theme and startup",
-                    section: SettingsSection::System,
-                },
-                selected,
-                colors,
-                app,
-                compact,
-            ),
-        ])
+        .children(
+            settings_navigation_items()
+                .into_iter()
+                .map(|item| settings_navigation_item(item, selected, colors, app.clone(), compact)),
+        )
 }
 
 #[derive(Clone, Copy)]
@@ -1605,6 +1560,36 @@ struct SettingsNavigationItem {
     label: &'static str,
     description: &'static str,
     section: SettingsSection,
+}
+
+/// Keeps the navigation vocabulary task-oriented so the compact and wide layouts tell the same story.
+fn settings_navigation_items() -> [SettingsNavigationItem; 4] {
+    [
+        SettingsNavigationItem {
+            id: "settings-nav-capture",
+            label: "Capture",
+            description: "Screenshot, annotate, export",
+            section: SettingsSection::Capture,
+        },
+        SettingsNavigationItem {
+            id: "settings-nav-files",
+            label: "Library",
+            description: "Saved images and history",
+            section: SettingsSection::Files,
+        },
+        SettingsNavigationItem {
+            id: "settings-nav-recording",
+            label: "Record",
+            description: "Screen and audio",
+            section: SettingsSection::Recording,
+        },
+        SettingsNavigationItem {
+            id: "settings-nav-system",
+            label: "App",
+            description: "Theme, startup, updates",
+            section: SettingsSection::System,
+        },
+    ]
 }
 
 /// Keeps each section reachable at the minimum window size without taking a second line for detail text.
@@ -1691,21 +1676,7 @@ fn settings_navigation_item(
 
 /// Gives every section a stable task-oriented title.
 fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColors) -> gpui::Div {
-    let (title, description) = match section {
-        SettingsSection::Capture => (
-            "Quick actions",
-            "Capture, annotate, and export without leaving the main workflow.",
-        ),
-        SettingsSection::Files => (
-            "Files",
-            "Choose where captures go and manage recent history.",
-        ),
-        SettingsSection::Recording => (
-            "Recording",
-            "Configure display, audio, and recording controls.",
-        ),
-        SettingsSection::System => ("System", "Tune appearance, startup, and update checks."),
-    };
+    let (title, description) = settings_page_copy(section);
     div()
         .pb_4()
         .border_b_1()
@@ -1720,6 +1691,25 @@ fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColo
                 .child(title),
         )
         .child(div().text_sm().text_color(colors.muted).child(description))
+}
+
+/// Returns the short heading and purpose statement shown before each settings task group.
+fn settings_page_copy(section: SettingsSection) -> (&'static str, &'static str) {
+    match section {
+        SettingsSection::Capture => (
+            "Capture",
+            "Start a screenshot or adjust capture preferences.",
+        ),
+        SettingsSection::Files => (
+            "Library",
+            "Find saved captures, change output, and manage history.",
+        ),
+        SettingsSection::Recording => (
+            "Record",
+            "Choose a display, audio source, and recording controls.",
+        ),
+        SettingsSection::System => ("App", "Set appearance, startup, and update preferences."),
+    }
 }
 
 fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
@@ -2023,8 +2013,8 @@ mod tests {
         capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
         history_entry_label, history_entry_matches, history_result_summary,
         history_retention_label, history_visibility_label, relative_timestamp_label,
-        settings_page_intro, settings_path_label, status_indicator_color,
-        uses_compact_settings_navigation, visible_history_entries,
+        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
+        status_indicator_color, uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2077,6 +2067,53 @@ mod tests {
         ] {
             let _ = settings_page_intro(section, colors);
         }
+    }
+
+    #[test]
+    fn settings_navigation_uses_task_oriented_labels() {
+        let items = settings_navigation_items();
+        assert_eq!(
+            items.map(|item| item.label),
+            ["Capture", "Library", "Record", "App"]
+        );
+        assert_eq!(
+            items.map(|item| item.description),
+            [
+                "Screenshot, annotate, export",
+                "Saved images and history",
+                "Screen and audio",
+                "Theme, startup, updates",
+            ]
+        );
+    }
+
+    #[test]
+    fn settings_page_copy_matches_navigation_purposes() {
+        assert_eq!(
+            settings_page_copy(SettingsSection::Capture),
+            (
+                "Capture",
+                "Start a screenshot or adjust capture preferences."
+            )
+        );
+        assert_eq!(
+            settings_page_copy(SettingsSection::Files),
+            (
+                "Library",
+                "Find saved captures, change output, and manage history."
+            )
+        );
+        assert_eq!(
+            settings_page_copy(SettingsSection::Recording),
+            (
+                "Record",
+                "Choose a display, audio source, and recording controls."
+            )
+        );
+        assert_eq!(
+            settings_page_copy(SettingsSection::System),
+            ("App", "Set appearance, startup, and update preferences.")
+        );
     }
 
     #[test]
