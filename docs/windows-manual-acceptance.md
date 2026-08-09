@@ -129,6 +129,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `a71bf72` | 343 项库测试、严格 Clippy、格式检查、便携包构建和验证通过；便携启动冒烟现在使用隔离 profile 并确认进程保持运行 5 秒。 | 待执行 | `dist/acceptance-profile/FlashShot-0.1.0-windows-x86_64.zip` 通过结构与 SHA-256 校验；`FLASH_SHOT_PROFILE_DIR` 下的 `config/data/cache/history` 均成功创建，调用方原有 profile 环境变量在冒烟结束后恢复；便携包 fixture 与安装器 `-ValidateOnly` 也通过。真实干净 Windows 用户账户、签名和安装器仍待发布时执行。 |
 | 2026-08-10 | `7034a07` | `recognition-acceptance` 探针升级为 schema 2；默认模式只读探测并保持非阻塞，`--require-ocr` 与 `--require-translation` 可分别把依赖就绪状态作为机器可读退出门禁。 | 待执行 | 当前默认报告 `target/ui-acceptance/recognition-acceptance-default-current.json` 中 OCR 为 `program not found`、翻译端点未配置且 `passed: true`；显式 `--require-ocr` 与 `--require-translation` 分别在 `target/ui-acceptance/recognition-acceptance-required-ocr-current.json`、`target/ui-acceptance/recognition-acceptance-required-translation-current.json` 写入 `passed: false` 并以退出码 1 结束。未安装 Tesseract 或未配置翻译服务时，不将 OCR/翻译真实 UI 矩阵标为通过。 |
 | 2026-08-10 | `current-ocr-timeout` | 347 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；本地 OCR 子进程增加 20 秒有界等待，正常退出会回收输出，超时会终止进程并返回 `TimedOut`，相关生命周期回归测试通过。 | 待执行 | 这补充 OCR 失败恢复的自动证据，不替代含文字选区的真实 OCR UI、翻译服务失败后重试和滚动截图手工矩阵；当前机器仍未安装 Tesseract，真实依赖门禁保持未通过。 |
+| 2026-08-10 | `current-update-timeout` | 更新 manifest 请求增加 15 秒连接与总超时，并保留传输超时错误类型；更新配置与 manifest 校验测试通过，严格 Clippy、格式检查和全目标编译通过。 | 待执行 | 这是显式更新检查的失败恢复自动证据；当前未配置 `FLASH_SHOT_UPDATE_ENDPOINT`，因此未进行外部发布端点实测。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

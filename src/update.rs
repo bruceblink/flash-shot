@@ -1,8 +1,9 @@
 //! Explicit, HTTPS-only release manifest checks with no download or installation behavior.
 
-use std::{cmp::Ordering, env, io};
+use std::{cmp::Ordering, env, error::Error as _, io, time::Duration};
 
 const ENDPOINT_ENV: &str = "FLASH_SHOT_UPDATE_ENDPOINT";
+const UPDATE_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UpdateConfig {
@@ -38,13 +39,19 @@ pub enum UpdateAvailability {
 
 /// Fetches and validates a release manifest only after the user explicitly asks to check.
 pub fn check(config: &UpdateConfig, current_version: &str) -> io::Result<UpdateAvailability> {
-    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    // Bound an explicit update check so a broken release endpoint cannot hold the UI status
+    // in its in-flight state indefinitely.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(UPDATE_REQUEST_TIMEOUT)
+        .timeout(UPDATE_REQUEST_TIMEOUT)
+        .redirects(0)
+        .build();
     let response = agent
         .get(config.endpoint())
         .set("accept", "application/json")
         .call()
         .map_err(update_error)?;
-    let manifest = response.into_json().map_err(update_error)?;
+    let manifest = response.into_json().map_err(update_body_error)?;
     let version = release_version_from_manifest(manifest)?;
     match compare_versions(&version, current_version)? {
         Ordering::Greater => Ok(UpdateAvailability::Available { version }),
@@ -168,16 +175,38 @@ fn parse_version_part(
     })
 }
 
-fn update_error(error: impl std::fmt::Display) -> io::Error {
-    io::Error::other(format!("update manifest request failed: {error}"))
+fn update_error(error: ureq::Error) -> io::Error {
+    let kind = match &error {
+        ureq::Error::Transport(transport) => transport
+            .source()
+            .and_then(|source| source.downcast_ref::<io::Error>())
+            .map(|source| source.kind())
+            .unwrap_or(io::ErrorKind::Other),
+        ureq::Error::Status(_, _) => io::ErrorKind::Other,
+    };
+    io::Error::new(kind, format!("update manifest request failed: {error}"))
+}
+
+fn update_body_error(error: io::Error) -> io::Error {
+    let kind = error.kind();
+    io::Error::new(
+        kind,
+        format!("update manifest response could not be decoded: {error}"),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        UpdateAvailability, compare_versions, release_version_from_manifest, validate_endpoint,
+        UPDATE_REQUEST_TIMEOUT, UpdateAvailability, compare_versions,
+        release_version_from_manifest, validate_endpoint,
     };
-    use std::cmp::Ordering;
+    use std::{cmp::Ordering, time::Duration};
+
+    #[test]
+    fn update_requests_have_a_bounded_timeout() {
+        assert_eq!(UPDATE_REQUEST_TIMEOUT, Duration::from_secs(15));
+    }
 
     fn manifest(version: &str) -> serde_json::Value {
         serde_json::json!({
