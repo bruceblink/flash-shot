@@ -109,6 +109,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `18de6de` | 336 项库测试、严格 Clippy、格式检查、全目标编译和 Release 构建通过；`scroll-acceptance` 通过 6 帧、5 个 90 像素重叠区的确定性拼接验收，输出 96x630，像素校验和为 `2267123376996061824`；本机 FFmpeg 9.0 可用并识别 `gdigrab`。 | 待执行 | 滚动控制器现在只接受未修饰的 `Escape` 取消，Ctrl/Alt/平台键/Fn 组合不会误取消；报告写入 `target/ui-acceptance/scroll-acceptance-20260810-current.json`。真实滚动 UI、双屏/混合 DPI 和录屏手工矩阵仍待执行。 |
 | 2026-08-10 | `e0c647c` | 滚动截图控制窗口沿用覆盖层的原生置顶策略；336 项库测试、严格 Clippy、格式检查、全目标编译和 Release `scroll-acceptance` 验收通过。 | 待执行 | 滚动控制条首次渲染后异步保持在目标窗口上方，避免滚动过程中被目标应用遮挡；确定性报告仍为 6 帧、5 个 90 像素重叠、96x630。真实滚动 UI、双屏/混合 DPI 和录屏手工矩阵仍待执行。 |
 | 2026-08-10 | `036c450` | 336 项库测试、严格 Clippy、格式检查、全目标编译通过；Release `recognition-acceptance` 探针通过并输出 OCR/翻译可选依赖状态。 | 待执行 | 报告位于 `target/ui-acceptance/recognition-acceptance-20260810-current.json`：OCR 为 `program not found`，翻译端点未配置；探针不创建截图、不发起网络请求。OCR/翻译真实 UI 与失败后重试仍待手工矩阵。 |
+| 2026-08-10 | `066feb6` | 337 项库测试、严格 Clippy、格式检查、全目标编译和 Release 设置页探针通过；新增零基显示器索引定位。 | 待执行 | 当前机器仅有 `DISPLAY1`（2560x1440、DPI 96、scale 1.0）；索引 `0` 的 Capture 520x640 截图位于 `target/ui-acceptance/settings-display-0-current-520x640.png`，JSON 报告 `scale_match: true`。索引 `1` 按预期失败并报告仅检测到 1 块显示器；150%/200% 实机仍待执行。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
