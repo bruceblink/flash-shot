@@ -277,6 +277,7 @@ impl FlashShotApp {
         self.manual_scroll_auto_capture_generation = None;
         self.recognition_result = None;
         self.recognition_retry = None;
+        self.recognition_in_flight = false;
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
         self.status = "Capturing virtual desktop...".to_owned();
@@ -527,6 +528,7 @@ impl FlashShotApp {
         self.manual_scroll_auto_capture_generation = None;
         self.recognition_result = None;
         self.recognition_retry = None;
+        self.recognition_in_flight = false;
         self.recording_control = None;
         self.recording_start_in_flight = false;
         self.recording_paused = false;

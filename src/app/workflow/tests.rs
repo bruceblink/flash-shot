@@ -13,12 +13,12 @@ use super::{
     quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
-    recording_audio_selection_label, recording_display_selection_label,
-    recording_start_conflict_status, recording_start_failure_status, recording_support_status,
-    recording_target_label, resolve_pointer_selection, save_annotated_frame_selection,
-    save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-    text_annotation_with_content, tool_selected_status, translation_failure_status,
-    translation_support_status, with_alpha,
+    recognition_start_conflict_status, recording_audio_selection_label,
+    recording_display_selection_label, recording_start_conflict_status,
+    recording_start_failure_status, recording_support_status, recording_target_label,
+    resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
+    save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
+    tool_selected_status, translation_failure_status, translation_support_status, with_alpha,
 };
 use crate::{
     domain::{
@@ -1675,6 +1675,15 @@ fn translation_failure_messages_identify_the_recovery_step() {
     assert!(
         translation_failure_status(&TranslationOutcome::ServiceFailed("timeout".to_owned()))
             .contains("Check the endpoint")
+    );
+}
+
+#[test]
+fn recognition_requests_report_overlapping_work_without_replacing_the_first_task() {
+    assert_eq!(recognition_start_conflict_status(false), None);
+    assert_eq!(
+        recognition_start_conflict_status(true),
+        Some("Recognition is already in progress")
     );
 }
 

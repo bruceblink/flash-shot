@@ -19,6 +19,8 @@ pub(super) use support::*;
 use windowing::*;
 
 #[cfg(test)]
+pub(super) use recognition::recognition_start_conflict_status;
+#[cfg(test)]
 use recording::{
     format_recording_progress, next_recording_audio_selection, next_recording_display_selection,
     recording_start_conflict_status, recording_start_failure_status, recording_support_status,

@@ -4,6 +4,11 @@ use super::*;
 
 impl FlashShotApp {
     pub(in crate::app) fn recognize_qr_selection(&mut self, cx: &mut Context<Self>) {
+        if let Some(status) = recognition_start_conflict_status(self.recognition_in_flight) {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
         let Some(selection) = self.session.selection() else {
             self.status = "Select an area before recognizing a QR code".to_owned();
             cx.notify();
@@ -48,6 +53,7 @@ impl FlashShotApp {
         if !is_current_operation(self.operation_generation, generation) {
             return;
         }
+        self.recognition_in_flight = false;
         self.status = match result {
             Ok(codes) if codes.is_empty() => "No QR code found in the selection".to_owned(),
             Ok(codes) => {
@@ -72,6 +78,11 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn recognize_text_selection(&mut self, cx: &mut Context<Self>) {
+        if let Some(status) = recognition_start_conflict_status(self.recognition_in_flight) {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
         let Some(selection) = self.session.selection() else {
             self.status = "Select an area before recognizing text".to_owned();
             cx.notify();
@@ -118,6 +129,7 @@ impl FlashShotApp {
         if !is_current_operation(self.operation_generation, generation) {
             return;
         }
+        self.recognition_in_flight = false;
         self.status = match result {
             Ok(text) if text.is_empty() => {
                 self.recognition_retry = None;
@@ -146,6 +158,11 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn translate_selection(&mut self, cx: &mut Context<Self>) {
+        if let Some(status) = recognition_start_conflict_status(self.recognition_in_flight) {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
         let Some(selection) = self.session.selection() else {
             self.status = "Select an area before translating text".to_owned();
             cx.notify();
@@ -155,6 +172,7 @@ impl FlashShotApp {
         let config = match crate::translation::TranslationConfig::from_environment() {
             Ok(Some(config)) => config,
             Ok(None) => {
+                self.recognition_in_flight = false;
                 self.recognition_retry = Some(RecognitionRetry::Translation);
                 self.status =
                     "Translation is disabled. Configure FLASH_SHOT_TRANSLATION_ENDPOINT to opt in."
@@ -163,6 +181,7 @@ impl FlashShotApp {
                 return;
             }
             Err(error) => {
+                self.recognition_in_flight = false;
                 self.recognition_retry = Some(RecognitionRetry::Translation);
                 self.status = format!("Translation is unavailable: {error}");
                 cx.notify();
@@ -170,6 +189,7 @@ impl FlashShotApp {
             }
         };
         let Some((frame, document)) = self.export_source() else {
+            self.recognition_in_flight = false;
             cx.notify();
             return;
         };
@@ -201,6 +221,7 @@ impl FlashShotApp {
         self.operation_generation = self.operation_generation.wrapping_add(1);
         self.recognition_result = None;
         self.recognition_retry = None;
+        self.recognition_in_flight = true;
         self.operation_generation
     }
 
@@ -213,6 +234,7 @@ impl FlashShotApp {
         if !is_current_operation(self.operation_generation, generation) {
             return;
         }
+        self.recognition_in_flight = false;
         self.status = match result {
             TranslationOutcome::Completed(text) if text.is_empty() => {
                 self.recognition_retry = None;
@@ -248,4 +270,9 @@ impl FlashShotApp {
         };
         cx.notify();
     }
+}
+
+/// Prevents overlapping OCR, translation, and QR requests from replacing one another.
+pub(crate) fn recognition_start_conflict_status(in_flight: bool) -> Option<&'static str> {
+    in_flight.then_some("Recognition is already in progress")
 }
