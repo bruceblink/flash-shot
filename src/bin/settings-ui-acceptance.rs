@@ -68,6 +68,7 @@ struct Options {
     linger_delay: Duration,
     expected_scale: Option<f32>,
     section: String,
+    display_index: Option<usize>,
 }
 
 impl Options {
@@ -97,6 +98,7 @@ impl Options {
             .map(parse_section)
             .transpose()?
             .unwrap_or_else(|| "capture".to_owned());
+        let display_index = arguments.next().map(parse_display_index).transpose()?;
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -114,12 +116,13 @@ impl Options {
             linger_delay,
             expected_scale,
             section,
+            display_index,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index]"
         .to_owned()
 }
 
@@ -188,6 +191,15 @@ fn parse_section(value: std::ffi::OsString) -> Result<String, String> {
     }
 }
 
+/// Parses a zero-based display index so DPI evidence can target a specific monitor.
+fn parse_display_index(value: std::ffi::OsString) -> Result<usize, String> {
+    value
+        .into_string()
+        .map_err(|_| "display-index must be a non-negative integer".to_owned())?
+        .parse::<usize>()
+        .map_err(|_| "display-index must be a non-negative integer".to_owned())
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -228,6 +240,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             width: options.width,
             height: options.height,
             section: options.section,
+            display_index: options.display_index,
         },
     )
 }
@@ -358,8 +371,8 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_expected_scale, parse_linger_delay, parse_section, parse_settle_delay,
-        scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
+        parse_display_index, parse_expected_scale, parse_linger_delay, parse_section,
+        parse_settle_delay, scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
     };
     use std::{ffi::OsString, path::Path, time::Duration};
 
@@ -387,6 +400,14 @@ mod tests {
         assert_eq!(parse_expected_scale(OsString::from("2.0")).unwrap(), 2.0);
         assert!(parse_expected_scale(OsString::from("0.9")).is_err());
         assert!(parse_expected_scale(OsString::from("not-a-scale")).is_err());
+    }
+
+    #[test]
+    fn display_index_accepts_zero_based_monitor_selection() {
+        assert_eq!(parse_display_index(OsString::from("0")).unwrap(), 0);
+        assert_eq!(parse_display_index(OsString::from("12")).unwrap(), 12);
+        assert!(parse_display_index(OsString::from("-1")).is_err());
+        assert!(parse_display_index(OsString::from("monitor")).is_err());
     }
 
     #[test]

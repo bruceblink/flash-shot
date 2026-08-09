@@ -78,6 +78,7 @@ pub fn run_settings_ui_acceptance(
             height: acceptance.height.max(420.0),
             show: true,
             section: acceptance.section,
+            display_index: acceptance.display_index,
         },
     )
 }
@@ -88,6 +89,8 @@ pub struct SettingsUiAcceptanceOptions {
     pub width: f32,
     pub height: f32,
     pub section: String,
+    /// Selects a zero-based Windows display index for multi-monitor DPI acceptance runs.
+    pub display_index: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -96,6 +99,7 @@ struct SettingsWindowOptions {
     height: f32,
     show: bool,
     section: String,
+    display_index: Option<usize>,
 }
 
 impl Default for SettingsWindowOptions {
@@ -105,6 +109,7 @@ impl Default for SettingsWindowOptions {
             height: 640.0,
             show: false,
             section: "capture".to_owned(),
+            display_index: None,
         }
     }
 }
@@ -118,6 +123,27 @@ fn run_with_settings_window(
     settings_path: PathBuf,
     window_options: SettingsWindowOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let display_id = window_options
+        .display_index
+        .map(|index| {
+            use crate::platform::display::DisplayProvider;
+
+            let displays = crate::platform::display::SystemDisplayProvider.displays()?;
+            displays
+                .get(index)
+                .map(|display| DisplayId::new(display.platform_id))
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "display index {index} is unavailable ({} display(s) detected)",
+                            displays.len()
+                        ),
+                    )
+                })
+        })
+        .transpose()?;
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -137,6 +163,7 @@ fn run_with_settings_window(
                 size(px(window_options.width), px(window_options.height)),
                 cx,
             )),
+            display_id,
             window_min_size: Some(size(px(420.), px(420.))),
             // Flash Shot runs from its tray icon. The settings surface is restored only
             // when requested, keeping app launch out of the capture workflow.

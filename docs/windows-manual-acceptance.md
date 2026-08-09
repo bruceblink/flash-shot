@@ -61,11 +61,16 @@ cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scr
 # 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-200.png 1500 0 2.0
+# 选择零基显示器索引；这会把窗口放到指定显示器并保留其 DPI 证据
+cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-display-1-scale.png 1500 0 1.5 capture 1
 ```
 
 `settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含物理窗口边界、Windows DPI
 和缩放比例。提供最后一个 `expected-scale` 参数时，命令只有在 `scale_match` 为 `true`
 时才成功；150%/200% 验收必须保留 `scale_factor` 为 `1.5` 或 `2.0` 的对应证据。
+提供最后一个 `display-index` 参数时，探针会将窗口放到指定的零基显示器，并在同名 JSON
+中保留该窗口实际观测到的 `dpi`、物理边界和 `scale_factor`；索引不存在时命令失败，避免
+把另一块显示器的截图误记为目标 DPI 证据。
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
