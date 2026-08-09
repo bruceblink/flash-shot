@@ -33,6 +33,7 @@ use windows_sys::core::BOOL;
 const DEFAULT_RENDER_SETTLE_DELAY: Duration = Duration::from_millis(1_500);
 const DEFAULT_LINGER_DELAY: Duration = Duration::ZERO;
 const DEFAULT_WINDOWS_DPI: u32 = 96;
+const SCALE_TOLERANCE: f32 = 0.01;
 
 #[derive(serde::Serialize)]
 struct ScreenshotMetadata {
@@ -40,6 +41,8 @@ struct ScreenshotMetadata {
     physical_bounds: ScreenshotBounds,
     dpi: u32,
     scale_factor: f32,
+    expected_scale: Option<f32>,
+    scale_match: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
@@ -63,6 +66,7 @@ struct Options {
     output: PathBuf,
     settle_delay: Duration,
     linger_delay: Duration,
+    expected_scale: Option<f32>,
 }
 
 impl Options {
@@ -86,6 +90,7 @@ impl Options {
             .map(parse_linger_delay)
             .transpose()?
             .unwrap_or(DEFAULT_LINGER_DELAY);
+        let expected_scale = arguments.next().map(parse_expected_scale).transpose()?;
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -101,12 +106,13 @@ impl Options {
             output,
             settle_delay,
             linger_delay,
+            expected_scale,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale]"
         .to_owned()
 }
 
@@ -148,6 +154,21 @@ fn parse_linger_delay(value: std::ffi::OsString) -> Result<Duration, String> {
     Ok(Duration::from_millis(milliseconds))
 }
 
+/// Parses the optional scale required by a high-DPI acceptance run.
+/// Keeping it explicit prevents a 100% screenshot from being mistaken for 150% or 200% evidence.
+fn parse_expected_scale(value: std::ffi::OsString) -> Result<f32, String> {
+    let value = value
+        .into_string()
+        .map_err(|_| "expected-scale must be a number".to_owned())?;
+    let scale = value
+        .parse::<f32>()
+        .map_err(|_| "expected-scale must be a number".to_owned())?;
+    if !scale.is_finite() || !(1.0..=4.0).contains(&scale) {
+        return Err("expected-scale must be between 1.0 and 4.0".to_owned());
+    }
+    Ok(scale)
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -172,7 +193,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut settings = UserSettings::default();
     settings.theme_mode = options.theme;
 
-    spawn_screenshot_worker(output, options.settle_delay, options.linger_delay);
+    spawn_screenshot_worker(
+        output,
+        options.settle_delay,
+        options.linger_delay,
+        options.expected_scale,
+    );
     flash_shot::run_settings_ui_acceptance(
         Instant::now(),
         performance,
@@ -185,13 +211,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Waits for GPUI to paint, captures the window, optionally keeps it alive, then exits.
-fn spawn_screenshot_worker(output: PathBuf, settle_delay: Duration, linger_delay: Duration) {
+fn spawn_screenshot_worker(
+    output: PathBuf,
+    settle_delay: Duration,
+    linger_delay: Duration,
+    expected_scale: Option<f32>,
+) {
     thread::spawn(move || {
         thread::sleep(settle_delay);
         let result = visible_process_window().and_then(|window| {
             let frame = SystemCaptureBackend.capture(window.bounds)?;
             frame.save_png(&output)?;
-            write_screenshot_metadata(&output, &window)
+            write_screenshot_metadata(&output, &window, expected_scale)?;
+            if let Some(expected_scale) = expected_scale {
+                let actual_scale = scale_factor_for_dpi(window.dpi);
+                if !scale_matches(actual_scale, expected_scale) {
+                    return Err(io::Error::other(format!(
+                        "expected Windows scale {expected_scale:.2}, observed {actual_scale:.2}"
+                    )));
+                }
+            }
+            Ok(())
         });
         match result {
             Ok(()) => {
@@ -251,7 +291,12 @@ fn visible_process_window() -> io::Result<VisibleProcessWindow> {
 }
 
 /// Writes machine-readable scale evidence beside a native screenshot without changing its pixels.
-fn write_screenshot_metadata(output: &Path, window: &VisibleProcessWindow) -> io::Result<()> {
+fn write_screenshot_metadata(
+    output: &Path,
+    window: &VisibleProcessWindow,
+    expected_scale: Option<f32>,
+) -> io::Result<()> {
+    let scale_factor = scale_factor_for_dpi(window.dpi);
     let metadata = ScreenshotMetadata {
         screenshot: output
             .file_name()
@@ -265,7 +310,9 @@ fn write_screenshot_metadata(output: &Path, window: &VisibleProcessWindow) -> io
             bottom: window.bounds.bottom,
         },
         dpi: window.dpi,
-        scale_factor: scale_factor_for_dpi(window.dpi),
+        scale_factor,
+        expected_scale,
+        scale_match: expected_scale.map(|expected| scale_matches(scale_factor, expected)),
     };
     let encoded = serde_json::to_vec_pretty(&metadata).map_err(io::Error::other)?;
     fs::write(screenshot_metadata_path(output), encoded)
@@ -276,6 +323,11 @@ fn scale_factor_for_dpi(dpi: u32) -> f32 {
     dpi.max(DEFAULT_WINDOWS_DPI) as f32 / DEFAULT_WINDOWS_DPI as f32
 }
 
+/// Compares observed and requested scale with a small tolerance for fractional DPI rounding.
+fn scale_matches(observed: f32, expected: f32) -> bool {
+    (observed - expected).abs() <= SCALE_TOLERANCE
+}
+
 /// Keeps evidence pairs easy to find by using the screenshot's filename with a JSON extension.
 fn screenshot_metadata_path(output: &Path) -> PathBuf {
     output.with_extension("json")
@@ -284,7 +336,8 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_linger_delay, parse_settle_delay, scale_factor_for_dpi, screenshot_metadata_path,
+        parse_expected_scale, parse_linger_delay, parse_settle_delay, scale_factor_for_dpi,
+        scale_matches, screenshot_metadata_path,
     };
     use std::{ffi::OsString, path::Path, time::Duration};
 
@@ -307,11 +360,26 @@ mod tests {
     }
 
     #[test]
+    fn expected_scale_accepts_standard_dpi_values_and_rejects_invalid_values() {
+        assert_eq!(parse_expected_scale(OsString::from("1.5")).unwrap(), 1.5);
+        assert_eq!(parse_expected_scale(OsString::from("2.0")).unwrap(), 2.0);
+        assert!(parse_expected_scale(OsString::from("0.9")).is_err());
+        assert!(parse_expected_scale(OsString::from("not-a-scale")).is_err());
+    }
+
+    #[test]
     fn dpi_metadata_uses_standard_windows_scale_factors() {
         assert_eq!(scale_factor_for_dpi(96), 1.0);
         assert_eq!(scale_factor_for_dpi(144), 1.5);
         assert_eq!(scale_factor_for_dpi(192), 2.0);
         assert_eq!(scale_factor_for_dpi(0), 1.0);
+    }
+
+    #[test]
+    fn expected_scale_guard_allows_only_small_dpi_rounding() {
+        assert!(scale_matches(1.5, 1.5));
+        assert!(scale_matches(1.509, 1.5));
+        assert!(!scale_matches(1.52, 1.5));
     }
 
     #[test]
