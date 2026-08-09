@@ -41,11 +41,15 @@ impl OcrSupport {
 /// Checks the configured Tesseract executable and selected language without creating an image.
 pub fn check_support(configured_language: Option<&str>) -> io::Result<OcrSupport> {
     let executable = executable_path();
-    let version_output = Command::new(&executable).arg("--version").output()?;
+    let version_output = run_tesseract_command_with_executable(
+        executable.clone(),
+        vec![OsString::from("--version")],
+    )?;
     if !version_output.status.success() {
         return Err(ocr_command_error("--version", &version_output));
     }
-    let languages_output = Command::new(&executable).arg("--list-langs").output()?;
+    let languages_output =
+        run_tesseract_command_with_executable(executable, vec![OsString::from("--list-langs")])?;
     if !languages_output.status.success() {
         return Err(ocr_command_error("--list-langs", &languages_output));
     }
@@ -97,7 +101,14 @@ pub fn recognize_with_language(
 
 /// Waits for Tesseract without letting a stuck local process block recognition forever.
 fn run_tesseract_command(arguments: Vec<OsString>) -> io::Result<Output> {
-    let mut child = Command::new(executable_path())
+    run_tesseract_command_with_executable(executable_path(), arguments)
+}
+
+fn run_tesseract_command_with_executable(
+    executable: OsString,
+    arguments: Vec<OsString>,
+) -> io::Result<Output> {
+    let mut child = Command::new(executable)
         .args(arguments)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
