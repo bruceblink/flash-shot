@@ -9,9 +9,13 @@ use std::{
 
 const INDEX_FILE: &str = "history.json";
 const DEFAULT_LIMIT: usize = 30;
+const PROFILE_DIR_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
 
 /// Returns the only directory whose screenshot files this feature manages.
 pub fn managed_history_directory() -> io::Result<PathBuf> {
+    if let Some(root) = std::env::var_os(PROFILE_DIR_ENV).filter(|root| !root.is_empty()) {
+        return create_managed_history_directory(PathBuf::from(root).join("history"));
+    }
     let user_dirs = directories::UserDirs::new().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -24,7 +28,11 @@ pub fn managed_history_directory() -> io::Result<PathBuf> {
             "user picture directory is unavailable",
         )
     })?;
-    let directory = pictures.join("Flash Shot");
+    create_managed_history_directory(pictures.join("Flash Shot"))
+}
+
+/// Creates the history root selected by the current profile without exposing files outside it.
+fn create_managed_history_directory(directory: PathBuf) -> io::Result<PathBuf> {
     fs::create_dir_all(&directory)?;
     Ok(directory)
 }
@@ -356,6 +364,16 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ))
+    }
+
+    #[test]
+    fn isolated_profile_history_uses_its_private_root() {
+        let root = directory("profile");
+        let history = super::create_managed_history_directory(root.join("history")).unwrap();
+
+        assert_eq!(history, root.join("history"));
+        assert!(history.is_dir());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

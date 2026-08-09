@@ -13,6 +13,7 @@ use directories::ProjectDirs;
 use log::{LevelFilter, Log, Metadata, Record};
 
 const LOG_FILE_NAME: &str = "flash-shot.jsonl";
+const PROFILE_DIR_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
 type PanicHook = Box<dyn Fn(&panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,21 +26,39 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn discover() -> io::Result<Self> {
-        let project = ProjectDirs::from("com", "BruceBlink", "Flash Shot").ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "application directories unavailable",
-            )
-        })?;
-
-        let paths = Self {
-            config_dir: project.config_dir().to_path_buf(),
-            data_dir: project.data_dir().to_path_buf(),
-            cache_dir: project.cache_dir().to_path_buf(),
-            log_dir: project.data_dir().join("logs"),
-        };
+        let paths =
+            if let Some(root) = std::env::var_os(PROFILE_DIR_ENV).filter(|root| !root.is_empty()) {
+                Self::from_profile_root(PathBuf::from(root))
+            } else {
+                let project =
+                    ProjectDirs::from("com", "BruceBlink", "Flash Shot").ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::NotFound,
+                            "application directories unavailable",
+                        )
+                    })?;
+                Self {
+                    config_dir: project.config_dir().to_path_buf(),
+                    data_dir: project.data_dir().to_path_buf(),
+                    cache_dir: project.cache_dir().to_path_buf(),
+                    log_dir: project.data_dir().join("logs"),
+                }
+            };
         paths.create()?;
         Ok(paths)
+    }
+
+    /// Maps an explicit test profile root to every writable application directory.
+    ///
+    /// Keeping the root mapping in one place prevents a clean-profile run from accidentally
+    /// writing settings, metrics, logs, or cache entries into the user's normal profile.
+    fn from_profile_root(root: PathBuf) -> Self {
+        Self {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            cache_dir: root.join("cache"),
+            log_dir: root.join("data").join("logs"),
+        }
     }
 
     fn create(&self) -> io::Result<()> {
@@ -157,7 +176,7 @@ fn unix_timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{JsonLogger, LOG_FILE_NAME, Log, Metadata, Record};
+    use super::{AppPaths, JsonLogger, LOG_FILE_NAME, Log, Metadata, Record};
     use log::{Level, LevelFilter};
     use std::{fs::OpenOptions, sync::Mutex};
 
@@ -212,5 +231,16 @@ mod tests {
         };
 
         assert!(!logger.enabled(&metadata));
+    }
+
+    #[test]
+    fn profile_root_paths_are_kept_inside_the_explicit_root() {
+        let root = std::path::PathBuf::from("target/profile-fixture");
+        let paths = AppPaths::from_profile_root(root.clone());
+
+        assert_eq!(paths.config_dir, root.join("config"));
+        assert_eq!(paths.data_dir, root.join("data"));
+        assert_eq!(paths.cache_dir, root.join("cache"));
+        assert_eq!(paths.log_dir, root.join("data/logs"));
     }
 }

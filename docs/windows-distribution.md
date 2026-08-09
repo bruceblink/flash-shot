@@ -21,7 +21,9 @@ Before distributing a portable ZIP, run its release executable from a fresh temp
 .\scripts\smoke-portable-startup.ps1 -ArchivePath "dist\FlashShot-0.1.0-windows-x86_64.zip"
 ```
 
-This is an artifact-startup preflight, not a substitute for manually testing on a clean Windows user profile.
+The smoke script sets `FLASH_SHOT_PROFILE_DIR` to a disposable directory and verifies that config,
+data, cache, and history are initialized there. This is an isolated profile preflight, not a
+substitute for manually testing on a clean Windows user account.
 
 The package intentionally does not include FFmpeg. Recording users must install a compatible FFmpeg build or set `FLASH_SHOT_FFMPEG` to its executable path. This keeps the application license boundary and FFmpeg distribution choice explicit.
 
