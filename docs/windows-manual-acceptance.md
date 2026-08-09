@@ -111,6 +111,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `036c450` | 336 项库测试、严格 Clippy、格式检查、全目标编译通过；Release `recognition-acceptance` 探针通过并输出 OCR/翻译可选依赖状态。 | 待执行 | 报告位于 `target/ui-acceptance/recognition-acceptance-20260810-current.json`：OCR 为 `program not found`，翻译端点未配置；探针不创建截图、不发起网络请求。OCR/翻译真实 UI 与失败后重试仍待手工矩阵。 |
 | 2026-08-10 | `066feb6` | 337 项库测试、严格 Clippy、格式检查、全目标编译和 Release 设置页探针通过；新增零基显示器索引定位。 | 待执行 | 当前机器仅有 `DISPLAY1`（2560x1440、DPI 96、scale 1.0）；索引 `0` 的 Capture 520x640 截图位于 `target/ui-acceptance/settings-display-0-current-520x640.png`，JSON 报告 `scale_match: true`。索引 `1` 按预期失败并报告仅检测到 1 块显示器；150%/200% 实机仍待执行。 |
 | 2026-08-10 | `711951f` | 当前提交的便携包通过结构校验、SHA-256 生成、5 秒启动冒烟和 fixture 正/反例门禁；安装器 `-ValidateOnly` 通过。 | 待执行 | 便携包证据位于 `dist/acceptance-711951f/FlashShot-0.1.0-windows-x86_64.zip`；启动后进程保持运行 5 秒并被测试脚本清理。当前环境没有 `ISCC.exe`/`signtool.exe`，真实安装器编译、签名和干净 Windows profile 仍待执行。 |
+| 2026-08-10 | `e5e69e0` | 339 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；录屏设置页新增启动、录制、暂停状态与 FFmpeg 秒数/帧数反馈。 | 待执行 | Release 原生 Record 页 520x640 截图 `target/ui-acceptance/recording-progress-idle-520x640.png` 已复核，空闲布局无文字截断或控件重叠；启动/暂停/实时进度文案由单测覆盖。应用内完整录屏 UI 手工矩阵仍待执行。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
