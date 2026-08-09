@@ -294,9 +294,9 @@ fn manual_scroll_capture_label(capture_in_flight: bool, retry_available: bool) -
 /// Explains that automatic capture is waiting for the target application to repaint.
 fn auto_scroll_capture_label(auto_capture_pending: bool) -> &'static str {
     if auto_capture_pending {
-        "Waiting..."
+        "Scrolling..."
     } else {
-        "Scroll + capture"
+        "Scroll down + capture"
     }
 }
 
@@ -362,8 +362,8 @@ mod tests {
 
     #[test]
     fn automatic_capture_action_reports_its_settle_delay() {
-        assert_eq!(auto_scroll_capture_label(false), "Scroll + capture");
-        assert_eq!(auto_scroll_capture_label(true), "Waiting...");
+        assert_eq!(auto_scroll_capture_label(false), "Scroll down + capture");
+        assert_eq!(auto_scroll_capture_label(true), "Scrolling...");
     }
 
     #[test]
