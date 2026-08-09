@@ -68,6 +68,8 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 `settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含物理窗口边界、Windows DPI
 和缩放比例。提供最后一个 `expected-scale` 参数时，命令只有在 `scale_match` 为 `true`
 时才成功；150%/200% 验收必须保留 `scale_factor` 为 `1.5` 或 `2.0` 的对应证据。
+设置页探针应串行执行：截图 worker 捕获窗口所在的桌面物理区域，多个验收窗口重叠时，
+后启动的进程可能截到前一个窗口，不能把并行输出当作独立主题或页面证据。
 提供最后一个 `display-index` 参数时，探针会将窗口放到指定的零基显示器，并在同名 JSON
 中保留该窗口实际观测到的 `dpi`、物理边界和 `scale_factor`；索引不存在时命令失败，避免
 把另一块显示器的截图误记为目标 DPI 证据。
