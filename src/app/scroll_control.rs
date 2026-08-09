@@ -1,8 +1,8 @@
 //! Small movable controller used while a user captures scrolling content.
 
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, FontWeight, Render, Subscription, Window, div,
-    prelude::*, px,
+    Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, Keystroke, Render,
+    Subscription, Window, div, prelude::*, px,
 };
 
 use super::FlashShotApp;
@@ -27,6 +27,19 @@ impl ManualScrollControl {
 impl Focusable for ManualScrollControl {
     fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl ManualScrollControl {
+    /// Cancels the active scroll session from the focused controller without affecting global shortcuts.
+    fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if !manual_scroll_cancel_key(&event.keystroke) {
+            return;
+        }
+        let app = self.app.clone();
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| app.cancel_manual_scroll(cx));
+        });
     }
 }
 
@@ -113,6 +126,10 @@ impl Render for ManualScrollControl {
             .border_1()
             .border_color(colors.border)
             .rounded_lg()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                this.handle_key_down(event, cx);
+            }))
             .child(
                 div()
                     .flex()
@@ -211,6 +228,11 @@ impl Render for ManualScrollControl {
     }
 }
 
+/// Limits Escape cancellation to an unmodified key so text and system shortcuts remain isolated.
+fn manual_scroll_cancel_key(keystroke: &Keystroke) -> bool {
+    keystroke.key == "escape" && !keystroke.modifiers.shift
+}
+
 /// Keeps the primary action explicit while one scroll frame is being captured.
 fn manual_scroll_capture_label(capture_in_flight: bool, retry_available: bool) -> &'static str {
     if capture_in_flight {
@@ -243,8 +265,10 @@ fn manual_scroll_finish_label(can_finish: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_scroll_capture_label, manual_scroll_capture_label, manual_scroll_finish_label,
+        auto_scroll_capture_label, manual_scroll_cancel_key, manual_scroll_capture_label,
+        manual_scroll_finish_label,
     };
+    use gpui::Keystroke;
 
     #[test]
     fn capture_action_describes_its_busy_state() {
@@ -263,5 +287,15 @@ mod tests {
     fn automatic_capture_action_reports_its_settle_delay() {
         assert_eq!(auto_scroll_capture_label(false), "Scroll + capture");
         assert_eq!(auto_scroll_capture_label(true), "Waiting...");
+    }
+
+    #[test]
+    fn escape_cancels_only_without_shift() {
+        assert!(manual_scroll_cancel_key(
+            &Keystroke::parse("escape").unwrap()
+        ));
+        assert!(!manual_scroll_cancel_key(
+            &Keystroke::parse("shift-escape").unwrap()
+        ));
     }
 }
