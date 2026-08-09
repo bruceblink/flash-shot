@@ -1488,7 +1488,7 @@ fn manual_scroll_control_bounds_keep_logical_size_on_scaled_displays() {
     assert_eq!(f32::from(bounds.origin.x), 340.0);
     assert_eq!(f32::from(bounds.origin.y), 608.0);
     assert_eq!(f32::from(bounds.size.width), 520.0);
-    assert_eq!(f32::from(bounds.size.height), 136.0);
+    assert_eq!(f32::from(bounds.size.height), 176.0);
 }
 
 #[test]

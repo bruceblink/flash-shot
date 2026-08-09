@@ -4,7 +4,8 @@ use super::*;
 
 // Keeps every manual-scroll command on one stable row without squeezing labels into symbols.
 const MANUAL_SCROLL_CONTROL_WIDTH: f32 = 520.0;
-const MANUAL_SCROLL_CONTROL_HEIGHT: f32 = 136.0;
+// Leaves room for the title bar, two wrapped action rows, and a readable status line.
+const MANUAL_SCROLL_CONTROL_HEIGHT: f32 = 176.0;
 const MANUAL_SCROLL_CONTROL_GAP: i32 = 12;
 
 pub(super) fn open_capture_overlays(
