@@ -1,6 +1,6 @@
 param(
-    [ValidateRange(1, 100)]
-    [int]$Iterations = 10,
+    [ValidateRange(20, 100)]
+    [int]$Iterations = 20,
     [ValidateRange(500, 10000)]
     [int]$SampleReadyWaitMilliseconds = 1000,
     [string]$OutputPath = "target\\release-capture-performance.json",

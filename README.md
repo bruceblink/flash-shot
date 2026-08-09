@@ -205,13 +205,13 @@ those gates pass. It exits with status `2` when a threshold fails, and with stat
 samples are malformed or insufficient. `--no-gate` and `--include-nonrelease` produce
 exploratory reports with both fields set to `false`.
 
-Collect an isolated ten-startup Release baseline without mixing older samples into the result:
+Collect an isolated twenty-startup Release baseline without mixing older samples into the result:
 
 ```powershell
 .\scripts\measure-release-startup.ps1
 ```
 
-This starts the Release executable ten times, writes a time-windowed startup-only p95 report to
+This starts the Release executable twenty times, writes a time-windowed startup-only p95 report to
 `target\release-startup-performance.json`, and stops on a startup crash, a missing current sample,
 or a startup p95 above 500 ms. It deliberately does not claim full release qualification because
 the shortcut-to-overlay metrics need their own real interaction sampling.
@@ -225,7 +225,7 @@ Collect an isolated shortcut-to-overlay baseline with the dedicated `Ctrl+Alt+F1
 .\scripts\measure-release-capture.ps1
 ```
 
-The script starts one Release application, triggers and cancels ten real capture overlays, and
+The script starts one Release application, triggers and cancels twenty real capture overlays, and
 gates the current window's frame-ready and overlay p95 values at 100 ms. It requires an
 interactive Windows desktop and no existing Flash Shot process.
 

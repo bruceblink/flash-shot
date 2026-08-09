@@ -1,6 +1,6 @@
 param(
-    [ValidateRange(10, 100)]
-    [int]$Iterations = 10,
+    [ValidateRange(20, 100)]
+    [int]$Iterations = 20,
     [ValidateRange(1, 30)]
     [int]$StartupWaitSeconds = 1,
     [string]$OutputPath = "target\\release-startup-performance.json",
