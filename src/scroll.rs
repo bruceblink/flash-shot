@@ -152,6 +152,12 @@ pub fn detect_vertical_overlap(
     options: OverlapOptions,
 ) -> io::Result<u32> {
     validate_pair(upper, lower, options)?;
+    if same_visible_pixels(upper, lower) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "scroll frame did not reveal new content",
+        ));
+    }
     let maximum = upper.height.min(lower.height);
     for rows in (options.minimum_rows..=maximum).rev() {
         if mean_difference(upper, lower, rows)? <= options.max_mean_abs_difference {
@@ -162,6 +168,19 @@ pub fn detect_vertical_overlap(
         io::ErrorKind::InvalidData,
         "no reliable vertical overlap found",
     ))
+}
+
+/// Detects an unchanged viewport so a capture without user movement can be retried safely.
+fn same_visible_pixels(upper: &CaptureFrame, lower: &CaptureFrame) -> bool {
+    if upper.width != lower.width || upper.height != lower.height {
+        return false;
+    }
+    let row_bytes = upper.width as usize * 4;
+    upper
+        .pixels
+        .chunks_exact(upper.stride)
+        .zip(lower.pixels.chunks_exact(lower.stride))
+        .all(|(upper_row, lower_row)| upper_row[..row_bytes] == lower_row[..row_bytes])
 }
 
 /// Stitches a sequence of manually captured, vertically scrolling frames.
@@ -381,6 +400,22 @@ mod tests {
         let error = detect_vertical_overlap(&frame(0..10), &frame(20..30), options()).unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_an_unchanged_viewport_without_consuming_the_session() {
+        let mut capture = ManualScrollCapture::default();
+        capture.begin(frame(0..10)).unwrap();
+
+        let error = capture.append(frame(0..10), options()).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(capture.frame_count(), 1);
+        assert!(!capture.can_finish());
+        assert_eq!(
+            capture.failure(),
+            Some("scroll frame did not reveal new content")
+        );
     }
 
     #[test]
