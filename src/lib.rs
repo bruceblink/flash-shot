@@ -45,6 +45,69 @@ pub fn run(
     settings: UserSettings,
     settings_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    run_with_settings_window(
+        started_at,
+        performance,
+        history,
+        settings,
+        settings_path,
+        SettingsWindowOptions::default(),
+    )
+}
+
+/// Starts the real settings surface visibly at a deterministic size for native screenshot QA.
+///
+/// Production startup continues to use [`run`] and remains hidden in the tray. This entry point
+/// exists so the repository's acceptance probe can render both themes without UI automation.
+pub fn run_settings_ui_acceptance(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    width: f32,
+    height: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_with_settings_window(
+        started_at,
+        performance,
+        history,
+        settings,
+        settings_path,
+        SettingsWindowOptions {
+            width: width.max(420.0),
+            height: height.max(420.0),
+            show: true,
+        },
+    )
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SettingsWindowOptions {
+    width: f32,
+    height: f32,
+    show: bool,
+}
+
+impl Default for SettingsWindowOptions {
+    fn default() -> Self {
+        Self {
+            width: 520.0,
+            height: 640.0,
+            show: false,
+        }
+    }
+}
+
+/// Runs the shared GPUI application with only the initial settings-window presentation varied.
+fn run_with_settings_window(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    window_options: SettingsWindowOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -60,11 +123,14 @@ pub fn run(
         ]);
 
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(520.), px(640.)), cx)),
+            window_bounds: Some(WindowBounds::centered(
+                size(px(window_options.width), px(window_options.height)),
+                cx,
+            )),
             window_min_size: Some(size(px(420.), px(420.))),
             // Flash Shot runs from its tray icon. The settings surface is restored only
             // when requested, keeping app launch out of the capture workflow.
-            show: false,
+            show: window_options.show,
             titlebar: Some(TitlebarOptions {
                 title: Some("Flash Shot".into()),
                 ..Default::default()
