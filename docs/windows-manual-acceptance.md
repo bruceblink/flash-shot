@@ -64,6 +64,7 @@ cargo run --release --bin windows-acceptance-probe -- --output target/windows-ac
 | 2026-08-02 | `88ed32e` | 313 项库测试、Clippy、格式检查、100 次连续截图和 4K 标注压力测试通过；Release 启动 p95 为 264.24ms（上限 500ms），快捷键到覆盖层 p95 为 96.38ms（上限 100ms）。 | 待执行 | 当前机器只提供单显示器压力测试证据；负坐标双屏、混合 DPI 和 FFmpeg 实机结果尚未记录。 |
 | 2026-08-09 | `23d4c31` | 324 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；`windows-acceptance-probe` 输出保存为 `target/windows-acceptance-environment-20260809.json`。 | 待执行 | 当前会话探测到一块 2560x1440、100% 显示器，FFmpeg 不可用；因此未把双屏、混合 DPI、录屏或完整单屏交互矩阵标为通过。 |
 | 2026-08-09 | `32096da` | 326 项库测试、严格 Clippy、格式检查和设置页宽窄截图复核通过；用户级 FFmpeg 探测结果保存为 `target/windows-acceptance-environment-20260809-ffmpeg.json`。 | 待执行 | Capture/Library/Record/App 导航在 980x760 和 520x640 窗口中无截断或重叠，证据位于 `target/ui-acceptance/settings-p1-task-navigation-*.png`。FFmpeg 已探测到 `gdigrab`，但 MP4 录制矩阵尚未执行。 |
+| 2026-08-09 | `c4e90f4` | 326 项库测试、严格 Clippy、格式检查和真实覆盖层截图复核通过。 | 待执行 | Undo/Redo 在无历史时保持固定低对比禁用态，Select/Mark 选中反馈清楚，主动作与样式控件未越出 2560x1440 屏幕；证据位于 `target/ui-acceptance/annotation-p1-stable-history-controls-*.png`。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
