@@ -44,6 +44,11 @@ const ANNOTATION_TOOL_ESTIMATED_WIDTH: f32 = 104.0;
 const ANNOTATION_TOOL_ROW_HEIGHT: f32 = 34.0;
 const ANNOTATION_TOOL_GAP: f32 = 8.0;
 const ANNOTATION_TOOLBAR_PADDING: f32 = 4.0;
+// Context sections add a visible divider and breathing room without making the
+// stable drawing palette move when an annotation is selected.
+const ANNOTATION_CONTEXT_SECTION_GAP: f32 =
+    ANNOTATION_TOOL_GAP + ANNOTATION_TOOLBAR_PADDING * 2.0 + 1.0;
+const ANNOTATION_TOOL_PALETTE_ITEMS: usize = 14;
 const ANNOTATION_STYLE_ROW_GAP: f32 = 30.0;
 const ANNOTATION_STYLE_PANEL_WIDTH: f32 = 164.0;
 const ANNOTATION_STYLE_PANEL_GAP: f32 = 8.0;
@@ -183,6 +188,7 @@ pub(super) struct CaptureOverlay {
     preview: Arc<RenderImage>,
     focus_handle: FocusHandle,
     topmost_requested: bool,
+    annotation_arrange_actions_for: Option<AnnotationId>,
     _app_observation: Subscription,
 }
 
@@ -200,6 +206,7 @@ impl CaptureOverlay {
             preview,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
+            annotation_arrange_actions_for: None,
             _app_observation: observation,
         }
     }
@@ -424,11 +431,14 @@ impl Render for CaptureOverlay {
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
-        let annotation_toolbar_items = annotation_toolbar_item_count(
+        let show_annotation_arrange_actions =
+            selected_annotation.is_some_and(|id| self.annotation_arrange_actions_for == Some(id));
+        let annotation_toolbar_items = annotation_toolbar_items(
             can_delete,
             can_edit_text,
             selected_number.is_some(),
             can_rotate,
+            show_annotation_arrange_actions,
         );
         let transform = self.transform(viewport);
         let selected_on_display =
@@ -783,9 +793,7 @@ impl Render for CaptureOverlay {
                                 .right(px(OVERLAY_EDGE_INSET))
                                 .top(px(OVERLAY_EDGE_INSET))
                         })
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
+                        .flex_col()
                         .gap_2()
                         .p_1()
                         .when(annotation_style_is_side_by_side, |tools| {
@@ -793,412 +801,485 @@ impl Render for CaptureOverlay {
                         })
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(annotation_action_button(
-                            "overlay-undo",
-                            "Undo",
-                            colors,
-                            AnnotationActionTone::Neutral,
-                            can_undo,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.undo_annotation(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-redo",
-                            "Redo",
-                            colors,
-                            AnnotationActionTone::Neutral,
-                            can_redo,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.redo_annotation(cx));
-                                });
-                            }),
-                        ))
-                        .when(can_delete, |tools| {
-                            tools.child(annotation_action_button(
-                                "overlay-delete",
-                                "Delete",
-                                colors,
-                                AnnotationActionTone::Destructive,
-                                true,
-                                cx.listener(|this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| {
-                                            app.delete_selected_annotation(cx);
-                                        });
-                                    });
-                                }),
-                            ))
-                        })
-                        .when(can_edit_text, |tools| {
-                            tools.child(annotation_action_button(
-                                "overlay-edit-text",
-                                "Edit text",
-                                colors,
-                                AnnotationActionTone::Primary,
-                                true,
-                                cx.listener(|this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| {
-                                            app.edit_selected_text_annotation(cx);
-                                        });
-                                    });
-                                }),
-                            ))
-                        })
-                        .when_some(selected_number, |tools, value| {
-                            tools
+                        .child(
+                            div()
+                                .id("overlay-annotation-tool-palette")
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap_2()
                                 .child(annotation_action_button(
-                                    "overlay-number-decrement",
-                                    "-",
+                                    "overlay-undo",
+                                    "Undo",
                                     colors,
                                     AnnotationActionTone::Neutral,
-                                    true,
+                                    can_undo,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.adjust_selected_number(-1, cx);
-                                            });
-                                        });
-                                    }),
-                                ))
-                                .child(
-                                    div()
-                                        .h(px(32.0))
-                                        .px_2()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded_md()
-                                        .bg(colors.panel)
-                                        .text_color(colors.text)
-                                        .child(value.to_string()),
-                                )
-                                .child(annotation_action_button(
-                                    "overlay-number-increment",
-                                    "+",
-                                    colors,
-                                    AnnotationActionTone::Neutral,
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.adjust_selected_number(1, cx);
-                                            });
-                                        });
-                                    }),
-                                ))
-                        })
-                        .when(can_delete, |tools| {
-                            tools.child(annotation_action_button(
-                                "overlay-duplicate",
-                                "Duplicate",
-                                colors,
-                                AnnotationActionTone::Neutral,
-                                true,
-                                cx.listener(|this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| {
-                                            app.duplicate_selected_annotation(cx);
-                                        });
-                                    });
-                                }),
-                            ))
-                        })
-                        .when(can_rotate, |tools| {
-                            tools.child(annotation_action_button(
-                                "overlay-rotate-clockwise",
-                                "Rotate 90",
-                                colors,
-                                AnnotationActionTone::Neutral,
-                                true,
-                                cx.listener(|this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| {
-                                            app.rotate_selected_annotation_clockwise(cx);
-                                        });
-                                    });
-                                }),
-                            ))
-                        })
-                        .when(can_delete, |tools| {
-                            tools
-                                .child(annotation_action_button(
-                                    "overlay-bring-forward",
-                                    "Forward",
-                                    colors,
-                                    AnnotationActionTone::Neutral,
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.bring_selected_annotation_forward(cx);
-                                            });
+                                            app.update(cx, |app, cx| app.undo_annotation(cx));
                                         });
                                     }),
                                 ))
                                 .child(annotation_action_button(
-                                    "overlay-send-backward",
-                                    "Backward",
+                                    "overlay-redo",
+                                    "Redo",
                                     colors,
                                     AnnotationActionTone::Neutral,
-                                    true,
+                                    can_redo,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.send_selected_annotation_backward(cx);
-                                            });
+                                            app.update(cx, |app, cx| app.redo_annotation(cx));
                                         });
                                     }),
                                 ))
                                 .child(annotation_action_button(
-                                    "overlay-bring-to-front",
-                                    "Front",
+                                    "overlay-tool-watermark",
+                                    "Watermark",
                                     colors,
-                                    AnnotationActionTone::Neutral,
+                                    if selected_tool == Some(AnnotationTool::Watermark) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
                                     true,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.bring_selected_annotation_to_front(cx);
-                                            });
+                                            app.update(cx, |app, cx| app.select_watermark_tool(cx));
                                         });
                                     }),
                                 ))
                                 .child(annotation_action_button(
-                                    "overlay-send-to-back",
-                                    "Back",
+                                    "overlay-tool-text",
+                                    "Text",
                                     colors,
-                                    AnnotationActionTone::Neutral,
+                                    if selected_tool == Some(AnnotationTool::Text) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
                                     true,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.send_selected_annotation_to_back(cx);
-                                            });
+                                            app.update(cx, |app, cx| app.select_text_tool(cx))
                                         });
                                     }),
                                 ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-number",
+                                    "Number",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Number) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_number_tool(cx))
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-blur",
+                                    "Blur",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Blur) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_blur_tool(cx));
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-mosaic",
+                                    "Mosaic",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Mosaic) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_mosaic_tool(cx));
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-highlight",
+                                    "Highlight",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Highlight) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_highlight_tool(cx));
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-selection",
+                                    "Select",
+                                    colors,
+                                    if selected_tool.is_none() {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_selection_tool(cx));
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-rectangle",
+                                    "Rectangle",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Rectangle) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_rectangle_tool(cx));
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-ellipse",
+                                    "Ellipse",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Ellipse) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_ellipse_tool(cx));
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-line",
+                                    "Line",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Line) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_line_tool(cx));
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-arrow",
+                                    "Arrow",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Arrow) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_arrow_tool(cx));
+                                        });
+                                    }),
+                                ))
+                                .child(annotation_action_button(
+                                    "overlay-tool-freehand",
+                                    "Freehand",
+                                    colors,
+                                    if selected_tool == Some(AnnotationTool::Freehand) {
+                                        AnnotationActionTone::Primary
+                                    } else {
+                                        AnnotationActionTone::Neutral
+                                    },
+                                    true,
+                                    cx.listener(|this, _, _, cx| {
+                                        let app = this.app.clone();
+                                        cx.defer(move |cx| {
+                                            app.update(cx, |app, cx| app.select_freehand_tool(cx));
+                                        });
+                                    }),
+                                )),
+                        )
+                        .when_some(selected_annotation, |tools, selected_id| {
+                            tools.child(
+                                div()
+                                    .id("overlay-selection-context")
+                                    .w_full()
+                                    .pt_2()
+                                    .border_t_1()
+                                    .border_color(rgba(0xFFFFFF24))
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .h(px(32.0))
+                                            .px_2()
+                                            .flex()
+                                            .items_center()
+                                            .text_color(colors.muted)
+                                            .text_xs()
+                                            .child("Selected"),
+                                    )
+                                    .child(annotation_action_button(
+                                        "overlay-delete",
+                                        "Delete",
+                                        colors,
+                                        AnnotationActionTone::Destructive,
+                                        true,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.delete_selected_annotation(cx);
+                                                });
+                                            });
+                                        }),
+                                    ))
+                                    .when(can_edit_text, |actions| {
+                                        actions.child(annotation_action_button(
+                                            "overlay-edit-text",
+                                            "Edit text",
+                                            colors,
+                                            AnnotationActionTone::Primary,
+                                            true,
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.edit_selected_text_annotation(cx);
+                                                    });
+                                                });
+                                            }),
+                                        ))
+                                    })
+                                    .when_some(selected_number, |actions, value| {
+                                        actions
+                                            .child(annotation_action_button(
+                                                "overlay-number-decrement",
+                                                "-",
+                                                colors,
+                                                AnnotationActionTone::Neutral,
+                                                true,
+                                                cx.listener(|this, _, _, cx| {
+                                                    let app = this.app.clone();
+                                                    cx.defer(move |cx| {
+                                                        app.update(cx, |app, cx| {
+                                                            app.adjust_selected_number(-1, cx);
+                                                        });
+                                                    });
+                                                }),
+                                            ))
+                                            .child(
+                                                div()
+                                                    .h(px(32.0))
+                                                    .px_2()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded_md()
+                                                    .bg(colors.panel)
+                                                    .text_color(colors.text)
+                                                    .child(value.to_string()),
+                                            )
+                                            .child(annotation_action_button(
+                                                "overlay-number-increment",
+                                                "+",
+                                                colors,
+                                                AnnotationActionTone::Neutral,
+                                                true,
+                                                cx.listener(|this, _, _, cx| {
+                                                    let app = this.app.clone();
+                                                    cx.defer(move |cx| {
+                                                        app.update(cx, |app, cx| {
+                                                            app.adjust_selected_number(1, cx);
+                                                        });
+                                                    });
+                                                }),
+                                            ))
+                                    })
+                                    .child(annotation_action_button(
+                                        "overlay-duplicate",
+                                        "Duplicate",
+                                        colors,
+                                        AnnotationActionTone::Neutral,
+                                        true,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.duplicate_selected_annotation(cx);
+                                                });
+                                            });
+                                        }),
+                                    ))
+                                    .child(annotation_action_button(
+                                        "overlay-selection-arrange-toggle",
+                                        "Arrange",
+                                        colors,
+                                        if show_annotation_arrange_actions {
+                                            AnnotationActionTone::Primary
+                                        } else {
+                                            AnnotationActionTone::Neutral
+                                        },
+                                        true,
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.annotation_arrange_actions_for = if this
+                                                .annotation_arrange_actions_for
+                                                == Some(selected_id)
+                                            {
+                                                None
+                                            } else {
+                                                Some(selected_id)
+                                            };
+                                            cx.notify();
+                                        }),
+                                    )),
+                            )
                         })
-                        .child(annotation_action_button(
-                            "overlay-tool-watermark",
-                            "Watermark",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Watermark) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_watermark_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-text",
-                            "Text",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Text) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_text_tool(cx))
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-number",
-                            "Number",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Number) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_number_tool(cx))
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-blur",
-                            "Blur",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Blur) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_blur_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-mosaic",
-                            "Mosaic",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Mosaic) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_mosaic_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-highlight",
-                            "Highlight",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Highlight) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_highlight_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-selection",
-                            "Select",
-                            colors,
-                            if selected_tool.is_none() {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_selection_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-rectangle",
-                            "Rectangle",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Rectangle) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_rectangle_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-ellipse",
-                            "Ellipse",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Ellipse) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_ellipse_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-line",
-                            "Line",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Line) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_line_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-arrow",
-                            "Arrow",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Arrow) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_arrow_tool(cx));
-                                });
-                            }),
-                        ))
-                        .child(annotation_action_button(
-                            "overlay-tool-freehand",
-                            "Freehand",
-                            colors,
-                            if selected_tool == Some(AnnotationTool::Freehand) {
-                                AnnotationActionTone::Primary
-                            } else {
-                                AnnotationActionTone::Neutral
-                            },
-                            true,
-                            cx.listener(|this, _, _, cx| {
-                                let app = this.app.clone();
-                                cx.defer(move |cx| {
-                                    app.update(cx, |app, cx| app.select_freehand_tool(cx));
-                                });
-                            }),
-                        )),
+                        .when(show_annotation_arrange_actions, |tools| {
+                            tools.child(
+                                div()
+                                    .id("overlay-selection-arrange-context")
+                                    .w_full()
+                                    .pt_2()
+                                    .border_t_1()
+                                    .border_color(rgba(0xFFFFFF24))
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .h(px(32.0))
+                                            .px_2()
+                                            .flex()
+                                            .items_center()
+                                            .text_color(colors.muted)
+                                            .text_xs()
+                                            .child("Arrange"),
+                                    )
+                                    .when(can_rotate, |actions| {
+                                        actions.child(annotation_action_button(
+                                            "overlay-rotate-clockwise",
+                                            "Rotate 90",
+                                            colors,
+                                            AnnotationActionTone::Neutral,
+                                            true,
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.rotate_selected_annotation_clockwise(
+                                                            cx,
+                                                        );
+                                                    });
+                                                });
+                                            }),
+                                        ))
+                                    })
+                                    .child(annotation_action_button(
+                                        "overlay-bring-forward",
+                                        "Forward",
+                                        colors,
+                                        AnnotationActionTone::Neutral,
+                                        true,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.bring_selected_annotation_forward(cx);
+                                                });
+                                            });
+                                        }),
+                                    ))
+                                    .child(annotation_action_button(
+                                        "overlay-send-backward",
+                                        "Backward",
+                                        colors,
+                                        AnnotationActionTone::Neutral,
+                                        true,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.send_selected_annotation_backward(cx);
+                                                });
+                                            });
+                                        }),
+                                    ))
+                                    .child(annotation_action_button(
+                                        "overlay-bring-to-front",
+                                        "Front",
+                                        colors,
+                                        AnnotationActionTone::Neutral,
+                                        true,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.bring_selected_annotation_to_front(cx);
+                                                });
+                                            });
+                                        }),
+                                    ))
+                                    .child(annotation_action_button(
+                                        "overlay-send-to-back",
+                                        "Back",
+                                        colors,
+                                        AnnotationActionTone::Neutral,
+                                        true,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.send_selected_annotation_to_back(cx);
+                                                });
+                                            });
+                                        }),
+                                    )),
+                            )
+                        }),
                 )
             })
             .when(show_annotation_controls, |overlay| {
@@ -2809,6 +2890,12 @@ struct AnnotationToolbarLayout {
     actions_above_tools: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AnnotationToolbarItems {
+    selection_context: usize,
+    arrange_context: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct AnnotationLayerLayout {
     left: f32,
@@ -2827,42 +2914,63 @@ fn annotation_style_panel_height(can_adjust_font_size: bool) -> f32 {
     if can_adjust_font_size { 158.0 } else { 128.0 }
 }
 
-/// Counts stable history controls, drawing tools, and only the actions supported by the current
-/// selection. Undo and redo are always reserved so later history changes do not move the tools.
-fn annotation_toolbar_item_count(
+/// Counts the contextual controls that belong beside a selected annotation.
+/// The drawing palette remains a separate stable section; arrange controls only consume space
+/// after the user explicitly expands them.
+fn annotation_toolbar_items(
     has_selected_annotation: bool,
     can_edit_text: bool,
     has_selected_number: bool,
     can_rotate: bool,
-) -> usize {
-    14 + usize::from(has_selected_annotation) * 6
-        + usize::from(can_edit_text)
-        + usize::from(has_selected_number) * 3
-        + usize::from(can_rotate)
+    show_arrange_context: bool,
+) -> AnnotationToolbarItems {
+    if !has_selected_annotation {
+        return AnnotationToolbarItems {
+            selection_context: 0,
+            arrange_context: 0,
+        };
+    }
+
+    AnnotationToolbarItems {
+        // Selected label, Delete, Duplicate, and the Arrange toggle are always available.
+        selection_context: 4 + usize::from(can_edit_text) + usize::from(has_selected_number) * 3,
+        // Arrange label, four layer ordering commands, and an optional rotation command.
+        arrange_context: usize::from(show_arrange_context) * (5 + usize::from(can_rotate)),
+    }
 }
 
 /// Reserves enough vertical space for the annotation toolbar before style controls are placed.
 /// Widths are deliberately conservative so localized or contextual labels cannot overlap the
 /// rows below even when GPUI wraps them earlier than expected.
 #[cfg(test)]
-fn annotation_toolbar_height(viewport: Bounds<Pixels>, item_count: usize) -> f32 {
+fn annotation_toolbar_height(viewport: Bounds<Pixels>, items: AnnotationToolbarItems) -> f32 {
     let viewport = view_rect(viewport);
-    annotation_toolbar_height_for_width(
-        (viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0),
-        item_count,
-    )
+    annotation_toolbar_height_for_width((viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0), items)
 }
 
-/// Measures wrapped marking tools for the bounded panel that follows a selection.
-fn annotation_toolbar_height_for_width(width: f32, item_count: usize) -> f32 {
+/// Measures each visible toolbar section independently so a selection context cannot reorder the
+/// drawing palette or reserve rows until it is actually expanded.
+fn annotation_toolbar_height_for_width(width: f32, items: AnnotationToolbarItems) -> f32 {
     let content_width = (width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
     let columns = (((content_width + ANNOTATION_TOOL_GAP)
         / (ANNOTATION_TOOL_ESTIMATED_WIDTH + ANNOTATION_TOOL_GAP))
         .floor() as usize)
         .max(1);
-    let rows = item_count.max(1).div_ceil(columns);
-    rows as f32 * ANNOTATION_TOOL_ROW_HEIGHT
-        + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
+    let section_height = |item_count: usize| {
+        let rows = item_count.max(1).div_ceil(columns);
+        rows as f32 * ANNOTATION_TOOL_ROW_HEIGHT
+            + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
+    };
+    let section_count =
+        1 + usize::from(items.selection_context > 0) + usize::from(items.arrange_context > 0);
+    section_height(ANNOTATION_TOOL_PALETTE_ITEMS)
+        + (items.selection_context > 0)
+            .then(|| section_height(items.selection_context))
+            .unwrap_or_default()
+        + (items.arrange_context > 0)
+            .then(|| section_height(items.arrange_context))
+            .unwrap_or_default()
+        + section_count.saturating_sub(1) as f32 * ANNOTATION_CONTEXT_SECTION_GAP
         + ANNOTATION_TOOLBAR_PADDING * 2.0
 }
 
@@ -2872,7 +2980,7 @@ fn annotation_toolbar_layout(
     transform: Option<PreviewTransform>,
     viewport: Bounds<Pixels>,
     action_toolbar: Option<ActionToolbarLayout>,
-    item_count: usize,
+    items: AnnotationToolbarItems,
     style_height: f32,
 ) -> Option<AnnotationToolbarLayout> {
     let selection = selection?;
@@ -2890,7 +2998,7 @@ fn annotation_toolbar_layout(
     } else {
         width
     };
-    let tools_height = annotation_toolbar_height_for_width(tools_width, item_count);
+    let tools_height = annotation_toolbar_height_for_width(tools_width, items);
     let tools_and_style_height = if side_by_side {
         tools_height.max(style_height)
     } else {
@@ -3286,7 +3394,7 @@ mod tests {
         OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
         SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
         action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
-        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_item_count,
+        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_items,
         annotation_toolbar_layout, arrow_head_points, capture_double_click, intersect,
         is_text_annotation, magnifier_origin, outline_shape_bounds, owns_selection_toolbar,
         primary_action_tooltip, recognition_result_preview, recognition_retry_label,
@@ -3769,7 +3877,7 @@ mod tests {
             transform,
             viewport,
             Some(primary_actions),
-            annotation_toolbar_item_count(false, false, false, false),
+            annotation_toolbar_items(false, false, false, false, false),
             annotation_style_panel_height(false),
         )
         .expect("selection with actions should position marking tools");
@@ -3822,7 +3930,7 @@ mod tests {
             transform,
             viewport,
             Some(primary_actions),
-            annotation_toolbar_item_count(false, false, false, false),
+            annotation_toolbar_items(false, false, false, false, false),
             annotation_style_panel_height(false),
         )
         .expect("selection with actions should position marking tools");
@@ -3914,14 +4022,19 @@ mod tests {
     fn annotation_toolbar_reserves_wrapped_rows_on_narrow_overlays() {
         let wide = Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0)));
         let narrow = Bounds::new(point(px(0.0), px(0.0)), size(px(360.0), px(720.0)));
-        let stable_items = annotation_toolbar_item_count(false, false, false, false);
-        let selected_items = annotation_toolbar_item_count(true, true, true, true);
+        let stable_items = annotation_toolbar_items(false, false, false, false, false);
+        let selected_items = annotation_toolbar_items(true, true, true, true, false);
+        let expanded_items = annotation_toolbar_items(true, true, true, true, true);
 
-        assert_eq!(stable_items, 14);
-        assert_eq!(selected_items, 25);
+        assert_eq!(stable_items.selection_context, 0);
+        assert_eq!(stable_items.arrange_context, 0);
+        assert_eq!(selected_items.selection_context, 8);
+        assert_eq!(selected_items.arrange_context, 0);
+        assert_eq!(expanded_items.arrange_context, 6);
         assert_eq!(annotation_toolbar_height(wide, stable_items), 42.0);
         assert_eq!(annotation_toolbar_height(narrow, stable_items), 294.0);
-        assert!(annotation_toolbar_height(narrow, selected_items) > 294.0);
+        assert_eq!(annotation_toolbar_height(narrow, selected_items), 471.0);
+        assert!(annotation_toolbar_height(narrow, expanded_items) > 471.0);
     }
 
     #[test]
