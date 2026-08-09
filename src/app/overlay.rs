@@ -123,18 +123,25 @@ enum AnnotationActionTone {
     Destructive,
 }
 
-/// Builds one annotation action with consistent spacing, focus feedback, and semantic color.
+/// Builds one annotation action with consistent spacing, focus feedback, semantic color, and a
+/// non-interactive disabled state. Disabled controls stay visible so editing history cannot move
+/// the drawing tools underneath the pointer.
 fn annotation_action_button(
     id: impl Into<gpui::ElementId>,
     label: impl Into<String>,
     colors: ThemeColors,
     tone: AnnotationActionTone,
+    enabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
-    let (background, text_color, border_color) = match tone {
-        AnnotationActionTone::Neutral => (colors.panel, colors.text, colors.border),
-        AnnotationActionTone::Primary => (colors.accent, colors.background, colors.accent),
-        AnnotationActionTone::Destructive => (colors.danger, colors.background, colors.danger),
+    let (background, text_color, border_color) = if enabled {
+        match tone {
+            AnnotationActionTone::Neutral => (colors.panel, colors.text, colors.border),
+            AnnotationActionTone::Primary => (colors.accent, colors.background, colors.accent),
+            AnnotationActionTone::Destructive => (colors.danger, colors.background, colors.danger),
+        }
+    } else {
+        (colors.panel, colors.muted.opacity(0.62), colors.border)
     };
     div()
         .id(id)
@@ -150,20 +157,23 @@ fn annotation_action_button(
         .text_color(text_color)
         .text_sm()
         .font_weight(FontWeight::SEMIBOLD)
-        .focusable()
-        .focus_visible(|style| style.border_color(colors.accent))
-        .cursor_pointer()
-        .hover(move |style| {
-            style
-                .bg(colors.background)
-                .border_color(if matches!(tone, AnnotationActionTone::Destructive) {
-                    colors.danger
-                } else {
-                    colors.accent
+        .when(enabled, |button| {
+            button
+                .focusable()
+                .focus_visible(|style| style.border_color(colors.accent))
+                .cursor_pointer()
+                .hover(move |style| {
+                    style
+                        .bg(colors.background)
+                        .border_color(if matches!(tone, AnnotationActionTone::Destructive) {
+                            colors.danger
+                        } else {
+                            colors.accent
+                        })
+                        .text_color(colors.text)
                 })
-                .text_color(colors.text)
+                .on_click(on_click)
         })
-        .on_click(on_click)
         .child(label.into())
 }
 
@@ -414,13 +424,12 @@ impl Render for CaptureOverlay {
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
-        let annotation_toolbar_items = 12
-            + usize::from(can_undo)
-            + usize::from(can_redo)
-            + usize::from(can_delete) * 6
-            + usize::from(can_edit_text)
-            + usize::from(selected_number.is_some()) * 3
-            + usize::from(can_rotate);
+        let annotation_toolbar_items = annotation_toolbar_item_count(
+            can_delete,
+            can_edit_text,
+            selected_number.is_some(),
+            can_rotate,
+        );
         let transform = self.transform(viewport);
         let selected_on_display =
             selection.and_then(|selection| intersect(selection, display_bounds));
@@ -784,40 +793,39 @@ impl Render for CaptureOverlay {
                         })
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .when(can_undo, |tools| {
-                            tools.child(annotation_action_button(
-                                "overlay-undo",
-                                "Undo",
-                                colors,
-                                AnnotationActionTone::Neutral,
-                                cx.listener(|this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| app.undo_annotation(cx));
-                                    });
-                                }),
-                            ))
-                        })
-                        .when(can_redo, |tools| {
-                            tools.child(annotation_action_button(
-                                "overlay-redo",
-                                "Redo",
-                                colors,
-                                AnnotationActionTone::Neutral,
-                                cx.listener(|this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| app.redo_annotation(cx));
-                                    });
-                                }),
-                            ))
-                        })
+                        .child(annotation_action_button(
+                            "overlay-undo",
+                            "Undo",
+                            colors,
+                            AnnotationActionTone::Neutral,
+                            can_undo,
+                            cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.undo_annotation(cx));
+                                });
+                            }),
+                        ))
+                        .child(annotation_action_button(
+                            "overlay-redo",
+                            "Redo",
+                            colors,
+                            AnnotationActionTone::Neutral,
+                            can_redo,
+                            cx.listener(|this, _, _, cx| {
+                                let app = this.app.clone();
+                                cx.defer(move |cx| {
+                                    app.update(cx, |app, cx| app.redo_annotation(cx));
+                                });
+                            }),
+                        ))
                         .when(can_delete, |tools| {
                             tools.child(annotation_action_button(
                                 "overlay-delete",
                                 "Delete",
                                 colors,
                                 AnnotationActionTone::Destructive,
+                                true,
                                 cx.listener(|this, _, _, cx| {
                                     let app = this.app.clone();
                                     cx.defer(move |cx| {
@@ -834,6 +842,7 @@ impl Render for CaptureOverlay {
                                 "Edit text",
                                 colors,
                                 AnnotationActionTone::Primary,
+                                true,
                                 cx.listener(|this, _, _, cx| {
                                     let app = this.app.clone();
                                     cx.defer(move |cx| {
@@ -851,6 +860,7 @@ impl Render for CaptureOverlay {
                                     "-",
                                     colors,
                                     AnnotationActionTone::Neutral,
+                                    true,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -877,6 +887,7 @@ impl Render for CaptureOverlay {
                                     "+",
                                     colors,
                                     AnnotationActionTone::Neutral,
+                                    true,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -893,6 +904,7 @@ impl Render for CaptureOverlay {
                                 "Duplicate",
                                 colors,
                                 AnnotationActionTone::Neutral,
+                                true,
                                 cx.listener(|this, _, _, cx| {
                                     let app = this.app.clone();
                                     cx.defer(move |cx| {
@@ -909,6 +921,7 @@ impl Render for CaptureOverlay {
                                 "Rotate 90",
                                 colors,
                                 AnnotationActionTone::Neutral,
+                                true,
                                 cx.listener(|this, _, _, cx| {
                                     let app = this.app.clone();
                                     cx.defer(move |cx| {
@@ -926,6 +939,7 @@ impl Render for CaptureOverlay {
                                     "Forward",
                                     colors,
                                     AnnotationActionTone::Neutral,
+                                    true,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -940,6 +954,7 @@ impl Render for CaptureOverlay {
                                     "Backward",
                                     colors,
                                     AnnotationActionTone::Neutral,
+                                    true,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -954,6 +969,7 @@ impl Render for CaptureOverlay {
                                     "Front",
                                     colors,
                                     AnnotationActionTone::Neutral,
+                                    true,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -968,6 +984,7 @@ impl Render for CaptureOverlay {
                                     "Back",
                                     colors,
                                     AnnotationActionTone::Neutral,
+                                    true,
                                     cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
@@ -987,6 +1004,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1003,6 +1021,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1019,6 +1038,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1035,6 +1055,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1051,6 +1072,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1067,6 +1089,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1083,6 +1106,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1099,6 +1123,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1115,6 +1140,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1131,6 +1157,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1147,6 +1174,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -1163,6 +1191,7 @@ impl Render for CaptureOverlay {
                             } else {
                                 AnnotationActionTone::Neutral
                             },
+                            true,
                             cx.listener(|this, _, _, cx| {
                                 let app = this.app.clone();
                                 cx.defer(move |cx| {
@@ -2798,6 +2827,20 @@ fn annotation_style_panel_height(can_adjust_font_size: bool) -> f32 {
     if can_adjust_font_size { 158.0 } else { 128.0 }
 }
 
+/// Counts stable history controls, drawing tools, and only the actions supported by the current
+/// selection. Undo and redo are always reserved so later history changes do not move the tools.
+fn annotation_toolbar_item_count(
+    has_selected_annotation: bool,
+    can_edit_text: bool,
+    has_selected_number: bool,
+    can_rotate: bool,
+) -> usize {
+    14 + usize::from(has_selected_annotation) * 6
+        + usize::from(can_edit_text)
+        + usize::from(has_selected_number) * 3
+        + usize::from(can_rotate)
+}
+
 /// Reserves enough vertical space for the annotation toolbar before style controls are placed.
 /// Widths are deliberately conservative so localized or contextual labels cannot overlap the
 /// rows below even when GPUI wraps them earlier than expected.
@@ -3243,12 +3286,13 @@ mod tests {
         OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
         SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
         action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
-        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_layout,
-        arrow_head_points, capture_double_click, intersect, is_text_annotation, magnifier_origin,
-        outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip,
-        recognition_result_preview, recognition_retry_label, resize_handle_points,
-        secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
-        selection_cursor, selection_dimension_label_layout, status_bottom_inset, visible_selection,
+        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_item_count,
+        annotation_toolbar_layout, arrow_head_points, capture_double_click, intersect,
+        is_text_annotation, magnifier_origin, outline_shape_bounds, owns_selection_toolbar,
+        primary_action_tooltip, recognition_result_preview, recognition_retry_label,
+        resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
+        secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
+        status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -3725,7 +3769,7 @@ mod tests {
             transform,
             viewport,
             Some(primary_actions),
-            12,
+            annotation_toolbar_item_count(false, false, false, false),
             annotation_style_panel_height(false),
         )
         .expect("selection with actions should position marking tools");
@@ -3733,7 +3777,7 @@ mod tests {
         assert_eq!(layout.left, 100.0);
         assert_eq!(layout.width, 900.0);
         assert_eq!(layout.tools_width, 728.0);
-        assert_eq!(layout.tools_height, 84.0);
+        assert_eq!(layout.tools_height, 126.0);
         assert_eq!(layout.height, 186.0);
         assert!((layout.top - 412.0).abs() < 0.01);
         assert_eq!(layout.tools_top, layout.top);
@@ -3778,7 +3822,7 @@ mod tests {
             transform,
             viewport,
             Some(primary_actions),
-            12,
+            annotation_toolbar_item_count(false, false, false, false),
             annotation_style_panel_height(false),
         )
         .expect("selection with actions should position marking tools");
@@ -3870,10 +3914,14 @@ mod tests {
     fn annotation_toolbar_reserves_wrapped_rows_on_narrow_overlays() {
         let wide = Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0)));
         let narrow = Bounds::new(point(px(0.0), px(0.0)), size(px(360.0), px(720.0)));
+        let stable_items = annotation_toolbar_item_count(false, false, false, false);
+        let selected_items = annotation_toolbar_item_count(true, true, true, true);
 
-        assert_eq!(annotation_toolbar_height(wide, 12), 42.0);
-        assert_eq!(annotation_toolbar_height(narrow, 12), 252.0);
-        assert!(annotation_toolbar_height(narrow, 20) > 252.0);
+        assert_eq!(stable_items, 14);
+        assert_eq!(selected_items, 25);
+        assert_eq!(annotation_toolbar_height(wide, stable_items), 42.0);
+        assert_eq!(annotation_toolbar_height(narrow, stable_items), 294.0);
+        assert!(annotation_toolbar_height(narrow, selected_items) > 294.0);
     }
 
     #[test]
