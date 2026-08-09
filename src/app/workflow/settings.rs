@@ -4,6 +4,19 @@ use super::super::{HistoryClearScope, history_entry_matches, selected_history_pa
 use super::*;
 
 impl FlashShotApp {
+    /// Selects the initial settings page for native acceptance screenshots.
+    ///
+    /// The production tray path keeps its persisted section unchanged; this narrow helper is
+    /// only used by the disposable screenshot probe so every settings workflow can be reviewed.
+    pub(crate) fn set_settings_section_for_acceptance(&mut self, section: &str) {
+        self.settings_section = match section {
+            "library" => SettingsSection::Files,
+            "record" => SettingsSection::Recording,
+            "app" => SettingsSection::System,
+            _ => SettingsSection::Capture,
+        };
+    }
+
     /// Opens a native folder picker, then swaps history only after the new private root is ready.
     pub(in crate::app) fn choose_quick_save_directory(&mut self, cx: &mut Context<Self>) {
         self.status = "Choose a folder for quick saves and screenshot history...".to_owned();

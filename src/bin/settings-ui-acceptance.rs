@@ -67,6 +67,7 @@ struct Options {
     settle_delay: Duration,
     linger_delay: Duration,
     expected_scale: Option<f32>,
+    section: String,
 }
 
 impl Options {
@@ -91,6 +92,11 @@ impl Options {
             .transpose()?
             .unwrap_or(DEFAULT_LINGER_DELAY);
         let expected_scale = arguments.next().map(parse_expected_scale).transpose()?;
+        let section = arguments
+            .next()
+            .map(parse_section)
+            .transpose()?
+            .unwrap_or_else(|| "capture".to_owned());
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -107,12 +113,13 @@ impl Options {
             settle_delay,
             linger_delay,
             expected_scale,
+            section,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app]"
         .to_owned()
 }
 
@@ -169,6 +176,18 @@ fn parse_expected_scale(value: std::ffi::OsString) -> Result<f32, String> {
     Ok(scale)
 }
 
+/// Parses the settings workflow that a disposable screenshot should open first.
+fn parse_section(value: std::ffi::OsString) -> Result<String, String> {
+    let section = value
+        .into_string()
+        .map_err(|_| "section must be capture, library, record, or app".to_owned())?;
+    if matches!(section.as_str(), "capture" | "library" | "record" | "app") {
+        Ok(section)
+    } else {
+        Err("section must be capture, library, record, or app".to_owned())
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -205,8 +224,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         history,
         settings,
         session_root.join("settings.json"),
-        options.width,
-        options.height,
+        flash_shot::SettingsUiAcceptanceOptions {
+            width: options.width,
+            height: options.height,
+            section: options.section,
+        },
     )
 }
 
@@ -336,8 +358,8 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_expected_scale, parse_linger_delay, parse_settle_delay, scale_factor_for_dpi,
-        scale_matches, screenshot_metadata_path,
+        parse_expected_scale, parse_linger_delay, parse_section, parse_settle_delay,
+        scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
     };
     use std::{ffi::OsString, path::Path, time::Duration};
 
@@ -365,6 +387,14 @@ mod tests {
         assert_eq!(parse_expected_scale(OsString::from("2.0")).unwrap(), 2.0);
         assert!(parse_expected_scale(OsString::from("0.9")).is_err());
         assert!(parse_expected_scale(OsString::from("not-a-scale")).is_err());
+    }
+
+    #[test]
+    fn section_parser_accepts_each_settings_workflow() {
+        for section in ["capture", "library", "record", "app"] {
+            assert_eq!(parse_section(section.into()).unwrap(), section);
+        }
+        assert!(parse_section("unknown".into()).is_err());
     }
 
     #[test]

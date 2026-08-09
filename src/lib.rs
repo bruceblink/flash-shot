@@ -65,8 +65,7 @@ pub fn run_settings_ui_acceptance(
     history: ScreenshotHistory,
     settings: UserSettings,
     settings_path: PathBuf,
-    width: f32,
-    height: f32,
+    acceptance: SettingsUiAcceptanceOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     run_with_settings_window(
         started_at,
@@ -75,18 +74,28 @@ pub fn run_settings_ui_acceptance(
         settings,
         settings_path,
         SettingsWindowOptions {
-            width: width.max(420.0),
-            height: height.max(420.0),
+            width: acceptance.width.max(420.0),
+            height: acceptance.height.max(420.0),
             show: true,
+            section: acceptance.section,
         },
     )
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Describes the disposable settings window rendered by the native screenshot acceptance probe.
+#[derive(Clone, Debug)]
+pub struct SettingsUiAcceptanceOptions {
+    pub width: f32,
+    pub height: f32,
+    pub section: String,
+}
+
+#[derive(Clone, Debug)]
 struct SettingsWindowOptions {
     width: f32,
     height: f32,
     show: bool,
+    section: String,
 }
 
 impl Default for SettingsWindowOptions {
@@ -95,6 +104,7 @@ impl Default for SettingsWindowOptions {
             width: 520.0,
             height: 640.0,
             show: false,
+            section: "capture".to_owned(),
         }
     }
 }
@@ -138,11 +148,15 @@ fn run_with_settings_window(
             ..Default::default()
         };
 
+        let initial_section = window_options.section.clone();
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
             let app =
                 cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx));
+            app.update(cx, |app, _| {
+                app.set_settings_section_for_acceptance(&initial_section);
+            });
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()
             {
