@@ -180,6 +180,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `current-update-checking-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 注入更新检查忙状态，不请求发布端点；截图报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/update-checking-single-100.png`：App 页 Updates 行显示可点击的 `Cancel check`，固定状态栏显示 `Checking for updates...`，没有文字截断、控件重叠或状态栏遮挡。取消会使当前 manifest 请求 generation 失效，晚到结果不会覆盖用户取消反馈；双屏与混合 DPI 按当前范围暂缓。 |
 | 2026-08-11 | `current-recording-start-generation` | 录屏启动请求现在绑定 operation generation；显示器、区域和窗口三种启动路径共享晚到结果守卫，窗口录屏也会等待 FFmpeg 支持检查结束。 | 待执行 | 聚焦回归测试 `cargo test --lib recording_start` 覆盖支持检查冲突、启动 generation 匹配和取消/新 workflow 后忽略晚到结果；这补充录屏失败恢复自动证据，不替代完整应用内录屏 UI 手工矩阵。 |
 | 2026-08-11 | `current-capture-recording-guard` | 录屏 active、starting 或 stopping 期间，截图入口会在 workflow 层返回明确冲突状态；设置页 Capture 动作也同步进入禁用态。 | 待执行 | 聚焦回归测试 `cargo test --lib capture_start` 与 `cargo test --lib settings_actions_wait_for_recording_lifecycle_to_settle` 通过；Release 截图 `target/ui-acceptance/capture-recording-guard-520x640.png` 已复核：Capture 页所有截图/Pin 快捷动作低对比禁用，状态栏显示 `Recording primary display - 4s, 60 frames`，无文字截断或控件重叠。 |
+| 2026-08-11 | `current-scroll-end-feedback` | 滚动截图重复捕获到相同视口时，不再只报告通用重叠失败；已有两帧可拼接时提示完成或重试，首帧阶段则提示先滚动。 | 待执行 | 聚焦回归测试覆盖无新增内容、可完成与不可完成两种下一步提示，以及普通重叠失败的重试提示；现有 `manual-scroll-controller-after-auto-2.png` 保持证明滚动控制条的 Finish 操作可见。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

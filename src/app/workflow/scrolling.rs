@@ -166,9 +166,9 @@ impl FlashShotApp {
                     self.manual_scroll.frame_count(),
                     overlap
                 ),
-                Err(error) => format!(
-                    "That frame did not overlap the previous one: {error}. Adjust the scroll position and capture again."
-                ),
+                Err(error) => {
+                    scroll_frame_append_failure_status(&error, self.manual_scroll.can_finish())
+                }
             },
             Err(error) => format!("Could not capture scroll frame: {error}"),
         };
@@ -307,6 +307,28 @@ pub(super) fn next_operation_generation(generation: u64) -> u64 {
     generation.wrapping_add(1)
 }
 
+/// Turns overlap failures into the next useful scroll action.
+///
+/// An unchanged viewport normally means the page reached its end. Once two compatible frames
+/// already exist, finishing is safer than asking the user to repeat a capture that cannot add
+/// pixels; before then, the user still needs to scroll and collect a second viewport.
+fn scroll_frame_append_failure_status(error: &std::io::Error, can_finish: bool) -> String {
+    if error.kind() == std::io::ErrorKind::InvalidData
+        && error.to_string() == "scroll frame did not reveal new content"
+    {
+        return if can_finish {
+            "No new content was revealed. Finish the scrolling screenshot or adjust the page and capture again."
+                .to_owned()
+        } else {
+            "No new content was revealed. Scroll the page, then capture again.".to_owned()
+        };
+    }
+
+    format!(
+        "That frame did not overlap the previous one: {error}. Adjust the scroll position and capture again."
+    )
+}
+
 /// Calculates the physical viewport center used for deliberate wheel input.
 fn scroll_target(selection: PhysicalRect) -> PhysicalPoint {
     PhysicalPoint {
@@ -317,8 +339,9 @@ fn scroll_target(selection: PhysicalRect) -> PhysicalPoint {
 
 #[cfg(test)]
 mod tests {
-    use super::scroll_target;
+    use super::{scroll_frame_append_failure_status, scroll_target};
     use crate::domain::geometry::PhysicalRect;
+    use std::io::{Error, ErrorKind};
 
     #[test]
     fn scroll_target_uses_the_selected_viewport_center() {
@@ -330,6 +353,33 @@ mod tests {
                 bottom: 220,
             }),
             crate::domain::geometry::PhysicalPoint { x: 100, y: 120 }
+        );
+    }
+
+    #[test]
+    fn unchanged_scroll_frame_feedback_offers_finish_only_after_stitching_is_possible() {
+        let unchanged = Error::new(
+            ErrorKind::InvalidData,
+            "scroll frame did not reveal new content",
+        );
+
+        assert_eq!(
+            scroll_frame_append_failure_status(&unchanged, false),
+            "No new content was revealed. Scroll the page, then capture again."
+        );
+        assert_eq!(
+            scroll_frame_append_failure_status(&unchanged, true),
+            "No new content was revealed. Finish the scrolling screenshot or adjust the page and capture again."
+        );
+    }
+
+    #[test]
+    fn overlap_mismatch_feedback_still_requests_a_retry() {
+        let mismatch = Error::new(ErrorKind::InvalidData, "no reliable vertical overlap found");
+
+        assert_eq!(
+            scroll_frame_append_failure_status(&mismatch, true),
+            "That frame did not overlap the previous one: no reliable vertical overlap found. Adjust the scroll position and capture again."
         );
     }
 }
