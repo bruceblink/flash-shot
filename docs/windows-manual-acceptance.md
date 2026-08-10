@@ -52,7 +52,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --lib
 cargo run --release --bin capture-stress -- --output target/capture-stress.json
 cargo run --release --bin annotation-stress -- --iterations 30
-cargo run --release --bin windows-acceptance-probe -- --output target/windows-acceptance-environment.json
+# 当前单屏开发范围：要求环境恰好只有一块显示器，避免把多屏状态误记为单屏证据。
+cargo run --release --bin windows-acceptance-probe -- --single-display --output target/windows-acceptance-environment.json
 cargo run --release --bin recognition-acceptance -- --output target/ui-acceptance/recognition-acceptance.json
 # 可选依赖门禁：只有在本机明确要求 OCR/翻译就绪时才使用；未安装或未配置会以非零退出。
 cargo run --release --bin recognition-acceptance -- --require-ocr --output target/ui-acceptance/recognition-acceptance-required-ocr.json
@@ -90,6 +91,8 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 `settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含物理窗口边界、Windows DPI
 和缩放比例。提供最后一个 `expected-scale` 参数时，命令只有在 `scale_match` 为 `true`
 时才成功；150%/200% 验收必须保留 `scale_factor` 为 `1.5` 或 `2.0` 的对应证据。
+`windows-acceptance-probe --single-display` 会在报告中写入 `single_display_required: true`
+并在检测到多块显示器时失败；这是当前单屏开发范围的保护，不代表双屏功能已经通过验收。
 设置页探针应串行执行：截图 worker 捕获窗口所在的桌面物理区域，多个验收窗口重叠时，
 后启动的进程可能截到前一个窗口，不能把并行输出当作独立主题或页面证据。
 提供最后一个 `display-index` 参数时，探针会将窗口放到指定的零基显示器，并在同名 JSON
@@ -194,6 +197,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-11 | `current-recording-cancelled-status-single-100` | `settings-ui-acceptance` 新增 `cancelled` Record 页状态，复现生产取消文案和中性色状态指示器，不创建 FFmpeg 子进程。 | 待执行 | Release 截图 `target/ui-acceptance/recording-ui-cancelled-single-100-20260811.png` 同名 JSON 报告 DPI 96、scale 1.0、`scale_match: true`；目视复核 `Screen recording startup cancelled` 清晰可读，Record display 恢复可用，状态点为 muted 中性色且无布局重叠。该证据验证取消反馈视觉语义，不替代完整 FFmpeg 应用内手工矩阵。 |
 | 2026-08-11 | `current-recording-failed-status-single-100` | `settings-ui-acceptance` 新增 `failed` Record 页状态，复现生产 FFmpeg 失败文案和危险色状态指示器，不创建 FFmpeg 子进程。 | 待执行 | Release 截图 `target/ui-acceptance/recording-ui-failed-single-100-20260811.png` 同名 JSON 报告 DPI 96、scale 1.0、`scale_match: true`；目视复核失败文案清晰可读、Record display 可重新发起录制，危险色状态点与布局无重叠。该证据验证失败反馈视觉语义，不替代完整 FFmpeg 应用内手工矩阵。 |
 | 2026-08-11 | `current-single-screen-scroll-ui-review` | 按当前单屏范围重新目视复核滚动截图入口、置顶控制条、辅助追加、完成拼接和编辑页衔接；同时复核 Release 设置页在 520x640 窗口内的内容滚动。 | 通过 | `target/ui-acceptance/manual-scroll-more-menu-open.png`、`manual-scroll-controller-start.png`、`manual-scroll-controller-after-auto-2.png` 与 `manual-scroll-finished.png` 显示 Scroll shot 入口、`Scroll down + capture`、`2 frames - ready to finish`、`Finish`、`Cancel` 和 `Flash Shot - Edit Image` 均完整可见；`manual-settings-interaction-20260811.png` 记录当前 Release 设置页的单屏 100% 复核。双屏/混合 DPI、OCR/翻译和完整录屏矩阵仍不在本条范围。 |
+| 2026-08-11 | `current-single-screen-scope-guard` | `windows-acceptance-probe --single-display` 在收集证据前强制要求恰好一块显示器，并将该要求写入报告；5 项探针测试、384 项库测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `target/windows-acceptance-environment-single-screen.json` 记录 `single_display_required: true`、1 块 2560x1440 显示器、DPI 96、scale 1.0 与可用的 FFmpeg 9.0；Release 截图 `target/ui-acceptance/p1-single-screen-scope-520x640.png` 的 `scale_match: true`，目视复核 Capture 导航、主要动作、内容滚动和状态栏无截断或重叠。该保护只限定当前单屏范围，不代表双屏或 150%/200% 验收通过。 |
 | 2026-08-12 | `current-recording-backend-20260812` | 当前 Release `recording-acceptance` 重新完成显示器、区域和窗口三种目标；三份 MP4 均由探针内部及 FFprobe 校验为 H.264，暂停/恢复均观察到，结束后没有残留 FFmpeg 或 FFprobe 进程。 | 待执行 | 报告位于 `target/ui-acceptance/recording-current-20260812-display.json`、`recording-current-20260812-region.json` 和 `recording-current-20260812-window.json`；输出分别为 2560x1440、640x360、1904x984，时长约 2.53s、2.93s、2.53s，最高进度帧分别为 32、37、32。该记录确认当前后端能力，不替代完整应用内录屏 UI 手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、

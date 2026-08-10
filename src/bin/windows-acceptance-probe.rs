@@ -18,8 +18,9 @@ fn main() {
 
 /// Collects display geometry and FFmpeg readiness without opening a capture or recording.
 fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
-    let output = parse_output(args)?;
+    let options = parse_output(args)?;
     let displays = SystemDisplayProvider.displays()?;
+    validate_display_scope(displays.len(), options.require_single_display)?;
     let ffmpeg = match flash_shot::recording::discover() {
         Ok(capabilities) => json!({
             "available": true,
@@ -39,12 +40,13 @@ fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
         "schema_version": 1,
         "test": "windows_acceptance_environment",
         "timestamp_unix_ms": unix_timestamp_ms(),
+        "single_display_required": options.require_single_display,
         "display_count": displays.len(),
         "displays": displays.iter().map(display_json).collect::<Vec<_>>(),
         "ffmpeg": ffmpeg,
     });
     let rendered = serde_json::to_string_pretty(&report).map_err(io::Error::other)?;
-    if let Some(path) = output {
+    if let Some(path) = options.output {
         if let Some(parent) = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -57,8 +59,15 @@ fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
     Ok(())
 }
 
-fn parse_output(args: impl IntoIterator<Item = String>) -> io::Result<Option<PathBuf>> {
-    let mut output = None;
+#[derive(Debug, Default, Eq, PartialEq)]
+struct ProbeOptions {
+    output: Option<PathBuf>,
+    require_single_display: bool,
+}
+
+/// Parses the report destination and optional single-display scope guard.
+fn parse_output(args: impl IntoIterator<Item = String>) -> io::Result<ProbeOptions> {
+    let mut options = ProbeOptions::default();
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -66,7 +75,10 @@ fn parse_output(args: impl IntoIterator<Item = String>) -> io::Result<Option<Pat
                 let value = args.next().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "missing value for --output")
                 })?;
-                output = Some(PathBuf::from(value));
+                options.output = Some(PathBuf::from(value));
+            }
+            "--single-display" => {
+                options.require_single_display = true;
             }
             _ => {
                 return Err(io::Error::new(
@@ -76,7 +88,20 @@ fn parse_output(args: impl IntoIterator<Item = String>) -> io::Result<Option<Pat
             }
         }
     }
-    Ok(output)
+    Ok(options)
+}
+
+/// Enforces the active acceptance scope before collecting environment evidence.
+fn validate_display_scope(display_count: usize, require_single_display: bool) -> io::Result<()> {
+    if require_single_display && display_count != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "single-display acceptance requires exactly one display, found {display_count}"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Converts one native display record into stable JSON fields used by the acceptance checklist.
@@ -123,15 +148,37 @@ fn unix_timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_output, rotation_label};
+    use super::{ProbeOptions, parse_output, rotation_label, validate_display_scope};
     use flash_shot::platform::display::DisplayRotation;
 
     #[test]
     fn accepts_an_optional_report_path() {
         assert_eq!(
             parse_output(["--output".to_owned(), "target/environment.json".to_owned(),]).unwrap(),
-            Some(std::path::PathBuf::from("target/environment.json"))
+            ProbeOptions {
+                output: Some(std::path::PathBuf::from("target/environment.json")),
+                require_single_display: false,
+            }
         );
+    }
+
+    #[test]
+    fn accepts_the_single_display_scope_guard() {
+        assert_eq!(
+            parse_output(["--single-display".to_owned()]).unwrap(),
+            ProbeOptions {
+                output: None,
+                require_single_display: true,
+            }
+        );
+    }
+
+    #[test]
+    fn single_display_scope_rejects_missing_or_extra_displays() {
+        assert!(validate_display_scope(1, true).is_ok());
+        assert!(validate_display_scope(0, true).is_err());
+        assert!(validate_display_scope(2, true).is_err());
+        assert!(validate_display_scope(2, false).is_ok());
     }
 
     #[test]
