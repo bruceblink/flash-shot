@@ -35,9 +35,7 @@ impl FlashShotApp {
                     Ok(Ok(Some(mut paths))) => match paths.pop() {
                         Some(path) => {
                             cx.background_executor()
-                                .spawn(async move {
-                                    crate::history::ScreenshotHistory::open_with_limit(path, limit)
-                                })
+                                .spawn(async move { open_verified_quick_save_history(path, limit) })
                                 .await
                         }
                         None => return,
@@ -687,6 +685,58 @@ impl FlashShotApp {
     }
 }
 
+/// Verifies a user-selected folder before making it the managed quick-save history root.
+///
+/// Opening a history directory only needs metadata access, while a later export needs durable
+/// writes. Running the storage probe first prevents Settings from persisting a read-only folder.
+fn open_verified_quick_save_history(
+    path: std::path::PathBuf,
+    limit: usize,
+) -> std::io::Result<crate::history::ScreenshotHistory> {
+    crate::history::verify_writable_directory(&path)?;
+    crate::history::ScreenshotHistory::open_with_limit(path, limit)
+}
+
 pub(in crate::app) fn shortcut_option_label(shortcut: Option<&str>) -> &str {
     shortcut.unwrap_or("Off")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::open_verified_quick_save_history;
+    use std::{fs, io};
+
+    fn directory(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "flash-shot-quick-save-settings-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    #[test]
+    fn selected_quick_save_folder_is_probed_before_history_is_opened() {
+        let root = directory("probe");
+        fs::create_dir_all(&root).unwrap();
+
+        let history = open_verified_quick_save_history(root.clone(), 30).unwrap();
+
+        assert_eq!(history.root(), root.canonicalize().unwrap());
+        assert!(fs::read_dir(history.root()).unwrap().next().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn selected_file_cannot_become_the_quick_save_folder() {
+        let root = directory("file");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("not-a-directory.txt");
+        fs::write(&file, b"not a directory").unwrap();
+
+        let error = open_verified_quick_save_history(file.clone(), 30).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read(&file).unwrap(), b"not a directory");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
