@@ -34,6 +34,14 @@ struct TranslationReadiness {
     error: Option<String>,
 }
 
+/// Records only bounded metadata from one explicit translation request.
+#[derive(Serialize)]
+struct TranslationExercise {
+    passed: bool,
+    text_length: Option<usize>,
+    error: Option<String>,
+}
+
 /// Describes optional readiness requirements without making the default probe network-bound.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct ProbeOptions {
@@ -41,6 +49,7 @@ struct ProbeOptions {
     require_ocr: bool,
     require_translation: bool,
     ocr_image: Option<PathBuf>,
+    translation_text: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -51,6 +60,7 @@ struct AcceptanceReport {
     ocr: OcrReadiness,
     ocr_exercise: Option<OcrExercise>,
     translation: TranslationReadiness,
+    translation_exercise: Option<TranslationExercise>,
     require_ocr: bool,
     require_translation: bool,
     passed: bool,
@@ -63,23 +73,31 @@ fn main() {
     }
 }
 
-/// Probes optional dependencies without capturing the screen or making a translation request.
-/// An explicit `--ocr-image` exercises the full PNG-to-Tesseract path against a supplied fixture.
+/// Probes optional dependencies without capturing the screen or making a translation request by
+/// default. Explicit `--ocr-image` and `--translation-text` arguments exercise their real paths.
 fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
     let options = parse_options(args)?;
     let ocr = probe_ocr();
     let ocr_exercise = options.ocr_image.as_deref().map(exercise_ocr);
     let translation = probe_translation();
+    let translation_exercise = options
+        .translation_text
+        .as_deref()
+        .map(exercise_translation);
     let passed = (!options.require_ocr || ocr.available)
         && (!options.require_translation || translation.configured)
-        && ocr_exercise.as_ref().is_none_or(|exercise| exercise.passed);
+        && ocr_exercise.as_ref().is_none_or(|exercise| exercise.passed)
+        && translation_exercise
+            .as_ref()
+            .is_none_or(|exercise| exercise.passed);
     let report = AcceptanceReport {
-        schema_version: 3,
+        schema_version: 4,
         test: "recognition_readiness",
         timestamp_unix_ms: unix_timestamp_ms(),
         ocr,
         ocr_exercise,
         translation,
+        translation_exercise,
         require_ocr: options.require_ocr,
         require_translation: options.require_translation,
         passed,
@@ -112,6 +130,13 @@ fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
         {
             missing.push("OCR fixture");
         }
+        if report
+            .translation_exercise
+            .as_ref()
+            .is_some_and(|exercise| !exercise.passed)
+        {
+            missing.push("translation request");
+        }
         Err(io::Error::other(format!(
             "required recognition dependencies are not ready: {}",
             missing.join(", ")
@@ -135,6 +160,36 @@ fn exercise_ocr(path: &std::path::Path) -> OcrExercise {
             error: Some("OCR returned no text".to_owned()),
         },
         Err(error) => OcrExercise {
+            passed: false,
+            text_length: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+/// Exercises one explicitly requested translation without writing source or result text to the
+/// report. The configured client already supplies the HTTPS and timeout guarantees.
+fn exercise_translation(text: &str) -> TranslationExercise {
+    let result = match flash_shot::translation::TranslationConfig::from_environment() {
+        Ok(Some(config)) => flash_shot::translation::translate(&config, text),
+        Ok(None) => Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "translation endpoint is not configured",
+        )),
+        Err(error) => Err(error),
+    };
+    match result {
+        Ok(translated) if !translated.trim().is_empty() => TranslationExercise {
+            passed: true,
+            text_length: Some(translated.trim().chars().count()),
+            error: None,
+        },
+        Ok(_) => TranslationExercise {
+            passed: false,
+            text_length: Some(0),
+            error: Some("translation returned no text".to_owned()),
+        },
+        Err(error) => TranslationExercise {
             passed: false,
             text_length: None,
             error: Some(error.to_string()),
@@ -234,6 +289,27 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> io::Result<ProbeOpti
                 })?;
                 options.ocr_image = Some(PathBuf::from(value));
             }
+            "--translation-text" => {
+                if options.translation_text.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--translation-text may only be provided once",
+                    ));
+                }
+                let value = arguments.next().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--translation-text requires non-empty text",
+                    )
+                })?;
+                if value.trim().is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--translation-text requires non-empty text",
+                    ));
+                }
+                options.translation_text = Some(value);
+            }
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -279,6 +355,7 @@ mod tests {
                 require_ocr: true,
                 require_translation: true,
                 ocr_image: None,
+                translation_text: None,
             }
         );
         assert!(parse_options(["--output".to_owned()].into_iter()).is_err());
@@ -290,6 +367,28 @@ mod tests {
                     "one.json".to_owned(),
                     "--output".to_owned(),
                     "two.json".to_owned(),
+                ]
+                .into_iter()
+            )
+            .is_err()
+        );
+        assert_eq!(
+            parse_options(["--translation-text".to_owned(), "hello".to_owned()].into_iter())
+                .unwrap()
+                .translation_text,
+            Some("hello".to_owned())
+        );
+        assert!(parse_options(["--translation-text".to_owned()].into_iter()).is_err());
+        assert!(
+            parse_options(["--translation-text".to_owned(), " ".to_owned(),].into_iter()).is_err()
+        );
+        assert!(
+            parse_options(
+                [
+                    "--translation-text".to_owned(),
+                    "one".to_owned(),
+                    "--translation-text".to_owned(),
+                    "two".to_owned(),
                 ]
                 .into_iter()
             )

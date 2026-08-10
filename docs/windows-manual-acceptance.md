@@ -58,6 +58,8 @@ cargo run --release --bin recognition-acceptance -- --require-ocr --output targe
 cargo run --release --bin recognition-acceptance -- --require-translation --output target/ui-acceptance/recognition-acceptance-required-translation.json
 # 可选真实链路门禁：对含文字的项目截图执行完整 PNG -> Tesseract OCR，只写入文本长度等元数据。
 cargo run --release --bin recognition-acceptance -- --require-ocr --ocr-image target/ui-acceptance/settings-current-dark-520x640.png --output target/ui-acceptance/recognition-acceptance-ocr-fixture.json
+# 可选真实翻译链路：只有配置 HTTPS 端点时执行；只写入翻译结果长度等元数据，不保存原文或译文。
+cargo run --release --bin recognition-acceptance -- --require-translation --translation-text "Flash Shot" --output target/ui-acceptance/recognition-acceptance-translation-exercise.json
 cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acceptance/settings-light-980x760.png
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
 cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
