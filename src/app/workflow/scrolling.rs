@@ -252,6 +252,9 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn manual_scroll_control_closed(&mut self, cx: &mut Context<Self>) {
+        if !should_cancel_manual_scroll_for_close(self.scroll_window.is_some()) {
+            return;
+        }
         self.abandon_manual_scroll();
         self.scroll_window = None;
         self.status = "Scrolling screenshot cancelled".to_owned();
@@ -307,6 +310,15 @@ pub(super) fn next_operation_generation(generation: u64) -> u64 {
     generation.wrapping_add(1)
 }
 
+/// Decides whether a native close notification belongs to a user-cancelled scroll session.
+///
+/// Completing or cancelling a session removes the tracked control handle before asking GPUI to
+/// close its window. That later native callback must not replace a completed screenshot's status
+/// with a cancellation or return the newly opened editor to the background.
+pub(super) const fn should_cancel_manual_scroll_for_close(tracked_control: bool) -> bool {
+    tracked_control
+}
+
 /// Turns overlap failures into the next useful scroll action.
 ///
 /// An unchanged viewport normally means the page reached its end. Once two compatible frames
@@ -339,7 +351,9 @@ fn scroll_target(selection: PhysicalRect) -> PhysicalPoint {
 
 #[cfg(test)]
 mod tests {
-    use super::{scroll_frame_append_failure_status, scroll_target};
+    use super::{
+        scroll_frame_append_failure_status, scroll_target, should_cancel_manual_scroll_for_close,
+    };
     use crate::domain::geometry::PhysicalRect;
     use std::io::{Error, ErrorKind};
 
@@ -381,5 +395,11 @@ mod tests {
             scroll_frame_append_failure_status(&mismatch, true),
             "That frame did not overlap the previous one: no reliable vertical overlap found. Adjust the scroll position and capture again."
         );
+    }
+
+    #[test]
+    fn programmatic_scroll_control_close_does_not_cancel_the_completed_session() {
+        assert!(!should_cancel_manual_scroll_for_close(false));
+        assert!(should_cancel_manual_scroll_for_close(true));
     }
 }
