@@ -85,10 +85,19 @@ fn validate_endpoint(endpoint: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Accepts the two common top-level names used by configured translation services.
+/// Keeping this normalization at the HTTP boundary lets the workflow and retry UI consume one
+/// stable text result without loosening the endpoint, timeout, or token rules.
 fn translation_from_response(value: serde_json::Value) -> io::Result<String> {
-    value
+    let translation = value
         .get("translation")
         .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            value
+                .get("translatedText")
+                .and_then(serde_json::Value::as_str)
+        });
+    translation
         .map(str::to_owned)
         .filter(|translation| !translation.is_empty())
         .ok_or_else(|| {
@@ -138,12 +147,17 @@ mod tests {
     }
 
     #[test]
-    fn translation_response_requires_a_non_empty_translation_field() {
+    fn translation_response_accepts_common_non_empty_text_fields() {
         assert_eq!(
             translation_from_response(serde_json::json!({ "translation": "Hello" })).unwrap(),
             "Hello"
         );
+        assert_eq!(
+            translation_from_response(serde_json::json!({ "translatedText": "Hello" })).unwrap(),
+            "Hello"
+        );
         assert!(translation_from_response(serde_json::json!({})).is_err());
         assert!(translation_from_response(serde_json::json!({ "translation": "" })).is_err());
+        assert!(translation_from_response(serde_json::json!({ "translatedText": "" })).is_err());
     }
 }
