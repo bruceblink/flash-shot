@@ -677,6 +677,7 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .id("overlay-selection-dimensions")
+                        .occlude()
                         .absolute()
                         .left(px(layout.left))
                         .top(px(layout.top))
@@ -700,6 +701,7 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .id("overlay-marking-panel")
+                        .occlude()
                         .absolute()
                         .left(px(layout.left))
                         .top(px(layout.top))
@@ -716,6 +718,7 @@ impl Render for CaptureOverlay {
                 overlay.child(
                     div()
                         .id("overlay-layers")
+                        .occlude()
                         .absolute()
                         .when_some(annotation_layer_layout, |layers, layout| {
                             layers.left(px(layout.left))
@@ -774,6 +777,8 @@ impl Render for CaptureOverlay {
             .when(show_annotation_controls, |overlay| {
                 overlay.child(
                     div()
+                        .id("overlay-annotation-style")
+                        .occlude()
                         .absolute()
                         .left(px(annotation_style_panel_left))
                         .top(px(annotation_style_panel_top))
@@ -784,6 +789,8 @@ impl Render for CaptureOverlay {
             .when(show_annotation_controls, |overlay| {
                 overlay.child(
                     div()
+                        .id("overlay-annotation-tools")
+                        .occlude()
                         .absolute()
                         .when_some(annotation_layout, |tools, layout| {
                             tools
@@ -1466,6 +1473,8 @@ impl Render for CaptureOverlay {
             })
             .child(
                 div()
+                    .id("overlay-status")
+                    .occlude()
                     .absolute()
                     .left(px(18.0))
                     .bottom(px(status_bottom_inset(action_layout.is_none())))
@@ -1482,6 +1491,10 @@ impl Render for CaptureOverlay {
             )
             .child(
                 div()
+                    // These controls sit over the full-screen selection canvas. Their hitbox must
+                    // keep a command click from also starting or completing a selection underneath.
+                    .id("overlay-actions")
+                    .occlude()
                     .absolute()
                     .when(!show_action_toolbar, |actions| actions.hidden())
                     .when_some(action_layout, |actions, layout| {
@@ -1715,6 +1728,7 @@ impl Render for CaptureOverlay {
                                 actions.child(
                                     div()
                                         .id("overlay-secondary-actions")
+                                        .occlude()
                                         .absolute()
                                         .right_0()
                                         .w_full()
