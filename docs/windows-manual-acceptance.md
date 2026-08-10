@@ -56,6 +56,8 @@ cargo run --release --bin recognition-acceptance -- --output target/ui-acceptanc
 # 可选依赖门禁：只有在本机明确要求 OCR/翻译就绪时才使用；未安装或未配置会以非零退出。
 cargo run --release --bin recognition-acceptance -- --require-ocr --output target/ui-acceptance/recognition-acceptance-required-ocr.json
 cargo run --release --bin recognition-acceptance -- --require-translation --output target/ui-acceptance/recognition-acceptance-required-translation.json
+# 可选真实链路门禁：对含文字的项目截图执行完整 PNG -> Tesseract OCR，只写入文本长度等元数据。
+cargo run --release --bin recognition-acceptance -- --require-ocr --ocr-image target/ui-acceptance/settings-current-dark-520x640.png --output target/ui-acceptance/recognition-acceptance-ocr-fixture.json
 cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acceptance/settings-light-980x760.png
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
 cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
@@ -136,6 +138,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `current-P1-settings-sections-420x420` | Release `settings-ui-acceptance` 串行生成深色/浅色 Capture、Library、Record、App 四页最小窗口截图；紧凑导航、首屏内容和固定状态栏边界均通过目视检查，长页面的后续控件保留在可滚动内容区。 | 待执行 | 截图位于 `target/ui-acceptance/settings-p1-current-dark-capture-420x420.png`、`settings-p1-current-dark-library-420x420.png`、`settings-p1-current-dark-record-420x420.png`、`settings-p1-current-dark-app-420x420.png` 及对应浅色文件；150%/200% 缩放、双屏和混合 DPI 仍待真实环境验收。 |
 | 2026-08-10 | `current-scroll-portable-20260810` | 当前主线滚动截图专项测试 19 项通过；Release `scroll-acceptance` 通过 6 帧、5 个 90 像素重叠区的确定性拼接，输出 96x630，像素校验和为 `2267123376996061824`；最新 Windows 便携包结构、SHA-256、隔离 profile 启动冒烟、fixture 和安装器配置校验均通过。 | 待执行 | 滚动截图可从选区工具栏的更多操作启动，支持手动追加、辅助滚动追加、失败重试、完成拼接和导出；便携包 `target/portable-current/FlashShot-0.1.0-windows-x86_64.zip` 的 SHA-256 为 `b1f0cf1fd09373bf5c6870f756affcd64b2cdb2d67acbaebae1338641e677d6a`（见同目录 `.sha256`，校验值完整记录在文件中）。真实滚动 UI、150%/200% 缩放、双屏和完整录屏 UI 手工矩阵仍待执行。 |
 | 2026-08-10 | `current-environment-followup` | 当前 Release 环境探针通过：检测到单块 `DISPLAY1`（2560x1440、DPI 96、scale 1.0），FFmpeg 9.0 可用并支持 `gdigrab`、窗口和区域输入；Tesseract 5.5.3 已安装并通过 `FLASH_SHOT_TESSERACT` 指向 `C:\Program Files\Tesseract-OCR\tesseract.exe`；识别就绪探针的 `--require-ocr` 门禁通过。 | 待执行 | 机器可读证据位于 `target/windows-acceptance-environment-20260810-followup.json`、`target/ui-acceptance/recognition-acceptance-ocr-ready.json` 和 `target/ui-acceptance/recognition-acceptance-ocr-ready-default.json`。翻译端点未配置；OCR/翻译真实 UI、150%/200% 缩放、双屏和完整录屏 UI 仍不标记为通过。 |
+| 2026-08-10 | `current-ocr-fixture` | Release `recognition-acceptance` 使用含文字的 `settings-current-dark-520x640.png` 执行完整 PNG -> Tesseract OCR；schema 3 报告中 `ocr.available`、`ocr_exercise.passed` 和 `--require-ocr` 均通过，识别文本只保留长度元数据（391 个字符）。 | 待执行 | 报告位于 `target/ui-acceptance/recognition-acceptance-ocr-fixture.json`。这证明本地 OCR 调用链可用，不替代含文字选区的真实 UI 复核、翻译服务失败后重试或滚动截图手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
