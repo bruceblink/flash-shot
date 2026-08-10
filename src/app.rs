@@ -71,6 +71,8 @@ pub struct FlashShotApp {
     manual_scroll_capture_in_flight: bool,
     manual_scroll_auto_capture_generation: Option<u64>,
     recording_control: Option<crate::recording::RecordingControl>,
+    // Acceptance-only flag that renders live Record controls without starting an FFmpeg worker.
+    recording_acceptance_active: bool,
     recording_progress: crate::recording::RecordingProgress,
     recording_start_in_flight: bool,
     recording_stopping: bool,
@@ -478,6 +480,7 @@ impl FlashShotApp {
             manual_scroll_capture_in_flight: false,
             manual_scroll_auto_capture_generation: None,
             recording_control: None,
+            recording_acceptance_active: false,
             recording_progress: Default::default(),
             recording_start_in_flight: false,
             recording_stopping: false,

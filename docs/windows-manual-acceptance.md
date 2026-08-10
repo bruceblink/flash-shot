@@ -65,6 +65,8 @@ cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acce
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
 cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
 cargo run --release --bin settings-ui-acceptance -- dark 520 640 target/ui-acceptance/recording-settings-520x640.png 1500 1000 1.0 record
+# Record 页生命周期视觉复核：最后的 state 参数只注入 UI 状态，不会启动 FFmpeg。
+cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/recording-ui-paused.png 3000 0 1.0 record 0 paused
 cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
 # 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
@@ -81,6 +83,8 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 提供最后一个 `display-index` 参数时，探针会将窗口放到指定的零基显示器，并在同名 JSON
 中保留该窗口实际观测到的 `dpi`、物理边界和 `scale_factor`；索引不存在时命令失败，避免
 把另一块显示器的截图误记为目标 DPI 证据。
+提供其后的 `idle|starting|recording|paused|stopping` 参数时，探针会在不创建 FFmpeg 子进程
+的情况下固定 Record 页生命周期外观；截图前会把目标窗口置前，避免桌面区域捕获被其他窗口遮挡。
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
@@ -157,6 +161,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `e393f5d` | 当前 Release `recording-acceptance` 串行完成显示器、区域、窗口三种目标录制；三份 MP4 均由探针内部及 FFprobe 校验为 H.264，暂停/恢复事件均观察到，最终进度帧分别为 32、29、36，录制结束后未残留 FFmpeg、FFprobe 或验收窗口进程。 | 待执行 | 报告位于 `target/ui-acceptance/recording-p2-current3-display.json`、`recording-p2-current3-region.json` 和 `recording-p2-current3-window.json`；显示器输出为 2560x1440、2.53 秒，区域输出为 640x360、2.4 秒，窗口输出为 520x640、2.8 秒。窗口截图 `target/ui-acceptance/recording-p2-current3-window-settings.png` 复核 Record 导航、Display/Audio、Check support、Record display 和状态栏无截断或重叠；完整应用内录屏 UI、双屏和混合 DPI 手工矩阵仍待执行。 |
 | 2026-08-10 | `current-recording-p3-20260810` | 当前 Release `recording-acceptance` 重新完成显示器、区域、窗口三种目标；三份 MP4 均由探针内部及 FFprobe 校验为 H.264，暂停/恢复/停止事件均观察到，最终进度帧分别为 31、30、35，录制结束后没有残留 FFmpeg、FFprobe 或验收窗口进程。 | 待执行 | 报告位于 `target/ui-acceptance/recording-p3-display-20260810.json`、`recording-p3-region-20260810.json` 和 `recording-p3-window-20260810.json`；输出分别为 2560x1440、640x360、520x640，时长约 2.53s、2.4s、2.8s。窗口截图 `target/ui-acceptance/recording-p3-window-settings-2.png` 已复核 Record 导航、Display/Audio、Check support、Record display 和状态栏无截断或重叠；双屏、混合 DPI 与完整应用内录屏手工矩阵仍待执行。 |
 | 2026-08-10 | `current-scroll-acceptance-final-20260810` | 当前 Release `scroll-acceptance` 重新通过 6 帧、5 个 90px 重叠区的确定性拼接，输出 96x630，像素校验和为 `2267123376996061824`；本机 FFmpeg 9.0 可用并识别 `gdigrab`。 | 待执行 | 报告位于 `target/ui-acceptance/scroll-acceptance-20260810-final.json`；滚动控制器真实 UI 截图 `target/ui-acceptance/manual-scroll-controller-after-auto-2.png` 显示 `2 frames - ready to finish`、`420 px overlap`、`Scroll down + capture`、`Finish` 和 `Cancel` 均完整可见。该证据确认滚动入口、辅助追加、状态反馈和拼接链路；双屏、混合 DPI 与完整录屏 UI 手工矩阵仍待执行。 |
+| 2026-08-10 | `current-recording-ui-lifecycle-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 依次渲染 Starting、Recording、Paused、Stopping；每张截图均报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/recording-ui-starting-single-100.png`、`recording-ui-recording-single-100.png`、`recording-ui-paused-single-100.png` 和 `recording-ui-stopping-single-100.png`：Preparing/Stopping 禁用冲突动作，Recording 显示 Stop/Pause 与进度，Paused 显示 Stop/Resume 与相同进度，文本未截断或重叠。这是无 FFmpeg 的确定性 UI 证据，不替代完整录屏手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

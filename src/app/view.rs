@@ -42,7 +42,7 @@ impl gpui::Render for FlashShotApp {
             uses_compact_settings_navigation(f32::from(window.bounds().size.width));
         let is_idle = self.session.state() == CaptureSessionState::Idle;
         let recording_state = RecordingViewState {
-            active: self.recording_control.is_some(),
+            active: self.recording_control.is_some() || self.recording_acceptance_active,
             starting: self.recording_start_in_flight,
             stopping: self.recording_stopping,
             display_discovery_in_flight: self.recording_display_discovery_in_flight,

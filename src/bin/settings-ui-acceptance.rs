@@ -8,6 +8,7 @@ use std::{
 };
 
 use flash_shot::{
+    RecordingUiAcceptanceState,
     history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::capture::{CaptureBackend, SystemCaptureBackend},
@@ -23,7 +24,8 @@ use windows_sys::Win32::{
     UI::{
         HiDpi::GetDpiForWindow,
         WindowsAndMessaging::{
-            EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible,
+            BringWindowToTop, EnumWindows, GetWindowRect, GetWindowThreadProcessId,
+            IsWindowVisible, SetForegroundWindow,
         },
     },
 };
@@ -56,6 +58,8 @@ struct ScreenshotBounds {
 struct VisibleProcessWindow {
     bounds: flash_shot::domain::geometry::PhysicalRect,
     dpi: u32,
+    #[cfg(windows)]
+    handle: *mut c_void,
 }
 
 #[derive(Debug)]
@@ -69,6 +73,7 @@ struct Options {
     expected_scale: Option<f32>,
     section: String,
     display_index: Option<usize>,
+    recording_state: RecordingUiAcceptanceState,
 }
 
 impl Options {
@@ -99,6 +104,11 @@ impl Options {
             .transpose()?
             .unwrap_or_else(|| "capture".to_owned());
         let display_index = arguments.next().map(parse_display_index).transpose()?;
+        let recording_state = arguments
+            .next()
+            .map(parse_recording_state)
+            .transpose()?
+            .unwrap_or_default();
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -117,12 +127,13 @@ impl Options {
             expected_scale,
             section,
             display_index,
+            recording_state,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping]"
         .to_owned()
 }
 
@@ -200,6 +211,26 @@ fn parse_display_index(value: std::ffi::OsString) -> Result<usize, String> {
         .map_err(|_| "display-index must be a non-negative integer".to_owned())
 }
 
+/// Parses a synthetic Record page state used for deterministic lifecycle screenshots.
+fn parse_recording_state(value: std::ffi::OsString) -> Result<RecordingUiAcceptanceState, String> {
+    match value
+        .into_string()
+        .map_err(|_| {
+            "recording-state must be idle, starting, recording, paused, or stopping".to_owned()
+        })?
+        .as_str()
+    {
+        "idle" => Ok(RecordingUiAcceptanceState::Idle),
+        "starting" => Ok(RecordingUiAcceptanceState::Starting),
+        "recording" => Ok(RecordingUiAcceptanceState::Recording),
+        "paused" => Ok(RecordingUiAcceptanceState::Paused),
+        "stopping" => Ok(RecordingUiAcceptanceState::Stopping),
+        _ => {
+            Err("recording-state must be idle, starting, recording, paused, or stopping".to_owned())
+        }
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -241,6 +272,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             height: options.height,
             section: options.section,
             display_index: options.display_index,
+            recording_state: options.recording_state,
         },
     )
 }
@@ -255,6 +287,8 @@ fn spawn_screenshot_worker(
     thread::spawn(move || {
         thread::sleep(settle_delay);
         let result = visible_process_window().and_then(|window| {
+            focus_process_window(&window)?;
+            thread::sleep(Duration::from_millis(100));
             let frame = SystemCaptureBackend.capture(window.bounds)?;
             frame.save_png(&output)?;
             write_screenshot_metadata(&output, &window, expected_scale)?;
@@ -309,6 +343,7 @@ fn visible_process_window() -> io::Result<VisibleProcessWindow> {
                     bottom: rect.bottom,
                 },
                 dpi,
+                handle: window,
             });
             return 0;
         }
@@ -323,6 +358,26 @@ fn visible_process_window() -> io::Result<VisibleProcessWindow> {
     search
         .window
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "visible settings window not found"))
+}
+
+/// Brings the disposable settings window above the caller so desktop-region capture cannot be
+/// occluded by the terminal or another app while the acceptance screenshot is taken.
+#[cfg(windows)]
+fn focus_process_window(window: &VisibleProcessWindow) -> io::Result<()> {
+    // SAFETY: the handle was returned by EnumWindows for this live process and remains valid
+    // until the acceptance process exits after the screenshot is written.
+    let focused = unsafe { SetForegroundWindow(window.handle) } != 0;
+    let raised = unsafe { BringWindowToTop(window.handle) } != 0;
+    if focused || raised {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(windows))]
+fn focus_process_window(_window: &VisibleProcessWindow) -> io::Result<()> {
+    Ok(())
 }
 
 /// Writes machine-readable scale evidence beside a native screenshot without changing its pixels.
@@ -371,9 +426,11 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_display_index, parse_expected_scale, parse_linger_delay, parse_section,
-        parse_settle_delay, scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
+        parse_display_index, parse_expected_scale, parse_linger_delay, parse_recording_state,
+        parse_section, parse_settle_delay, scale_factor_for_dpi, scale_matches,
+        screenshot_metadata_path,
     };
+    use flash_shot::RecordingUiAcceptanceState;
     use std::{ffi::OsString, path::Path, time::Duration};
 
     #[test]
@@ -408,6 +465,15 @@ mod tests {
         assert_eq!(parse_display_index(OsString::from("12")).unwrap(), 12);
         assert!(parse_display_index(OsString::from("-1")).is_err());
         assert!(parse_display_index(OsString::from("monitor")).is_err());
+    }
+
+    #[test]
+    fn recording_state_parser_accepts_lifecycle_states() {
+        assert_eq!(
+            parse_recording_state(OsString::from("paused")).unwrap(),
+            RecordingUiAcceptanceState::Paused
+        );
+        assert!(parse_recording_state(OsString::from("running")).is_err());
     }
 
     #[test]

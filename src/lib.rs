@@ -78,6 +78,7 @@ pub fn run_settings_ui_acceptance(
             height: acceptance.height.max(420.0),
             show: true,
             section: acceptance.section,
+            recording_state: acceptance.recording_state,
             display_index: acceptance.display_index,
         },
     )
@@ -89,8 +90,21 @@ pub struct SettingsUiAcceptanceOptions {
     pub width: f32,
     pub height: f32,
     pub section: String,
+    /// Seeds a deterministic Record page state without launching FFmpeg.
+    pub recording_state: RecordingUiAcceptanceState,
     /// Selects a zero-based Windows display index for multi-monitor DPI acceptance runs.
     pub display_index: Option<usize>,
+}
+
+/// Synthetic Record page states used only by the native screenshot acceptance probe.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RecordingUiAcceptanceState {
+    #[default]
+    Idle,
+    Starting,
+    Recording,
+    Paused,
+    Stopping,
 }
 
 #[derive(Clone, Debug)]
@@ -99,6 +113,7 @@ struct SettingsWindowOptions {
     height: f32,
     show: bool,
     section: String,
+    recording_state: RecordingUiAcceptanceState,
     display_index: Option<usize>,
 }
 
@@ -109,6 +124,7 @@ impl Default for SettingsWindowOptions {
             height: 640.0,
             show: false,
             section: "capture".to_owned(),
+            recording_state: RecordingUiAcceptanceState::Idle,
             display_index: None,
         }
     }
@@ -176,6 +192,7 @@ fn run_with_settings_window(
         };
 
         let initial_section = window_options.section.clone();
+        let recording_state = window_options.recording_state;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
@@ -183,6 +200,7 @@ fn run_with_settings_window(
                 cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx));
             app.update(cx, |app, _| {
                 app.set_settings_section_for_acceptance(&initial_section);
+                app.set_recording_state_for_acceptance(recording_state);
             });
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()

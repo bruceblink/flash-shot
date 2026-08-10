@@ -17,6 +17,23 @@ impl FlashShotApp {
         };
     }
 
+    /// Seeds one Record page lifecycle state for screenshots without spawning an FFmpeg process.
+    /// The acceptance-only flag keeps the controls visible while production recording ownership
+    /// remains represented by `recording_control`.
+    pub(crate) fn set_recording_state_for_acceptance(
+        &mut self,
+        state: crate::RecordingUiAcceptanceState,
+    ) {
+        let (active, starting, stopping, paused, progress, status) =
+            acceptance_recording_state(state);
+        self.recording_acceptance_active = active;
+        self.recording_start_in_flight = starting;
+        self.recording_stopping = stopping;
+        self.recording_paused = paused;
+        self.recording_progress = progress;
+        self.status = status.to_owned();
+    }
+
     /// Opens a native folder picker, then swaps history only after the new private root is ready.
     pub(in crate::app) fn choose_quick_save_directory(&mut self, cx: &mut Context<Self>) {
         self.status = "Choose a folder for quick saves and screenshot history...".to_owned();
@@ -751,9 +768,76 @@ pub(in crate::app) fn shortcut_option_label(shortcut: Option<&str>) -> &str {
     shortcut.unwrap_or("Off")
 }
 
+fn acceptance_recording_state(
+    state: crate::RecordingUiAcceptanceState,
+) -> (
+    bool,
+    bool,
+    bool,
+    bool,
+    crate::recording::RecordingProgress,
+    &'static str,
+) {
+    match state {
+        crate::RecordingUiAcceptanceState::Idle => (
+            false,
+            false,
+            false,
+            false,
+            Default::default(),
+            "Ready - Ctrl+Shift+Print Screen",
+        ),
+        crate::RecordingUiAcceptanceState::Starting => (
+            false,
+            true,
+            false,
+            false,
+            Default::default(),
+            "Discovering FFmpeg and preparing display recording...",
+        ),
+        crate::RecordingUiAcceptanceState::Recording => (
+            true,
+            false,
+            false,
+            false,
+            crate::recording::RecordingProgress {
+                output_time_us: Some(4_000_000),
+                frame: Some(60),
+                finished: false,
+            },
+            "Recording primary display - 4s, 60 frames",
+        ),
+        crate::RecordingUiAcceptanceState::Paused => (
+            true,
+            false,
+            false,
+            true,
+            crate::recording::RecordingProgress {
+                output_time_us: Some(4_000_000),
+                frame: Some(60),
+                finished: false,
+            },
+            "Paused primary display recording - 4s, 60 frames",
+        ),
+        crate::RecordingUiAcceptanceState::Stopping => (
+            false,
+            false,
+            true,
+            false,
+            crate::recording::RecordingProgress {
+                output_time_us: Some(4_000_000),
+                frame: Some(60),
+                finished: false,
+            },
+            "Stopping primary display recording...",
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::open_verified_quick_save_history;
+    use super::{acceptance_recording_state, open_verified_quick_save_history};
+    use crate::RecordingUiAcceptanceState;
     use std::{fs, io};
 
     fn directory(name: &str) -> std::path::PathBuf {
@@ -788,5 +872,69 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(fs::read(&file).unwrap(), b"not a directory");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn acceptance_recording_states_keep_lifecycle_flags_and_progress_truthful() {
+        let cases = [
+            (
+                RecordingUiAcceptanceState::Idle,
+                false,
+                false,
+                false,
+                false,
+                None,
+                "Ready - Ctrl+Shift+Print Screen",
+            ),
+            (
+                RecordingUiAcceptanceState::Starting,
+                false,
+                true,
+                false,
+                false,
+                None,
+                "Discovering FFmpeg and preparing display recording...",
+            ),
+            (
+                RecordingUiAcceptanceState::Recording,
+                true,
+                false,
+                false,
+                false,
+                Some(4_000_000),
+                "Recording primary display - 4s, 60 frames",
+            ),
+            (
+                RecordingUiAcceptanceState::Paused,
+                true,
+                false,
+                false,
+                true,
+                Some(4_000_000),
+                "Paused primary display recording - 4s, 60 frames",
+            ),
+            (
+                RecordingUiAcceptanceState::Stopping,
+                false,
+                false,
+                true,
+                false,
+                Some(4_000_000),
+                "Stopping primary display recording...",
+            ),
+        ];
+
+        for (state, active, starting, stopping, paused, output_time_us, expected_status) in cases {
+            let (actual_active, actual_starting, actual_stopping, actual_paused, progress, status) =
+                acceptance_recording_state(state);
+
+            assert_eq!(actual_active, active);
+            assert_eq!(actual_starting, starting);
+            assert_eq!(actual_stopping, stopping);
+            assert_eq!(actual_paused, paused);
+            assert_eq!(progress.output_time_us, output_time_us);
+            assert_eq!(progress.frame, output_time_us.map(|_| 60));
+            assert_eq!(status, expected_status);
+        }
     }
 }
