@@ -121,6 +121,7 @@ pub enum RecordingUiAcceptanceState {
     Paused,
     Stopping,
     Cancelled,
+    Failed,
 }
 
 /// Synthetic FFmpeg support-check states used only by the native screenshot acceptance probe.

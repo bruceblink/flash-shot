@@ -940,6 +940,14 @@ fn acceptance_recording_state(
             Default::default(),
             "Screen recording startup cancelled",
         ),
+        crate::RecordingUiAcceptanceState::Failed => (
+            false,
+            false,
+            false,
+            false,
+            Default::default(),
+            "Screen recording failed: FFmpeg exited before producing frames",
+        ),
     }
 }
 
@@ -1039,6 +1047,15 @@ mod tests {
                 false,
                 None,
                 "Screen recording startup cancelled",
+            ),
+            (
+                RecordingUiAcceptanceState::Failed,
+                false,
+                false,
+                false,
+                false,
+                None,
+                "Screen recording failed: FFmpeg exited before producing frames",
             ),
         ];
 

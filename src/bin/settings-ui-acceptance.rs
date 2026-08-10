@@ -170,7 +170,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback]"
         .to_owned()
 }
 
@@ -253,7 +253,7 @@ fn parse_recording_state(value: std::ffi::OsString) -> Result<RecordingUiAccepta
     match value
         .into_string()
         .map_err(|_| {
-            "recording-state must be idle, starting, recording, paused, stopping, or cancelled"
+            "recording-state must be idle, starting, recording, paused, stopping, cancelled, or failed"
                 .to_owned()
         })?
         .as_str()
@@ -264,8 +264,9 @@ fn parse_recording_state(value: std::ffi::OsString) -> Result<RecordingUiAccepta
         "paused" => Ok(RecordingUiAcceptanceState::Paused),
         "stopping" => Ok(RecordingUiAcceptanceState::Stopping),
         "cancelled" => Ok(RecordingUiAcceptanceState::Cancelled),
+        "failed" => Ok(RecordingUiAcceptanceState::Failed),
         _ => Err(
-            "recording-state must be idle, starting, recording, paused, stopping, or cancelled"
+            "recording-state must be idle, starting, recording, paused, stopping, cancelled, or failed"
                 .to_owned(),
         ),
     }
@@ -624,6 +625,10 @@ mod tests {
         assert_eq!(
             parse_recording_state(OsString::from("cancelled")).unwrap(),
             RecordingUiAcceptanceState::Cancelled
+        );
+        assert_eq!(
+            parse_recording_state(OsString::from("failed")).unwrap(),
+            RecordingUiAcceptanceState::Failed
         );
         assert!(parse_recording_state(OsString::from("running")).is_err());
     }
