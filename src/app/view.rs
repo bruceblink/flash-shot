@@ -286,10 +286,10 @@ fn status_indicator_color(
     }
 }
 
-/// Keeps the translation test button label stable while its independent request is in flight.
+/// Switches the translation action to cancellation while its independent request is in flight.
 fn translation_service_test_label(in_flight: bool) -> &'static str {
     if in_flight {
-        "Testing..."
+        "Cancel test"
     } else {
         "Test service"
     }
@@ -662,8 +662,16 @@ fn capture_settings(
             "settings-test-translation-service",
             translation_service_test_label(app_state.translation_service_test_in_flight),
             colors,
-            !app_state.translation_service_test_in_flight,
-            move |_, _, cx| app.update(cx, |this, cx| this.test_translation_service(cx)),
+            true,
+            move |_, _, cx| {
+                app.update(cx, |this, cx| {
+                    if this.translation_service_test_in_flight {
+                        this.cancel_translation_service_test(cx);
+                    } else {
+                        this.test_translation_service(cx);
+                    }
+                })
+            },
         )));
 
     div()
@@ -2506,7 +2514,7 @@ mod tests {
     #[test]
     fn translation_test_label_explains_its_independent_busy_state() {
         assert_eq!(translation_service_test_label(false), "Test service");
-        assert_eq!(translation_service_test_label(true), "Testing...");
+        assert_eq!(translation_service_test_label(true), "Cancel test");
     }
 
     #[test]

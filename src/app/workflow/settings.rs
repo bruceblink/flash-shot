@@ -472,6 +472,19 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Cancels the visible service check so a slow endpoint never leaves the settings UI stuck.
+    /// The request may still finish in the background, but its generation can no longer update UI.
+    pub(in crate::app) fn cancel_translation_service_test(&mut self, cx: &mut Context<Self>) {
+        if !self.translation_service_test_in_flight {
+            return;
+        }
+        self.translation_service_test_generation =
+            self.translation_service_test_generation.wrapping_add(1);
+        self.translation_service_test_in_flight = false;
+        self.status = "Translation service test cancelled".to_owned();
+        cx.notify();
+    }
+
     fn finish_translation_service_test(
         &mut self,
         result: std::io::Result<String>,
