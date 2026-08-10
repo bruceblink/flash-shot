@@ -829,17 +829,17 @@ pub(super) fn recording_support_status(
 ) -> String {
     match result {
         Ok(capabilities) if capabilities.supports_display_capture() => format!(
-            "Recording ready: FFmpeg {} supports {}",
-            capabilities.version(),
+            "FFmpeg {} ready ({})",
+            capabilities.version_label(),
             if capabilities.supports_input("ddagrab") {
-                "Desktop Duplication"
+                "DDagrab"
             } else {
-                "GDI capture"
+                "GDI"
             }
         ),
         Ok(capabilities) => format!(
-            "FFmpeg {} is installed but cannot capture the desktop. Use a build with ddagrab or gdigrab.",
-            capabilities.version()
+            "FFmpeg {}: desktop capture unavailable",
+            capabilities.version_label()
         ),
         Err(error) => recording_start_failure_status(error),
     }

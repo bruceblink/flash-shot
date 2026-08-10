@@ -59,6 +59,14 @@ impl FfmpegCapabilities {
         &self.version
     }
 
+    /// Returns a compact one-line version label for fixed-width settings and status surfaces.
+    ///
+    /// FFmpeg's raw banner may include a copyright suffix or line breaks; those details remain
+    /// available through [`Self::version`] for reports, while this label keeps UI feedback readable.
+    pub fn version_label(&self) -> String {
+        compact_version_label(&self.version)
+    }
+
     pub fn input_formats(&self) -> &[String] {
         &self.input_formats
     }
@@ -88,6 +96,29 @@ impl FfmpegCapabilities {
     pub fn supports_input(&self, name: &str) -> bool {
         self.input_formats.iter().any(|input| input == name)
     }
+}
+
+const MAX_VERSION_LABEL_CHARS: usize = 32;
+
+/// Removes banner noise and bounds the version text before it reaches a fixed-width UI row.
+fn compact_version_label(version: &str) -> String {
+    let first_line = version.lines().next().unwrap_or_default().trim();
+    let label = first_line
+        .split("Copyright")
+        .next()
+        .unwrap_or(first_line)
+        .trim();
+    if label.is_empty() {
+        return "unknown".to_owned();
+    }
+    let mut compact = label
+        .chars()
+        .take(MAX_VERSION_LABEL_CHARS)
+        .collect::<String>();
+    if label.chars().count() > MAX_VERSION_LABEL_CHARS {
+        compact.push_str("...");
+    }
+    compact
 }
 
 /// A physical-pixel video source selected before an FFmpeg process is started.
@@ -1388,6 +1419,31 @@ mod tests {
             first_diagnostic_line("\n  access denied\ntrace"),
             Some("access denied")
         );
+    }
+
+    #[test]
+    fn version_label_removes_banner_suffix_and_limits_width() {
+        let capabilities = FfmpegCapabilities {
+            executable: PathBuf::from("ffmpeg"),
+            version: "9.0-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers\nmore diagnostics".to_owned(),
+            input_formats: Vec::new(),
+        };
+
+        assert_eq!(capabilities.version_label(), "9.0-full_build-www.gyan.dev");
+
+        let long = FfmpegCapabilities {
+            executable: PathBuf::from("ffmpeg"),
+            version: "123456789012345678901234567890123456".to_owned(),
+            input_formats: Vec::new(),
+        };
+        assert_eq!(long.version_label(), "12345678901234567890123456789012...");
+
+        let empty = FfmpegCapabilities {
+            executable: PathBuf::from("ffmpeg"),
+            version: "\nCopyright only".to_owned(),
+            input_formats: Vec::new(),
+        };
+        assert_eq!(empty.version_label(), "unknown");
     }
 
     #[test]
