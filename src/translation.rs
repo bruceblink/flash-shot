@@ -85,27 +85,52 @@ fn validate_endpoint(endpoint: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Accepts the two common top-level names used by configured translation services.
-/// Keeping this normalization at the HTTP boundary lets the workflow and retry UI consume one
-/// stable text result without loosening the endpoint, timeout, or token rules.
+/// Normalizes the common response shapes used by configured translation services.
+/// Keeping this at the HTTP boundary lets the workflow and retry UI consume one stable text
+/// result without loosening the endpoint, timeout, or token rules.
 fn translation_from_response(value: serde_json::Value) -> io::Result<String> {
-    let translation = value
-        .get("translation")
-        .and_then(serde_json::Value::as_str)
+    let translation = translation_text(&value)
         .or_else(|| {
             value
-                .get("translatedText")
-                .and_then(serde_json::Value::as_str)
-        });
+                .get("translations")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(translation_text)
+        })
+        .or_else(|| value.get("data").and_then(translation_from_nested_data));
     translation
         .map(str::to_owned)
-        .filter(|translation| !translation.is_empty())
+        .filter(|translation| !translation.trim().is_empty())
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "translation response does not contain a non-empty translation",
             )
         })
+}
+
+/// Reads one translated string from a service object or one item in a translations array.
+fn translation_text(value: &serde_json::Value) -> Option<&str> {
+    value
+        .get("translation")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            value
+                .get("translatedText")
+                .and_then(serde_json::Value::as_str)
+        })
+        .or_else(|| value.get("text").and_then(serde_json::Value::as_str))
+}
+
+/// Looks through a bounded `data` wrapper without accepting arbitrary nested response content.
+fn translation_from_nested_data(value: &serde_json::Value) -> Option<&str> {
+    translation_text(value).or_else(|| {
+        value
+            .get("translations")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(translation_text)
+    })
 }
 
 fn translation_error(error: ureq::Error) -> io::Error {
@@ -156,8 +181,22 @@ mod tests {
             translation_from_response(serde_json::json!({ "translatedText": "Hello" })).unwrap(),
             "Hello"
         );
+        assert_eq!(
+            translation_from_response(serde_json::json!({ "translations": [{ "text": "Hello" }] }))
+                .unwrap(),
+            "Hello"
+        );
+        assert_eq!(
+            translation_from_response(
+                serde_json::json!({ "data": { "translations": [{ "translatedText": "Hello" }] } })
+            )
+            .unwrap(),
+            "Hello"
+        );
         assert!(translation_from_response(serde_json::json!({})).is_err());
         assert!(translation_from_response(serde_json::json!({ "translation": "" })).is_err());
         assert!(translation_from_response(serde_json::json!({ "translatedText": "" })).is_err());
+        assert!(translation_from_response(serde_json::json!({ "translations": [] })).is_err());
+        assert!(translation_from_response(serde_json::json!({ "translation": "   " })).is_err());
     }
 }
