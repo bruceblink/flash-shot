@@ -249,7 +249,7 @@ impl gpui::Render for FlashShotApp {
     }
 }
 
-/// Chooses a semantic status color so failures cannot look like a healthy idle state.
+/// Chooses a semantic status color so failures and cancellations cannot look like success.
 fn status_indicator_color(
     status: &str,
     is_idle: bool,
@@ -270,6 +270,12 @@ fn status_indicator_color(
     .any(|marker| normalized.contains(marker));
     if failure {
         return colors.danger;
+    }
+    let cancelled = ["cancelled", "canceled"]
+        .iter()
+        .any(|marker| normalized.contains(marker));
+    if cancelled {
+        return colors.muted;
     }
     let busy = [
         "checking",
@@ -2633,6 +2639,10 @@ mod tests {
         assert_eq!(
             status_indicator_color("Could not save screenshot", true, colors),
             colors.danger
+        );
+        assert_eq!(
+            status_indicator_color("Screen recording startup cancelled", true, colors),
+            colors.muted
         );
     }
 
