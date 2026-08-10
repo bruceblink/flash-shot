@@ -1,10 +1,10 @@
 //! Lightweight always-on-top windows for keeping a captured selection visible.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, Keystroke, Render, Window,
-    WindowControlArea, div, img, prelude::*, px,
+    AsyncApp, Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, Keystroke, Render,
+    WeakEntity, Window, WindowControlArea, div, img, prelude::*, px,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -15,6 +15,7 @@ use crate::platform::{
 };
 
 const PIN_OPACITY_STEPS: [u8; 4] = [255, 191, 128, 64];
+const PIN_FEEDBACK_VISIBLE_FOR: Duration = Duration::from_secs(3);
 
 struct PinnedTooltip(&'static str, crate::theme::ThemeColors);
 
@@ -60,6 +61,8 @@ pub(super) struct PinnedImage {
     opacity: u8,
     mouse_through: bool,
     status: &'static str,
+    feedback_visible: bool,
+    feedback_generation: u64,
 }
 
 impl PinnedImage {
@@ -80,18 +83,20 @@ impl PinnedImage {
             opacity: 255,
             mouse_through: false,
             status: "Pinned capture",
+            feedback_visible: false,
+            feedback_generation: 0,
         }
     }
 
     fn copy_image(&mut self, cx: &mut Context<Self>) {
-        self.status = match copy_pinned_image(&self.frame, &SystemClipboard) {
+        let feedback = match copy_pinned_image(&self.frame, &SystemClipboard) {
             Ok(()) => "Copied image",
             Err(error) => {
                 log::warn!(target: "flash_shot::pinned", "pinned_window_copy_failed error={error}");
                 "Could not copy image"
             }
         };
-        cx.notify();
+        self.show_operation_feedback(feedback, cx);
     }
 
     /// Delegates the file write to the capture service so history ownership stays centralized.
@@ -101,23 +106,48 @@ impl PinnedImage {
         let accepted = self
             .app
             .update(cx, |app, cx| app.quick_save_pinned_frame(frame, pin, cx));
-        self.status = if accepted {
+        let feedback = if accepted {
             "Saving image..."
         } else {
             "Another pin is already saving"
         };
-        cx.notify();
+        self.show_operation_feedback(feedback, cx);
     }
 
     /// Applies the async save result to the originating pin while ignoring a closed window.
     pub(super) fn finish_save_status(&mut self, saved: bool, cx: &mut Context<Self>) {
-        self.status = pinned_save_result_status(saved);
+        self.show_operation_feedback(pinned_save_result_status(saved), cx);
+    }
+
+    /// Keeps a completed action visible long enough for keyboard and pointer users to read it.
+    fn show_operation_feedback(&mut self, status: &'static str, cx: &mut Context<Self>) {
+        self.status = status;
+        self.feedback_visible = true;
+        self.feedback_generation = self.feedback_generation.wrapping_add(1);
+        let generation = self.feedback_generation;
         cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                cx.background_executor()
+                    .timer(PIN_FEEDBACK_VISIBLE_FOR)
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        if pin_feedback_timer_is_current(this.feedback_generation, generation) {
+                            this.feedback_visible = false;
+                            cx.notify();
+                        }
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     /// Scales the complete native window so the contained image remains undistorted.
     fn zoom(&mut self, scale: f32, window: &mut Window, cx: &mut Context<Self>) {
-        self.status = match window.window_handle() {
+        let feedback = match window.window_handle() {
             Ok(handle) => match handle.as_raw() {
                 RawWindowHandle::Win32(handle) => {
                     match crate::platform::window_visibility::resize_centered(
@@ -139,13 +169,13 @@ impl PinnedImage {
                 "Could not resize window"
             }
         };
-        cx.notify();
+        self.show_operation_feedback(feedback, cx);
     }
 
     /// Cycles through readable reference-image opacity levels without moving the window.
     fn cycle_opacity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = next_pin_opacity(self.opacity);
-        self.status = match window.window_handle() {
+        let feedback = match window.window_handle() {
             Ok(handle) => match handle.as_raw() {
                 RawWindowHandle::Win32(handle) => {
                     match crate::platform::window_visibility::set_opacity(handle.hwnd.get(), next) {
@@ -166,13 +196,13 @@ impl PinnedImage {
                 "Could not change opacity"
             }
         };
-        cx.notify();
+        self.show_operation_feedback(feedback, cx);
     }
 
     /// Lets clicks reach the app below while this pinned image remains usable through Ctrl+M.
     fn toggle_mouse_through(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = !self.mouse_through;
-        self.status = match window.window_handle() {
+        let feedback = match window.window_handle() {
             Ok(handle) => match handle.as_raw() {
                 RawWindowHandle::Win32(handle) => {
                     match crate::platform::window_visibility::set_mouse_through(
@@ -204,7 +234,7 @@ impl PinnedImage {
                 "Could not change mouse-through"
             }
         };
-        cx.notify();
+        self.show_operation_feedback(feedback, cx);
     }
 
     pub(super) fn restore_mouse_input(
@@ -220,14 +250,13 @@ impl PinnedImage {
         crate::platform::window_visibility::set_mouse_through(handle, false)
             .map_err(|error| error.to_string())?;
         self.mouse_through = false;
-        self.status = "Mouse through disabled";
-        cx.notify();
+        self.show_operation_feedback("Mouse through disabled", cx);
         Ok(true)
     }
 
     /// Keeps one reference image visible without closing the user's other pinned captures.
     fn hide_other_pinned_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.status = match native_window_handle(window) {
+        let feedback = match native_window_handle(window) {
             Some(handle) => {
                 let hidden = self
                     .app
@@ -240,7 +269,7 @@ impl PinnedImage {
             }
             None => "Pinned window handle is unavailable",
         };
-        cx.notify();
+        self.show_operation_feedback(feedback, cx);
     }
 
     /// Restores hidden reference images while preserving the active pin's keyboard focus.
@@ -248,12 +277,12 @@ impl PinnedImage {
         let shown = self
             .app
             .update(cx, |app, cx| app.show_all_pinned_windows(cx));
-        self.status = if shown == 0 {
+        let feedback = if shown == 0 {
             "No pinned images to show"
         } else {
             "All pinned images shown"
         };
-        cx.notify();
+        self.show_operation_feedback(feedback, cx);
     }
 
     /// Closes this independent pinned window without affecting the capture service.
@@ -392,8 +421,11 @@ impl Render for PinnedImage {
             .border_color(colors.border)
             .rounded_lg()
             .shadow_lg()
-            .invisible()
-            .group_hover("pinned-window", |toolbar| toolbar.visible())
+            .when(!self.feedback_visible, |toolbar| {
+                toolbar
+                    .invisible()
+                    .group_hover("pinned-window", |toolbar| toolbar.visible())
+            })
             .child(
                 div()
                     .flex()
@@ -600,12 +632,17 @@ fn pinned_save_result_status(saved: bool) -> &'static str {
     }
 }
 
+/// Rejects a stale delay so an older action cannot hide newer feedback early.
+fn pin_feedback_timer_is_current(current_generation: u64, timer_generation: u64) -> bool {
+    current_generation == timer_generation
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         PinnedKeyboardCommand, copy_pinned_image, next_pin_opacity, opacity_percentage,
-        pinned_close_key, pinned_control_tooltip, pinned_keyboard_command,
-        pinned_save_result_status,
+        pin_feedback_timer_is_current, pinned_close_key, pinned_control_tooltip,
+        pinned_keyboard_command, pinned_save_result_status,
     };
     use crate::{
         domain::geometry::PhysicalRect,
@@ -754,5 +791,11 @@ mod tests {
     fn pinned_save_result_status_distinguishes_success_and_failure() {
         assert_eq!(pinned_save_result_status(true), "Saved image");
         assert_eq!(pinned_save_result_status(false), "Could not save image");
+    }
+
+    #[test]
+    fn current_pin_feedback_timer_does_not_hide_newer_feedback() {
+        assert!(pin_feedback_timer_is_current(4, 4));
+        assert!(!pin_feedback_timer_is_current(5, 4));
     }
 }
