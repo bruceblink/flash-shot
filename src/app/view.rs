@@ -1609,6 +1609,14 @@ fn uses_compact_settings_navigation(window_width: f32) -> bool {
     window_width < COMPACT_SETTINGS_NAVIGATION_BREAKPOINT
 }
 
+/// Accepts the two conventional activation keys for a focused settings destination.
+///
+/// Navigation items remain pointer-friendly, but keyboard users should be able to activate the
+/// same destination without depending on a mouse click or a global shortcut.
+fn settings_navigation_activation(keystroke: &gpui::Keystroke) -> bool {
+    !keystroke.modifiers.modified() && matches!(keystroke.key.as_str(), "enter" | "space")
+}
+
 /// Renders a vertical navigation rail on roomy windows and a compact section row on narrow ones.
 fn settings_navigation(
     selected: SettingsSection,
@@ -1704,6 +1712,7 @@ fn settings_navigation_item(
     compact: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let active = selected == item.section;
+    let keyboard_app = app.clone();
     div()
         .id(item.id)
         .flex()
@@ -1750,6 +1759,13 @@ fn settings_navigation_item(
                 } else {
                     colors.text
                 })
+        })
+        .on_key_down(move |event, _, cx| {
+            if settings_navigation_activation(&event.keystroke) {
+                keyboard_app.update(cx, |this, cx| {
+                    this.select_settings_section(item.section, cx)
+                });
+            }
         })
         .on_click(move |_, _, cx| {
             app.update(cx, |this, cx| {
@@ -2117,9 +2133,9 @@ mod tests {
         history_clear_confirmation_label, history_entry_label, history_entry_matches,
         history_result_summary, history_retention_label, history_visibility_label,
         recording_progress_label, recording_source_discovery_busy, recording_status_visible,
-        recording_toggle_label, relative_timestamp_label, settings_navigation_items,
-        settings_page_copy, settings_page_intro, settings_path_label, status_indicator_color,
-        uses_compact_settings_navigation, visible_history_entries,
+        recording_toggle_label, relative_timestamp_label, settings_navigation_activation,
+        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
+        status_indicator_color, uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2191,6 +2207,20 @@ mod tests {
                 "Theme, startup, updates",
             ]
         );
+    }
+
+    #[test]
+    fn settings_navigation_accepts_plain_enter_and_space_only() {
+        for key in ["enter", "space"] {
+            assert!(settings_navigation_activation(
+                &gpui::Keystroke::parse(key).unwrap()
+            ));
+        }
+        for key in ["shift-enter", "ctrl-enter", "alt-space", "cmd-space"] {
+            assert!(!settings_navigation_activation(
+                &gpui::Keystroke::parse(key).unwrap()
+            ));
+        }
     }
 
     #[test]
