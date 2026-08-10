@@ -39,6 +39,11 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if self.recording_support_check_in_flight {
+            self.status = "Cancel or wait for the FFmpeg support check before recording".to_owned();
+            cx.notify();
+            return;
+        }
         if self.session.state() != CaptureSessionState::Idle {
             self.status = "Finish or cancel the current screenshot before recording".to_owned();
             cx.notify();
@@ -57,6 +62,11 @@ impl FlashShotApp {
 
     /// Probes FFmpeg without opening a recording process so users can fix local prerequisites first.
     pub(in crate::app) fn check_recording_support(&mut self, cx: &mut Context<Self>) {
+        if self.recording_support_check_in_flight {
+            self.status = "FFmpeg recording support check is already in progress".to_owned();
+            cx.notify();
+            return;
+        }
         if self.recording_control.is_some()
             || self.recording_start_in_flight
             || self.recording_stopping
@@ -73,6 +83,15 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if self.recording_support_check_in_flight {
+            self.status = "Cancel or wait for the FFmpeg support check before recording".to_owned();
+            cx.notify();
+            return;
+        }
+        self.recording_support_check_generation =
+            self.recording_support_check_generation.wrapping_add(1);
+        let generation = self.recording_support_check_generation;
+        self.recording_support_check_in_flight = true;
         self.status = "Checking FFmpeg recording support...".to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -84,6 +103,10 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
+                        if this.recording_support_check_generation != generation {
+                            return;
+                        }
+                        this.recording_support_check_in_flight = false;
                         this.status = recording_support_status(result.as_ref());
                         cx.notify();
                     });
@@ -91,6 +114,19 @@ impl FlashShotApp {
             }
         })
         .detach();
+    }
+
+    /// Cancels the visible FFmpeg support probe while allowing its background process to finish.
+    /// Advancing the generation prevents stale success or failure text from replacing the cancel.
+    pub(in crate::app) fn cancel_recording_support_check(&mut self, cx: &mut Context<Self>) {
+        if !self.recording_support_check_in_flight {
+            return;
+        }
+        self.recording_support_check_generation =
+            self.recording_support_check_generation.wrapping_add(1);
+        self.recording_support_check_in_flight = false;
+        self.status = "FFmpeg recording support check cancelled".to_owned();
+        cx.notify();
     }
 
     pub(in crate::app) fn start_region_recording(&mut self, cx: &mut Context<Self>) {
@@ -113,6 +149,11 @@ impl FlashShotApp {
             self.recording_audio_discovery_in_flight,
         ) {
             self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
+        if self.recording_support_check_in_flight {
+            self.status = "Cancel or wait for the FFmpeg support check before recording".to_owned();
             cx.notify();
             return;
         }
@@ -239,6 +280,7 @@ impl FlashShotApp {
             || self.recording_stopping
             || self.recording_display_discovery_in_flight
             || self.recording_audio_discovery_in_flight
+            || self.recording_support_check_in_flight
         {
             return;
         }
@@ -300,6 +342,7 @@ impl FlashShotApp {
             || self.recording_stopping
             || self.recording_audio_discovery_in_flight
             || self.recording_display_discovery_in_flight
+            || self.recording_support_check_in_flight
         {
             return;
         }

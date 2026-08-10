@@ -8,7 +8,8 @@ use std::{
 };
 
 use flash_shot::{
-    OcrSupportUiAcceptanceState, RecordingUiAcceptanceState, TranslationServiceUiAcceptanceState,
+    OcrSupportUiAcceptanceState, RecordingSupportUiAcceptanceState, RecordingUiAcceptanceState,
+    TranslationServiceUiAcceptanceState,
     history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::capture::{CaptureBackend, SystemCaptureBackend},
@@ -74,6 +75,7 @@ struct Options {
     section: String,
     display_index: Option<usize>,
     recording_state: RecordingUiAcceptanceState,
+    recording_support_check_state: RecordingSupportUiAcceptanceState,
     translation_service_test_state: TranslationServiceUiAcceptanceState,
     ocr_support_check_state: OcrSupportUiAcceptanceState,
 }
@@ -121,6 +123,11 @@ impl Options {
             .map(parse_ocr_support_check_state)
             .transpose()?
             .unwrap_or_default();
+        let recording_support_check_state = arguments
+            .next()
+            .map(parse_recording_support_check_state)
+            .transpose()?
+            .unwrap_or_default();
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -140,6 +147,7 @@ impl Options {
             section,
             display_index,
             recording_state,
+            recording_support_check_state,
             translation_service_test_state,
             ocr_support_check_state,
         })
@@ -147,7 +155,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking]"
         .to_owned()
 }
 
@@ -282,6 +290,27 @@ fn parse_ocr_support_check_state(
     }
 }
 
+/// Parses a synthetic FFmpeg support-check state for deterministic settings screenshots.
+fn parse_recording_support_check_state(
+    value: std::ffi::OsString,
+) -> Result<RecordingSupportUiAcceptanceState, String> {
+    match value
+        .into_string()
+        .map_err(|_| {
+            "recording-support-state must be recording-support-idle or recording-support-checking"
+                .to_owned()
+        })?
+        .as_str()
+    {
+        "recording-support-idle" => Ok(RecordingSupportUiAcceptanceState::Idle),
+        "recording-support-checking" => Ok(RecordingSupportUiAcceptanceState::Checking),
+        _ => Err(
+            "recording-support-state must be recording-support-idle or recording-support-checking"
+                .to_owned(),
+        ),
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -324,6 +353,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             section: options.section,
             display_index: options.display_index,
             recording_state: options.recording_state,
+            recording_support_check_state: options.recording_support_check_state,
             translation_service_test_state: options.translation_service_test_state,
             ocr_support_check_state: options.ocr_support_check_state,
         },
@@ -480,12 +510,12 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 mod tests {
     use super::{
         parse_display_index, parse_expected_scale, parse_linger_delay,
-        parse_ocr_support_check_state, parse_recording_state, parse_section, parse_settle_delay,
-        parse_translation_service_test_state, scale_factor_for_dpi, scale_matches,
-        screenshot_metadata_path,
+        parse_ocr_support_check_state, parse_recording_state, parse_recording_support_check_state,
+        parse_section, parse_settle_delay, parse_translation_service_test_state,
+        scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
     };
     use flash_shot::{
-        OcrSupportUiAcceptanceState, RecordingUiAcceptanceState,
+        OcrSupportUiAcceptanceState, RecordingSupportUiAcceptanceState, RecordingUiAcceptanceState,
         TranslationServiceUiAcceptanceState,
     };
     use std::{ffi::OsString, path::Path, time::Duration};
@@ -557,6 +587,16 @@ mod tests {
             OcrSupportUiAcceptanceState::Checking
         );
         assert!(parse_ocr_support_check_state(OsString::from("checking")).is_err());
+    }
+
+    #[test]
+    fn recording_support_state_parser_accepts_the_busy_state() {
+        assert_eq!(
+            parse_recording_support_check_state(OsString::from("recording-support-checking"))
+                .unwrap(),
+            RecordingSupportUiAcceptanceState::Checking
+        );
+        assert!(parse_recording_support_check_state(OsString::from("checking")).is_err());
     }
 
     #[test]

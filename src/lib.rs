@@ -79,6 +79,7 @@ pub fn run_settings_ui_acceptance(
             show: true,
             section: acceptance.section,
             recording_state: acceptance.recording_state,
+            recording_support_check_state: acceptance.recording_support_check_state,
             translation_service_test_state: acceptance.translation_service_test_state,
             ocr_support_check_state: acceptance.ocr_support_check_state,
             display_index: acceptance.display_index,
@@ -94,6 +95,8 @@ pub struct SettingsUiAcceptanceOptions {
     pub section: String,
     /// Seeds a deterministic Record page state without launching FFmpeg.
     pub recording_state: RecordingUiAcceptanceState,
+    /// Seeds the FFmpeg support-check button without probing the installed executable.
+    pub recording_support_check_state: RecordingSupportUiAcceptanceState,
     /// Seeds the explicit translation-service test button without making a network request.
     pub translation_service_test_state: TranslationServiceUiAcceptanceState,
     /// Seeds the local OCR support button without probing the installed OCR executable.
@@ -111,6 +114,14 @@ pub enum RecordingUiAcceptanceState {
     Recording,
     Paused,
     Stopping,
+}
+
+/// Synthetic FFmpeg support-check states used only by the native screenshot acceptance probe.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RecordingSupportUiAcceptanceState {
+    #[default]
+    Idle,
+    Checking,
 }
 
 /// Synthetic translation-service button states used only by the native screenshot acceptance probe.
@@ -137,6 +148,7 @@ struct SettingsWindowOptions {
     show: bool,
     section: String,
     recording_state: RecordingUiAcceptanceState,
+    recording_support_check_state: RecordingSupportUiAcceptanceState,
     translation_service_test_state: TranslationServiceUiAcceptanceState,
     ocr_support_check_state: OcrSupportUiAcceptanceState,
     display_index: Option<usize>,
@@ -150,6 +162,7 @@ impl Default for SettingsWindowOptions {
             show: false,
             section: "capture".to_owned(),
             recording_state: RecordingUiAcceptanceState::Idle,
+            recording_support_check_state: RecordingSupportUiAcceptanceState::Idle,
             translation_service_test_state: TranslationServiceUiAcceptanceState::Idle,
             ocr_support_check_state: OcrSupportUiAcceptanceState::Idle,
             display_index: None,
@@ -220,6 +233,7 @@ fn run_with_settings_window(
 
         let initial_section = window_options.section.clone();
         let recording_state = window_options.recording_state;
+        let recording_support_check_state = window_options.recording_support_check_state;
         let translation_service_test_state = window_options.translation_service_test_state;
         let ocr_support_check_state = window_options.ocr_support_check_state;
         if let Err(error) = cx.open_window(options, move |window, cx| {
@@ -230,6 +244,7 @@ fn run_with_settings_window(
             app.update(cx, |app, _| {
                 app.set_settings_section_for_acceptance(&initial_section);
                 app.set_recording_state_for_acceptance(recording_state);
+                app.set_recording_support_check_for_acceptance(recording_support_check_state);
                 app.set_translation_service_test_for_acceptance(translation_service_test_state);
                 app.set_ocr_support_check_for_acceptance(ocr_support_check_state);
             });

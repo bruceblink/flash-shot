@@ -34,6 +34,18 @@ impl FlashShotApp {
         self.status = status.to_owned();
     }
 
+    /// Seeds the FFmpeg support-check button for screenshots without launching local probes.
+    pub(crate) fn set_recording_support_check_for_acceptance(
+        &mut self,
+        state: crate::RecordingSupportUiAcceptanceState,
+    ) {
+        self.recording_support_check_in_flight =
+            state == crate::RecordingSupportUiAcceptanceState::Checking;
+        if self.recording_support_check_in_flight {
+            self.status = "Checking FFmpeg recording support...".to_owned();
+        }
+    }
+
     /// Seeds the translation service button for screenshots without contacting the configured
     /// endpoint. Production requests continue to own their state through the test workflow.
     pub(crate) fn set_translation_service_test_for_acceptance(

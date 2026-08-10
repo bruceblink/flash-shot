@@ -29,6 +29,7 @@ struct RecordingViewState {
     stopping: bool,
     display_discovery_in_flight: bool,
     audio_discovery_in_flight: bool,
+    support_check_in_flight: bool,
     paused: bool,
     progress: crate::recording::RecordingProgress,
 }
@@ -47,6 +48,7 @@ impl gpui::Render for FlashShotApp {
             stopping: self.recording_stopping,
             display_discovery_in_flight: self.recording_display_discovery_in_flight,
             audio_discovery_in_flight: self.recording_audio_discovery_in_flight,
+            support_check_in_flight: self.recording_support_check_in_flight,
             paused: self.recording_paused,
             progress: self.recording_progress,
         };
@@ -828,9 +830,13 @@ fn recording_settings(
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
     let source_discovery_busy = recording_source_discovery_busy(state);
-    let settings_idle =
-        !state.active && !state.starting && !state.stopping && !source_discovery_busy;
-    let recording_toggle_enabled = !state.starting && !state.stopping && !source_discovery_busy;
+    let lifecycle_busy = state.active || state.starting || state.stopping;
+    let support_check_available = !lifecycle_busy && !source_discovery_busy;
+    let settings_idle = support_check_available && !state.support_check_in_flight;
+    let recording_toggle_enabled = !state.starting
+        && !state.stopping
+        && !source_discovery_busy
+        && !state.support_check_in_flight;
     settings_section("Recording", colors)
         .child(settings_row("Display", colors).child(settings_button(
             "settings-recording-display",
@@ -868,12 +874,20 @@ fn recording_settings(
                 .gap_2()
                 .child(settings_button(
                     "settings-check-recording-support",
-                    "Check support",
+                    recording_support_check_label(state.support_check_in_flight),
                     colors,
-                    settings_idle,
+                    support_check_available,
                     {
                         let app = app.clone();
-                        move |_, _, cx| app.update(cx, |this, cx| this.check_recording_support(cx))
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| {
+                                if this.recording_support_check_in_flight {
+                                    this.cancel_recording_support_check(cx);
+                                } else {
+                                    this.check_recording_support(cx);
+                                }
+                            })
+                        }
                     },
                 ))
                 .child(settings_button(
@@ -924,6 +938,15 @@ fn recording_status_visible(state: RecordingViewState) -> bool {
 /// Reports whether display or audio discovery is still changing the next recording input.
 fn recording_source_discovery_busy(state: RecordingViewState) -> bool {
     state.display_discovery_in_flight || state.audio_discovery_in_flight
+}
+
+/// Switches FFmpeg support checking to an explicit cancellation action while probing.
+fn recording_support_check_label(in_flight: bool) -> &'static str {
+    if in_flight {
+        "Cancel check"
+    } else {
+        "Check support"
+    }
 }
 
 /// Gives the record command a truthful label while source discovery temporarily owns the action.
@@ -2217,11 +2240,11 @@ mod tests {
         capture_shortcut_summary, history_clear_confirmation_label, history_entry_label,
         history_entry_matches, history_result_summary, history_retention_label,
         history_visibility_label, ocr_support_check_label, recording_progress_label,
-        recording_source_discovery_busy, recording_status_visible, recording_toggle_label,
-        relative_timestamp_label, settings_navigation_activation, settings_navigation_direction,
-        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
-        status_indicator_color, translation_service_test_label, uses_compact_settings_navigation,
-        visible_history_entries,
+        recording_source_discovery_busy, recording_status_visible, recording_support_check_label,
+        recording_toggle_label, relative_timestamp_label, settings_navigation_activation,
+        settings_navigation_direction, settings_navigation_items, settings_page_copy,
+        settings_page_intro, settings_path_label, status_indicator_color,
+        translation_service_test_label, uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2445,6 +2468,7 @@ mod tests {
             stopping: true,
             display_discovery_in_flight: false,
             audio_discovery_in_flight: false,
+            support_check_in_flight: false,
             paused: false,
             progress: RecordingProgress::default(),
         }));
@@ -2454,6 +2478,7 @@ mod tests {
             stopping: false,
             display_discovery_in_flight: false,
             audio_discovery_in_flight: false,
+            support_check_in_flight: false,
             paused: false,
             progress: RecordingProgress::default(),
         }));
@@ -2467,11 +2492,18 @@ mod tests {
             stopping: false,
             display_discovery_in_flight: true,
             audio_discovery_in_flight: false,
+            support_check_in_flight: false,
             paused: false,
             progress: RecordingProgress::default(),
         };
         assert!(recording_source_discovery_busy(state));
         assert_eq!(recording_toggle_label(state), "Discovering...");
+    }
+
+    #[test]
+    fn recording_support_check_label_explains_the_cancel_action() {
+        assert_eq!(recording_support_check_label(false), "Check support");
+        assert_eq!(recording_support_check_label(true), "Cancel check");
     }
 
     #[test]
