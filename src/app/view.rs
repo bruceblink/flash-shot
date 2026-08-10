@@ -1617,6 +1617,37 @@ fn settings_navigation_activation(keystroke: &gpui::Keystroke) -> bool {
     !keystroke.modifiers.modified() && matches!(keystroke.key.as_str(), "enter" | "space")
 }
 
+/// Maps layout-appropriate arrow keys to one step through the settings workspaces.
+///
+/// The compact row reads horizontally while the wide rail reads vertically, so the direction
+/// follows the visible arrangement instead of forcing users to remember one global key pair.
+fn settings_navigation_direction(keystroke: &gpui::Keystroke, compact: bool) -> Option<i8> {
+    if keystroke.modifiers.modified() {
+        return None;
+    }
+    match (compact, keystroke.key.as_str()) {
+        (true, "left") | (false, "up") => Some(-1),
+        (true, "right") | (false, "down") => Some(1),
+        _ => None,
+    }
+}
+
+/// Selects the next settings workspace and wraps at either end of the visible navigation list.
+fn adjacent_settings_section(section: SettingsSection, direction: i8) -> SettingsSection {
+    const SECTIONS: [SettingsSection; 4] = [
+        SettingsSection::Capture,
+        SettingsSection::Files,
+        SettingsSection::Recording,
+        SettingsSection::System,
+    ];
+    let index = SECTIONS
+        .iter()
+        .position(|candidate| *candidate == section)
+        .expect("every settings section must be listed in navigation");
+    let next = (index as isize + isize::from(direction)).rem_euclid(SECTIONS.len() as isize);
+    SECTIONS[next as usize]
+}
+
 /// Renders a vertical navigation rail on roomy windows and a compact section row on narrow ones.
 fn settings_navigation(
     selected: SettingsSection,
@@ -1764,6 +1795,12 @@ fn settings_navigation_item(
             if settings_navigation_activation(&event.keystroke) {
                 keyboard_app.update(cx, |this, cx| {
                     this.select_settings_section(item.section, cx)
+                });
+            } else if let Some(direction) = settings_navigation_direction(&event.keystroke, compact)
+            {
+                keyboard_app.update(cx, |this, cx| {
+                    let section = adjacent_settings_section(this.settings_section, direction);
+                    this.select_settings_section(section, cx);
                 });
             }
         })
@@ -2129,13 +2166,14 @@ fn settings_delay_button(
 #[cfg(test)]
 mod tests {
     use super::{
-        RecordingViewState, capture_command_label, capture_shortcut_summary,
-        history_clear_confirmation_label, history_entry_label, history_entry_matches,
-        history_result_summary, history_retention_label, history_visibility_label,
-        recording_progress_label, recording_source_discovery_busy, recording_status_visible,
-        recording_toggle_label, relative_timestamp_label, settings_navigation_activation,
-        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
-        status_indicator_color, uses_compact_settings_navigation, visible_history_entries,
+        RecordingViewState, adjacent_settings_section, capture_command_label,
+        capture_shortcut_summary, history_clear_confirmation_label, history_entry_label,
+        history_entry_matches, history_result_summary, history_retention_label,
+        history_visibility_label, recording_progress_label, recording_source_discovery_busy,
+        recording_status_visible, recording_toggle_label, relative_timestamp_label,
+        settings_navigation_activation, settings_navigation_direction, settings_navigation_items,
+        settings_page_copy, settings_page_intro, settings_path_label, status_indicator_color,
+        uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2221,6 +2259,42 @@ mod tests {
                 &gpui::Keystroke::parse(key).unwrap()
             ));
         }
+    }
+
+    #[test]
+    fn settings_navigation_uses_the_visible_layout_direction() {
+        assert_eq!(
+            settings_navigation_direction(&gpui::Keystroke::parse("left").unwrap(), true),
+            Some(-1)
+        );
+        assert_eq!(
+            settings_navigation_direction(&gpui::Keystroke::parse("down").unwrap(), false),
+            Some(1)
+        );
+        assert_eq!(
+            settings_navigation_direction(&gpui::Keystroke::parse("right").unwrap(), false),
+            None
+        );
+        assert_eq!(
+            settings_navigation_direction(&gpui::Keystroke::parse("shift-left").unwrap(), true),
+            None
+        );
+    }
+
+    #[test]
+    fn settings_navigation_wraps_when_traversing_past_the_first_or_last_section() {
+        assert_eq!(
+            adjacent_settings_section(SettingsSection::Capture, -1),
+            SettingsSection::System
+        );
+        assert_eq!(
+            adjacent_settings_section(SettingsSection::System, 1),
+            SettingsSection::Capture
+        );
+        assert_eq!(
+            adjacent_settings_section(SettingsSection::Files, 1),
+            SettingsSection::Recording
+        );
     }
 
     #[test]
