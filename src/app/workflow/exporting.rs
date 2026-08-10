@@ -124,7 +124,12 @@ impl FlashShotApp {
         &mut self,
         frame: CaptureFrame,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        if !claim_pinned_save_slot(&mut self.pinned_save_in_flight) {
+            self.status = "Another pinned image is already saving. Try again shortly.".to_owned();
+            cx.notify();
+            return false;
+        }
         self.status = "Saving pinned image...".to_owned();
         let directory = self.history.root().to_owned();
         let prefix = self.settings.quick_save_prefix.clone();
@@ -146,6 +151,7 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
+                        this.pinned_save_in_flight = false;
                         match result {
                             Ok(path) => {
                                 let history_note = this.record_managed_save_with_recovery(
@@ -170,6 +176,7 @@ impl FlashShotApp {
             }
         })
         .detach();
+        true
     }
 
     pub(in crate::app) fn save_annotation_document(&mut self, cx: &mut Context<Self>) {
@@ -723,5 +730,15 @@ impl FlashShotApp {
                 let _ = window.update(cx, |_, window, _| window.remove_window());
             });
         }
+    }
+}
+
+/// Claims the single managed pinned-save slot so concurrent Pin windows cannot race on history.
+pub(super) fn claim_pinned_save_slot(in_flight: &mut bool) -> bool {
+    if *in_flight {
+        false
+    } else {
+        *in_flight = true;
+        true
     }
 }

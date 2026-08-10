@@ -97,9 +97,14 @@ impl PinnedImage {
     /// Delegates the file write to the capture service so history ownership stays centralized.
     fn save_image(&mut self, cx: &mut Context<Self>) {
         let frame = self.frame.clone();
-        self.app
+        let accepted = self
+            .app
             .update(cx, |app, cx| app.quick_save_pinned_frame(frame, cx));
-        self.status = "Saving image...";
+        self.status = if accepted {
+            "Saving image..."
+        } else {
+            "Another pin is already saving"
+        };
         cx.notify();
     }
 

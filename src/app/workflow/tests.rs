@@ -1,3 +1,4 @@
+use super::exporting::claim_pinned_save_slot;
 use super::{
     ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
@@ -1215,6 +1216,15 @@ fn recording_start_waits_for_source_discovery_to_finish() {
         Some("Wait for recording source discovery to finish...")
     );
     assert_eq!(recording_discovery_conflict_status(false, false), None);
+}
+
+#[test]
+fn pinned_save_slot_rejects_a_second_concurrent_request() {
+    let mut in_flight = false;
+    assert!(claim_pinned_save_slot(&mut in_flight));
+    assert!(!claim_pinned_save_slot(&mut in_flight));
+    in_flight = false;
+    assert!(claim_pinned_save_slot(&mut in_flight));
 }
 
 #[test]
