@@ -3,7 +3,7 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -16,6 +16,7 @@ use flash_shot::{
 use serde::{Deserialize, Serialize};
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(20);
+const FFPROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const ACTIVE_CAPTURE_DELAY: Duration = Duration::from_millis(900);
 const PAUSE_DELAY: Duration = Duration::from_millis(350);
 
@@ -311,7 +312,18 @@ fn probe_media(ffmpeg: &Path, output: &Path) -> io::Result<MediaMetadata> {
     } else {
         "ffprobe"
     });
-    let result = Command::new(ffprobe)
+    let result = run_ffprobe(&ffprobe, output)?;
+    if !result.status.success() {
+        return Err(io::Error::other(format!(
+            "FFprobe rejected the MP4: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        )));
+    }
+    parse_media_probe(&result.stdout)
+}
+
+fn run_ffprobe(ffprobe: &Path, output: &Path) -> io::Result<Output> {
+    let mut child = Command::new(ffprobe)
         .args([
             "-v",
             "error",
@@ -324,14 +336,38 @@ fn probe_media(ffmpeg: &Path, output: &Path) -> io::Result<MediaMetadata> {
         ])
         .arg(output)
         .stdin(Stdio::null())
-        .output()?;
-    if !result.status.success() {
-        return Err(io::Error::other(format!(
-            "FFprobe rejected the MP4: {}",
-            String::from_utf8_lossy(&result.stderr).trim()
-        )));
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    wait_for_ffprobe_child(&mut child, FFPROBE_TIMEOUT)?;
+    child.wait_with_output()
+}
+
+/// Polls FFprobe until it exits; a stuck metadata check is terminated and reaped.
+fn wait_for_ffprobe_child(child: &mut Child, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "FFprobe exceeded {} ms and was terminated",
+                        timeout.as_millis()
+                    ),
+                ));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        }
     }
-    parse_media_probe(&result.stdout)
 }
 
 /// Parses and validates the small FFprobe JSON contract written into acceptance reports.
@@ -383,8 +419,39 @@ fn parse_media_probe(stdout: &[u8]) -> io::Result<MediaMetadata> {
 
 #[cfg(test)]
 mod tests {
-    use super::{centered_region, parse_media_probe};
+    use super::{FFPROBE_TIMEOUT, centered_region, parse_media_probe, wait_for_ffprobe_child};
     use flash_shot::domain::geometry::PhysicalRect;
+    use std::{
+        process::{Command, Stdio},
+        time::Duration,
+    };
+
+    #[test]
+    fn ffprobe_checks_have_a_bounded_timeout() {
+        assert_eq!(FFPROBE_TIMEOUT, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn stuck_ffprobe_checks_are_terminated_at_the_deadline() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "ping -n 5 127.0.0.1 >NUL"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 2"]);
+            command
+        };
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let error = wait_for_ffprobe_child(&mut child, Duration::from_millis(100)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(child.try_wait().unwrap().is_some());
+    }
 
     #[test]
     fn acceptance_region_is_centered_even_and_clamped_to_the_display() {
