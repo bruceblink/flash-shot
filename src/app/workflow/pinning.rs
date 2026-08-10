@@ -203,6 +203,14 @@ impl FlashShotApp {
                 ..Default::default()
             },
             move |window, cx| {
+                let close_app = pinned_app.clone();
+                window.on_window_should_close(cx, move |_, cx| {
+                    let close_app = close_app.clone();
+                    cx.defer(move |cx| {
+                        close_app.update(cx, |app, cx| app.prune_closed_pinned_windows(cx));
+                    });
+                    true
+                });
                 let pinned = cx.new(|cx| {
                     PinnedImage::new(pinned.image, pinned_frame, pinned_app, pinned_colors, cx)
                 });
@@ -303,6 +311,20 @@ impl FlashShotApp {
             }
         });
         shown
+    }
+
+    /// Drops window handles whose native Pin windows were closed by the user.
+    ///
+    /// Explicit Close and Escape actions defer this sweep until native teardown completes, so
+    /// the registry does not retain dead handles or make later multi-Pin commands scan them.
+    pub(in crate::app) fn prune_closed_pinned_windows(&mut self, cx: &mut Context<Self>) {
+        self.pinned_windows.retain(|pinned| match pinned.update(cx, |_, _, _| {}) {
+            Ok(()) => true,
+            Err(error) => {
+                log::debug!(target: "flash_shot::pinned", "closed_pinned_window_removed error={error}");
+                false
+            }
+        });
     }
 
     /// Provides a recovery route when a click-through pin no longer owns keyboard focus.

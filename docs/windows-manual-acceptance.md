@@ -188,6 +188,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-11 | `current-scroll-end-feedback` | 滚动截图重复捕获到相同视口时，不再只报告通用重叠失败；已有两帧可拼接时提示完成或重试，首帧阶段则提示先滚动。 | 待执行 | 聚焦回归测试覆盖无新增内容、可完成与不可完成两种下一步提示，以及普通重叠失败的重试提示；现有 `manual-scroll-controller-after-auto-2.png` 保持证明滚动控制条的 Finish 操作可见。 |
 | 2026-08-11 | `current-pin-saved-feedback-single-100` | 当前 Release `settings-ui-acceptance` 在隔离目录中生成 760x480 Pin 预览，并通过与真实保存完成相同的状态路径显示 `Saved image`。同名 JSON 记录 DPI 96、scale 1.0 且 `scale_match: true`。 | 待执行 | 已目视复核 `target/ui-acceptance/pinned-saved-feedback-single-100-20260811.png`：状态、Save、缩放、透明度、Pass、Solo、Show all、Copy 和 Close 均完整可见，无文本截断、按钮重叠或窗口裁切。该确定性截图不替代多 Pin 移动、保存和关闭的真实生命周期矩阵。 |
 | 2026-08-11 | `current-quick-save-reservation` | 快速保存路径在编码前使用 `create_new` 原子占位；8 个并发预留在同一毫秒返回唯一的 `FlashShot-42.png` 到 `FlashShot-42-8.png`，保存调用失败时会清理占位文件。 | 待执行 | 聚焦回归测试 `cargo test --lib quick_save_reservations_are_unique_when_captures_finish_together` 通过；该自动证据补充命名竞态覆盖，不替代不同 Windows profile 的目录权限手工矩阵。 |
+| 2026-08-11 | `current-pin-registry-cleanup-single-100` | Pin 通过 Close、未修饰 Escape 或系统窗口关闭后，延迟清理主应用中的失效 Pin 窗口句柄；后续 Solo、Show all 和输入恢复操作不再长期扫描已关闭窗口。 | 待执行 | `cargo test --lib app::pinned::tests` 通过；Release Pin 反馈截图 `target/ui-acceptance/pin-close-cleanup-ui-20260811.png` 目视复核 `Saved image`、Save、缩放、透明度、Pass、Solo、Show all、Copy 和 Close 均完整可见。实际多 Pin 移动、关闭和主应用继续截图仍需手工执行。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

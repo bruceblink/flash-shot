@@ -285,9 +285,13 @@ impl PinnedImage {
         self.show_operation_feedback(feedback, cx);
     }
 
-    /// Closes this independent pinned window without affecting the capture service.
-    fn close(&mut self, window: &mut Window) {
+    /// Closes this independent pinned window and schedules registry cleanup after native teardown.
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let app = self.app.clone();
         window.remove_window();
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| app.prune_closed_pinned_windows(cx));
+        });
     }
 }
 
@@ -520,7 +524,7 @@ impl Render for PinnedImage {
                         "close",
                         colors,
                         PinnedButtonTone::Destructive,
-                        cx.listener(|this, _, window, _| this.close(window)),
+                        cx.listener(|this, _, window, cx| this.close(window, cx)),
                     )),
             );
         let image = div()
@@ -537,7 +541,7 @@ impl Render for PinnedImage {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 match pinned_keyboard_command(&event.keystroke) {
-                    Some(PinnedKeyboardCommand::Close) => this.close(window),
+                    Some(PinnedKeyboardCommand::Close) => this.close(window, cx),
                     Some(PinnedKeyboardCommand::Copy) => this.copy_image(cx),
                     Some(PinnedKeyboardCommand::Save) => this.save_image(cx),
                     Some(PinnedKeyboardCommand::ZoomOut) => this.zoom(0.8, window, cx),
