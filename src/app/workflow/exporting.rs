@@ -675,6 +675,7 @@ impl FlashShotApp {
                 frame,
                 "Full screen pinned in an always-on-top window",
                 Some("Could not pin full screen"),
+                false,
                 cx,
             ),
             Err(error) => {

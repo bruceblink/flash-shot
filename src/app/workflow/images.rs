@@ -230,6 +230,7 @@ impl FlashShotApp {
                 frame,
                 "History image pinned in an always-on-top window",
                 Some("Could not pin history image"),
+                false,
                 cx,
             ),
             Err(error) => {

@@ -84,6 +84,7 @@ pub fn run_settings_ui_acceptance(
             ocr_support_check_state: acceptance.ocr_support_check_state,
             update_check_state: acceptance.update_check_state,
             display_index: acceptance.display_index,
+            pinned_saved_feedback_preview: acceptance.pinned_saved_feedback_preview,
         },
     )
 }
@@ -106,6 +107,8 @@ pub struct SettingsUiAcceptanceOptions {
     pub update_check_state: UpdateUiAcceptanceState,
     /// Selects a zero-based Windows display index for multi-monitor DPI acceptance runs.
     pub display_index: Option<usize>,
+    /// Opens a disposable Pin window that displays the same saved-state feedback as production.
+    pub pinned_saved_feedback_preview: bool,
 }
 
 /// Synthetic Record page states used only by the native screenshot acceptance probe.
@@ -164,6 +167,7 @@ struct SettingsWindowOptions {
     ocr_support_check_state: OcrSupportUiAcceptanceState,
     update_check_state: UpdateUiAcceptanceState,
     display_index: Option<usize>,
+    pinned_saved_feedback_preview: bool,
 }
 
 impl Default for SettingsWindowOptions {
@@ -179,6 +183,7 @@ impl Default for SettingsWindowOptions {
             ocr_support_check_state: OcrSupportUiAcceptanceState::Idle,
             update_check_state: UpdateUiAcceptanceState::Idle,
             display_index: None,
+            pinned_saved_feedback_preview: false,
         }
     }
 }
@@ -250,6 +255,7 @@ fn run_with_settings_window(
         let translation_service_test_state = window_options.translation_service_test_state;
         let ocr_support_check_state = window_options.ocr_support_check_state;
         let update_check_state = window_options.update_check_state;
+        let pinned_saved_feedback_preview = window_options.pinned_saved_feedback_preview;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
@@ -263,6 +269,12 @@ fn run_with_settings_window(
                 app.set_ocr_support_check_for_acceptance(ocr_support_check_state);
                 app.set_update_check_for_acceptance(update_check_state);
             });
+            if pinned_saved_feedback_preview {
+                let preview_app = app.clone();
+                cx.defer(move |cx| {
+                    preview_app.update(cx, |app, cx| app.open_pinned_saved_feedback_preview(cx));
+                });
+            }
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()
             {

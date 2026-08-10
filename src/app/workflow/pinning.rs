@@ -87,6 +87,7 @@ impl FlashShotApp {
                             pinned_frame,
                             "Selection pinned in an always-on-top window",
                             None,
+                            false,
                             cx,
                         );
                     });
@@ -151,6 +152,7 @@ impl FlashShotApp {
                 frame,
                 "Clipboard image pinned in an always-on-top window",
                 Some("Could not pin clipboard image"),
+                false,
                 cx,
             ),
             Err(error) => {
@@ -168,6 +170,7 @@ impl FlashShotApp {
         pinned_frame: CaptureFrame,
         success_status: &'static str,
         failure_notification: Option<&'static str>,
+        show_saved_feedback: bool,
         cx: &mut Context<Self>,
     ) {
         let pinned = match render_image_from_capture(&pinned_frame) {
@@ -203,6 +206,9 @@ impl FlashShotApp {
                 let pinned = cx.new(|cx| {
                     PinnedImage::new(pinned.image, pinned_frame, pinned_app, pinned_colors, cx)
                 });
+                if show_saved_feedback {
+                    pinned.update(cx, |pinned, cx| pinned.finish_save_status(true, cx));
+                }
                 pinned.read(cx).focus_handle(cx).focus(window, cx);
                 pinned
             },
@@ -220,6 +226,17 @@ impl FlashShotApp {
             }
         }
         cx.notify();
+    }
+
+    /// Opens an isolated preview that exercises the Pin window's saved-state feedback for UI QA.
+    pub(crate) fn open_pinned_saved_feedback_preview(&mut self, cx: &mut Context<Self>) {
+        self.open_pinned_frame(
+            pinned_saved_feedback_preview_frame(),
+            "Pinned saved-feedback preview opened",
+            None,
+            true,
+            cx,
+        );
     }
 
     /// Hides every live pinned window except the focused reference image.
@@ -316,5 +333,60 @@ impl FlashShotApp {
             format!("Restored mouse input for {restored} pinned window(s)")
         };
         cx.notify();
+    }
+}
+
+/// Builds a patterned frame so native Pin screenshots show both the image surface and toolbar.
+fn pinned_saved_feedback_preview_frame() -> CaptureFrame {
+    const WIDTH: u32 = 760;
+    const HEIGHT: u32 = 480;
+    const BLOCK_SIZE: usize = 76;
+    let stride = WIDTH as usize * 4;
+    let mut pixels = vec![0_u8; stride * HEIGHT as usize];
+
+    for y in 0..HEIGHT as usize {
+        for x in 0..WIDTH as usize {
+            let block_is_light = (x / BLOCK_SIZE + y / BLOCK_SIZE).is_multiple_of(2);
+            let color = if block_is_light {
+                [82, 104, 128, 255]
+            } else {
+                [49, 65, 82, 255]
+            };
+            let offset = y * stride + x * 4;
+            pixels[offset..offset + 4].copy_from_slice(&color);
+        }
+    }
+
+    CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: WIDTH as i32,
+            bottom: HEIGHT as i32,
+        },
+        width: WIDTH,
+        height: HEIGHT,
+        stride,
+        format: crate::platform::capture::PixelFormat::Bgra8,
+        pixels: Arc::from(pixels),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pinned_saved_feedback_preview_frame;
+    use crate::domain::geometry::PhysicalPoint;
+
+    #[test]
+    fn saved_feedback_preview_frame_has_valid_physical_pixels() {
+        let frame = pinned_saved_feedback_preview_frame();
+
+        assert_eq!(frame.bounds.width(), 760);
+        assert_eq!(frame.bounds.height(), 480);
+        assert!(frame.validate().is_ok());
+        assert!(frame.pixel_at(PhysicalPoint { x: 0, y: 0 }).is_some());
+        assert!(frame.pixel_at(PhysicalPoint { x: 760, y: 480 }).is_none());
     }
 }

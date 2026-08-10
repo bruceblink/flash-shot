@@ -79,6 +79,7 @@ struct Options {
     translation_service_test_state: TranslationServiceUiAcceptanceState,
     ocr_support_check_state: OcrSupportUiAcceptanceState,
     update_check_state: UpdateUiAcceptanceState,
+    pinned_saved_feedback_preview: bool,
 }
 
 impl Options {
@@ -134,6 +135,11 @@ impl Options {
             .map(parse_update_check_state)
             .transpose()?
             .unwrap_or_default();
+        let pinned_saved_feedback_preview = arguments
+            .next()
+            .map(parse_pinned_saved_feedback_preview)
+            .transpose()?
+            .unwrap_or(false);
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -157,12 +163,13 @@ impl Options {
             translation_service_test_state,
             ocr_support_check_state,
             update_check_state,
+            pinned_saved_feedback_preview,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback]"
         .to_owned()
 }
 
@@ -331,6 +338,19 @@ fn parse_update_check_state(value: std::ffi::OsString) -> Result<UpdateUiAccepta
     }
 }
 
+/// Selects the ordinary settings page or a Pin window after its saved-state feedback appears.
+fn parse_pinned_saved_feedback_preview(value: std::ffi::OsString) -> Result<bool, String> {
+    match value
+        .into_string()
+        .map_err(|_| "surface must be settings or pin-saved-feedback".to_owned())?
+        .as_str()
+    {
+        "settings" => Ok(false),
+        "pin-saved-feedback" => Ok(true),
+        _ => Err("surface must be settings or pin-saved-feedback".to_owned()),
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -377,6 +397,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             translation_service_test_state: options.translation_service_test_state,
             ocr_support_check_state: options.ocr_support_check_state,
             update_check_state: options.update_check_state,
+            pinned_saved_feedback_preview: options.pinned_saved_feedback_preview,
         },
     )
 }
@@ -531,9 +552,10 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 mod tests {
     use super::{
         parse_display_index, parse_expected_scale, parse_linger_delay,
-        parse_ocr_support_check_state, parse_recording_state, parse_recording_support_check_state,
-        parse_section, parse_settle_delay, parse_translation_service_test_state,
-        parse_update_check_state, scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
+        parse_ocr_support_check_state, parse_pinned_saved_feedback_preview, parse_recording_state,
+        parse_recording_support_check_state, parse_section, parse_settle_delay,
+        parse_translation_service_test_state, parse_update_check_state, scale_factor_for_dpi,
+        scale_matches, screenshot_metadata_path,
     };
     use flash_shot::{
         OcrSupportUiAcceptanceState, RecordingSupportUiAcceptanceState, RecordingUiAcceptanceState,
@@ -627,6 +649,13 @@ mod tests {
             UpdateUiAcceptanceState::Checking
         );
         assert!(parse_update_check_state(OsString::from("checking")).is_err());
+    }
+
+    #[test]
+    fn acceptance_surface_parser_enables_the_saved_pin_preview() {
+        assert!(parse_pinned_saved_feedback_preview(OsString::from("pin-saved-feedback")).unwrap());
+        assert!(!parse_pinned_saved_feedback_preview(OsString::from("settings")).unwrap());
+        assert!(parse_pinned_saved_feedback_preview(OsString::from("pin")).is_err());
     }
 
     #[test]
