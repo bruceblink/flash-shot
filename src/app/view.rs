@@ -861,7 +861,7 @@ fn recording_settings(
                     ))
                 }),
         )
-        .when(state.starting || state.active, |section| {
+        .when(recording_status_visible(state), |section| {
             section.child(
                 settings_row("Status", colors).child(
                     div()
@@ -879,6 +879,11 @@ fn recording_settings(
                 ),
             )
         })
+}
+
+/// Keeps the recording status row visible for every non-idle lifecycle phase, including stop.
+fn recording_status_visible(state: RecordingViewState) -> bool {
+    state.starting || state.active || state.stopping
 }
 
 /// Summarizes recording lifecycle and FFmpeg progress in the settings page while a capture runs.
@@ -2080,12 +2085,12 @@ fn settings_delay_button(
 #[cfg(test)]
 mod tests {
     use super::{
-        capture_command_label, capture_shortcut_summary, history_clear_confirmation_label,
-        history_entry_label, history_entry_matches, history_result_summary,
-        history_retention_label, history_visibility_label, recording_progress_label,
-        relative_timestamp_label, settings_navigation_items, settings_page_copy,
-        settings_page_intro, settings_path_label, status_indicator_color,
-        uses_compact_settings_navigation, visible_history_entries,
+        RecordingViewState, capture_command_label, capture_shortcut_summary,
+        history_clear_confirmation_label, history_entry_label, history_entry_matches,
+        history_result_summary, history_retention_label, history_visibility_label,
+        recording_progress_label, recording_status_visible, relative_timestamp_label,
+        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
+        status_indicator_color, uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2249,6 +2254,24 @@ mod tests {
             recording_progress_label(false, false, true, false, RecordingProgress::default()),
             "Stopping recording..."
         );
+    }
+
+    #[test]
+    fn recording_status_remains_visible_while_stopping() {
+        assert!(recording_status_visible(RecordingViewState {
+            active: false,
+            starting: false,
+            stopping: true,
+            paused: false,
+            progress: RecordingProgress::default(),
+        }));
+        assert!(!recording_status_visible(RecordingViewState {
+            active: false,
+            starting: false,
+            stopping: false,
+            paused: false,
+            progress: RecordingProgress::default(),
+        }));
     }
 
     #[test]
