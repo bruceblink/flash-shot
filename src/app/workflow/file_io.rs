@@ -114,9 +114,14 @@ pub(super) fn quick_save_full_screen_frame_in_with_prefix(
     prefix: &str,
     timestamp_ms: u128,
 ) -> std::io::Result<PathBuf> {
-    let path = next_quick_save_path_with_prefix(directory, prefix, timestamp_ms, Path::exists);
-    frame.save_png(path.clone())?;
-    Ok(path)
+    let path = reserve_quick_save_path(directory, prefix, timestamp_ms)?;
+    match frame.save_png(&path) {
+        Ok(()) => Ok(path),
+        Err(error) => {
+            let _ = std::fs::remove_file(&path);
+            Err(error)
+        }
+    }
 }
 
 pub(super) fn quick_save_annotated_frame_selection_in_with_prefix(
@@ -127,9 +132,46 @@ pub(super) fn quick_save_annotated_frame_selection_in_with_prefix(
     prefix: &str,
     timestamp_ms: u128,
 ) -> std::io::Result<PathBuf> {
-    let path = next_quick_save_path_with_prefix(directory, prefix, timestamp_ms, Path::exists);
-    save_annotated_frame_selection(frame, document, selection, path.clone())?;
-    Ok(path)
+    let path = reserve_quick_save_path(directory, prefix, timestamp_ms)?;
+    match save_annotated_frame_selection(frame, document, selection, path.clone()) {
+        Ok(()) => Ok(path),
+        Err(error) => {
+            let _ = std::fs::remove_file(&path);
+            Err(error)
+        }
+    }
+}
+
+/// Atomically reserves a collision-safe final name before an encoder can start writing.
+///
+/// A plain existence check is insufficient when two capture workflows finish in the same
+/// millisecond. The zero-byte reservation makes the filename claim exclusive; the image writer
+/// replaces that reservation only after the encoded bytes are complete.
+pub(super) fn reserve_quick_save_path(
+    directory: &Path,
+    prefix: &str,
+    timestamp_ms: u128,
+) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(directory)?;
+    let mut candidate =
+        next_quick_save_path_with_prefix(directory, prefix, timestamp_ms, Path::exists);
+    loop {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                drop(file);
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                candidate =
+                    next_quick_save_path_with_prefix(directory, prefix, timestamp_ms, Path::exists);
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 pub(super) fn next_quick_save_path_with_prefix(

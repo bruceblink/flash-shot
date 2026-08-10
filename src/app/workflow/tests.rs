@@ -19,10 +19,10 @@ use super::{
     recording_display_selection_label, recording_start_conflict_status,
     recording_start_failure_status, recording_start_result_is_applicable,
     recording_support_check_conflict_status, recording_support_status, recording_target_label,
-    resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
-    save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-    tool_selected_status, translation_failure_status, translation_service_test_status,
-    translation_support_status, with_alpha,
+    reserve_quick_save_path, resolve_pointer_selection, save_annotated_frame_selection,
+    save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+    text_annotation_with_content, tool_selected_status, translation_failure_status,
+    translation_service_test_status, translation_support_status, with_alpha,
 };
 use crate::{
     domain::{
@@ -47,7 +47,7 @@ use std::{
     io::{self, BufReader},
     path::PathBuf,
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Default)]
@@ -1068,6 +1068,46 @@ fn quick_save_names_are_timestamped_and_do_not_overwrite_existing_files() {
             .is_some_and(|name| name == "FlashShot-1725000000123.png")
     });
     assert_eq!(second, directory.join("FlashShot-1725000000123-2.png"));
+}
+
+#[test]
+fn quick_save_reservations_are_unique_when_captures_finish_together() {
+    let unique_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "flash-shot-quick-save-reservation-{}-{unique_id}",
+        std::process::id()
+    ));
+    let directory = Arc::new(root.join("captures"));
+    let handles = (0..8)
+        .map(|_| {
+            let directory = Arc::clone(&directory);
+            std::thread::spawn(move || reserve_quick_save_path(directory.as_ref(), "FlashShot", 42))
+        })
+        .collect::<Vec<_>>();
+
+    let mut paths = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap().unwrap())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+
+    assert_eq!(paths.len(), 8);
+    for index in 0..8 {
+        let expected = if index == 0 {
+            root.join("captures/FlashShot-42.png")
+        } else {
+            root.join(format!("captures/FlashShot-42-{}.png", index + 1))
+        };
+        assert!(
+            paths.contains(&expected),
+            "missing reservation {expected:?}"
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
