@@ -16,6 +16,12 @@ const TESSERACT_PATH_ENV: &str = "FLASH_SHOT_TESSERACT";
 const TESSERACT_LANGUAGE_ENV: &str = "FLASH_SHOT_OCR_LANGUAGE";
 const OCR_COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 
+#[cfg(windows)]
+const WINDOWS_TESSERACT_PATHS: [&str; 2] = [
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+];
+
 /// Read-only local OCR readiness information used before the user begins a capture workflow.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OcrSupport {
@@ -144,8 +150,21 @@ fn wait_for_child(child: &mut Child, timeout: Duration) -> io::Result<()> {
     }
 }
 
+/// Selects an explicit executable override, common Windows install paths, or PATH lookup.
 fn executable_path() -> OsString {
-    std::env::var_os(TESSERACT_PATH_ENV).unwrap_or_else(|| OsString::from("tesseract"))
+    if let Some(configured) = std::env::var_os(TESSERACT_PATH_ENV).filter(|value| !value.is_empty())
+    {
+        return configured;
+    }
+    #[cfg(windows)]
+    if let Some(installed) = WINDOWS_TESSERACT_PATHS
+        .iter()
+        .map(Path::new)
+        .find(|path| path.is_file())
+    {
+        return installed.as_os_str().to_owned();
+    }
+    OsString::from("tesseract")
 }
 
 fn language() -> String {
@@ -243,6 +262,18 @@ mod tests {
     #[test]
     fn ocr_commands_have_a_bounded_timeout() {
         assert_eq!(OCR_COMMAND_TIMEOUT, Duration::from_secs(20));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn common_windows_tesseract_paths_are_absolute_and_executable_named() {
+        assert!(super::WINDOWS_TESSERACT_PATHS.iter().all(|path| {
+            let path = Path::new(path);
+            path.is_absolute()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("tesseract.exe"))
+        }));
     }
 
     #[test]
