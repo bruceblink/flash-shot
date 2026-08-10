@@ -286,6 +286,15 @@ fn status_indicator_color(
     }
 }
 
+/// Keeps the translation test button label stable while its independent request is in flight.
+fn translation_service_test_label(in_flight: bool) -> &'static str {
+    if in_flight {
+        "Testing..."
+    } else {
+        "Test service"
+    }
+}
+
 fn settings_header(
     colors: crate::theme::ThemeColors,
     is_idle: bool,
@@ -642,9 +651,9 @@ fn capture_settings(
         )
         .child(settings_row("Translation", colors).child(settings_button(
             "settings-test-translation-service",
-            "Test service",
+            translation_service_test_label(app_state.translation_service_test_in_flight),
             colors,
-            !app_state.recognition_in_flight,
+            !app_state.translation_service_test_in_flight,
             move |_, _, cx| app.update(cx, |this, cx| this.test_translation_service(cx)),
         )));
 
@@ -2194,7 +2203,7 @@ mod tests {
         recording_status_visible, recording_toggle_label, relative_timestamp_label,
         settings_navigation_activation, settings_navigation_direction, settings_navigation_items,
         settings_page_copy, settings_page_intro, settings_path_label, status_indicator_color,
-        uses_compact_settings_navigation, visible_history_entries,
+        translation_service_test_label, uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2482,6 +2491,12 @@ mod tests {
             status_indicator_color("Could not save screenshot", true, colors),
             colors.danger
         );
+    }
+
+    #[test]
+    fn translation_test_label_explains_its_independent_busy_state() {
+        assert_eq!(translation_service_test_label(false), "Test service");
+        assert_eq!(translation_service_test_label(true), "Testing...");
     }
 
     #[test]

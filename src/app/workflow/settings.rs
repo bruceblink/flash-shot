@@ -34,6 +34,19 @@ impl FlashShotApp {
         self.status = status.to_owned();
     }
 
+    /// Seeds the translation service button for screenshots without contacting the configured
+    /// endpoint. Production requests continue to own their state through the test workflow.
+    pub(crate) fn set_translation_service_test_for_acceptance(
+        &mut self,
+        state: crate::TranslationServiceUiAcceptanceState,
+    ) {
+        self.translation_service_test_in_flight =
+            state == crate::TranslationServiceUiAcceptanceState::Testing;
+        if self.translation_service_test_in_flight {
+            self.status = "Testing translation service...".to_owned();
+        }
+    }
+
     /// Opens a native folder picker, then swaps history only after the new private root is ready.
     pub(in crate::app) fn choose_quick_save_directory(&mut self, cx: &mut Context<Self>) {
         self.status = "Choose a folder for quick saves and screenshot history...".to_owned();
@@ -388,8 +401,8 @@ impl FlashShotApp {
     /// Sends a fixed, non-user phrase to the configured HTTPS endpoint so service connectivity can
     /// be verified from settings without reusing or exposing text from a captured screenshot.
     pub(in crate::app) fn test_translation_service(&mut self, cx: &mut Context<Self>) {
-        if self.recognition_in_flight {
-            self.status = "Recognition is already in progress".to_owned();
+        if self.translation_service_test_in_flight {
+            self.status = "Translation service test is already in progress".to_owned();
             cx.notify();
             return;
         }
@@ -406,9 +419,10 @@ impl FlashShotApp {
                 return;
             }
         };
-        self.operation_generation = self.operation_generation.wrapping_add(1);
-        let generation = self.operation_generation;
-        self.recognition_in_flight = true;
+        self.translation_service_test_generation =
+            self.translation_service_test_generation.wrapping_add(1);
+        let generation = self.translation_service_test_generation;
+        self.translation_service_test_in_flight = true;
         self.status = "Testing translation service...".to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -434,10 +448,10 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !is_current_operation(self.operation_generation, generation) {
+        if self.translation_service_test_generation != generation {
             return;
         }
-        self.recognition_in_flight = false;
+        self.translation_service_test_in_flight = false;
         self.status = translation_service_test_status(&result);
         cx.notify();
     }

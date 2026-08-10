@@ -79,6 +79,7 @@ pub fn run_settings_ui_acceptance(
             show: true,
             section: acceptance.section,
             recording_state: acceptance.recording_state,
+            translation_service_test_state: acceptance.translation_service_test_state,
             display_index: acceptance.display_index,
         },
     )
@@ -92,6 +93,8 @@ pub struct SettingsUiAcceptanceOptions {
     pub section: String,
     /// Seeds a deterministic Record page state without launching FFmpeg.
     pub recording_state: RecordingUiAcceptanceState,
+    /// Seeds the explicit translation-service test button without making a network request.
+    pub translation_service_test_state: TranslationServiceUiAcceptanceState,
     /// Selects a zero-based Windows display index for multi-monitor DPI acceptance runs.
     pub display_index: Option<usize>,
 }
@@ -107,6 +110,14 @@ pub enum RecordingUiAcceptanceState {
     Stopping,
 }
 
+/// Synthetic translation-service button states used only by the native screenshot acceptance probe.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TranslationServiceUiAcceptanceState {
+    #[default]
+    Idle,
+    Testing,
+}
+
 #[derive(Clone, Debug)]
 struct SettingsWindowOptions {
     width: f32,
@@ -114,6 +125,7 @@ struct SettingsWindowOptions {
     show: bool,
     section: String,
     recording_state: RecordingUiAcceptanceState,
+    translation_service_test_state: TranslationServiceUiAcceptanceState,
     display_index: Option<usize>,
 }
 
@@ -125,6 +137,7 @@ impl Default for SettingsWindowOptions {
             show: false,
             section: "capture".to_owned(),
             recording_state: RecordingUiAcceptanceState::Idle,
+            translation_service_test_state: TranslationServiceUiAcceptanceState::Idle,
             display_index: None,
         }
     }
@@ -193,6 +206,7 @@ fn run_with_settings_window(
 
         let initial_section = window_options.section.clone();
         let recording_state = window_options.recording_state;
+        let translation_service_test_state = window_options.translation_service_test_state;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
@@ -201,6 +215,7 @@ fn run_with_settings_window(
             app.update(cx, |app, _| {
                 app.set_settings_section_for_acceptance(&initial_section);
                 app.set_recording_state_for_acceptance(recording_state);
+                app.set_translation_service_test_for_acceptance(translation_service_test_state);
             });
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()
