@@ -27,7 +27,7 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 - 显示器、窗口和区域录制，以及音频选择、暂停/恢复、进度与 Job Object 清理；
 - 可重复性能/资源压力工具、结构化诊断和本地质量门禁。
 
-录屏后端和测试已完成；生成 MP4 仍需要在安装了支持 `ddagrab` 或 `gdigrab` 的 FFmpeg 环境中做手工验收。
+录屏后端和单屏录屏 UI 手工验收已完成；生成 MP4 需要安装支持 `ddagrab` 或 `gdigrab` 的 FFmpeg。
 
 ### 运行
 
@@ -46,10 +46,11 @@ cargo run
 `Capture preferences` 可为区域截图、全屏截图和焦点窗口截图分别配置全局快捷键。三个
 动作使用一次原生注册，重复组合会被拒绝；将附加动作切换到 `Off` 可释放对应快捷键。
 
-录屏依赖用户本机或随应用分发的 FFmpeg。默认视频保存到 `Videos\Flash Shot`（不可用时回退到当前目录）。可通过以下环境变量显式指定可执行文件和一个可选音频源：
+录屏依赖用户本机或随应用分发的 FFmpeg。默认视频保存到 `Videos\Flash Shot`，不可写时回退到 Flash Shot 的应用数据目录。可通过以下环境变量显式指定 FFmpeg、视频目录和可选音频源：
 
 ```powershell
 $env:FLASH_SHOT_FFMPEG = "C:\\tools\\ffmpeg.exe"
+$env:FLASH_SHOT_RECORDING_DIRECTORY = "D:\\Recordings\\Flash Shot"
 $env:FLASH_SHOT_RECORDING_MICROPHONE = "Microphone (USB Audio Device)"
 # 或者，仅在 FFmpeg 探测到 WASAPI 时：
 $env:FLASH_SHOT_RECORDING_SYSTEM_AUDIO = "default"
@@ -133,7 +134,7 @@ The repository currently includes:
 - display, window, and region recording with audio selection, pause/resume, progress, and Job Object cleanup;
 - repeatable performance/resource stress tooling, structured diagnostics, and local quality gates.
 
-The recording backend and its automated tests are complete. Producing an MP4 still needs manual acceptance with an FFmpeg build that supports `ddagrab` or `gdigrab`.
+The recording backend and the single-display recording UI have passed manual acceptance. Producing an MP4 requires an FFmpeg build that supports `ddagrab` or `gdigrab`.
 
 ### Run
 
@@ -147,7 +148,7 @@ Requirements:
 cargo run
 ```
 
-The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
+Recording uses a local or bundled FFmpeg. Videos go to `Videos\Flash Shot` by default and fall back to Flash Shot's application-data directory when that folder is unavailable. Set `FLASH_SHOT_FFMPEG` and optionally `FLASH_SHOT_RECORDING_DIRECTORY` to override the executable and output directory. The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
 
 The `Display` control cycles recordable monitors in primary-first order. Both display and audio discovery happen only after the respective control is clicked, keeping startup free of FFmpeg probing.
 
