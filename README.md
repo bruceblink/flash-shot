@@ -27,7 +27,7 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 - 显示器、窗口和区域录制，以及音频选择、暂停/恢复、进度与 Job Object 清理；
 - 可重复性能/资源压力工具、结构化诊断和本地质量门禁。
 
-录屏后端和单屏录屏 UI 手工验收已完成；生成 MP4 需要安装支持 `ddagrab` 或 `gdigrab` 的 FFmpeg。
+录屏后端和单屏显示器录屏 UI 手工验收已完成；生成 MP4 需要安装支持 `ddagrab` 或 `gdigrab` 的 FFmpeg。
 
 ### 运行
 
@@ -57,6 +57,8 @@ $env:FLASH_SHOT_RECORDING_SYSTEM_AUDIO = "default"
 ```
 
 `FLASH_SHOT_RECORDING_MICROPHONE` 与 `FLASH_SHOT_RECORDING_SYSTEM_AUDIO` 不能同时设置；未设置时录制无音频。
+
+Record 页的 `Video folder` 会显示当前 MP4 目录，并提供选择、恢复默认、可写性检查和打开目录操作。用户选择会持久化；`FLASH_SHOT_RECORDING_DIRECTORY` 存在时仍作为管理员或便携环境的最高优先级覆盖。
 
 主窗口的 `Audio` 按钮会在用户点击后后台发现本机 FFmpeg 支持的输入，并轮换自动配置、关闭、DirectShow 麦克风以及可用的 WASAPI 系统声音。`auto` 保持上述环境变量兼容行为；选择 `off` 会明确禁用音频。
 
@@ -134,7 +136,7 @@ The repository currently includes:
 - display, window, and region recording with audio selection, pause/resume, progress, and Job Object cleanup;
 - repeatable performance/resource stress tooling, structured diagnostics, and local quality gates.
 
-The recording backend and the single-display recording UI have passed manual acceptance. Producing an MP4 requires an FFmpeg build that supports `ddagrab` or `gdigrab`.
+The recording backend and the single-display display-recording UI have passed manual acceptance. Producing an MP4 requires an FFmpeg build that supports `ddagrab` or `gdigrab`.
 
 ### Run
 
@@ -149,6 +151,8 @@ cargo run
 ```
 
 Recording uses a local or bundled FFmpeg. Videos go to `Videos\Flash Shot` by default and fall back to Flash Shot's application-data directory when that folder is unavailable. Set `FLASH_SHOT_FFMPEG` and optionally `FLASH_SHOT_RECORDING_DIRECTORY` to override the executable and output directory. The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
+
+The Record page's `Video folder` control shows the active MP4 destination and lets users choose, reset, verify, or open it. A chosen folder is persisted; `FLASH_SHOT_RECORDING_DIRECTORY` remains the authoritative override for managed or portable environments.
 
 The `Display` control cycles recordable monitors in primary-first order. Both display and audio discovery happen only after the respective control is clicked, keeping startup free of FFmpeg probing.
 

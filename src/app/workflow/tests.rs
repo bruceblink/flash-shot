@@ -15,15 +15,16 @@ use super::{
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
     recognition_start_conflict_status, recording_audio_selection_label,
-    recording_discovery_conflict_status, recording_discovery_result_is_applicable,
-    recording_display_selection_label, recording_output_path_from_candidates,
-    recording_start_cancellation_generation, recording_start_conflict_status,
-    recording_start_failure_status, recording_start_result_is_applicable,
-    recording_support_check_conflict_status, recording_support_status, recording_target_label,
-    reserve_quick_save_path, resolve_pointer_selection, save_annotated_frame_selection,
-    save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
-    text_annotation_with_content, tool_selected_status, translation_failure_status,
-    translation_service_test_status, translation_support_status, with_alpha,
+    recording_directory_candidates, recording_discovery_conflict_status,
+    recording_discovery_result_is_applicable, recording_display_selection_label,
+    recording_output_path_from_candidates, recording_start_cancellation_generation,
+    recording_start_conflict_status, recording_start_failure_status,
+    recording_start_result_is_applicable, recording_support_check_conflict_status,
+    recording_support_status, recording_target_label, reserve_quick_save_path,
+    resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
+    save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
+    tool_selected_status, translation_failure_status, translation_service_test_status,
+    translation_support_status, with_alpha,
 };
 use crate::{
     domain::{
@@ -1339,6 +1340,19 @@ fn recording_support_probe_reuses_actionable_missing_ffmpeg_guidance() {
     let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "ffmpeg.exe");
 
     assert!(recording_support_status(Err(&missing)).contains("FLASH_SHOT_FFMPEG"));
+}
+
+#[test]
+fn selected_recording_directory_precedes_default_fallbacks_without_duplicates() {
+    let selected = PathBuf::from(r"F:\recordings\Flash Shot");
+
+    let candidates = recording_directory_candidates(Some(&selected));
+
+    assert_eq!(candidates.first(), Some(&selected));
+    let mut unique = candidates.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), candidates.len());
 }
 
 #[test]

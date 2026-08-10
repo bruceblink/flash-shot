@@ -379,6 +379,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let performance = PerformanceRecorder::new(session_root.join("metrics"))?;
     let mut settings = UserSettings::default();
     settings.theme_mode = options.theme;
+    settings.recording_directory = Some(session_root.join("recordings"));
 
     spawn_screenshot_worker(
         output,

@@ -45,6 +45,11 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if self.recording_directory_check_in_flight {
+            self.status = "Wait for the recording folder check to finish".to_owned();
+            cx.notify();
+            return;
+        }
         if self.session.state() != CaptureSessionState::Idle {
             self.status = "Finish or cancel the current screenshot before recording".to_owned();
             cx.notify();
@@ -94,6 +99,11 @@ impl FlashShotApp {
             || self.recording_stopping
         {
             self.status = "Stop the current recording before checking support".to_owned();
+            cx.notify();
+            return;
+        }
+        if self.recording_directory_check_in_flight {
+            self.status = "Wait for the recording folder check to finish".to_owned();
             cx.notify();
             return;
         }
@@ -153,6 +163,195 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Lets a user select a writable MP4 destination without relying on an environment variable.
+    ///
+    /// The choice is committed only after the private write probe and settings save both succeed,
+    /// so cancelling the picker or selecting a read-only folder cannot break the next recording.
+    pub(in crate::app) fn choose_recording_directory(&mut self, cx: &mut Context<Self>) {
+        if let Some(directory) = recording_directory_override() {
+            self.status = format!(
+                "Recording folder is controlled by {RECORDING_DIRECTORY_ENV}: {}",
+                directory.display()
+            );
+            cx.notify();
+            return;
+        }
+        if self.recording_control.is_some()
+            || self.recording_start_in_flight
+            || self.recording_stopping
+            || self.recording_support_check_in_flight
+            || self.recording_display_discovery_in_flight
+            || self.recording_audio_discovery_in_flight
+            || self.recording_directory_check_in_flight
+        {
+            self.status =
+                "Wait for the current recording action before changing its folder".to_owned();
+            cx.notify();
+            return;
+        }
+        self.recording_directory_check_in_flight = true;
+        self.status = "Choose a folder for MP4 recordings...".to_owned();
+        cx.notify();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose recording folder".into()),
+        });
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let selection = match prompt.await {
+                    Ok(Ok(Some(mut paths))) => match paths.pop() {
+                        Some(path) => Some(
+                            cx.background_executor()
+                                .spawn(async move { verify_recording_directory(path) })
+                                .await,
+                        ),
+                        None => None,
+                    },
+                    Ok(Ok(None)) => None,
+                    Ok(Err(error)) => Some(Err(std::io::Error::other(error))),
+                    Err(error) => Some(Err(std::io::Error::other(error.to_string()))),
+                };
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.recording_directory_check_in_flight = false;
+                        match selection {
+                            Some(Ok(directory)) => {
+                                let previous = this.settings.recording_directory.clone();
+                                this.settings.recording_directory = Some(directory.clone());
+                                match this.settings.save(&this.settings_path) {
+                                    Ok(()) => {
+                                        this.status = format!(
+                                            "MP4 recordings now use {}",
+                                            directory.display()
+                                        );
+                                    }
+                                    Err(error) => {
+                                        this.settings.recording_directory = previous;
+                                        this.status = format!(
+                                            "Could not save recording folder preference: {error}"
+                                        );
+                                    }
+                                }
+                            }
+                            Some(Err(error)) => {
+                                this.status = format!("Could not use recording folder: {error}");
+                            }
+                            None => {
+                                this.status = "Recording folder unchanged".to_owned();
+                            }
+                        }
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Clears the persisted MP4 folder so the next recording returns to the Windows default.
+    pub(in crate::app) fn use_default_recording_directory(&mut self, cx: &mut Context<Self>) {
+        if let Some(directory) = recording_directory_override() {
+            self.status = format!(
+                "Recording folder is controlled by {RECORDING_DIRECTORY_ENV}: {}",
+                directory.display()
+            );
+            cx.notify();
+            return;
+        }
+        if self.recording_control.is_some()
+            || self.recording_start_in_flight
+            || self.recording_stopping
+            || self.recording_support_check_in_flight
+            || self.recording_display_discovery_in_flight
+            || self.recording_audio_discovery_in_flight
+            || self.recording_directory_check_in_flight
+        {
+            self.status =
+                "Wait for the current recording action before changing its folder".to_owned();
+            cx.notify();
+            return;
+        }
+        let Some(previous) = self.settings.recording_directory.take() else {
+            self.status = "MP4 recordings already use the default folder".to_owned();
+            cx.notify();
+            return;
+        };
+        self.status = match self.settings.save(&self.settings_path) {
+            Ok(()) => recording_directory_for_display(None).map_or_else(
+                || "Recording folder returned to the default location".to_owned(),
+                |directory| format!("Recording folder returned to {}", directory.display()),
+            ),
+            Err(error) => {
+                self.settings.recording_directory = Some(previous);
+                format!("Could not reset recording folder preference: {error}")
+            }
+        };
+        cx.notify();
+    }
+
+    /// Verifies the effective MP4 folder asynchronously before the user begins a recording.
+    pub(in crate::app) fn check_recording_directory(&mut self, cx: &mut Context<Self>) {
+        if self.recording_directory_check_in_flight {
+            return;
+        }
+        if self.recording_control.is_some()
+            || self.recording_start_in_flight
+            || self.recording_stopping
+            || self.recording_support_check_in_flight
+            || self.recording_display_discovery_in_flight
+            || self.recording_audio_discovery_in_flight
+        {
+            self.status =
+                "Wait for the current recording action before checking its folder".to_owned();
+            cx.notify();
+            return;
+        }
+        self.recording_directory_check_in_flight = true;
+        let preferred = self.settings.recording_directory.clone();
+        self.status = "Checking recording folder...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { recording_output_directory(preferred.as_deref()) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.recording_directory_check_in_flight = false;
+                        this.status = match result {
+                            Ok(directory) => {
+                                format!("Recording folder is ready: {}", directory.display())
+                            }
+                            Err(error) => format!("Recording folder check failed: {error}"),
+                        };
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Opens the same writable folder selected by the recording output fallback rules.
+    pub(in crate::app) fn open_recording_directory(&mut self, cx: &mut Context<Self>) {
+        if self.recording_directory_check_in_flight {
+            return;
+        }
+        let preferred = self.settings.recording_directory.clone();
+        self.status = match recording_output_directory(preferred.as_deref())
+            .and_then(|directory| directory::open(&directory).map(|()| directory))
+        {
+            Ok(directory) => format!("Opened recording folder {}", directory.display()),
+            Err(error) => format!("Could not open recording folder: {error}"),
+        };
+        cx.notify();
+    }
+
     pub(in crate::app) fn start_region_recording(&mut self, cx: &mut Context<Self>) {
         let Some(bounds) = self.selection_drag.selection() else {
             self.status = "Select a region before starting a recording".to_owned();
@@ -178,6 +377,11 @@ impl FlashShotApp {
         }
         if self.recording_support_check_in_flight {
             self.status = "Cancel or wait for the FFmpeg support check before recording".to_owned();
+            cx.notify();
+            return;
+        }
+        if self.recording_directory_check_in_flight {
+            self.status = "Wait for the recording folder check to finish".to_owned();
             cx.notify();
             return;
         }
@@ -231,6 +435,11 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if self.recording_directory_check_in_flight {
+            self.status = "Wait for the recording folder check to finish".to_owned();
+            cx.notify();
+            return;
+        }
         let center = crate::domain::geometry::PhysicalPoint {
             x: selection.left + selection.width() as i32 / 2,
             y: selection.top + selection.height() as i32 / 2,
@@ -247,6 +456,7 @@ impl FlashShotApp {
         let generation = self.operation_generation;
         let audio = self.recording_audio.clone();
         let display = self.recording_display.clone();
+        let recording_directory = self.settings.recording_directory.clone();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -266,6 +476,7 @@ impl FlashShotApp {
                                 Some(RecordingTarget::Window { title }),
                                 audio,
                                 display,
+                                recording_directory,
                             )
                         })
                         .await;
@@ -287,6 +498,7 @@ impl FlashShotApp {
         cx: &mut Context<Self>,
     ) {
         let generation = self.operation_generation;
+        let recording_directory = self.settings.recording_directory.clone();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -298,6 +510,7 @@ impl FlashShotApp {
                             region.map(|bounds| RecordingTarget::Region { bounds }),
                             audio,
                             display,
+                            recording_directory,
                         )
                     })
                     .await;
@@ -318,6 +531,7 @@ impl FlashShotApp {
             || self.recording_display_discovery_in_flight
             || self.recording_audio_discovery_in_flight
             || self.recording_support_check_in_flight
+            || self.recording_directory_check_in_flight
         {
             return;
         }
@@ -380,6 +594,7 @@ impl FlashShotApp {
             || self.recording_audio_discovery_in_flight
             || self.recording_display_discovery_in_flight
             || self.recording_support_check_in_flight
+            || self.recording_directory_check_in_flight
         {
             return;
         }
@@ -567,6 +782,7 @@ pub(super) fn start_recording_target(
     target: Option<RecordingTarget>,
     audio_selection: RecordingAudioSelection,
     display_selection: RecordingDisplaySelection,
+    recording_directory: Option<PathBuf>,
 ) -> std::io::Result<crate::recording::RecordingControl> {
     let capabilities = discover()?;
     let audio = match audio_selection {
@@ -580,7 +796,7 @@ pub(super) fn start_recording_target(
         Some(target) => target,
         None => recording_display_target(&display_selection)?,
     };
-    let output = recording_output_path()?;
+    let output = recording_output_path(recording_directory.as_deref())?;
     start_recording(
         capabilities,
         RecordingRequest {
@@ -614,27 +830,66 @@ const RECORDING_DIRECTORY_ENV: &str = "FLASH_SHOT_RECORDING_DIRECTORY";
 
 /// Chooses a writable recording directory before FFmpeg starts writing its MP4.
 ///
-/// The user's Videos folder remains preferred, but restricted profiles fall back to Flash Shot's
-/// writable application-data directory. An explicit environment override is authoritative and
-/// returns its own error instead of silently redirecting a recording elsewhere.
-pub(super) fn recording_output_path() -> std::io::Result<PathBuf> {
+/// A folder selected in Settings is tried before the user's Videos folder and Flash Shot's
+/// application-data fallback. An explicit environment override remains authoritative and returns
+/// its own error instead of silently redirecting a recording elsewhere.
+pub(super) fn recording_output_path(
+    preferred_directory: Option<&Path>,
+) -> std::io::Result<PathBuf> {
     let timestamp_ms = unix_timestamp_ms();
-    if let Some(directory) =
-        std::env::var_os(RECORDING_DIRECTORY_ENV).filter(|value| !value.is_empty())
-    {
-        return recording_output_path_in(Path::new(&directory), timestamp_ms);
+    if let Some(directory) = recording_directory_override() {
+        return recording_output_path_in(&directory, timestamp_ms);
     }
+    let candidates = recording_directory_candidates(preferred_directory);
+    recording_output_path_from_candidates(&candidates, timestamp_ms)
+}
 
-    let mut candidates = Vec::with_capacity(2);
+/// Returns the folder shown in Settings without creating it on the UI thread.
+pub(in crate::app) fn recording_directory_for_display(
+    preferred_directory: Option<&Path>,
+) -> Option<PathBuf> {
+    recording_directory_override().or_else(|| {
+        recording_directory_candidates(preferred_directory)
+            .into_iter()
+            .next()
+    })
+}
+
+/// Resolves and probes the folder that a new recording would use.
+fn recording_output_directory(preferred_directory: Option<&Path>) -> std::io::Result<PathBuf> {
+    if let Some(directory) = recording_directory_override() {
+        return verify_recording_directory(directory);
+    }
+    recording_output_directory_from_candidates(&recording_directory_candidates(preferred_directory))
+}
+
+/// Keeps explicit settings ahead of conventional Windows and application-data fallbacks.
+pub(super) fn recording_directory_candidates(preferred_directory: Option<&Path>) -> Vec<PathBuf> {
+    let mut candidates = Vec::with_capacity(3);
+    if let Some(directory) = preferred_directory {
+        candidates.push(directory.to_owned());
+    }
     if let Some(videos) = directories::UserDirs::new()
         .and_then(|directories| directories.video_dir().map(Path::to_owned))
     {
-        candidates.push(videos.join("Flash Shot"));
+        let directory = videos.join("Flash Shot");
+        if !candidates.contains(&directory) {
+            candidates.push(directory);
+        }
     }
     if let Ok(paths) = crate::diagnostics::AppPaths::discover() {
-        candidates.push(paths.data_dir.join("recordings"));
+        let directory = paths.data_dir.join("recordings");
+        if !candidates.contains(&directory) {
+            candidates.push(directory);
+        }
     }
-    recording_output_path_from_candidates(&candidates, timestamp_ms)
+    candidates
+}
+
+fn recording_directory_override() -> Option<PathBuf> {
+    std::env::var_os(RECORDING_DIRECTORY_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Tries recording roots in preference order and retains every failure when none are writable.
@@ -642,10 +897,16 @@ pub(super) fn recording_output_path_from_candidates(
     candidates: &[PathBuf],
     timestamp_ms: u128,
 ) -> std::io::Result<PathBuf> {
+    let directory = recording_output_directory_from_candidates(candidates)?;
+    Ok(directory.join(format!("FlashShot-{timestamp_ms}.mp4")))
+}
+
+/// Tries recording roots in preference order and retains every failure when none are writable.
+fn recording_output_directory_from_candidates(candidates: &[PathBuf]) -> std::io::Result<PathBuf> {
     let mut failures = Vec::with_capacity(candidates.len());
     for directory in candidates {
-        match recording_output_path_in(directory, timestamp_ms) {
-            Ok(path) => return Ok(path),
+        match verify_recording_directory(directory.to_owned()) {
+            Ok(directory) => return Ok(directory),
             Err(error) => failures.push(format!("{}: {error}", directory.display())),
         }
     }
@@ -663,9 +924,15 @@ pub(super) fn recording_output_path_from_candidates(
 
 /// Creates and probes one directory, returning the final timestamped MP4 path only when writable.
 fn recording_output_path_in(directory: &Path, timestamp_ms: u128) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(directory)?;
-    crate::history::verify_writable_directory(directory)?;
+    let directory = verify_recording_directory(directory.to_owned())?;
     Ok(directory.join(format!("FlashShot-{timestamp_ms}.mp4")))
+}
+
+/// Creates and probes a candidate without leaving a test file in the user's video folder.
+fn verify_recording_directory(directory: PathBuf) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(&directory)?;
+    crate::history::verify_writable_directory(&directory)?;
+    Ok(directory)
 }
 
 pub(super) fn recording_target_label(target: &RecordingTarget) -> &'static str {

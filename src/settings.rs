@@ -40,6 +40,8 @@ pub struct UserSettings {
     pub quick_save_directory: Option<PathBuf>,
     /// Safe prefix used before the timestamp in generated quick-save file names.
     pub quick_save_prefix: String,
+    /// Optional user-selected folder for completed MP4 recordings.
+    pub recording_directory: Option<PathBuf>,
     /// A standard Tesseract language selected in Settings; `None` preserves the environment fallback.
     pub ocr_language: Option<String>,
     pub theme_mode: ThemeMode,
@@ -60,6 +62,7 @@ impl Default for UserSettings {
             export_format: DEFAULT_EXPORT_FORMAT,
             quick_save_directory: None,
             quick_save_prefix: DEFAULT_SAVE_PREFIX.to_owned(),
+            recording_directory: None,
             ocr_language: None,
             theme_mode: ThemeMode::Dark,
         }
@@ -101,6 +104,8 @@ impl UserSettings {
                     Self::normalize_quick_save_directory(settings.quick_save_directory);
                 settings.quick_save_prefix =
                     Self::normalize_save_prefix(&settings.quick_save_prefix);
+                settings.recording_directory =
+                    Self::normalize_recording_directory(settings.recording_directory);
                 settings.ocr_language = Self::normalize_ocr_language(settings.ocr_language);
                 Ok((settings, path))
             }
@@ -158,6 +163,11 @@ impl UserSettings {
 
     /// Removes unusable paths so an old or hand-edited setting cannot become a filesystem root.
     pub fn normalize_quick_save_directory(directory: Option<PathBuf>) -> Option<PathBuf> {
+        directory.filter(|path| !path.as_os_str().is_empty())
+    }
+
+    /// Removes an empty persisted video folder before the recording workflow treats it as a root.
+    pub fn normalize_recording_directory(directory: Option<PathBuf>) -> Option<PathBuf> {
         directory.filter(|path| !path.as_os_str().is_empty())
     }
 
@@ -280,6 +290,7 @@ mod tests {
         assert_eq!(settings.color_format, DEFAULT_COLOR_FORMAT);
         assert_eq!(settings.quick_save_directory, None);
         assert_eq!(settings.quick_save_prefix, DEFAULT_SAVE_PREFIX);
+        assert_eq!(settings.recording_directory, None);
         assert_eq!(settings.ocr_language, None);
         assert_eq!(settings.theme_mode, ThemeMode::Dark);
         let _ = std::fs::remove_dir_all(directory);
@@ -299,6 +310,7 @@ mod tests {
         settings.color_format = 2;
         settings.quick_save_directory = Some(directory.join("captures"));
         settings.quick_save_prefix = "Release_Notes".to_owned();
+        settings.recording_directory = Some(directory.join("recordings"));
         settings.ocr_language = Some("eng+chi_sim".to_owned());
         settings.theme_mode = ThemeMode::Light;
         settings.save(&path).unwrap();
@@ -323,6 +335,10 @@ mod tests {
             Some(directory.join("captures"))
         );
         assert_eq!(reopened.quick_save_prefix, "Release_Notes");
+        assert_eq!(
+            reopened.recording_directory,
+            Some(directory.join("recordings"))
+        );
         assert_eq!(reopened.ocr_language.as_deref(), Some("eng+chi_sim"));
         assert_eq!(reopened.theme_mode, ThemeMode::Light);
         std::fs::remove_dir_all(directory).unwrap();
@@ -426,6 +442,14 @@ mod tests {
         assert_eq!(
             UserSettings::next_save_prefix("Capture"),
             DEFAULT_SAVE_PREFIX
+        );
+    }
+
+    #[test]
+    fn empty_recording_directory_returns_to_the_default_location() {
+        assert_eq!(
+            UserSettings::normalize_recording_directory(Some(std::path::PathBuf::new())),
+            None
         );
     }
 

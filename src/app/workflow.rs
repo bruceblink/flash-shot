@@ -25,13 +25,17 @@ pub(super) use recognition::recognition_start_conflict_status;
 #[cfg(test)]
 use recording::{
     format_recording_progress, format_recording_stopping, next_recording_audio_selection,
-    next_recording_display_selection, recording_discovery_conflict_status,
-    recording_discovery_result_is_applicable, recording_output_path_from_candidates,
-    recording_start_cancellation_generation, recording_start_conflict_status,
-    recording_start_failure_status, recording_start_result_is_applicable,
-    recording_support_check_conflict_status, recording_support_status, recording_target_label,
+    next_recording_display_selection, recording_directory_candidates,
+    recording_discovery_conflict_status, recording_discovery_result_is_applicable,
+    recording_output_path_from_candidates, recording_start_cancellation_generation,
+    recording_start_conflict_status, recording_start_failure_status,
+    recording_start_result_is_applicable, recording_support_check_conflict_status,
+    recording_support_status, recording_target_label,
 };
-pub(super) use recording::{recording_audio_selection_label, recording_display_selection_label};
+pub(super) use recording::{
+    recording_audio_selection_label, recording_directory_for_display,
+    recording_display_selection_label,
+};
 
 use std::{
     ops::Range,
