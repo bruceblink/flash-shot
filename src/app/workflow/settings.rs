@@ -368,10 +368,60 @@ impl FlashShotApp {
         .detach();
     }
 
-    /// Checks the opt-in translation configuration without sending screenshot text or a network request.
-    pub(in crate::app) fn check_translation_support(&mut self, cx: &mut Context<Self>) {
-        self.status =
-            translation_support_status(crate::translation::TranslationConfig::from_environment());
+    /// Sends a fixed, non-user phrase to the configured HTTPS endpoint so service connectivity can
+    /// be verified from settings without reusing or exposing text from a captured screenshot.
+    pub(in crate::app) fn test_translation_service(&mut self, cx: &mut Context<Self>) {
+        if self.recognition_in_flight {
+            self.status = "Recognition is already in progress".to_owned();
+            cx.notify();
+            return;
+        }
+        let config = match crate::translation::TranslationConfig::from_environment() {
+            Ok(Some(config)) => config,
+            Ok(None) => {
+                self.status = translation_support_status(Ok(None));
+                cx.notify();
+                return;
+            }
+            Err(error) => {
+                self.status = translation_support_status(Err(error));
+                cx.notify();
+                return;
+            }
+        };
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.recognition_in_flight = true;
+        self.status = "Testing translation service...".to_owned();
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { crate::translation::translate(&config, "Flash Shot") })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_translation_service_test(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn finish_translation_service_test(
+        &mut self,
+        result: std::io::Result<String>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation) {
+            return;
+        }
+        self.recognition_in_flight = false;
+        self.status = translation_service_test_status(&result);
         cx.notify();
     }
 

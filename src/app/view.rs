@@ -634,11 +634,11 @@ fn capture_settings(
             ),
         )
         .child(settings_row("Translation", colors).child(settings_button(
-            "settings-check-translation-support",
-            "Check configuration",
+            "settings-test-translation-service",
+            "Test service",
             colors,
-            true,
-            move |_, _, cx| app.update(cx, |this, cx| this.check_translation_support(cx)),
+            !app_state.recognition_in_flight,
+            move |_, _, cx| app.update(cx, |this, cx| this.test_translation_service(cx)),
         )));
 
     div()

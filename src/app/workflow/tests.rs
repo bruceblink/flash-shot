@@ -18,7 +18,8 @@ use super::{
     recording_start_failure_status, recording_support_status, recording_target_label,
     resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
     save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-    tool_selected_status, translation_failure_status, translation_support_status, with_alpha,
+    tool_selected_status, translation_failure_status, translation_service_test_status,
+    translation_support_status, with_alpha,
 };
 use crate::{
     domain::{
@@ -1704,6 +1705,24 @@ fn translation_support_status_keeps_disabled_configuration_local_and_actionable(
         "translation endpoint must use HTTPS",
     );
     assert!(translation_support_status(Err(invalid)).contains("needs attention"));
+}
+
+#[test]
+fn translation_service_test_status_reports_readiness_without_returning_text() {
+    let success = Ok("  Bonjour  ".to_owned());
+    assert_eq!(
+        translation_service_test_status(&success),
+        "Translation service ready (7 characters)"
+    );
+
+    let empty = Ok(String::new());
+    assert!(translation_service_test_status(&empty).contains("returned no text"));
+
+    let failure = Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "request timed out",
+    ));
+    assert!(translation_service_test_status(&failure).contains("Check the endpoint"));
 }
 
 #[test]

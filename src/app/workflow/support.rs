@@ -462,6 +462,22 @@ pub(in crate::app) fn translation_support_status(
     }
 }
 
+/// Turns an explicit fixed-text service probe into a safe status message without exposing the
+/// returned translation. The settings action only sends the phrase "Flash Shot" and reports its
+/// character count, so users can verify connectivity without putting screenshot text on the wire.
+pub(in crate::app) fn translation_service_test_status(result: &std::io::Result<String>) -> String {
+    match result {
+        Ok(text) if !text.trim().is_empty() => format!(
+            "Translation service ready ({} characters)",
+            text.trim().chars().count()
+        ),
+        Ok(_) => "Translation service returned no text. Check the endpoint response.".to_owned(),
+        Err(error) => {
+            translation_failure_status(&TranslationOutcome::ServiceFailed(error.to_string()))
+        }
+    }
+}
+
 /// Turns each translation-stage failure into a recovery action instead of a generic error.
 pub(in crate::app) fn translation_failure_status(outcome: &TranslationOutcome) -> String {
     match outcome {
