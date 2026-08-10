@@ -1356,6 +1356,27 @@ fn selected_recording_directory_precedes_default_fallbacks_without_duplicates() 
 }
 
 #[test]
+fn recording_output_keeps_an_existing_timestamped_mp4() {
+    let root = std::env::temp_dir().join(format!(
+        "flash-shot-recording-name-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let timestamp_ms = 1_725_000_000_123;
+    let existing = root.join(format!("FlashShot-{timestamp_ms}.mp4"));
+    std::fs::write(&existing, b"existing MP4").unwrap();
+
+    let output =
+        recording_output_path_from_candidates(std::slice::from_ref(&root), timestamp_ms).unwrap();
+
+    assert_eq!(output, root.join(format!("FlashShot-{timestamp_ms}-2.mp4")));
+    assert_eq!(std::fs::read(existing).unwrap(), b"existing MP4");
+    assert!(!output.exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn recording_output_falls_back_when_the_preferred_directory_is_not_writable() {
     let root = std::env::temp_dir().join(format!(
         "flash-shot-recording-output-{}-{:?}",

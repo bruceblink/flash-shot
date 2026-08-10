@@ -898,7 +898,11 @@ pub(super) fn recording_output_path_from_candidates(
     timestamp_ms: u128,
 ) -> std::io::Result<PathBuf> {
     let directory = recording_output_directory_from_candidates(candidates)?;
-    Ok(directory.join(format!("FlashShot-{timestamp_ms}.mp4")))
+    Ok(next_recording_output_path(
+        &directory,
+        timestamp_ms,
+        Path::exists,
+    ))
 }
 
 /// Tries recording roots in preference order and retains every failure when none are writable.
@@ -925,7 +929,34 @@ fn recording_output_directory_from_candidates(candidates: &[PathBuf]) -> std::io
 /// Creates and probes one directory, returning the final timestamped MP4 path only when writable.
 fn recording_output_path_in(directory: &Path, timestamp_ms: u128) -> std::io::Result<PathBuf> {
     let directory = verify_recording_directory(directory.to_owned())?;
-    Ok(directory.join(format!("FlashShot-{timestamp_ms}.mp4")))
+    Ok(next_recording_output_path(
+        &directory,
+        timestamp_ms,
+        Path::exists,
+    ))
+}
+
+/// Selects a new MP4 name without replacing a capture created in the same millisecond.
+///
+/// The recording command also uses FFmpeg's `-n` flag, which keeps this best-effort name choice
+/// safe when another process creates the same path between the existence check and process start.
+fn next_recording_output_path(
+    directory: &Path,
+    timestamp_ms: u128,
+    exists: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    let stem = format!("FlashShot-{timestamp_ms}");
+    let initial = directory.join(format!("{stem}.mp4"));
+    if !exists(&initial) {
+        return initial;
+    }
+    for index in 2_u32.. {
+        let path = directory.join(format!("{stem}-{index}.mp4"));
+        if !exists(&path) {
+            return path;
+        }
+    }
+    unreachable!("u32 recording filename suffixes cannot be exhausted")
 }
 
 /// Creates and probes a candidate without leaving a test file in the user's video folder.

@@ -918,7 +918,7 @@ pub fn build_recording_command(
     validate_request(request)?;
     let mut arguments = vec![
         OsString::from("-hide_banner"),
-        OsString::from("-y"),
+        OsString::from("-n"),
         OsString::from("-nostats"),
         OsString::from("-progress"),
         OsString::from("pipe:1"),
@@ -1514,7 +1514,7 @@ mod tests {
             command.arguments(),
             [
                 "-hide_banner",
-                "-y",
+                "-n",
                 "-nostats",
                 "-progress",
                 "pipe:1",
@@ -1540,6 +1540,14 @@ mod tests {
             ]
             .map(OsString::from)
         );
+    }
+
+    #[test]
+    fn recording_command_never_overwrites_an_existing_output_file() {
+        let command = build_recording_command(&capabilities(), &region_request()).unwrap();
+
+        assert!(command.arguments().contains(&OsString::from("-n")));
+        assert!(!command.arguments().contains(&OsString::from("-y")));
     }
 
     #[test]

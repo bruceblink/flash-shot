@@ -137,6 +137,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let report_path = std::path::absolute(&options.report)?;
     create_parent(&output)?;
     create_parent(&report_path)?;
+    prepare_reusable_output(&output)?;
 
     let capabilities = discover()?;
     if !capabilities.supports_display_capture() {
@@ -207,6 +208,19 @@ fn create_parent(path: &Path) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::other("acceptance output requires a parent directory"))?;
     fs::create_dir_all(parent)
+}
+
+/// Removes only the explicitly named probe artifact so repeated acceptance runs remain reusable.
+///
+/// Production recordings use FFmpeg's no-overwrite mode. This executable is different: its
+/// command-line output path intentionally names disposable test evidence, so replacing that exact
+/// artifact preserves the long-standing rerun behavior without weakening product safety.
+fn prepare_reusable_output(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 /// Resolves a CLI target into the same physical-pixel request used by the product UI.
@@ -419,7 +433,10 @@ fn parse_media_probe(stdout: &[u8]) -> io::Result<MediaMetadata> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FFPROBE_TIMEOUT, centered_region, parse_media_probe, wait_for_ffprobe_child};
+    use super::{
+        FFPROBE_TIMEOUT, centered_region, parse_media_probe, prepare_reusable_output,
+        wait_for_ffprobe_child,
+    };
     use flash_shot::domain::geometry::PhysicalRect;
     use std::{
         process::{Command, Stdio},
@@ -473,6 +490,27 @@ mod tests {
                 bottom: 730,
             }
         );
+    }
+
+    #[test]
+    fn reusable_probe_output_clears_only_its_explicit_file() {
+        let root = std::env::temp_dir().join(format!(
+            "flash-shot-recording-probe-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let output = root.join("recording.mp4");
+        let retained = root.join("keep.mp4");
+        std::fs::write(&output, b"old test artifact").unwrap();
+        std::fs::write(&retained, b"keep this artifact").unwrap();
+
+        prepare_reusable_output(&output).unwrap();
+        assert!(!output.exists());
+        assert_eq!(std::fs::read(retained).unwrap(), b"keep this artifact");
+        prepare_reusable_output(&output).unwrap();
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
