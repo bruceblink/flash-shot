@@ -88,7 +88,7 @@ Tauri/WebView/Excalidraw 架构。后续优先级只围绕快捷键到截图导�
 - [x] 暂停、恢复、正常结束、进度和失败恢复。
 - [x] Job Object/进程组清理和孤儿进程测试。
 
-当前实现状态：录制后端已具备 FFmpeg 探测、显示器/窗口/区域目标、可选单一音频源、暂停/恢复、进度、正常结束和 Windows Job Object 清理。本机用户级 FFmpeg 已配置并支持 `gdigrab`；生产录屏后端的显示器、窗口、区域以及暂停/恢复/停止流程已通过 `recording-acceptance` 探针生成并由 `ffprobe` 验证的 MP4，完整 UI 手工矩阵仍按 [Windows 手工验收记录](windows-manual-acceptance.md) 保持待执行。
+当前实现状态：录制后端已具备 FFmpeg 探测、显示器/窗口/区域目标、可选单一音频源、暂停/恢复、进度、正常结束和 Windows Job Object 清理。本机用户级 FFmpeg 已配置并支持 `gdigrab`；生产录屏后端的显示器、窗口、区域以及暂停/恢复/停止流程已通过 `recording-acceptance` 探针生成并由 `ffprobe` 验证的 MP4。录屏启动请求现在绑定 workflow generation，晚到启动结果不会覆盖已取消或新建的状态；完整 UI 手工矩阵仍按 [Windows 手工验收记录](windows-manual-acceptance.md) 保持待执行。
 
 ## 里程碑 7：分发与其他平台
 

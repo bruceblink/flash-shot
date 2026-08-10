@@ -17,7 +17,8 @@ use super::{
     recognition_start_conflict_status, recording_audio_selection_label,
     recording_discovery_conflict_status, recording_discovery_result_is_applicable,
     recording_display_selection_label, recording_start_conflict_status,
-    recording_start_failure_status, recording_support_status, recording_target_label,
+    recording_start_failure_status, recording_start_result_is_applicable,
+    recording_support_check_conflict_status, recording_support_status, recording_target_label,
     resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
     save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
     tool_selected_status, translation_failure_status, translation_service_test_status,
@@ -1219,12 +1220,28 @@ fn recording_start_waits_for_source_discovery_to_finish() {
 }
 
 #[test]
+fn recording_start_waits_for_support_checks_to_finish() {
+    assert_eq!(
+        recording_support_check_conflict_status(true),
+        Some("Cancel or wait for the FFmpeg support check before recording")
+    );
+    assert_eq!(recording_support_check_conflict_status(false), None);
+}
+
+#[test]
 fn pinned_save_slot_rejects_a_second_concurrent_request() {
     let mut in_flight = false;
     assert!(claim_pinned_save_slot(&mut in_flight));
     assert!(!claim_pinned_save_slot(&mut in_flight));
     in_flight = false;
     assert!(claim_pinned_save_slot(&mut in_flight));
+}
+
+#[test]
+fn stale_recording_start_results_cannot_replace_new_lifecycle_state() {
+    assert!(recording_start_result_is_applicable(4, 4, true));
+    assert!(!recording_start_result_is_applicable(5, 4, true));
+    assert!(!recording_start_result_is_applicable(4, 4, false));
 }
 
 #[test]

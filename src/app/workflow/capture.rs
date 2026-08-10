@@ -513,11 +513,17 @@ impl FlashShotApp {
         };
         self.close_capture_overlays(cx);
         self.close_manual_scroll_window(cx);
+        let recording_start_cancelled = self.recording_start_in_flight;
+        self.recording_start_in_flight = false;
         self.recording_audio_discovery_in_flight = false;
         self.recording_display_discovery_in_flight = false;
         self.recording_support_check_in_flight = false;
         self.recording_support_check_generation =
             self.recording_support_check_generation.wrapping_add(1);
+        if recording_start_cancelled && self.recording_control.is_none() && !self.recording_stopping
+        {
+            self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
+        }
         self.update_check_in_flight = false;
         self.update_check_generation = self.update_check_generation.wrapping_add(1);
         self.return_to_background();

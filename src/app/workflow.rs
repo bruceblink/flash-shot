@@ -25,7 +25,8 @@ use recording::{
     format_recording_progress, format_recording_stopping, next_recording_audio_selection,
     next_recording_display_selection, recording_discovery_conflict_status,
     recording_discovery_result_is_applicable, recording_start_conflict_status,
-    recording_start_failure_status, recording_support_status, recording_target_label,
+    recording_start_failure_status, recording_start_result_is_applicable,
+    recording_support_check_conflict_status, recording_support_status, recording_target_label,
 };
 pub(super) use recording::{recording_audio_selection_label, recording_display_selection_label};
 

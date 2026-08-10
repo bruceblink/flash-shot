@@ -39,8 +39,10 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
-        if self.recording_support_check_in_flight {
-            self.status = "Cancel or wait for the FFmpeg support check before recording".to_owned();
+        if let Some(status) =
+            recording_support_check_conflict_status(self.recording_support_check_in_flight)
+        {
+            self.status = status.to_owned();
             cx.notify();
             return;
         }
@@ -83,8 +85,10 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
-        if self.recording_support_check_in_flight {
-            self.status = "Cancel or wait for the FFmpeg support check before recording".to_owned();
+        if let Some(status) =
+            recording_support_check_conflict_status(self.recording_support_check_in_flight)
+        {
+            self.status = status.to_owned();
             cx.notify();
             return;
         }
@@ -200,6 +204,13 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if let Some(status) =
+            recording_support_check_conflict_status(self.recording_support_check_in_flight)
+        {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
         let center = crate::domain::geometry::PhysicalPoint {
             x: selection.left + selection.width() as i32 / 2,
             y: selection.top + selection.height() as i32 / 2,
@@ -213,6 +224,7 @@ impl FlashShotApp {
         self.frame = None;
         self.preview = None;
         self.selection_drag.clear();
+        let generation = self.operation_generation;
         let audio = self.recording_audio.clone();
         let display = self.recording_display.clone();
         cx.notify();
@@ -238,7 +250,9 @@ impl FlashShotApp {
                         })
                         .await;
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| this.recording_started(result, cx));
+                    this.update(&mut cx, |this, cx| {
+                        this.recording_started(result, generation, cx)
+                    });
                 }
             }
         })
@@ -252,6 +266,7 @@ impl FlashShotApp {
         display: RecordingDisplaySelection,
         cx: &mut Context<Self>,
     ) {
+        let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -267,7 +282,9 @@ impl FlashShotApp {
                     })
                     .await;
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| this.recording_started(result, cx));
+                    this.update(&mut cx, |this, cx| {
+                        this.recording_started(result, generation, cx)
+                    });
                 }
             }
         })
@@ -429,8 +446,17 @@ impl FlashShotApp {
     fn recording_started(
         &mut self,
         result: std::io::Result<crate::recording::RecordingControl>,
+        generation: u64,
         cx: &mut Context<Self>,
     ) {
+        if !recording_start_result_is_applicable(
+            self.operation_generation,
+            generation,
+            self.recording_start_in_flight,
+        ) {
+            drop(result);
+            return;
+        }
         match result {
             Ok(control) => {
                 let events = control.events();
@@ -725,6 +751,26 @@ pub(super) fn recording_discovery_conflict_status(
 ) -> Option<&'static str> {
     (display_discovery_in_flight || audio_discovery_in_flight)
         .then_some("Wait for recording source discovery to finish...")
+}
+
+/// Blocks recording starts while the local FFmpeg capability probe owns the same inputs.
+pub(super) fn recording_support_check_conflict_status(
+    support_check_in_flight: bool,
+) -> Option<&'static str> {
+    support_check_in_flight
+        .then_some("Cancel or wait for the FFmpeg support check before recording")
+}
+
+/// Accepts a completed FFmpeg startup only while the original startup request is still current.
+///
+/// If the user cancels the capture flow or starts a new workflow before FFmpeg answers, dropping
+/// the stale `RecordingControl` requests a normal stop instead of replacing the current UI state.
+pub(super) fn recording_start_result_is_applicable(
+    current_operation: u64,
+    completed_operation: u64,
+    recording_starting: bool,
+) -> bool {
+    is_current_operation(current_operation, completed_operation) && recording_starting
 }
 
 /// Accepts a discovery result only for the current workflow while no recording lifecycle owns the
