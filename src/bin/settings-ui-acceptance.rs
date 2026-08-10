@@ -147,7 +147,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping] [translation-idle|translation-testing] [ocr-idle|ocr-checking]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking]"
         .to_owned()
 }
 
@@ -252,13 +252,18 @@ fn parse_translation_service_test_state(
     match value
         .into_string()
         .map_err(|_| {
-            "translation-state must be translation-idle or translation-testing".to_owned()
+            "translation-state must be translation-idle, translation-testing, or translation-ready"
+                .to_owned()
         })?
         .as_str()
     {
         "translation-idle" => Ok(TranslationServiceUiAcceptanceState::Idle),
         "translation-testing" => Ok(TranslationServiceUiAcceptanceState::Testing),
-        _ => Err("translation-state must be translation-idle or translation-testing".to_owned()),
+        "translation-ready" => Ok(TranslationServiceUiAcceptanceState::Ready),
+        _ => Err(
+            "translation-state must be translation-idle, translation-testing, or translation-ready"
+                .to_owned(),
+        ),
     }
 }
 
@@ -535,6 +540,14 @@ mod tests {
             TranslationServiceUiAcceptanceState::Testing
         );
         assert!(parse_translation_service_test_state(OsString::from("testing")).is_err());
+    }
+
+    #[test]
+    fn translation_service_test_state_parser_accepts_the_ready_state() {
+        assert_eq!(
+            parse_translation_service_test_state(OsString::from("translation-ready")).unwrap(),
+            TranslationServiceUiAcceptanceState::Ready
+        );
     }
 
     #[test]

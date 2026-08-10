@@ -69,6 +69,8 @@ cargo run --release --bin settings-ui-acceptance -- dark 520 640 target/ui-accep
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/recording-ui-paused.png 3000 0 1.0 record 0 paused
 # 翻译服务测试忙状态：不发起网络请求，仅检查按钮与状态栏的可读性。
 cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acceptance/translation-service-testing.png 3000 0 1.0 capture 0 idle translation-testing
+# 翻译服务就绪状态：不发起网络请求，仅检查成功反馈不会泄露服务返回文本。
+cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acceptance/translation-service-ready.png 3000 0 1.0 capture 0 idle translation-ready ocr-idle
 # OCR 支持检查忙状态：不探测本机 Tesseract，仅检查按钮、语言选择与状态栏的可读性。
 cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acceptance/ocr-support-checking.png 3000 0 1.0 capture 0 idle translation-idle ocr-checking
 cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
@@ -167,6 +169,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `current-scroll-acceptance-final-20260810` | 当前 Release `scroll-acceptance` 重新通过 6 帧、5 个 90px 重叠区的确定性拼接，输出 96x630，像素校验和为 `2267123376996061824`；本机 FFmpeg 9.0 可用并识别 `gdigrab`。 | 待执行 | 报告位于 `target/ui-acceptance/scroll-acceptance-20260810-final.json`；滚动控制器真实 UI 截图 `target/ui-acceptance/manual-scroll-controller-after-auto-2.png` 显示 `2 frames - ready to finish`、`420 px overlap`、`Scroll down + capture`、`Finish` 和 `Cancel` 均完整可见。该证据确认滚动入口、辅助追加、状态反馈和拼接链路；双屏、混合 DPI 与完整录屏 UI 手工矩阵仍待执行。 |
 | 2026-08-10 | `current-recording-ui-lifecycle-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 依次渲染 Starting、Recording、Paused、Stopping；每张截图均报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/recording-ui-starting-single-100.png`、`recording-ui-recording-single-100.png`、`recording-ui-paused-single-100.png` 和 `recording-ui-stopping-single-100.png`：Preparing/Stopping 禁用冲突动作，Recording 显示 Stop/Pause 与进度，Paused 显示 Stop/Resume 与相同进度，文本未截断或重叠。这是无 FFmpeg 的确定性 UI 证据，不替代完整录屏手工矩阵。 |
 | 2026-08-10 | `current-translation-test-busy-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 注入 Translation 测试忙状态，不发起网络请求；截图报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/translation-service-testing-single-100.png`：Capture 页底部 Translation 行显示 `Testing...`，状态栏显示 `Testing translation service...`，二者均完整可读且不与固定状态栏重叠。此证据验证设置页反馈布局，不替代真实 HTTPS 端点成功/失败验收。 |
+| 2026-08-10 | `current-translation-test-ready-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 注入 Translation 服务就绪状态，不发起网络请求；截图报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/translation-service-ready.png`：Translation 行在空闲后恢复 `Test service`，固定状态栏显示 `Translation service ready (12 characters)`，成功反馈不包含服务返回内容，未发现文字截断、控件重叠或状态栏遮挡。此证据验证成功态布局，不替代真实 HTTPS 端点验收。 |
 | 2026-08-10 | `current-ocr-support-checking-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 注入本地 OCR 支持检查忙状态，不启动 Tesseract；截图报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/ocr-support-checking.png`：Capture 页底部 Local OCR 的语言选择与 `Checking...` 操作保持相邻且清晰可读，固定状态栏显示 `Checking local OCR support...`，没有文字截断、控件重叠或状态栏遮挡。此证据验证忙状态布局，不替代真实 OCR 结果与复制链路验收。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、

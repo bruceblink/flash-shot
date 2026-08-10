@@ -119,6 +119,7 @@ pub enum TranslationServiceUiAcceptanceState {
     #[default]
     Idle,
     Testing,
+    Ready,
 }
 
 /// Synthetic local-OCR support button states used only by the native screenshot acceptance probe.

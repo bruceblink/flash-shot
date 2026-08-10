@@ -40,10 +40,17 @@ impl FlashShotApp {
         &mut self,
         state: crate::TranslationServiceUiAcceptanceState,
     ) {
-        self.translation_service_test_in_flight =
-            state == crate::TranslationServiceUiAcceptanceState::Testing;
-        if self.translation_service_test_in_flight {
-            self.status = "Testing translation service...".to_owned();
+        self.translation_service_test_in_flight = false;
+        match state {
+            crate::TranslationServiceUiAcceptanceState::Idle => {}
+            crate::TranslationServiceUiAcceptanceState::Testing => {
+                self.translation_service_test_in_flight = true;
+                self.status = "Testing translation service...".to_owned();
+            }
+            crate::TranslationServiceUiAcceptanceState::Ready => {
+                // Keep a fixed count so acceptance screenshots never contact or expose a service.
+                self.status = "Translation service ready (12 characters)".to_owned();
+            }
         }
     }
 
