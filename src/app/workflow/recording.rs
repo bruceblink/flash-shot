@@ -15,7 +15,8 @@ impl FlashShotApp {
             match control.request_stop() {
                 Ok(()) => {
                     self.recording_stopping = true;
-                    self.status = "Stopping screen recording...".to_owned();
+                    self.status =
+                        format_recording_stopping(recording_target_label(control.target()));
                     self.set_tray_recording_state(
                         crate::platform::tray::TrayRecordingState::Stopping,
                     );
@@ -389,7 +390,11 @@ impl FlashShotApp {
             }
             RecordingEvent::Progress(progress) => {
                 self.recording_progress = progress;
-                self.status = format_recording_progress(target, progress);
+                self.status = if self.recording_stopping {
+                    format_recording_stopping(target)
+                } else {
+                    format_recording_progress(target, progress)
+                };
             }
             RecordingEvent::Finished { output } => {
                 self.recording_control = None;
@@ -589,6 +594,11 @@ pub(super) fn recording_start_failure_status(error: &std::io::Error) -> String {
         ),
         _ => format!("Could not start screen recording: {error}"),
     }
+}
+
+/// Keeps the user-facing status in the stopping phase while late FFmpeg progress frames arrive.
+pub(super) fn format_recording_stopping(target: &str) -> String {
+    format!("Stopping {target} recording...")
 }
 
 /// Names the safe next action when a new overlay recording would overlap an active lifecycle.

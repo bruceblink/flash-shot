@@ -22,9 +22,9 @@ use windowing::*;
 pub(super) use recognition::recognition_start_conflict_status;
 #[cfg(test)]
 use recording::{
-    format_recording_progress, next_recording_audio_selection, next_recording_display_selection,
-    recording_start_conflict_status, recording_start_failure_status, recording_support_status,
-    recording_target_label,
+    format_recording_progress, format_recording_stopping, next_recording_audio_selection,
+    next_recording_display_selection, recording_start_conflict_status,
+    recording_start_failure_status, recording_support_status, recording_target_label,
 };
 pub(super) use recording::{recording_audio_selection_label, recording_display_selection_label};
 

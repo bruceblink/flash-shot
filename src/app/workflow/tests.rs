@@ -4,8 +4,8 @@ use super::{
     annotation_position, annotation_sidecar_path, capture::focused_window_selection,
     claim_idle_completion, compose_captured_displays, copy_annotated_frame_selection,
     delayed_capture_status, drawing_status, export_path, fill_alpha, fill_color, format_hsl,
-    format_recording_progress, hovered_color, intersect_rect, is_current_operation,
-    keyboard_command, load_annotation_document, manual_scroll_control_bounds,
+    format_recording_progress, format_recording_stopping, hovered_color, intersect_rect,
+    is_current_operation, keyboard_command, load_annotation_document, manual_scroll_control_bounds,
     manual_scroll_control_rect, next_annotation_counters, next_annotation_selection,
     next_quick_save_path_with_prefix, next_recording_audio_selection,
     next_recording_display_selection, ocr_language_label, ocr_support_status,
@@ -1166,6 +1166,14 @@ fn recording_status_uses_ffmpeg_progress_without_exposing_process_output() {
             }
         ),
         "Recording selected area: 3s, 117 frames"
+    );
+}
+
+#[test]
+fn recording_stop_status_names_the_target_during_late_progress() {
+    assert_eq!(
+        format_recording_stopping("display"),
+        "Stopping display recording..."
     );
 }
 
