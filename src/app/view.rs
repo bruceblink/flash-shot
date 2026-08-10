@@ -295,6 +295,15 @@ fn translation_service_test_label(in_flight: bool) -> &'static str {
     }
 }
 
+/// Keeps the OCR support action readable while the local capability probe is running.
+fn ocr_support_check_label(in_flight: bool) -> &'static str {
+    if in_flight {
+        "Checking..."
+    } else {
+        "Check support"
+    }
+}
+
 fn settings_header(
     colors: crate::theme::ThemeColors,
     is_idle: bool,
@@ -631,7 +640,7 @@ fn capture_settings(
                             app_state.settings.ocr_language.as_deref(),
                         ),
                         colors,
-                        true,
+                        !app_state.ocr_support_check_in_flight,
                         {
                             let app = app.clone();
                             move |_, _, cx| app.update(cx, |this, cx| this.cycle_ocr_language(cx))
@@ -639,9 +648,9 @@ fn capture_settings(
                     ))
                     .child(settings_button(
                         "settings-check-ocr-support",
-                        "Check support",
+                        ocr_support_check_label(app_state.ocr_support_check_in_flight),
                         colors,
-                        true,
+                        !app_state.ocr_support_check_in_flight,
                         {
                             let app = app.clone();
                             move |_, _, cx| app.update(cx, |this, cx| this.check_ocr_support(cx))
@@ -2199,11 +2208,12 @@ mod tests {
         RecordingViewState, adjacent_settings_section, capture_command_label,
         capture_shortcut_summary, history_clear_confirmation_label, history_entry_label,
         history_entry_matches, history_result_summary, history_retention_label,
-        history_visibility_label, recording_progress_label, recording_source_discovery_busy,
-        recording_status_visible, recording_toggle_label, relative_timestamp_label,
-        settings_navigation_activation, settings_navigation_direction, settings_navigation_items,
-        settings_page_copy, settings_page_intro, settings_path_label, status_indicator_color,
-        translation_service_test_label, uses_compact_settings_navigation, visible_history_entries,
+        history_visibility_label, ocr_support_check_label, recording_progress_label,
+        recording_source_discovery_busy, recording_status_visible, recording_toggle_label,
+        relative_timestamp_label, settings_navigation_activation, settings_navigation_direction,
+        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
+        status_indicator_color, translation_service_test_label, uses_compact_settings_navigation,
+        visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2497,6 +2507,12 @@ mod tests {
     fn translation_test_label_explains_its_independent_busy_state() {
         assert_eq!(translation_service_test_label(false), "Test service");
         assert_eq!(translation_service_test_label(true), "Testing...");
+    }
+
+    #[test]
+    fn ocr_support_check_label_explains_its_busy_state() {
+        assert_eq!(ocr_support_check_label(false), "Check support");
+        assert_eq!(ocr_support_check_label(true), "Checking...");
     }
 
     #[test]

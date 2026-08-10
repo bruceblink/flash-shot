@@ -281,6 +281,8 @@ impl FlashShotApp {
         self.translation_service_test_in_flight = false;
         self.translation_service_test_generation =
             self.translation_service_test_generation.wrapping_add(1);
+        self.ocr_support_check_in_flight = false;
+        self.ocr_support_check_generation = self.ocr_support_check_generation.wrapping_add(1);
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
         self.status = "Capturing virtual desktop...".to_owned();
@@ -495,6 +497,8 @@ impl FlashShotApp {
         self.translation_service_test_in_flight = false;
         self.translation_service_test_generation =
             self.translation_service_test_generation.wrapping_add(1);
+        self.ocr_support_check_in_flight = false;
+        self.ocr_support_check_generation = self.ocr_support_check_generation.wrapping_add(1);
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
         self.status = if self.capture_shortcut_enabled {
@@ -540,6 +544,8 @@ impl FlashShotApp {
         self.translation_service_test_in_flight = false;
         self.translation_service_test_generation =
             self.translation_service_test_generation.wrapping_add(1);
+        self.ocr_support_check_in_flight = false;
+        self.ocr_support_check_generation = self.ocr_support_check_generation.wrapping_add(1);
         self.recording_control = None;
         self.recording_start_in_flight = false;
         self.recording_stopping = false;

@@ -80,6 +80,7 @@ pub fn run_settings_ui_acceptance(
             section: acceptance.section,
             recording_state: acceptance.recording_state,
             translation_service_test_state: acceptance.translation_service_test_state,
+            ocr_support_check_state: acceptance.ocr_support_check_state,
             display_index: acceptance.display_index,
         },
     )
@@ -95,6 +96,8 @@ pub struct SettingsUiAcceptanceOptions {
     pub recording_state: RecordingUiAcceptanceState,
     /// Seeds the explicit translation-service test button without making a network request.
     pub translation_service_test_state: TranslationServiceUiAcceptanceState,
+    /// Seeds the local OCR support button without probing the installed OCR executable.
+    pub ocr_support_check_state: OcrSupportUiAcceptanceState,
     /// Selects a zero-based Windows display index for multi-monitor DPI acceptance runs.
     pub display_index: Option<usize>,
 }
@@ -118,6 +121,14 @@ pub enum TranslationServiceUiAcceptanceState {
     Testing,
 }
 
+/// Synthetic local-OCR support button states used only by the native screenshot acceptance probe.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OcrSupportUiAcceptanceState {
+    #[default]
+    Idle,
+    Checking,
+}
+
 #[derive(Clone, Debug)]
 struct SettingsWindowOptions {
     width: f32,
@@ -126,6 +137,7 @@ struct SettingsWindowOptions {
     section: String,
     recording_state: RecordingUiAcceptanceState,
     translation_service_test_state: TranslationServiceUiAcceptanceState,
+    ocr_support_check_state: OcrSupportUiAcceptanceState,
     display_index: Option<usize>,
 }
 
@@ -138,6 +150,7 @@ impl Default for SettingsWindowOptions {
             section: "capture".to_owned(),
             recording_state: RecordingUiAcceptanceState::Idle,
             translation_service_test_state: TranslationServiceUiAcceptanceState::Idle,
+            ocr_support_check_state: OcrSupportUiAcceptanceState::Idle,
             display_index: None,
         }
     }
@@ -207,6 +220,7 @@ fn run_with_settings_window(
         let initial_section = window_options.section.clone();
         let recording_state = window_options.recording_state;
         let translation_service_test_state = window_options.translation_service_test_state;
+        let ocr_support_check_state = window_options.ocr_support_check_state;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
@@ -216,6 +230,7 @@ fn run_with_settings_window(
                 app.set_settings_section_for_acceptance(&initial_section);
                 app.set_recording_state_for_acceptance(recording_state);
                 app.set_translation_service_test_for_acceptance(translation_service_test_state);
+                app.set_ocr_support_check_for_acceptance(ocr_support_check_state);
             });
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()

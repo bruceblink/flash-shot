@@ -47,6 +47,17 @@ impl FlashShotApp {
         }
     }
 
+    /// Seeds the OCR support button for screenshots without probing the local installation.
+    pub(crate) fn set_ocr_support_check_for_acceptance(
+        &mut self,
+        state: crate::OcrSupportUiAcceptanceState,
+    ) {
+        self.ocr_support_check_in_flight = state == crate::OcrSupportUiAcceptanceState::Checking;
+        if self.ocr_support_check_in_flight {
+            self.status = "Checking local OCR support...".to_owned();
+        }
+    }
+
     /// Opens a native folder picker, then swaps history only after the new private root is ready.
     pub(in crate::app) fn choose_quick_save_directory(&mut self, cx: &mut Context<Self>) {
         self.status = "Choose a folder for quick saves and screenshot history...".to_owned();
@@ -377,7 +388,15 @@ impl FlashShotApp {
 
     /// Probes Tesseract and the selected language before the user needs OCR on a screenshot.
     pub(in crate::app) fn check_ocr_support(&mut self, cx: &mut Context<Self>) {
+        if self.ocr_support_check_in_flight {
+            self.status = "Local OCR support check is already in progress".to_owned();
+            cx.notify();
+            return;
+        }
         let language = self.settings.ocr_language.clone();
+        self.ocr_support_check_generation = self.ocr_support_check_generation.wrapping_add(1);
+        let generation = self.ocr_support_check_generation;
+        self.ocr_support_check_in_flight = true;
         self.status = "Checking local OCR support...".to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -389,6 +408,10 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
+                        if this.ocr_support_check_generation != generation {
+                            return;
+                        }
+                        this.ocr_support_check_in_flight = false;
                         this.status = ocr_support_status(result.as_ref());
                         cx.notify();
                     });

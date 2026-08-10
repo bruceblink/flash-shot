@@ -8,7 +8,7 @@ use std::{
 };
 
 use flash_shot::{
-    RecordingUiAcceptanceState, TranslationServiceUiAcceptanceState,
+    OcrSupportUiAcceptanceState, RecordingUiAcceptanceState, TranslationServiceUiAcceptanceState,
     history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::capture::{CaptureBackend, SystemCaptureBackend},
@@ -75,6 +75,7 @@ struct Options {
     display_index: Option<usize>,
     recording_state: RecordingUiAcceptanceState,
     translation_service_test_state: TranslationServiceUiAcceptanceState,
+    ocr_support_check_state: OcrSupportUiAcceptanceState,
 }
 
 impl Options {
@@ -115,6 +116,11 @@ impl Options {
             .map(parse_translation_service_test_state)
             .transpose()?
             .unwrap_or_default();
+        let ocr_support_check_state = arguments
+            .next()
+            .map(parse_ocr_support_check_state)
+            .transpose()?
+            .unwrap_or_default();
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -135,12 +141,13 @@ impl Options {
             display_index,
             recording_state,
             translation_service_test_state,
+            ocr_support_check_state,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping] [translation-idle|translation-testing]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping] [translation-idle|translation-testing] [ocr-idle|ocr-checking]"
         .to_owned()
 }
 
@@ -255,6 +262,21 @@ fn parse_translation_service_test_state(
     }
 }
 
+/// Parses a synthetic local-OCR support state for deterministic settings screenshots.
+fn parse_ocr_support_check_state(
+    value: std::ffi::OsString,
+) -> Result<OcrSupportUiAcceptanceState, String> {
+    match value
+        .into_string()
+        .map_err(|_| "ocr-state must be ocr-idle or ocr-checking".to_owned())?
+        .as_str()
+    {
+        "ocr-idle" => Ok(OcrSupportUiAcceptanceState::Idle),
+        "ocr-checking" => Ok(OcrSupportUiAcceptanceState::Checking),
+        _ => Err("ocr-state must be ocr-idle or ocr-checking".to_owned()),
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -298,6 +320,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             display_index: options.display_index,
             recording_state: options.recording_state,
             translation_service_test_state: options.translation_service_test_state,
+            ocr_support_check_state: options.ocr_support_check_state,
         },
     )
 }
@@ -451,11 +474,15 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_display_index, parse_expected_scale, parse_linger_delay, parse_recording_state,
-        parse_section, parse_settle_delay, parse_translation_service_test_state,
-        scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
+        parse_display_index, parse_expected_scale, parse_linger_delay,
+        parse_ocr_support_check_state, parse_recording_state, parse_section, parse_settle_delay,
+        parse_translation_service_test_state, scale_factor_for_dpi, scale_matches,
+        screenshot_metadata_path,
     };
-    use flash_shot::{RecordingUiAcceptanceState, TranslationServiceUiAcceptanceState};
+    use flash_shot::{
+        OcrSupportUiAcceptanceState, RecordingUiAcceptanceState,
+        TranslationServiceUiAcceptanceState,
+    };
     use std::{ffi::OsString, path::Path, time::Duration};
 
     #[test]
@@ -508,6 +535,15 @@ mod tests {
             TranslationServiceUiAcceptanceState::Testing
         );
         assert!(parse_translation_service_test_state(OsString::from("testing")).is_err());
+    }
+
+    #[test]
+    fn ocr_support_state_parser_accepts_the_busy_state() {
+        assert_eq!(
+            parse_ocr_support_check_state(OsString::from("ocr-checking")).unwrap(),
+            OcrSupportUiAcceptanceState::Checking
+        );
+        assert!(parse_ocr_support_check_state(OsString::from("checking")).is_err());
     }
 
     #[test]
