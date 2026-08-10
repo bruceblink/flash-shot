@@ -41,7 +41,6 @@ impl gpui::Render for FlashShotApp {
         let colors = self.colors;
         let compact_navigation =
             uses_compact_settings_navigation(f32::from(window.bounds().size.width));
-        let is_idle = self.session.state() == CaptureSessionState::Idle;
         let recording_state = RecordingViewState {
             active: self.recording_control.is_some() || self.recording_acceptance_active,
             starting: self.recording_start_in_flight,
@@ -52,6 +51,10 @@ impl gpui::Render for FlashShotApp {
             paused: self.recording_paused,
             progress: self.recording_progress,
         };
+        let is_idle = settings_actions_available(
+            self.session.state() == CaptureSessionState::Idle,
+            recording_state,
+        );
         let recording_audio =
             super::workflow::recording_audio_selection_label(&self.recording_audio);
         let recording_display =
@@ -409,6 +412,14 @@ fn capture_command_label(delayed_capture_remaining_seconds: Option<u8>) -> &'sta
     } else {
         "Capture"
     }
+}
+
+/// Keeps settings actions visually disabled while capture or recording owns shared resources.
+fn settings_actions_available(session_idle: bool, recording_state: RecordingViewState) -> bool {
+    session_idle
+        && !recording_state.active
+        && !recording_state.starting
+        && !recording_state.stopping
 }
 
 /// Makes the configured capture shortcut and its current system registration readable together.
@@ -2056,7 +2067,7 @@ fn quick_action_button(
         .justify_center()
         .rounded_md()
         .border_1()
-        .border_color(if primary {
+        .border_color(if primary && enabled {
             colors.accent
         } else {
             colors.border
@@ -2254,9 +2265,9 @@ mod tests {
         history_entry_matches, history_result_summary, history_retention_label,
         history_visibility_label, ocr_support_check_label, recording_progress_label,
         recording_source_discovery_busy, recording_status_visible, recording_support_check_label,
-        recording_toggle_label, relative_timestamp_label, settings_navigation_activation,
-        settings_navigation_direction, settings_navigation_items, settings_page_copy,
-        settings_page_intro, settings_path_label, status_indicator_color,
+        recording_toggle_label, relative_timestamp_label, settings_actions_available,
+        settings_navigation_activation, settings_navigation_direction, settings_navigation_items,
+        settings_page_copy, settings_page_intro, settings_path_label, status_indicator_color,
         translation_service_test_label, update_check_label, uses_compact_settings_navigation,
         visible_history_entries,
     };
@@ -2409,6 +2420,44 @@ mod tests {
             settings_page_copy(SettingsSection::System),
             ("App", "Set appearance, startup, and update preferences.")
         );
+    }
+
+    #[test]
+    fn settings_actions_wait_for_recording_lifecycle_to_settle() {
+        let idle_recording = RecordingViewState {
+            active: false,
+            starting: false,
+            stopping: false,
+            display_discovery_in_flight: false,
+            audio_discovery_in_flight: false,
+            support_check_in_flight: false,
+            paused: false,
+            progress: RecordingProgress::default(),
+        };
+        assert!(settings_actions_available(true, idle_recording));
+        assert!(!settings_actions_available(false, idle_recording));
+
+        assert!(!settings_actions_available(
+            true,
+            RecordingViewState {
+                active: true,
+                ..idle_recording
+            }
+        ));
+        assert!(!settings_actions_available(
+            true,
+            RecordingViewState {
+                starting: true,
+                ..idle_recording
+            }
+        ));
+        assert!(!settings_actions_available(
+            true,
+            RecordingViewState {
+                stopping: true,
+                ..idle_recording
+            }
+        ));
     }
 
     #[test]

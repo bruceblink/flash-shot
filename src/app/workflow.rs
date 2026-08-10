@@ -19,6 +19,8 @@ pub(super) use support::*;
 use windowing::*;
 
 #[cfg(test)]
+pub(in crate::app::workflow) use capture::capture_start_conflict_status;
+#[cfg(test)]
 pub(super) use recognition::recognition_start_conflict_status;
 #[cfg(test)]
 use recording::{

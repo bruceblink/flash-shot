@@ -3,15 +3,15 @@ use super::{
     ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
     annotation_position, annotation_sidecar_path, capture::focused_window_selection,
-    claim_idle_completion, compose_captured_displays, copy_annotated_frame_selection,
-    delayed_capture_status, drawing_status, export_path, fill_alpha, fill_color, format_hsl,
-    format_recording_progress, format_recording_stopping, hovered_color, intersect_rect,
-    is_current_operation, keyboard_command, load_annotation_document, manual_scroll_control_bounds,
-    manual_scroll_control_rect, next_annotation_counters, next_annotation_selection,
-    next_quick_save_path_with_prefix, next_recording_audio_selection,
-    next_recording_display_selection, ocr_language_label, ocr_support_status,
-    open_annotation_project, open_image_project, pinned_size, project_image_path,
-    quick_save_annotated_frame_selection_in_with_prefix,
+    capture_start_conflict_status, claim_idle_completion, compose_captured_displays,
+    copy_annotated_frame_selection, delayed_capture_status, drawing_status, export_path,
+    fill_alpha, fill_color, format_hsl, format_recording_progress, format_recording_stopping,
+    hovered_color, intersect_rect, is_current_operation, keyboard_command,
+    load_annotation_document, manual_scroll_control_bounds, manual_scroll_control_rect,
+    next_annotation_counters, next_annotation_selection, next_quick_save_path_with_prefix,
+    next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
+    ocr_support_status, open_annotation_project, open_image_project, pinned_size,
+    project_image_path, quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
     recognition_start_conflict_status, recording_audio_selection_label,
@@ -1187,6 +1187,23 @@ fn recording_start_failures_name_the_available_recovery_path() {
 
     let unsupported = std::io::Error::new(std::io::ErrorKind::Unsupported, "ddagrab unavailable");
     assert!(recording_start_failure_status(&unsupported).contains("ddagrab or gdigrab"));
+}
+
+#[test]
+fn capture_start_waits_for_recording_lifecycle_to_settle() {
+    assert_eq!(
+        capture_start_conflict_status(true, false, false),
+        Some("Stop the current recording before starting a capture")
+    );
+    assert_eq!(
+        capture_start_conflict_status(false, true, false),
+        Some("Wait for screen recording startup to finish before capturing")
+    );
+    assert_eq!(
+        capture_start_conflict_status(false, false, true),
+        Some("Screen recording is already stopping...")
+    );
+    assert_eq!(capture_start_conflict_status(false, false, false), None);
 }
 
 #[test]

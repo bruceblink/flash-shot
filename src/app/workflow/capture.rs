@@ -26,6 +26,15 @@ impl FlashShotApp {
         {
             return;
         }
+        if let Some(status) = capture_start_conflict_status(
+            self.recording_control.is_some() || self.recording_acceptance_active,
+            self.recording_start_in_flight,
+            self.recording_stopping,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
         self.start_capture_immediately(false, true, cx);
     }
 
@@ -38,6 +47,15 @@ impl FlashShotApp {
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
+            return;
+        }
+        if let Some(status) = capture_start_conflict_status(
+            self.recording_control.is_some() || self.recording_acceptance_active,
+            self.recording_start_in_flight,
+            self.recording_stopping,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
             return;
         }
         let generation = self.operation_generation;
@@ -79,6 +97,15 @@ impl FlashShotApp {
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
+            return;
+        }
+        if let Some(status) = capture_start_conflict_status(
+            self.recording_control.is_some() || self.recording_acceptance_active,
+            self.recording_start_in_flight,
+            self.recording_stopping,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
             return;
         }
         let generation = self.operation_generation;
@@ -128,6 +155,15 @@ impl FlashShotApp {
         {
             return;
         }
+        if let Some(status) = capture_start_conflict_status(
+            self.recording_control.is_some() || self.recording_acceptance_active,
+            self.recording_start_in_flight,
+            self.recording_stopping,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
         let generation = self.operation_generation;
         self.full_screen_pin_generation = Some(generation);
         self.status = "Capturing full screen to pin...".to_owned();
@@ -171,6 +207,15 @@ impl FlashShotApp {
             return;
         }
         if self.session.state() != CaptureSessionState::Idle {
+            return;
+        }
+        if let Some(status) = capture_start_conflict_status(
+            self.recording_control.is_some() || self.recording_acceptance_active,
+            self.recording_start_in_flight,
+            self.recording_stopping,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
             return;
         }
         if delay_seconds == 0 {
@@ -249,6 +294,15 @@ impl FlashShotApp {
         cx: &mut Context<Self>,
     ) {
         if self.session.state() != CaptureSessionState::Idle {
+            return;
+        }
+        if let Some(status) = capture_start_conflict_status(
+            self.recording_control.is_some() || self.recording_acceptance_active,
+            self.recording_start_in_flight,
+            self.recording_stopping,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
             return;
         }
         if let Err(error) = self.session.begin() {
@@ -772,6 +826,23 @@ impl FlashShotApp {
             }
         }
         cx.notify();
+    }
+}
+
+/// Keeps screenshot capture from starting while FFmpeg owns the desktop capture pipeline.
+pub(super) fn capture_start_conflict_status(
+    recording_active: bool,
+    recording_starting: bool,
+    recording_stopping: bool,
+) -> Option<&'static str> {
+    if recording_stopping {
+        Some("Screen recording is already stopping...")
+    } else if recording_active {
+        Some("Stop the current recording before starting a capture")
+    } else if recording_starting {
+        Some("Wait for screen recording startup to finish before capturing")
+    } else {
+        None
     }
 }
 
