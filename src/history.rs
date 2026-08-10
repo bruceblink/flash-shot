@@ -4,12 +4,14 @@ use std::{
     collections::VecDeque,
     fs, io,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const INDEX_FILE: &str = "history.json";
 const DEFAULT_LIMIT: usize = 30;
 const PROFILE_DIR_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
+static STORAGE_PROBE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Returns the only directory whose screenshot files this feature manages.
 pub fn managed_history_directory() -> io::Result<PathBuf> {
@@ -35,6 +37,39 @@ pub fn managed_history_directory() -> io::Result<PathBuf> {
 fn create_managed_history_directory(directory: PathBuf) -> io::Result<PathBuf> {
     fs::create_dir_all(&directory)?;
     Ok(directory)
+}
+
+/// Confirms that a quick-save directory can create, flush, and remove a private probe file.
+///
+/// The probe uses `create_new` so it never overwrites a user file, and cleanup runs after every
+/// write attempt. This lets Settings surface permissions or disconnected-drive problems before a
+/// screenshot needs to be saved.
+pub fn verify_writable_directory(directory: impl AsRef<Path>) -> io::Result<()> {
+    let directory = directory.as_ref();
+    if !fs::metadata(directory)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "quick-save path is not a directory",
+        ));
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let counter = STORAGE_PROBE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = directory.join(format!(
+        ".flash-shot-storage-probe-{}-{timestamp}-{counter}.tmp",
+        std::process::id()
+    ));
+    let probe = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    let flush_result = probe.sync_all();
+    drop(probe);
+    let cleanup_result = fs::remove_file(&path);
+    flush_result?;
+    cleanup_result
 }
 
 /// Names the user workflow that produced a managed screenshot.
@@ -355,8 +390,8 @@ fn unix_timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{HistorySource, ScreenshotHistory};
-    use std::fs;
+    use super::{HistorySource, ScreenshotHistory, verify_writable_directory};
+    use std::{fs, io};
 
     fn directory(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -373,6 +408,30 @@ mod tests {
 
         assert_eq!(history, root.join("history"));
         assert!(history.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn storage_probe_leaves_a_writable_directory_empty() {
+        let root = directory("storage-probe");
+        fs::create_dir_all(&root).unwrap();
+
+        verify_writable_directory(&root).unwrap();
+
+        assert!(fs::read_dir(&root).unwrap().next().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn storage_probe_rejects_a_file_path() {
+        let root = directory("storage-probe-file");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("not-a-directory.txt");
+        fs::write(&file, b"not a directory").unwrap();
+
+        let error = verify_writable_directory(&file).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         fs::remove_dir_all(root).unwrap();
     }
 

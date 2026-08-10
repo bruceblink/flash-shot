@@ -82,6 +82,45 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Checks the active quick-save root asynchronously so a permission failure is visible before
+    /// the next screenshot export. The probe only creates and removes its own temporary file.
+    pub(in crate::app) fn check_quick_save_directory(&mut self, cx: &mut Context<Self>) {
+        if self.quick_save_directory_check_in_flight {
+            return;
+        }
+        self.quick_save_directory_check_in_flight = true;
+        let directory = self.history.root().to_owned();
+        self.status = format!("Checking quick-save folder {}...", directory.display());
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let probe_directory = directory.clone();
+                let result = cx
+                    .background_executor()
+                    .spawn(
+                        async move { crate::history::verify_writable_directory(&probe_directory) },
+                    )
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.quick_save_directory_check_in_flight = false;
+                        this.status = match result {
+                            Ok(()) => {
+                                format!("Quick-save folder is ready: {}", directory.display())
+                            }
+                            Err(error) => {
+                                format!("Quick-save folder check failed: {error}")
+                            }
+                        };
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Cycles a persisted safe filename prefix shared by selection, full-screen, and pin saves.
     pub(in crate::app) fn cycle_quick_save_prefix(&mut self, cx: &mut Context<Self>) {
         let previous = self.settings.quick_save_prefix.clone();

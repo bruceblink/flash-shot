@@ -665,6 +665,20 @@ fn file_settings(
                 .text_color(colors.muted)
                 .child(settings_path_label(app_state.history.root())),
         )
+        .child(settings_row("Folder access", colors).child(settings_button(
+            "settings-check-quick-save-folder",
+            if app_state.quick_save_directory_check_in_flight {
+                "Checking..."
+            } else {
+                "Check folder"
+            },
+            colors,
+            is_idle && !app_state.quick_save_directory_check_in_flight,
+            {
+                let app = app.clone();
+                move |_, _, cx| app.update(cx, |this, cx| this.check_quick_save_directory(cx))
+            },
+        )))
         .child(settings_row("Save folder", colors).child(settings_button(
             "settings-quick-save-folder",
             "Choose folder",
