@@ -95,7 +95,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 提供最后一个 `display-index` 参数时，探针会将窗口放到指定的零基显示器，并在同名 JSON
 中保留该窗口实际观测到的 `dpi`、物理边界和 `scale_factor`；索引不存在时命令失败，避免
 把另一块显示器的截图误记为目标 DPI 证据。
-提供其后的 `idle|starting|recording|paused|stopping` 参数时，探针会在不创建 FFmpeg 子进程
+提供其后的 `idle|starting|recording|paused|stopping|cancelled` 参数时，探针会在不创建 FFmpeg 子进程
 的情况下固定 Record 页生命周期外观；截图前会把目标窗口置前，避免桌面区域捕获被其他窗口遮挡。
 最后一个可选参数为 `pin-saved-feedback` 时，探针会隐藏设置窗口并打开隔离 Pin 预览，
 通过生产的保存完成反馈路径展示 `Saved image` 和工具栏；该画面不写入用户历史，也不替代
@@ -191,6 +191,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-11 | `current-pin-registry-cleanup-single-100` | Pin 通过 Close、未修饰 Escape 或系统窗口关闭后，延迟清理主应用中的失效 Pin 窗口句柄；后续 Solo、Show all 和输入恢复操作不再长期扫描已关闭窗口。 | 待执行 | `cargo test --lib app::pinned::tests` 通过；Release Pin 反馈截图 `target/ui-acceptance/pin-close-cleanup-ui-20260811.png` 目视复核 `Saved image`、Save、缩放、透明度、Pass、Solo、Show all、Copy 和 Close 均完整可见。实际多 Pin 移动、关闭和主应用继续截图仍需手工执行。 |
 | 2026-08-11 | `current-scroll-control-close-guard` | 滚动截图完成时，主应用会先移除被跟踪的控制条句柄再请求原生窗口关闭；随后到达的关闭回调不再把已拼接结果改写为“已取消”，也不会将刚打开的编辑器退回后台。 | 待执行 | `cargo test --lib programmatic_scroll_control_close_does_not_cancel_the_completed_session` 覆盖程序关闭与用户关闭的分界；当前 Release `scroll-acceptance` 的 6 帧拼接、5 个 90px 重叠区与 96x630 输出通过，报告位于 `target/ui-acceptance/scroll-acceptance-close-guard-20260811.json`；`target/ui-acceptance/manual-scroll-controller-after-auto-2.png` 已目视复核单屏控制条的 2 帧完成状态、Finish 和 Cancel 均完整可见。完整真实滚动导出仍保留在单显示器手工矩阵中。 |
 | 2026-08-11 | `current-recording-start-cancel-single-100` | 录屏在 Preparing 阶段将 Record 动作改为可点击的 `Cancel start`；取消会推进 workflow generation，使晚到的 FFmpeg 控制句柄正常关闭而不覆盖取消后的状态。设置截图探针在捕获前会临时将自身窗口置顶，避免把被遮挡的桌面内容误记为 UI 证据。 | 待执行 | `cargo test --lib cancelling_recording_start_invalidates_its_late_result` 与 `recording_controls_keep_a_startup_cancellation_action_available` 通过；Release 截图 `target/ui-acceptance/recording-start-cancel-520x640-20260811-final.png` 的 DPI 96、scale 1.0、`scale_match: true`，目视复核 Cancel start、状态与底部 Preparing 文案均完整可见，无截断或重叠。完整 FFmpeg 应用内手工矩阵仍待执行。 |
+| 2026-08-11 | `current-recording-cancelled-status-single-100` | `settings-ui-acceptance` 新增 `cancelled` Record 页状态，复现生产取消文案和中性色状态指示器，不创建 FFmpeg 子进程。 | 待执行 | Release 截图 `target/ui-acceptance/recording-ui-cancelled-single-100-20260811.png` 同名 JSON 报告 DPI 96、scale 1.0、`scale_match: true`；目视复核 `Screen recording startup cancelled` 清晰可读，Record display 恢复可用，状态点为 muted 中性色且无布局重叠。该证据验证取消反馈视觉语义，不替代完整 FFmpeg 应用内手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

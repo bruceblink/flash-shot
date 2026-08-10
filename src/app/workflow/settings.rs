@@ -932,6 +932,14 @@ fn acceptance_recording_state(
             },
             "Stopping primary display recording...",
         ),
+        crate::RecordingUiAcceptanceState::Cancelled => (
+            false,
+            false,
+            false,
+            false,
+            Default::default(),
+            "Screen recording startup cancelled",
+        ),
     }
 }
 
@@ -1022,6 +1030,15 @@ mod tests {
                 false,
                 Some(4_000_000),
                 "Stopping primary display recording...",
+            ),
+            (
+                RecordingUiAcceptanceState::Cancelled,
+                false,
+                false,
+                false,
+                false,
+                None,
+                "Screen recording startup cancelled",
             ),
         ];
 
