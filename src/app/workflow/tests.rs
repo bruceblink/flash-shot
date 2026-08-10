@@ -16,14 +16,14 @@ use super::{
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
     recognition_start_conflict_status, recording_audio_selection_label,
     recording_discovery_conflict_status, recording_discovery_result_is_applicable,
-    recording_display_selection_label, recording_start_cancellation_generation,
-    recording_start_conflict_status, recording_start_failure_status,
-    recording_start_result_is_applicable, recording_support_check_conflict_status,
-    recording_support_status, recording_target_label, reserve_quick_save_path,
-    resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
-    save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-    tool_selected_status, translation_failure_status, translation_service_test_status,
-    translation_support_status, with_alpha,
+    recording_display_selection_label, recording_output_path_from_candidates,
+    recording_start_cancellation_generation, recording_start_conflict_status,
+    recording_start_failure_status, recording_start_result_is_applicable,
+    recording_support_check_conflict_status, recording_support_status, recording_target_label,
+    reserve_quick_save_path, resolve_pointer_selection, save_annotated_frame_selection,
+    save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+    text_annotation_with_content, tool_selected_status, translation_failure_status,
+    translation_service_test_status, translation_support_status, with_alpha,
 };
 use crate::{
     domain::{
@@ -1339,6 +1339,40 @@ fn recording_support_probe_reuses_actionable_missing_ffmpeg_guidance() {
     let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "ffmpeg.exe");
 
     assert!(recording_support_status(Err(&missing)).contains("FLASH_SHOT_FFMPEG"));
+}
+
+#[test]
+fn recording_output_falls_back_when_the_preferred_directory_is_not_writable() {
+    let root = std::env::temp_dir().join(format!(
+        "flash-shot-recording-output-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let invalid_directory = root.join("not-a-directory");
+    std::fs::write(&invalid_directory, b"file").unwrap();
+    let fallback_directory = root.join("fallback");
+
+    let output = recording_output_path_from_candidates(
+        &[invalid_directory, fallback_directory.clone()],
+        1_725_000_000_123,
+    )
+    .unwrap();
+
+    assert_eq!(
+        output,
+        fallback_directory.join("FlashShot-1725000000123.mp4")
+    );
+    assert!(fallback_directory.is_dir());
+    assert_eq!(std::fs::read_dir(&fallback_directory).unwrap().count(), 0);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn recording_output_requires_at_least_one_available_directory() {
+    let error = recording_output_path_from_candidates(&[], 42).unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
 }
 
 #[test]

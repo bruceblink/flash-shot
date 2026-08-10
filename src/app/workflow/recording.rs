@@ -610,19 +610,62 @@ pub(super) fn recording_display_target(
     })
 }
 
+const RECORDING_DIRECTORY_ENV: &str = "FLASH_SHOT_RECORDING_DIRECTORY";
+
+/// Chooses a writable recording directory before FFmpeg starts writing its MP4.
+///
+/// The user's Videos folder remains preferred, but restricted profiles fall back to Flash Shot's
+/// writable application-data directory. An explicit environment override is authoritative and
+/// returns its own error instead of silently redirecting a recording elsewhere.
 pub(super) fn recording_output_path() -> std::io::Result<PathBuf> {
-    let root = directories::UserDirs::new()
+    let timestamp_ms = unix_timestamp_ms();
+    if let Some(directory) =
+        std::env::var_os(RECORDING_DIRECTORY_ENV).filter(|value| !value.is_empty())
+    {
+        return recording_output_path_in(Path::new(&directory), timestamp_ms);
+    }
+
+    let mut candidates = Vec::with_capacity(2);
+    if let Some(videos) = directories::UserDirs::new()
         .and_then(|directories| directories.video_dir().map(Path::to_owned))
-        .or_else(|| std::env::current_dir().ok())
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "recording directory unavailable",
-            )
-        })?;
-    let directory = root.join("Flash Shot");
-    std::fs::create_dir_all(&directory)?;
-    Ok(directory.join(format!("FlashShot-{}.mp4", unix_timestamp_ms())))
+    {
+        candidates.push(videos.join("Flash Shot"));
+    }
+    if let Ok(paths) = crate::diagnostics::AppPaths::discover() {
+        candidates.push(paths.data_dir.join("recordings"));
+    }
+    recording_output_path_from_candidates(&candidates, timestamp_ms)
+}
+
+/// Tries recording roots in preference order and retains every failure when none are writable.
+pub(super) fn recording_output_path_from_candidates(
+    candidates: &[PathBuf],
+    timestamp_ms: u128,
+) -> std::io::Result<PathBuf> {
+    let mut failures = Vec::with_capacity(candidates.len());
+    for directory in candidates {
+        match recording_output_path_in(directory, timestamp_ms) {
+            Ok(path) => return Ok(path),
+            Err(error) => failures.push(format!("{}: {error}", directory.display())),
+        }
+    }
+    if failures.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "recording directory unavailable",
+        ));
+    }
+    Err(std::io::Error::other(format!(
+        "no writable recording directory: {}",
+        failures.join("; ")
+    )))
+}
+
+/// Creates and probes one directory, returning the final timestamped MP4 path only when writable.
+fn recording_output_path_in(directory: &Path, timestamp_ms: u128) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(directory)?;
+    crate::history::verify_writable_directory(directory)?;
+    Ok(directory.join(format!("FlashShot-{timestamp_ms}.mp4")))
 }
 
 pub(super) fn recording_target_label(target: &RecordingTarget) -> &'static str {

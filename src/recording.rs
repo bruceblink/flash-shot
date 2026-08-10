@@ -882,14 +882,27 @@ fn read_bounded_diagnostics(mut stderr: impl Read) -> io::Result<Vec<u8>> {
         if read == 0 {
             break;
         }
-        let remaining = MAX_DIAGNOSTIC_BYTES.saturating_sub(retained.len());
-        retained.extend_from_slice(&buffer[..read.min(remaining)]);
+        // Retain the latest stderr bytes because FFmpeg writes the actionable failure after
+        // startup banners. Keeping only the prefix can hide the real reason a recording stopped.
+        if read >= MAX_DIAGNOSTIC_BYTES {
+            retained.clear();
+            retained.extend_from_slice(&buffer[read - MAX_DIAGNOSTIC_BYTES..read]);
+            continue;
+        }
+        let overflow = retained
+            .len()
+            .saturating_add(read)
+            .saturating_sub(MAX_DIAGNOSTIC_BYTES);
+        if overflow > 0 {
+            retained.drain(..overflow);
+        }
+        retained.extend_from_slice(&buffer[..read]);
     }
     Ok(retained)
 }
 
 fn diagnostic_suffix(diagnostic: &str) -> String {
-    first_diagnostic_line(diagnostic)
+    last_diagnostic_line(diagnostic)
         .map(|line| format!(": {line}"))
         .unwrap_or_default()
 }
@@ -1278,16 +1291,26 @@ fn first_diagnostic_line(output: &str) -> Option<&str> {
     output.lines().map(str::trim).find(|line| !line.is_empty())
 }
 
+/// Selects the final non-empty FFmpeg line, where encoder and output failures are reported.
+fn last_diagnostic_line(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         AudioSource, DEVICE_ARGUMENTS, FFMPEG_PROBE_TIMEOUT, FORMAT_ARGUMENTS, FfmpegCapabilities,
-        FfmpegCommand, GRACEFUL_STOP_TIMEOUT, ProgressParser, RecordingAudioConfig,
-        RecordingCommands, RecordingProcess, RecordingProgress, RecordingRequest, RecordingSession,
-        RecordingState, RecordingTarget, VERSION_ARGUMENTS, audio_source_from_config,
-        build_recording_command, diagnostic_suffix, executable_from, first_diagnostic_line,
-        graceful_stop_input, parse_dshow_audio_devices, parse_input_formats, parse_version,
-        read_bounded_diagnostics, wait_for_probe_child,
+        FfmpegCommand, GRACEFUL_STOP_TIMEOUT, MAX_DIAGNOSTIC_BYTES, ProgressParser,
+        RecordingAudioConfig, RecordingCommands, RecordingProcess, RecordingProgress,
+        RecordingRequest, RecordingSession, RecordingState, RecordingTarget, VERSION_ARGUMENTS,
+        audio_source_from_config, build_recording_command, diagnostic_suffix, executable_from,
+        first_diagnostic_line, graceful_stop_input, last_diagnostic_line,
+        parse_dshow_audio_devices, parse_input_formats, parse_version, read_bounded_diagnostics,
+        wait_for_probe_child,
     };
     use crate::domain::geometry::PhysicalRect;
     use std::{
@@ -1418,6 +1441,10 @@ mod tests {
         assert_eq!(
             first_diagnostic_line("\n  access denied\ntrace"),
             Some("access denied")
+        );
+        assert_eq!(
+            last_diagnostic_line("capturing desktop\n  encoder failed\n"),
+            Some("encoder failed")
         );
     }
 
@@ -1741,12 +1768,28 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_are_bounded_and_include_only_the_first_line_in_errors() {
-        let diagnostics =
-            read_bounded_diagnostics(Cursor::new(b"failed to initialize\nverbose")).unwrap();
+    fn diagnostics_keep_the_latest_actionable_failure_line() {
+        let diagnostics = read_bounded_diagnostics(Cursor::new(
+            b"capturing whole desktop\nfailed to open output file",
+        ))
+        .unwrap();
         let diagnostics = String::from_utf8(diagnostics).unwrap();
 
-        assert_eq!(diagnostic_suffix(&diagnostics), ": failed to initialize");
+        assert_eq!(
+            diagnostic_suffix(&diagnostics),
+            ": failed to open output file"
+        );
+    }
+
+    #[test]
+    fn diagnostic_buffer_discards_old_banner_bytes_before_recent_errors() {
+        let mut output = vec![b'a'; MAX_DIAGNOSTIC_BYTES + 16];
+        output.extend_from_slice(b"\nlatest error");
+
+        let diagnostics = read_bounded_diagnostics(Cursor::new(output)).unwrap();
+
+        assert_eq!(diagnostics.len(), MAX_DIAGNOSTIC_BYTES);
+        assert!(String::from_utf8_lossy(&diagnostics).ends_with("latest error"));
     }
 
     #[cfg(windows)]
