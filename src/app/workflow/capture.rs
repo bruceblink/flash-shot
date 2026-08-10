@@ -531,6 +531,7 @@ impl FlashShotApp {
         self.recognition_in_flight = false;
         self.recording_control = None;
         self.recording_start_in_flight = false;
+        self.recording_stopping = false;
         self.recording_paused = false;
         // GPUI has already removed native windows before invoking on_app_quit.
         // Keeping the handles untouched avoids issuing late operations on closed HWNDs.

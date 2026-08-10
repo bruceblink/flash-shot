@@ -1179,16 +1179,20 @@ fn recording_start_failures_name_the_available_recovery_path() {
 }
 
 #[test]
-fn overlay_recording_actions_explain_active_and_starting_conflicts() {
+fn overlay_recording_actions_explain_active_starting_and_stopping_conflicts() {
     assert_eq!(
-        recording_start_conflict_status(true, false),
+        recording_start_conflict_status(true, false, false),
         Some("Stop the current recording before starting another")
     );
     assert_eq!(
-        recording_start_conflict_status(false, true),
+        recording_start_conflict_status(false, true, false),
         Some("Screen recording startup is already in progress...")
     );
-    assert_eq!(recording_start_conflict_status(false, false), None);
+    assert_eq!(
+        recording_start_conflict_status(true, false, true),
+        Some("Screen recording is already stopping...")
+    );
+    assert_eq!(recording_start_conflict_status(false, false, false), None);
 }
 
 #[test]

@@ -3,10 +3,18 @@
 use super::*;
 
 impl FlashShotApp {
+    /// Owns the display recording command lifecycle and keeps repeated stop/pause input harmless
+    /// while FFmpeg finishes its graceful container shutdown.
     pub(in crate::app) fn toggle_display_recording(&mut self, cx: &mut Context<Self>) {
+        if self.recording_stopping {
+            self.status = "Screen recording is already stopping...".to_owned();
+            cx.notify();
+            return;
+        }
         if let Some(control) = self.recording_control.as_ref() {
             match control.request_stop() {
                 Ok(()) => {
+                    self.recording_stopping = true;
                     self.status = "Stopping screen recording...".to_owned();
                     self.set_tray_recording_state(
                         crate::platform::tray::TrayRecordingState::Stopping,
@@ -40,7 +48,10 @@ impl FlashShotApp {
 
     /// Probes FFmpeg without opening a recording process so users can fix local prerequisites first.
     pub(in crate::app) fn check_recording_support(&mut self, cx: &mut Context<Self>) {
-        if self.recording_control.is_some() || self.recording_start_in_flight {
+        if self.recording_control.is_some()
+            || self.recording_start_in_flight
+            || self.recording_stopping
+        {
             self.status = "Stop the current recording before checking support".to_owned();
             cx.notify();
             return;
@@ -74,6 +85,7 @@ impl FlashShotApp {
         if let Some(status) = recording_start_conflict_status(
             self.recording_control.is_some(),
             self.recording_start_in_flight,
+            self.recording_stopping,
         ) {
             self.status = status.to_owned();
             cx.notify();
@@ -108,6 +120,7 @@ impl FlashShotApp {
         if let Some(status) = recording_start_conflict_status(
             self.recording_control.is_some(),
             self.recording_start_in_flight,
+            self.recording_stopping,
         ) {
             self.status = status.to_owned();
             cx.notify();
@@ -190,6 +203,7 @@ impl FlashShotApp {
     pub(in crate::app) fn cycle_recording_display(&mut self, cx: &mut Context<Self>) {
         if self.recording_control.is_some()
             || self.recording_start_in_flight
+            || self.recording_stopping
             || self.recording_display_discovery_in_flight
         {
             return;
@@ -238,6 +252,7 @@ impl FlashShotApp {
     pub(in crate::app) fn cycle_recording_audio(&mut self, cx: &mut Context<Self>) {
         if self.recording_control.is_some()
             || self.recording_start_in_flight
+            || self.recording_stopping
             || self.recording_audio_discovery_in_flight
         {
             return;
@@ -284,6 +299,11 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn toggle_recording_pause(&mut self, cx: &mut Context<Self>) {
+        if self.recording_stopping {
+            self.status = "Screen recording is already stopping...".to_owned();
+            cx.notify();
+            return;
+        }
         let Some(control) = self.recording_control.as_ref() else {
             return;
         };
@@ -316,6 +336,7 @@ impl FlashShotApp {
                 let events = control.events();
                 let target = recording_target_label(control.target());
                 self.recording_control = Some(control);
+                self.recording_stopping = false;
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
@@ -336,6 +357,7 @@ impl FlashShotApp {
             Err(error) => {
                 log::warn!(target: "flash_shot::recording", "recording_start_failed error={error}");
                 self.status = recording_start_failure_status(&error);
+                self.recording_stopping = false;
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
             }
         }
@@ -351,6 +373,7 @@ impl FlashShotApp {
             .unwrap_or("screen");
         match event {
             RecordingEvent::Started => {
+                self.recording_stopping = false;
                 self.status = format!("Recording {target}...");
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Recording);
             }
@@ -370,6 +393,7 @@ impl FlashShotApp {
             }
             RecordingEvent::Finished { output } => {
                 self.recording_control = None;
+                self.recording_stopping = false;
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
@@ -378,6 +402,7 @@ impl FlashShotApp {
             }
             RecordingEvent::Failed { message } => {
                 self.recording_control = None;
+                self.recording_stopping = false;
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
@@ -570,8 +595,11 @@ pub(super) fn recording_start_failure_status(error: &std::io::Error) -> String {
 pub(super) fn recording_start_conflict_status(
     recording_active: bool,
     recording_starting: bool,
+    recording_stopping: bool,
 ) -> Option<&'static str> {
-    if recording_active {
+    if recording_stopping {
+        Some("Screen recording is already stopping...")
+    } else if recording_active {
         Some("Stop the current recording before starting another")
     } else if recording_starting {
         Some("Screen recording startup is already in progress...")

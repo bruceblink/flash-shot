@@ -26,6 +26,7 @@ type HistoryEntryView = (
 struct RecordingViewState {
     active: bool,
     starting: bool,
+    stopping: bool,
     paused: bool,
     progress: crate::recording::RecordingProgress,
 }
@@ -41,6 +42,7 @@ impl gpui::Render for FlashShotApp {
         let recording_state = RecordingViewState {
             active: self.recording_control.is_some(),
             starting: self.recording_start_in_flight,
+            stopping: self.recording_stopping,
             paused: self.recording_paused,
             progress: self.recording_progress,
         };
@@ -799,7 +801,7 @@ fn recording_settings(
             "settings-recording-display",
             display,
             colors,
-            !state.active && !state.starting,
+            !state.active && !state.starting && !state.stopping,
             {
                 let app = app.clone();
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_display(cx))
@@ -809,7 +811,7 @@ fn recording_settings(
             "settings-recording-audio",
             audio,
             colors,
-            !state.active && !state.starting,
+            !state.active && !state.starting && !state.stopping,
             {
                 let app = app.clone();
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_audio(cx))
@@ -825,7 +827,7 @@ fn recording_settings(
                     "settings-check-recording-support",
                     "Check support",
                     colors,
-                    !state.active && !state.starting,
+                    !state.active && !state.starting && !state.stopping,
                     {
                         let app = app.clone();
                         move |_, _, cx| app.update(cx, |this, cx| this.check_recording_support(cx))
@@ -835,19 +837,21 @@ fn recording_settings(
                     "settings-record-display",
                     if state.starting {
                         "Preparing..."
+                    } else if state.stopping {
+                        "Stopping..."
                     } else if state.active {
                         "Stop recording"
                     } else {
                         "Record display"
                     },
                     colors,
-                    !state.starting,
+                    !state.starting && !state.stopping,
                     {
                         let app = app.clone();
                         move |_, _, cx| app.update(cx, |this, cx| this.toggle_display_recording(cx))
                     },
                 ))
-                .when(state.active && !state.starting, |row| {
+                .when(state.active && !state.starting && !state.stopping, |row| {
                     row.child(settings_button(
                         "settings-pause-recording",
                         if state.paused { "Resume" } else { "Pause" },
@@ -868,6 +872,7 @@ fn recording_settings(
                         .child(recording_progress_label(
                             state.active,
                             state.starting,
+                            state.stopping,
                             state.paused,
                             state.progress,
                         )),
@@ -880,11 +885,15 @@ fn recording_settings(
 fn recording_progress_label(
     recording_active: bool,
     recording_starting: bool,
+    recording_stopping: bool,
     recording_paused: bool,
     progress: crate::recording::RecordingProgress,
 ) -> String {
     if recording_starting {
         return "Preparing recording...".to_owned();
+    }
+    if recording_stopping {
+        return "Stopping recording...".to_owned();
     }
     if !recording_active {
         return "Recording is idle".to_owned();
@@ -2205,12 +2214,13 @@ mod tests {
     #[test]
     fn recording_progress_label_explains_start_pause_and_live_progress() {
         assert_eq!(
-            recording_progress_label(false, true, false, RecordingProgress::default()),
+            recording_progress_label(false, true, false, false, RecordingProgress::default()),
             "Preparing recording..."
         );
         assert_eq!(
             recording_progress_label(
                 true,
+                false,
                 false,
                 false,
                 RecordingProgress {
@@ -2225,6 +2235,7 @@ mod tests {
             recording_progress_label(
                 true,
                 false,
+                false,
                 true,
                 RecordingProgress {
                     output_time_us: Some(2_000_000),
@@ -2233,6 +2244,10 @@ mod tests {
                 }
             ),
             "Paused - 2s, 48 frames"
+        );
+        assert_eq!(
+            recording_progress_label(false, false, true, false, RecordingProgress::default()),
+            "Stopping recording..."
         );
     }
 
