@@ -75,6 +75,8 @@ cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acc
 cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acceptance/translation-service-ready.png 3000 0 1.0 capture 0 idle translation-ready ocr-idle
 # OCR 支持检查忙状态：不探测本机 Tesseract，仅检查按钮、语言选择与状态栏的可读性。
 cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acceptance/ocr-support-checking.png 3000 0 1.0 capture 0 idle translation-idle ocr-checking
+# 更新检查忙状态：不请求发布端点，仅检查 Cancel check 和状态栏的可读性。
+cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/update-checking-single-100.png 3000 0 1.0 app 0 idle translation-idle ocr-idle recording-support-idle update-checking
 cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
 # 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
@@ -175,8 +177,9 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `current-translation-test-busy-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 注入 Translation 测试忙状态，不发起网络请求；截图报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/translation-service-testing.png`：Capture 页底部 Translation 行显示可点击的 `Cancel test`，状态栏显示 `Testing translation service...`，二者均完整可读且不与固定状态栏重叠。取消会使当前请求 generation 失效，晚到结果不会覆盖用户的取消反馈；此证据验证设置页反馈布局，不替代真实 HTTPS 端点成功/失败验收。 |
 | 2026-08-10 | `current-translation-test-ready-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 注入 Translation 服务就绪状态，不发起网络请求；截图报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/translation-service-ready.png`：Translation 行在空闲后恢复 `Test service`，固定状态栏显示 `Translation service ready (12 characters)`，成功反馈不包含服务返回内容，未发现文字截断、控件重叠或状态栏遮挡。此证据验证成功态布局，不替代真实 HTTPS 端点验收。 |
 | 2026-08-10 | `current-ocr-support-checking-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 注入本地 OCR 支持检查忙状态，不启动 Tesseract；截图报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/ocr-support-checking.png`：Capture 页底部 Local OCR 的语言选择与 `Checking...` 操作保持相邻且清晰可读，固定状态栏显示 `Checking local OCR support...`，没有文字截断、控件重叠或状态栏遮挡。此证据验证忙状态布局，不替代真实 OCR 结果与复制链路验收。 |
+| 2026-08-10 | `current-update-checking-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 注入更新检查忙状态，不请求发布端点；截图报告 `scale_match: true`。 | 待执行 | 已人工复核 `target/ui-acceptance/update-checking-single-100.png`：App 页 Updates 行显示可点击的 `Cancel check`，固定状态栏显示 `Checking for updates...`，没有文字截断、控件重叠或状态栏遮挡。取消会使当前 manifest 请求 generation 失效，晚到结果不会覆盖用户取消反馈；双屏与混合 DPI 按当前范围暂缓。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
 `target\\release-capture-performance-20260802.json`。这些文件可用于复核本表中的数值，
-但不得替代缺失的真实双屏和录屏手工证据。
+但不得替代当前仍待执行的真实录屏、滚动、OCR/翻译等手工证据；双屏与混合 DPI 按当前范围暂缓。

@@ -286,6 +286,8 @@ impl FlashShotApp {
         self.recording_support_check_in_flight = false;
         self.recording_support_check_generation =
             self.recording_support_check_generation.wrapping_add(1);
+        self.update_check_in_flight = false;
+        self.update_check_generation = self.update_check_generation.wrapping_add(1);
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
         self.status = "Capturing virtual desktop...".to_owned();
@@ -516,6 +518,8 @@ impl FlashShotApp {
         self.recording_support_check_in_flight = false;
         self.recording_support_check_generation =
             self.recording_support_check_generation.wrapping_add(1);
+        self.update_check_in_flight = false;
+        self.update_check_generation = self.update_check_generation.wrapping_add(1);
         self.return_to_background();
         cx.notify();
     }
@@ -561,6 +565,8 @@ impl FlashShotApp {
         self.recording_support_check_in_flight = false;
         self.recording_support_check_generation =
             self.recording_support_check_generation.wrapping_add(1);
+        self.update_check_in_flight = false;
+        self.update_check_generation = self.update_check_generation.wrapping_add(1);
         // GPUI has already removed native windows before invoking on_app_quit.
         // Keeping the handles untouched avoids issuing late operations on closed HWNDs.
         log::info!(target: "flash_shot::lifecycle", "capture_workflow_shutdown");

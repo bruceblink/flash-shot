@@ -77,6 +77,17 @@ impl FlashShotApp {
         }
     }
 
+    /// Seeds the update-check button for screenshots without contacting a release endpoint.
+    pub(crate) fn set_update_check_for_acceptance(
+        &mut self,
+        state: crate::UpdateUiAcceptanceState,
+    ) {
+        self.update_check_in_flight = state == crate::UpdateUiAcceptanceState::Checking;
+        if self.update_check_in_flight {
+            self.status = "Checking for updates...".to_owned();
+        }
+    }
+
     /// Opens a native folder picker, then swaps history only after the new private root is ready.
     pub(in crate::app) fn choose_quick_save_directory(&mut self, cx: &mut Context<Self>) {
         self.status = "Choose a folder for quick saves and screenshot history...".to_owned();
@@ -760,6 +771,8 @@ impl FlashShotApp {
 
     pub(in crate::app) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
         if self.update_check_in_flight {
+            self.status = "Update check is already in progress".to_owned();
+            cx.notify();
             return;
         }
         let config = match UpdateConfig::from_environment() {
@@ -776,6 +789,8 @@ impl FlashShotApp {
                 return;
             }
         };
+        self.update_check_generation = self.update_check_generation.wrapping_add(1);
+        let generation = self.update_check_generation;
         self.update_check_in_flight = true;
         self.status = "Checking for updates...".to_owned();
         cx.notify();
@@ -787,18 +802,35 @@ impl FlashShotApp {
                     .spawn(async move { crate::update::check(&config, env!("CARGO_PKG_VERSION")) })
                     .await;
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| this.finish_update_check(result, cx));
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_update_check(result, generation, cx)
+                    });
                 }
             }
         })
         .detach();
     }
 
+    /// Cancels the visible manifest request; late network results cannot replace this status.
+    pub(in crate::app) fn cancel_update_check(&mut self, cx: &mut Context<Self>) {
+        if !self.update_check_in_flight {
+            return;
+        }
+        self.update_check_generation = self.update_check_generation.wrapping_add(1);
+        self.update_check_in_flight = false;
+        self.status = "Update check cancelled".to_owned();
+        cx.notify();
+    }
+
     fn finish_update_check(
         &mut self,
         result: std::io::Result<UpdateAvailability>,
+        generation: u64,
         cx: &mut Context<Self>,
     ) {
+        if self.update_check_generation != generation {
+            return;
+        }
         self.update_check_in_flight = false;
         self.status = match result {
             Ok(UpdateAvailability::Available { version }) => {

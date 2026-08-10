@@ -82,6 +82,7 @@ pub fn run_settings_ui_acceptance(
             recording_support_check_state: acceptance.recording_support_check_state,
             translation_service_test_state: acceptance.translation_service_test_state,
             ocr_support_check_state: acceptance.ocr_support_check_state,
+            update_check_state: acceptance.update_check_state,
             display_index: acceptance.display_index,
         },
     )
@@ -101,6 +102,8 @@ pub struct SettingsUiAcceptanceOptions {
     pub translation_service_test_state: TranslationServiceUiAcceptanceState,
     /// Seeds the local OCR support button without probing the installed OCR executable.
     pub ocr_support_check_state: OcrSupportUiAcceptanceState,
+    /// Seeds the update check button without contacting a release endpoint.
+    pub update_check_state: UpdateUiAcceptanceState,
     /// Selects a zero-based Windows display index for multi-monitor DPI acceptance runs.
     pub display_index: Option<usize>,
 }
@@ -141,6 +144,14 @@ pub enum OcrSupportUiAcceptanceState {
     Checking,
 }
 
+/// Synthetic update-check states used only by the native screenshot acceptance probe.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UpdateUiAcceptanceState {
+    #[default]
+    Idle,
+    Checking,
+}
+
 #[derive(Clone, Debug)]
 struct SettingsWindowOptions {
     width: f32,
@@ -151,6 +162,7 @@ struct SettingsWindowOptions {
     recording_support_check_state: RecordingSupportUiAcceptanceState,
     translation_service_test_state: TranslationServiceUiAcceptanceState,
     ocr_support_check_state: OcrSupportUiAcceptanceState,
+    update_check_state: UpdateUiAcceptanceState,
     display_index: Option<usize>,
 }
 
@@ -165,6 +177,7 @@ impl Default for SettingsWindowOptions {
             recording_support_check_state: RecordingSupportUiAcceptanceState::Idle,
             translation_service_test_state: TranslationServiceUiAcceptanceState::Idle,
             ocr_support_check_state: OcrSupportUiAcceptanceState::Idle,
+            update_check_state: UpdateUiAcceptanceState::Idle,
             display_index: None,
         }
     }
@@ -236,6 +249,7 @@ fn run_with_settings_window(
         let recording_support_check_state = window_options.recording_support_check_state;
         let translation_service_test_state = window_options.translation_service_test_state;
         let ocr_support_check_state = window_options.ocr_support_check_state;
+        let update_check_state = window_options.update_check_state;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
@@ -247,6 +261,7 @@ fn run_with_settings_window(
                 app.set_recording_support_check_for_acceptance(recording_support_check_state);
                 app.set_translation_service_test_for_acceptance(translation_service_test_state);
                 app.set_ocr_support_check_for_acceptance(ocr_support_check_state);
+                app.set_update_check_for_acceptance(update_check_state);
             });
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()

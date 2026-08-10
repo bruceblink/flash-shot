@@ -306,6 +306,15 @@ fn ocr_support_check_label(in_flight: bool) -> &'static str {
     }
 }
 
+/// Switches the update action to cancellation while a manifest request is outstanding.
+fn update_check_label(in_flight: bool) -> &'static str {
+    if in_flight {
+        "Cancel check"
+    } else {
+        "Check now"
+    }
+}
+
 fn settings_header(
     colors: crate::theme::ThemeColors,
     is_idle: bool,
@@ -1021,14 +1030,18 @@ fn system_settings(
         )
         .child(settings_row("Updates", colors).child(settings_button(
             "settings-check-updates",
-            if app_state.update_check_in_flight {
-                "Checking..."
-            } else {
-                "Check now"
-            },
+            update_check_label(app_state.update_check_in_flight),
             colors,
-            !app_state.update_check_in_flight,
-            move |_, _, cx| app.update(cx, |this, cx| this.check_for_updates(cx)),
+            true,
+            move |_, _, cx| {
+                app.update(cx, |this, cx| {
+                    if this.update_check_in_flight {
+                        this.cancel_update_check(cx);
+                    } else {
+                        this.check_for_updates(cx);
+                    }
+                })
+            },
         )))
 }
 
@@ -2244,7 +2257,8 @@ mod tests {
         recording_toggle_label, relative_timestamp_label, settings_navigation_activation,
         settings_navigation_direction, settings_navigation_items, settings_page_copy,
         settings_page_intro, settings_path_label, status_indicator_color,
-        translation_service_test_label, uses_compact_settings_navigation, visible_history_entries,
+        translation_service_test_label, update_check_label, uses_compact_settings_navigation,
+        visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2553,6 +2567,12 @@ mod tests {
     fn ocr_support_check_label_explains_its_busy_state() {
         assert_eq!(ocr_support_check_label(false), "Check support");
         assert_eq!(ocr_support_check_label(true), "Checking...");
+    }
+
+    #[test]
+    fn update_check_label_explains_the_cancel_action() {
+        assert_eq!(update_check_label(false), "Check now");
+        assert_eq!(update_check_label(true), "Cancel check");
     }
 
     #[test]
