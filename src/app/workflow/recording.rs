@@ -27,8 +27,7 @@ impl FlashShotApp {
             return;
         }
         if self.recording_start_in_flight {
-            self.status = "Screen recording startup is already in progress...".to_owned();
-            cx.notify();
+            self.cancel_recording_start(cx);
             return;
         }
         if let Some(status) = recording_discovery_conflict_status(
@@ -60,6 +59,27 @@ impl FlashShotApp {
             self.recording_display.clone(),
             cx,
         );
+    }
+
+    /// Cancels a pending FFmpeg startup without waiting for discovery or process creation to end.
+    ///
+    /// The operation generation invalidates a late `RecordingControl`; dropping that control then
+    /// requests its normal shutdown instead of reviving recording after the user has cancelled.
+    pub(in crate::app) fn cancel_recording_start(&mut self, cx: &mut Context<Self>) {
+        let Some(next_generation) = recording_start_cancellation_generation(
+            self.operation_generation,
+            self.recording_start_in_flight,
+        ) else {
+            return;
+        };
+        self.operation_generation = next_generation;
+        self.recording_start_in_flight = false;
+        self.recording_stopping = false;
+        self.recording_paused = false;
+        self.recording_progress = Default::default();
+        self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
+        self.status = "Screen recording startup cancelled".to_owned();
+        cx.notify();
     }
 
     /// Probes FFmpeg without opening a recording process so users can fix local prerequisites first.
@@ -771,6 +791,21 @@ pub(super) fn recording_start_result_is_applicable(
     recording_starting: bool,
 ) -> bool {
     is_current_operation(current_operation, completed_operation) && recording_starting
+}
+
+/// Advances the shared operation generation only when a recording startup is still cancellable.
+///
+/// The caller stores the returned token before clearing its busy flag, which makes every late
+/// FFmpeg result fail `recording_start_result_is_applicable` and lets its control shut down.
+pub(super) const fn recording_start_cancellation_generation(
+    current_operation: u64,
+    recording_starting: bool,
+) -> Option<u64> {
+    if recording_starting {
+        Some(current_operation.wrapping_add(1))
+    } else {
+        None
+    }
 }
 
 /// Accepts a discovery result only for the current workflow while no recording lifecycle owns the

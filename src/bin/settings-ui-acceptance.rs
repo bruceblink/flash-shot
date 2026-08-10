@@ -25,8 +25,9 @@ use windows_sys::Win32::{
     UI::{
         HiDpi::GetDpiForWindow,
         WindowsAndMessaging::{
-            BringWindowToTop, EnumWindows, GetWindowRect, GetWindowThreadProcessId,
-            IsWindowVisible, SetForegroundWindow,
+            BringWindowToTop, EnumWindows, GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST,
+            IsWindowVisible, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow,
+            SetWindowPos,
         },
     },
 };
@@ -485,15 +486,29 @@ fn visible_process_window() -> io::Result<VisibleProcessWindow> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "visible settings window not found"))
 }
 
-/// Brings the disposable settings window above the caller so desktop-region capture cannot be
-/// occluded by the terminal or another app while the acceptance screenshot is taken.
+/// Brings the disposable settings window above every normal desktop window before capture.
+///
+/// Windows may deny a foreground request from a background acceptance process. Temporarily making
+/// this short-lived process window topmost gives the desktop-region capture the same pixels a
+/// reviewer sees instead of silently recording an occluding terminal or File Explorer window.
 #[cfg(windows)]
 fn focus_process_window(window: &VisibleProcessWindow) -> io::Result<()> {
     // SAFETY: the handle was returned by EnumWindows for this live process and remains valid
     // until the acceptance process exits after the screenshot is written.
+    let topmost = unsafe {
+        SetWindowPos(
+            window.handle,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+    } != 0;
     let focused = unsafe { SetForegroundWindow(window.handle) } != 0;
     let raised = unsafe { BringWindowToTop(window.handle) } != 0;
-    if focused || raised {
+    if topmost || focused || raised {
         Ok(())
     } else {
         Err(io::Error::last_os_error())

@@ -853,10 +853,7 @@ fn recording_settings(
     let lifecycle_busy = state.active || state.starting || state.stopping;
     let support_check_available = !lifecycle_busy && !source_discovery_busy;
     let settings_idle = support_check_available && !state.support_check_in_flight;
-    let recording_toggle_enabled = !state.starting
-        && !state.stopping
-        && !source_discovery_busy
-        && !state.support_check_in_flight;
+    let recording_toggle_enabled = recording_toggle_enabled(state);
     settings_section("Recording", colors)
         .child(settings_row("Display", colors).child(settings_button(
             "settings-recording-display",
@@ -960,6 +957,14 @@ fn recording_source_discovery_busy(state: RecordingViewState) -> bool {
     state.display_discovery_in_flight || state.audio_discovery_in_flight
 }
 
+/// Keeps the record command available as an explicit cancellation while FFmpeg is starting.
+///
+/// Source discovery, support checks, and graceful shutdown still own their actions, but a pending
+/// startup can be invalidated safely before a late FFmpeg process reaches the application.
+fn recording_toggle_enabled(state: RecordingViewState) -> bool {
+    !state.stopping && !recording_source_discovery_busy(state) && !state.support_check_in_flight
+}
+
 /// Switches FFmpeg support checking to an explicit cancellation action while probing.
 fn recording_support_check_label(in_flight: bool) -> &'static str {
     if in_flight {
@@ -972,7 +977,7 @@ fn recording_support_check_label(in_flight: bool) -> &'static str {
 /// Gives the record command a truthful label while source discovery temporarily owns the action.
 fn recording_toggle_label(state: RecordingViewState) -> &'static str {
     if state.starting {
-        "Preparing..."
+        "Cancel start"
     } else if state.stopping {
         "Stopping..."
     } else if recording_source_discovery_busy(state) {
@@ -2265,11 +2270,11 @@ mod tests {
         history_entry_matches, history_result_summary, history_retention_label,
         history_visibility_label, ocr_support_check_label, recording_progress_label,
         recording_source_discovery_busy, recording_status_visible, recording_support_check_label,
-        recording_toggle_label, relative_timestamp_label, settings_actions_available,
-        settings_navigation_activation, settings_navigation_direction, settings_navigation_items,
-        settings_page_copy, settings_page_intro, settings_path_label, status_indicator_color,
-        translation_service_test_label, update_check_label, uses_compact_settings_navigation,
-        visible_history_entries,
+        recording_toggle_enabled, recording_toggle_label, relative_timestamp_label,
+        settings_actions_available, settings_navigation_activation, settings_navigation_direction,
+        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
+        status_indicator_color, translation_service_test_label, update_check_label,
+        uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2561,6 +2566,31 @@ mod tests {
         };
         assert!(recording_source_discovery_busy(state));
         assert_eq!(recording_toggle_label(state), "Discovering...");
+    }
+
+    #[test]
+    fn recording_controls_keep_a_startup_cancellation_action_available() {
+        let idle = RecordingViewState {
+            active: false,
+            starting: false,
+            stopping: false,
+            display_discovery_in_flight: false,
+            audio_discovery_in_flight: false,
+            support_check_in_flight: false,
+            paused: false,
+            progress: RecordingProgress::default(),
+        };
+        let starting = RecordingViewState {
+            starting: true,
+            ..idle
+        };
+
+        assert_eq!(recording_toggle_label(starting), "Cancel start");
+        assert!(recording_toggle_enabled(starting));
+        assert!(!recording_toggle_enabled(RecordingViewState {
+            stopping: true,
+            ..idle
+        }));
     }
 
     #[test]
