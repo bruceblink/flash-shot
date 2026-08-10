@@ -113,6 +113,7 @@ impl gpui::Render for FlashShotApp {
                         colors,
                         app.clone(),
                         compact_navigation,
+                        &self.settings_navigation_focus,
                     ))
                     .child(
                         div()
@@ -1634,18 +1635,27 @@ fn settings_navigation_direction(keystroke: &gpui::Keystroke, compact: bool) -> 
 
 /// Selects the next settings workspace and wraps at either end of the visible navigation list.
 fn adjacent_settings_section(section: SettingsSection, direction: i8) -> SettingsSection {
-    const SECTIONS: [SettingsSection; 4] = [
+    const SECTIONS: [SettingsSection; 4] = settings_sections();
+    let index = settings_section_index(section);
+    let next = (index as isize + isize::from(direction)).rem_euclid(SECTIONS.len() as isize);
+    SECTIONS[next as usize]
+}
+
+/// Keeps the settings order in one place for traversal and focus-handle lookup.
+const fn settings_sections() -> [SettingsSection; 4] {
+    [
         SettingsSection::Capture,
         SettingsSection::Files,
         SettingsSection::Recording,
         SettingsSection::System,
-    ];
-    let index = SECTIONS
+    ]
+}
+
+fn settings_section_index(section: SettingsSection) -> usize {
+    settings_sections()
         .iter()
         .position(|candidate| *candidate == section)
-        .expect("every settings section must be listed in navigation");
-    let next = (index as isize + isize::from(direction)).rem_euclid(SECTIONS.len() as isize);
-    SECTIONS[next as usize]
+        .expect("every settings section must be listed in navigation")
 }
 
 /// Renders a vertical navigation rail on roomy windows and a compact section row on narrow ones.
@@ -1654,6 +1664,7 @@ fn settings_navigation(
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
     compact: bool,
+    focus_handles: &[FocusHandle; 4],
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id("settings-navigation")
@@ -1689,11 +1700,16 @@ fn settings_navigation(
                         .child("WORKFLOW"),
                 )
         })
-        .children(
-            settings_navigation_items()
-                .into_iter()
-                .map(|item| settings_navigation_item(item, selected, colors, app.clone(), compact)),
-        )
+        .children(settings_navigation_items().into_iter().map(|item| {
+            settings_navigation_item(
+                item,
+                selected,
+                colors,
+                app.clone(),
+                compact,
+                (*focus_handles).clone(),
+            )
+        }))
 }
 
 #[derive(Clone, Copy)]
@@ -1741,9 +1757,11 @@ fn settings_navigation_item(
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
     compact: bool,
+    focus_handles: [FocusHandle; 4],
 ) -> gpui::Stateful<gpui::Div> {
     let active = selected == item.section;
     let keyboard_app = app.clone();
+    let item_focus = focus_handles[settings_section_index(item.section)].clone();
     div()
         .id(item.id)
         .flex()
@@ -1776,6 +1794,7 @@ fn settings_navigation_item(
             colors.text
         })
         .focusable()
+        .track_focus(&item_focus)
         .focus_visible(|style| style.border_color(colors.accent))
         .hover(move |style| {
             style
@@ -1791,7 +1810,7 @@ fn settings_navigation_item(
                     colors.text
                 })
         })
-        .on_key_down(move |event, _, cx| {
+        .on_key_down(move |event, window, cx| {
             if settings_navigation_activation(&event.keystroke) {
                 keyboard_app.update(cx, |this, cx| {
                     this.select_settings_section(item.section, cx)
@@ -1801,6 +1820,8 @@ fn settings_navigation_item(
                 keyboard_app.update(cx, |this, cx| {
                     let section = adjacent_settings_section(this.settings_section, direction);
                     this.select_settings_section(section, cx);
+                    let target = focus_handles[settings_section_index(section)].clone();
+                    target.focus(window, cx);
                 });
             }
         })
