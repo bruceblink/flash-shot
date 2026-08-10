@@ -17,6 +17,15 @@ struct OcrReadiness {
     error: Option<String>,
 }
 
+/// Records whether an explicitly requested OCR fixture produced any text without retaining its
+/// contents. The report is safe to commit because it exposes only bounded metadata.
+#[derive(Serialize)]
+struct OcrExercise {
+    passed: bool,
+    text_length: Option<usize>,
+    error: Option<String>,
+}
+
 #[derive(Serialize)]
 struct TranslationReadiness {
     configured: bool,
@@ -31,6 +40,7 @@ struct ProbeOptions {
     output: Option<PathBuf>,
     require_ocr: bool,
     require_translation: bool,
+    ocr_image: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -39,6 +49,7 @@ struct AcceptanceReport {
     test: &'static str,
     timestamp_unix_ms: u128,
     ocr: OcrReadiness,
+    ocr_exercise: Option<OcrExercise>,
     translation: TranslationReadiness,
     require_ocr: bool,
     require_translation: bool,
@@ -52,18 +63,22 @@ fn main() {
     }
 }
 
-/// Probes optional dependencies without creating screenshots or making a translation request.
+/// Probes optional dependencies without capturing the screen or making a translation request.
+/// An explicit `--ocr-image` exercises the full PNG-to-Tesseract path against a supplied fixture.
 fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
     let options = parse_options(args)?;
     let ocr = probe_ocr();
+    let ocr_exercise = options.ocr_image.as_deref().map(exercise_ocr);
     let translation = probe_translation();
     let passed = (!options.require_ocr || ocr.available)
-        && (!options.require_translation || translation.configured);
+        && (!options.require_translation || translation.configured)
+        && ocr_exercise.as_ref().is_none_or(|exercise| exercise.passed);
     let report = AcceptanceReport {
-        schema_version: 2,
+        schema_version: 3,
         test: "recognition_readiness",
         timestamp_unix_ms: unix_timestamp_ms(),
         ocr,
+        ocr_exercise,
         translation,
         require_ocr: options.require_ocr,
         require_translation: options.require_translation,
@@ -90,10 +105,40 @@ fn execute(args: impl IntoIterator<Item = String>) -> io::Result<()> {
         if options.require_translation && !report.translation.configured {
             missing.push("translation");
         }
+        if report
+            .ocr_exercise
+            .as_ref()
+            .is_some_and(|exercise| !exercise.passed)
+        {
+            missing.push("OCR fixture");
+        }
         Err(io::Error::other(format!(
             "required recognition dependencies are not ready: {}",
             missing.join(", ")
         )))
+    }
+}
+
+/// Runs the same PNG-to-Tesseract path used by the app and keeps the report content-free.
+fn exercise_ocr(path: &std::path::Path) -> OcrExercise {
+    let result = flash_shot::platform::capture::CaptureFrame::open_png(path)
+        .and_then(|frame| flash_shot::ocr::recognize_with_language(&frame, None));
+    match result {
+        Ok(text) if !text.trim().is_empty() => OcrExercise {
+            passed: true,
+            text_length: Some(text.trim().chars().count()),
+            error: None,
+        },
+        Ok(_) => OcrExercise {
+            passed: false,
+            text_length: Some(0),
+            error: Some("OCR returned no text".to_owned()),
+        },
+        Err(error) => OcrExercise {
+            passed: false,
+            text_length: None,
+            error: Some(error.to_string()),
+        },
     }
 }
 
@@ -177,6 +222,18 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> io::Result<ProbeOpti
                 }
                 options.require_translation = true;
             }
+            "--ocr-image" => {
+                if options.ocr_image.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--ocr-image may only be provided once",
+                    ));
+                }
+                let value = arguments.next().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "--ocr-image requires a path")
+                })?;
+                options.ocr_image = Some(PathBuf::from(value));
+            }
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -221,6 +278,7 @@ mod tests {
                 output: Some(PathBuf::from("report.json")),
                 require_ocr: true,
                 require_translation: true,
+                ocr_image: None,
             }
         );
         assert!(parse_options(["--output".to_owned()].into_iter()).is_err());
@@ -246,6 +304,24 @@ mod tests {
                 [
                     "--require-translation".to_owned(),
                     "--require-translation".to_owned(),
+                ]
+                .into_iter()
+            )
+            .is_err()
+        );
+        assert_eq!(
+            parse_options(["--ocr-image".to_owned(), "fixture.png".to_owned()].into_iter())
+                .unwrap()
+                .ocr_image,
+            Some(PathBuf::from("fixture.png"))
+        );
+        assert!(
+            parse_options(
+                [
+                    "--ocr-image".to_owned(),
+                    "one.png".to_owned(),
+                    "--ocr-image".to_owned(),
+                    "two.png".to_owned(),
                 ]
                 .into_iter()
             )
