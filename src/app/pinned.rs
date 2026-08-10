@@ -97,14 +97,21 @@ impl PinnedImage {
     /// Delegates the file write to the capture service so history ownership stays centralized.
     fn save_image(&mut self, cx: &mut Context<Self>) {
         let frame = self.frame.clone();
+        let pin = cx.entity().downgrade();
         let accepted = self
             .app
-            .update(cx, |app, cx| app.quick_save_pinned_frame(frame, cx));
+            .update(cx, |app, cx| app.quick_save_pinned_frame(frame, pin, cx));
         self.status = if accepted {
             "Saving image..."
         } else {
             "Another pin is already saving"
         };
+        cx.notify();
+    }
+
+    /// Applies the async save result to the originating pin while ignoring a closed window.
+    pub(super) fn finish_save_status(&mut self, saved: bool, cx: &mut Context<Self>) {
+        self.status = pinned_save_result_status(saved);
         cx.notify();
     }
 
@@ -584,11 +591,21 @@ fn pin_opacity_label(opacity: u8) -> &'static str {
     }
 }
 
+/// Keeps the Pin toolbar's completion text short enough to remain visible beside its controls.
+fn pinned_save_result_status(saved: bool) -> &'static str {
+    if saved {
+        "Saved image"
+    } else {
+        "Could not save image"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         PinnedKeyboardCommand, copy_pinned_image, next_pin_opacity, opacity_percentage,
         pinned_close_key, pinned_control_tooltip, pinned_keyboard_command,
+        pinned_save_result_status,
     };
     use crate::{
         domain::geometry::PhysicalRect,
@@ -731,5 +748,11 @@ mod tests {
         assert_eq!(next_pin_opacity(64), 255);
         assert_eq!(next_pin_opacity(99), 255);
         assert_eq!(opacity_percentage(191), 75);
+    }
+
+    #[test]
+    fn pinned_save_result_status_distinguishes_success_and_failure() {
+        assert_eq!(pinned_save_result_status(true), "Saved image");
+        assert_eq!(pinned_save_result_status(false), "Could not save image");
     }
 }

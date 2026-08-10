@@ -123,6 +123,7 @@ impl FlashShotApp {
     pub(in crate::app) fn quick_save_pinned_frame(
         &mut self,
         frame: CaptureFrame,
+        pin: WeakEntity<PinnedImage>,
         cx: &mut Context<Self>,
     ) -> bool {
         if !claim_pinned_save_slot(&mut self.pinned_save_in_flight) {
@@ -152,6 +153,7 @@ impl FlashShotApp {
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.pinned_save_in_flight = false;
+                        let pin_saved = result.is_ok();
                         match result {
                             Ok(path) => {
                                 let history_note = this.record_managed_save_with_recovery(
@@ -170,6 +172,9 @@ impl FlashShotApp {
                                 log::warn!(target: "flash_shot::pinned", "pinned_save_failed error={error}");
                             }
                         }
+                        let _ = pin.update(cx, |pin, cx| {
+                            pin.finish_save_status(pin_saved, cx);
+                        });
                         cx.notify();
                     });
                 }
