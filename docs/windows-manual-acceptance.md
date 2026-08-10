@@ -133,6 +133,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-10 | `current-ffmpeg-probe-timeout` | 350 项库测试、严格 Clippy、格式检查和工作区全目标编译通过；FFmpeg 版本、格式、设备和音频枚举探测增加 10 秒有界等待，卡住的探测进程会被终止并回收。 | 待执行 | 这补充录屏环境检查的自动失败恢复证据；本机 FFmpeg 9.0 的三种录制目标仍由既有 `recording-acceptance` 报告验证，完整录屏 UI 手工矩阵仍待执行。 |
 | 2026-08-10 | `recording-acceptance-ffprobe-timeout` | `recording-acceptance` 的 MP4 元数据校验增加 10 秒 FFprobe 超时与终止回收；探针测试、全量库测试、全目标编译和严格 Clippy 通过。 | 待执行 | 这是验收工具自身的失败恢复保护，不替代三种录制目标的当前 MP4/FFprobe 证据和完整录屏 UI 手工矩阵。 |
 | 2026-08-10 | `current-P1-settings-sections-520x640` | Release `settings-ui-acceptance` 串行生成深色/浅色 Capture、Library、Record、App 四页截图；当前 100% DPI 下八张截图均通过目视检查，未发现文字截断、控件重叠或状态栏遮挡。 | 待执行 | 截图位于 `target/ui-acceptance/settings-p1-current-dark-capture-520x640.png`、`settings-p1-current-dark-library-520x640.png`、`settings-p1-current-dark-record-520x640.png`、`settings-p1-current-dark-app-520x640.png` 及对应浅色文件；150%/200% 缩放、双屏和混合 DPI 仍待真实环境验收。 |
+| 2026-08-10 | `current-P1-settings-sections-420x420` | Release `settings-ui-acceptance` 串行生成深色/浅色 Capture、Library、Record、App 四页最小窗口截图；紧凑导航、首屏内容和固定状态栏边界均通过目视检查，长页面的后续控件保留在可滚动内容区。 | 待执行 | 截图位于 `target/ui-acceptance/settings-p1-current-dark-capture-420x420.png`、`settings-p1-current-dark-library-420x420.png`、`settings-p1-current-dark-record-420x420.png`、`settings-p1-current-dark-app-420x420.png` 及对应浅色文件；150%/200% 缩放、双屏和混合 DPI 仍待真实环境验收。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
