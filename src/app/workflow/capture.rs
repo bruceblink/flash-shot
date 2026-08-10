@@ -498,6 +498,8 @@ impl FlashShotApp {
         };
         self.close_capture_overlays(cx);
         self.close_manual_scroll_window(cx);
+        self.recording_audio_discovery_in_flight = false;
+        self.recording_display_discovery_in_flight = false;
         self.return_to_background();
         cx.notify();
     }
@@ -533,6 +535,8 @@ impl FlashShotApp {
         self.recording_start_in_flight = false;
         self.recording_stopping = false;
         self.recording_paused = false;
+        self.recording_audio_discovery_in_flight = false;
+        self.recording_display_discovery_in_flight = false;
         // GPUI has already removed native windows before invoking on_app_quit.
         // Keeping the handles untouched avoids issuing late operations on closed HWNDs.
         log::info!(target: "flash_shot::lifecycle", "capture_workflow_shutdown");

@@ -14,6 +14,7 @@ use super::{
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
     recognition_start_conflict_status, recording_audio_selection_label,
+    recording_discovery_conflict_status, recording_discovery_result_is_applicable,
     recording_display_selection_label, recording_start_conflict_status,
     recording_start_failure_status, recording_support_status, recording_target_label,
     resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
@@ -1201,6 +1202,38 @@ fn overlay_recording_actions_explain_active_starting_and_stopping_conflicts() {
         Some("Screen recording is already stopping...")
     );
     assert_eq!(recording_start_conflict_status(false, false, false), None);
+}
+
+#[test]
+fn recording_start_waits_for_source_discovery_to_finish() {
+    assert_eq!(
+        recording_discovery_conflict_status(true, false),
+        Some("Wait for recording source discovery to finish...")
+    );
+    assert_eq!(
+        recording_discovery_conflict_status(false, true),
+        Some("Wait for recording source discovery to finish...")
+    );
+    assert_eq!(recording_discovery_conflict_status(false, false), None);
+}
+
+#[test]
+fn stale_recording_discovery_results_cannot_replace_new_lifecycle_state() {
+    assert!(recording_discovery_result_is_applicable(
+        4, 4, false, false, false
+    ));
+    assert!(!recording_discovery_result_is_applicable(
+        5, 4, false, false, false
+    ));
+    assert!(!recording_discovery_result_is_applicable(
+        4, 4, true, false, false
+    ));
+    assert!(!recording_discovery_result_is_applicable(
+        4, 4, false, true, false
+    ));
+    assert!(!recording_discovery_result_is_applicable(
+        4, 4, false, false, true
+    ));
 }
 
 #[test]

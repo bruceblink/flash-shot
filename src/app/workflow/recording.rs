@@ -31,6 +31,14 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if let Some(status) = recording_discovery_conflict_status(
+            self.recording_display_discovery_in_flight,
+            self.recording_audio_discovery_in_flight,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
         if self.session.state() != CaptureSessionState::Idle {
             self.status = "Finish or cancel the current screenshot before recording".to_owned();
             cx.notify();
@@ -54,6 +62,14 @@ impl FlashShotApp {
             || self.recording_stopping
         {
             self.status = "Stop the current recording before checking support".to_owned();
+            cx.notify();
+            return;
+        }
+        if let Some(status) = recording_discovery_conflict_status(
+            self.recording_display_discovery_in_flight,
+            self.recording_audio_discovery_in_flight,
+        ) {
+            self.status = status.to_owned();
             cx.notify();
             return;
         }
@@ -92,6 +108,14 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if let Some(status) = recording_discovery_conflict_status(
+            self.recording_display_discovery_in_flight,
+            self.recording_audio_discovery_in_flight,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
         self.recording_start_in_flight = true;
         self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
         self.status = "Preparing region recording...".to_owned();
@@ -122,6 +146,14 @@ impl FlashShotApp {
             self.recording_control.is_some(),
             self.recording_start_in_flight,
             self.recording_stopping,
+        ) {
+            self.status = status.to_owned();
+            cx.notify();
+            return;
+        }
+        if let Some(status) = recording_discovery_conflict_status(
+            self.recording_display_discovery_in_flight,
+            self.recording_audio_discovery_in_flight,
         ) {
             self.status = status.to_owned();
             cx.notify();
@@ -206,12 +238,14 @@ impl FlashShotApp {
             || self.recording_start_in_flight
             || self.recording_stopping
             || self.recording_display_discovery_in_flight
+            || self.recording_audio_discovery_in_flight
         {
             return;
         }
         self.recording_display_discovery_in_flight = true;
         self.status = "Discovering displays for recording...".to_owned();
         let current = self.recording_display.clone();
+        let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -222,7 +256,7 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_recording_display_discovery(current, result, cx)
+                        this.finish_recording_display_discovery(current, result, generation, cx)
                     });
                 }
             }
@@ -234,8 +268,18 @@ impl FlashShotApp {
         &mut self,
         current: RecordingDisplaySelection,
         result: std::io::Result<Vec<crate::platform::display::DisplayInfo>>,
+        generation: u64,
         cx: &mut Context<Self>,
     ) {
+        if !recording_discovery_result_is_applicable(
+            self.operation_generation,
+            generation,
+            self.recording_control.is_some(),
+            self.recording_start_in_flight,
+            self.recording_stopping,
+        ) {
+            return;
+        }
         self.recording_display_discovery_in_flight = false;
         match result {
             Ok(displays) => {
@@ -255,12 +299,14 @@ impl FlashShotApp {
             || self.recording_start_in_flight
             || self.recording_stopping
             || self.recording_audio_discovery_in_flight
+            || self.recording_display_discovery_in_flight
         {
             return;
         }
         self.recording_audio_discovery_in_flight = true;
         self.status = "Discovering recording audio sources...".to_owned();
         let current = self.recording_audio.clone();
+        let generation = self.operation_generation;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -271,7 +317,7 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_recording_audio_discovery(current, result, cx)
+                        this.finish_recording_audio_discovery(current, result, generation, cx)
                     });
                 }
             }
@@ -283,8 +329,18 @@ impl FlashShotApp {
         &mut self,
         current: RecordingAudioSelection,
         result: std::io::Result<Vec<AudioSource>>,
+        generation: u64,
         cx: &mut Context<Self>,
     ) {
+        if !recording_discovery_result_is_applicable(
+            self.operation_generation,
+            generation,
+            self.recording_control.is_some(),
+            self.recording_start_in_flight,
+            self.recording_stopping,
+        ) {
+            return;
+        }
         self.recording_audio_discovery_in_flight = false;
         match result {
             Ok(sources) => {
@@ -616,6 +672,31 @@ pub(super) fn recording_start_conflict_status(
     } else {
         None
     }
+}
+
+/// Prevents a recording from starting while display or audio source discovery is still changing
+/// the selected input; the async completion must settle before a request can snapshot it.
+pub(super) fn recording_discovery_conflict_status(
+    display_discovery_in_flight: bool,
+    audio_discovery_in_flight: bool,
+) -> Option<&'static str> {
+    (display_discovery_in_flight || audio_discovery_in_flight)
+        .then_some("Wait for recording source discovery to finish...")
+}
+
+/// Accepts a discovery result only for the current workflow while no recording lifecycle owns the
+/// selected input; stale work leaves any newer discovery request untouched.
+pub(super) fn recording_discovery_result_is_applicable(
+    current_operation: u64,
+    completed_operation: u64,
+    recording_active: bool,
+    recording_starting: bool,
+    recording_stopping: bool,
+) -> bool {
+    is_current_operation(current_operation, completed_operation)
+        && !recording_active
+        && !recording_starting
+        && !recording_stopping
 }
 
 /// Converts a read-only FFmpeg probe into an actionable recording readiness message.

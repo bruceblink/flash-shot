@@ -27,6 +27,8 @@ struct RecordingViewState {
     active: bool,
     starting: bool,
     stopping: bool,
+    display_discovery_in_flight: bool,
+    audio_discovery_in_flight: bool,
     paused: bool,
     progress: crate::recording::RecordingProgress,
 }
@@ -43,6 +45,8 @@ impl gpui::Render for FlashShotApp {
             active: self.recording_control.is_some(),
             starting: self.recording_start_in_flight,
             stopping: self.recording_stopping,
+            display_discovery_in_flight: self.recording_display_discovery_in_flight,
+            audio_discovery_in_flight: self.recording_audio_discovery_in_flight,
             paused: self.recording_paused,
             progress: self.recording_progress,
         };
@@ -796,12 +800,20 @@ fn recording_settings(
     audio: &str,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
+    let source_discovery_busy = recording_source_discovery_busy(state);
+    let settings_idle =
+        !state.active && !state.starting && !state.stopping && !source_discovery_busy;
+    let recording_toggle_enabled = !state.starting && !state.stopping && !source_discovery_busy;
     settings_section("Recording", colors)
         .child(settings_row("Display", colors).child(settings_button(
             "settings-recording-display",
-            display,
+            if state.display_discovery_in_flight {
+                "Discovering..."
+            } else {
+                display
+            },
             colors,
-            !state.active && !state.starting && !state.stopping,
+            settings_idle,
             {
                 let app = app.clone();
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_display(cx))
@@ -809,9 +821,13 @@ fn recording_settings(
         )))
         .child(settings_row("Audio", colors).child(settings_button(
             "settings-recording-audio",
-            audio,
+            if state.audio_discovery_in_flight {
+                "Discovering..."
+            } else {
+                audio
+            },
             colors,
-            !state.active && !state.starting && !state.stopping,
+            settings_idle,
             {
                 let app = app.clone();
                 move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_audio(cx))
@@ -827,7 +843,7 @@ fn recording_settings(
                     "settings-check-recording-support",
                     "Check support",
                     colors,
-                    !state.active && !state.starting && !state.stopping,
+                    settings_idle,
                     {
                         let app = app.clone();
                         move |_, _, cx| app.update(cx, |this, cx| this.check_recording_support(cx))
@@ -835,17 +851,9 @@ fn recording_settings(
                 ))
                 .child(settings_button(
                     "settings-record-display",
-                    if state.starting {
-                        "Preparing..."
-                    } else if state.stopping {
-                        "Stopping..."
-                    } else if state.active {
-                        "Stop recording"
-                    } else {
-                        "Record display"
-                    },
+                    recording_toggle_label(state),
                     colors,
-                    !state.starting && !state.stopping,
+                    recording_toggle_enabled,
                     {
                         let app = app.clone();
                         move |_, _, cx| app.update(cx, |this, cx| this.toggle_display_recording(cx))
@@ -884,6 +892,26 @@ fn recording_settings(
 /// Keeps the recording status row visible for every non-idle lifecycle phase, including stop.
 fn recording_status_visible(state: RecordingViewState) -> bool {
     state.starting || state.active || state.stopping
+}
+
+/// Reports whether display or audio discovery is still changing the next recording input.
+fn recording_source_discovery_busy(state: RecordingViewState) -> bool {
+    state.display_discovery_in_flight || state.audio_discovery_in_flight
+}
+
+/// Gives the record command a truthful label while source discovery temporarily owns the action.
+fn recording_toggle_label(state: RecordingViewState) -> &'static str {
+    if state.starting {
+        "Preparing..."
+    } else if state.stopping {
+        "Stopping..."
+    } else if recording_source_discovery_busy(state) {
+        "Discovering..."
+    } else if state.active {
+        "Stop recording"
+    } else {
+        "Record display"
+    }
 }
 
 /// Summarizes recording lifecycle and FFmpeg progress in the settings page while a capture runs.
@@ -2088,9 +2116,10 @@ mod tests {
         RecordingViewState, capture_command_label, capture_shortcut_summary,
         history_clear_confirmation_label, history_entry_label, history_entry_matches,
         history_result_summary, history_retention_label, history_visibility_label,
-        recording_progress_label, recording_status_visible, relative_timestamp_label,
-        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
-        status_indicator_color, uses_compact_settings_navigation, visible_history_entries,
+        recording_progress_label, recording_source_discovery_busy, recording_status_visible,
+        recording_toggle_label, relative_timestamp_label, settings_navigation_items,
+        settings_page_copy, settings_page_intro, settings_path_label, status_indicator_color,
+        uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2262,6 +2291,8 @@ mod tests {
             active: false,
             starting: false,
             stopping: true,
+            display_discovery_in_flight: false,
+            audio_discovery_in_flight: false,
             paused: false,
             progress: RecordingProgress::default(),
         }));
@@ -2269,9 +2300,26 @@ mod tests {
             active: false,
             starting: false,
             stopping: false,
+            display_discovery_in_flight: false,
+            audio_discovery_in_flight: false,
             paused: false,
             progress: RecordingProgress::default(),
         }));
+    }
+
+    #[test]
+    fn recording_controls_explain_discovery_busy_state() {
+        let state = RecordingViewState {
+            active: false,
+            starting: false,
+            stopping: false,
+            display_discovery_in_flight: true,
+            audio_discovery_in_flight: false,
+            paused: false,
+            progress: RecordingProgress::default(),
+        };
+        assert!(recording_source_discovery_busy(state));
+        assert_eq!(recording_toggle_label(state), "Discovering...");
     }
 
     #[test]
