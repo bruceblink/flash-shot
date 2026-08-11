@@ -37,6 +37,7 @@ use crate::{
     platform::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
         capture::CaptureFrame,
+        clipboard::{ClipboardService, SystemClipboard},
         shortcut::{
             CaptureShortcut, GlobalShortcutService, ShortcutAction, ShortcutBinding, ShortcutEvent,
         },
@@ -185,6 +186,7 @@ pub struct FlashShotApp {
     history_thumbnails: HashMap<PathBuf, Arc<RenderImage>>,
     history_thumbnail_loading: HashSet<PathBuf>,
     history_thumbnail_failed: HashSet<PathBuf>,
+    selection_clipboard: Arc<dyn ClipboardService + Send + Sync>,
     system_services: SystemServices,
     _shutdown: Subscription,
     _window_closed: Subscription,
@@ -460,6 +462,7 @@ impl FlashShotApp {
             history,
             settings,
             settings_path,
+            Arc::new(SystemClipboard),
             SystemServices::Production,
             cx,
         )
@@ -478,7 +481,31 @@ impl FlashShotApp {
             history,
             settings,
             settings_path,
+            Arc::new(SystemClipboard),
             SystemServices::DisabledForAcceptance,
+            cx,
+        )
+    }
+
+    /// Builds the production shortcut workflow with a disposable selection-copy destination.
+    ///
+    /// Native input acceptance still exercises the real global shortcut and overlay lifecycle,
+    /// while the injected sink prevents its Copy action from replacing the user's clipboard.
+    pub(crate) fn new_for_overlay_interaction(
+        performance: PerformanceRecorder,
+        history: ScreenshotHistory,
+        settings: UserSettings,
+        settings_path: PathBuf,
+        selection_clipboard: Arc<dyn ClipboardService + Send + Sync>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_system_services(
+            performance,
+            history,
+            settings,
+            settings_path,
+            selection_clipboard,
+            SystemServices::Production,
             cx,
         )
     }
@@ -489,6 +516,7 @@ impl FlashShotApp {
         history: ScreenshotHistory,
         settings: UserSettings,
         settings_path: PathBuf,
+        selection_clipboard: Arc<dyn ClipboardService + Send + Sync>,
         system_services: SystemServices,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -500,6 +528,7 @@ impl FlashShotApp {
         let window_closed = cx.on_window_closed(move |cx, window_id| {
             if let Some(app) = app.upgrade() {
                 app.update(cx, |app, cx| {
+                    app.unregister_capture_overlay(window_id, cx);
                     app.unregister_pinned_window(window_id, cx);
                 });
             }
@@ -694,6 +723,7 @@ impl FlashShotApp {
             history_thumbnails: HashMap::new(),
             history_thumbnail_loading: HashSet::new(),
             history_thumbnail_failed: HashSet::new(),
+            selection_clipboard,
             system_services,
             _shutdown: shutdown,
             _window_closed: window_closed,
@@ -702,10 +732,10 @@ impl FlashShotApp {
         }
     }
 
-    /// Bridges the isolated input runner to recording state without bypassing product UI actions.
+    /// Bridges the isolated input runner to observable state without bypassing product UI actions.
     ///
-    /// Snapshot replies are process-local and bounded. The only mutating command mirrors opening
-    /// the Record page from the tray; pause, resume, and stop still require real button clicks.
+    /// Snapshot replies are process-local and bounded. The two mutating commands only restore the
+    /// hidden settings controller; capture, export, Pin, and recording actions still use input.
     pub(crate) fn listen_for_overlay_interaction_commands(
         commands: async_channel::Receiver<crate::OverlayInteractionAcceptanceCommand>,
         cx: &mut Context<Self>,
@@ -754,6 +784,58 @@ impl FlashShotApp {
                                     .unwrap_or_default(),
                                 status: this.status.clone(),
                             });
+                        }
+                        crate::OverlayInteractionAcceptanceCommand::CaptureSnapshot(reply) => {
+                            let pinned_source_bounds = this.pinned_windows.last().and_then(|pin| {
+                                pin.update(cx, |pin, _, _| pin.source_bounds_for_acceptance())
+                                    .ok()
+                            });
+                            let session_state = match this.session.state() {
+                                crate::domain::session::CaptureSessionState::Idle => "idle",
+                                crate::domain::session::CaptureSessionState::Capturing => {
+                                    "capturing"
+                                }
+                                crate::domain::session::CaptureSessionState::Selecting => {
+                                    "selecting"
+                                }
+                                crate::domain::session::CaptureSessionState::Exporting => {
+                                    "exporting"
+                                }
+                                crate::domain::session::CaptureSessionState::Completed => {
+                                    "completed"
+                                }
+                                crate::domain::session::CaptureSessionState::Cancelled => {
+                                    "cancelled"
+                                }
+                                crate::domain::session::CaptureSessionState::Failed => "failed",
+                            };
+                            let _ = reply.send(crate::OverlayInteractionCaptureState {
+                                session_state: session_state.to_owned(),
+                                // Report the committed session rectangle used by Save, Pin, and
+                                // Copy, never an in-flight mouse-move preview awaiting mouse-up.
+                                selection: this.session.selection(),
+                                overlay_count: this.overlay_windows.len(),
+                                pinned_count: this.pinned_windows.len(),
+                                pinned_source_bounds,
+                                capture_preflight_ready: this.capture_preflight_ready(),
+                                status: this.status.clone(),
+                            });
+                        }
+                        crate::OverlayInteractionAcceptanceCommand::CaptureContent(reply) => {
+                            let selection = this.session.selection().and_then(|selection| {
+                                this.frame
+                                    .as_ref()
+                                    .and_then(|frame| frame.crop(selection).ok())
+                            });
+                            let pin = this.pinned_windows.last().and_then(|pin| {
+                                pin.update(cx, |pin, _, _| pin.frame_for_acceptance()).ok()
+                            });
+                            let _ = reply
+                                .send(crate::OverlayInteractionCaptureContent { selection, pin });
+                        }
+                        crate::OverlayInteractionAcceptanceCommand::ShowCaptureSettings => {
+                            this.select_settings_section(SettingsSection::Capture, cx);
+                            this.show_settings_window(cx);
                         }
                         crate::OverlayInteractionAcceptanceCommand::ShowRecordingSettings => {
                             this.select_settings_section(SettingsSection::Recording, cx);

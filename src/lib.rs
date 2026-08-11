@@ -27,7 +27,10 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use settings::UserSettings;
 use std::{
     path::PathBuf,
-    sync::mpsc::SyncSender,
+    sync::{
+        Arc,
+        mpsc::{Sender, SyncSender},
+    },
     time::{Duration, Instant},
 };
 
@@ -91,6 +94,7 @@ pub fn run_settings_ui_acceptance(
             pinned_saved_feedback_preview: acceptance.pinned_saved_feedback_preview,
             interaction_shortcut_readiness: None,
             interaction_commands: None,
+            interaction_copy_results: None,
         },
     )
 }
@@ -125,6 +129,9 @@ pub fn run_overlay_ui_acceptance(
 #[derive(Debug)]
 pub enum OverlayInteractionAcceptanceCommand {
     Snapshot(SyncSender<OverlayInteractionRecordingState>),
+    CaptureSnapshot(SyncSender<OverlayInteractionCaptureState>),
+    CaptureContent(SyncSender<OverlayInteractionCaptureContent>),
+    ShowCaptureSettings,
     ShowRecordingSettings,
 }
 
@@ -142,12 +149,107 @@ pub struct OverlayInteractionRecordingState {
     pub status: String,
 }
 
+/// Minimal capture and Pin state returned to the isolated real-input probe.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OverlayInteractionCaptureState {
+    pub session_state: String,
+    pub selection: Option<domain::geometry::PhysicalRect>,
+    pub overlay_count: usize,
+    pub pinned_count: usize,
+    pub pinned_source_bounds: Option<domain::geometry::PhysicalRect>,
+    pub capture_preflight_ready: bool,
+    pub status: String,
+}
+
+/// Exact process-local frames used to prove Save, Copy, and Pin content without global state.
+#[derive(Clone, Debug)]
+pub struct OverlayInteractionCaptureContent {
+    pub selection: Option<platform::capture::CaptureFrame>,
+    pub pin: Option<platform::capture::CaptureFrame>,
+}
+
 /// Process-local controls for one isolated real-input overlay acceptance session.
 pub struct OverlayInteractionAcceptanceOptions {
     pub window_width: f32,
     pub window_height: f32,
     pub shortcut_readiness: SyncSender<bool>,
     pub commands: async_channel::Receiver<OverlayInteractionAcceptanceCommand>,
+    /// Receives the exact frame produced by a real selection Copy without touching Windows state.
+    pub copy_results: Sender<platform::capture::CaptureFrame>,
+}
+
+/// Process-local clipboard used only by the real-input acceptance entry point.
+struct OverlayInteractionClipboard(Sender<platform::capture::CaptureFrame>);
+
+impl platform::clipboard::ClipboardService for OverlayInteractionClipboard {
+    fn copy_image(&self, frame: &platform::capture::CaptureFrame) -> std::io::Result<()> {
+        self.0.send(frame.clone()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "overlay interaction copy receiver was dropped",
+            )
+        })
+    }
+
+    fn copy_text(&self, _text: &str) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "overlay interaction acceptance only records image copies",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod overlay_interaction_clipboard_tests {
+    use super::OverlayInteractionClipboard;
+    use crate::platform::{
+        capture::{CaptureFrame, PixelFormat},
+        clipboard::ClipboardService,
+    };
+    use std::{sync::Arc, sync::mpsc, time::Duration};
+
+    fn frame() -> CaptureFrame {
+        CaptureFrame {
+            bounds: crate::domain::geometry::PhysicalRect {
+                left: -4,
+                top: 7,
+                right: -2,
+                bottom: 8,
+            },
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([1, 2, 3, 255, 4, 5, 6, 255]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 2,
+        }
+    }
+
+    #[test]
+    fn acceptance_clipboard_sends_the_exact_cropped_frame() {
+        let (sender, receiver) = mpsc::channel();
+        let clipboard = OverlayInteractionClipboard(sender);
+        let expected = frame();
+
+        clipboard.copy_image(&expected).unwrap();
+        let copied = receiver.recv().unwrap();
+
+        assert_eq!(copied.bounds, expected.bounds);
+        assert_eq!((copied.width, copied.height), (2, 1));
+        assert_eq!(copied.pixels, expected.pixels);
+    }
+
+    #[test]
+    fn acceptance_clipboard_fails_when_the_observer_is_gone() {
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        let error = OverlayInteractionClipboard(sender)
+            .copy_image(&frame())
+            .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    }
 }
 
 /// Starts the real capture service with a visible, disposable settings window for input-driven QA.
@@ -176,6 +278,7 @@ pub fn run_overlay_interaction_acceptance(
             section: "capture".to_owned(),
             interaction_shortcut_readiness: Some(acceptance.shortcut_readiness),
             interaction_commands: Some(acceptance.commands),
+            interaction_copy_results: Some(acceptance.copy_results),
             ..SettingsWindowOptions::default()
         },
     )
@@ -331,6 +434,8 @@ struct SettingsWindowOptions {
     interaction_shortcut_readiness: Option<SyncSender<bool>>,
     /// Receives process-local recording observations and Record-page restore requests.
     interaction_commands: Option<async_channel::Receiver<OverlayInteractionAcceptanceCommand>>,
+    /// Replaces only selection Copy with a process-local sink for native input acceptance.
+    interaction_copy_results: Option<Sender<platform::capture::CaptureFrame>>,
 }
 
 impl Default for SettingsWindowOptions {
@@ -349,6 +454,7 @@ impl Default for SettingsWindowOptions {
             pinned_saved_feedback_preview: false,
             interaction_shortcut_readiness: None,
             interaction_commands: None,
+            interaction_copy_results: None,
         }
     }
 }
@@ -410,11 +516,24 @@ fn run_with_settings_window(
         let pinned_saved_feedback_preview = window_options.pinned_saved_feedback_preview;
         let interaction_shortcut_readiness = window_options.interaction_shortcut_readiness;
         let interaction_commands = window_options.interaction_commands;
+        let interaction_copy_results = window_options.interaction_copy_results;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
-            let app =
-                cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx));
+            let app = if let Some(copy_results) = interaction_copy_results {
+                cx.new(|cx| {
+                    FlashShotApp::new_for_overlay_interaction(
+                        performance,
+                        history,
+                        settings,
+                        settings_path,
+                        Arc::new(OverlayInteractionClipboard(copy_results)),
+                        cx,
+                    )
+                })
+            } else {
+                cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx))
+            };
             if let Some(readiness) = interaction_shortcut_readiness {
                 let _ = readiness.send(app.read(cx).capture_shortcut_active_for_acceptance());
             }

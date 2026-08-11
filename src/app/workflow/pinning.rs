@@ -19,6 +19,7 @@ impl FlashShotApp {
 
         self.status = "Copying selection...".to_owned();
         let generation = self.operation_generation;
+        let clipboard = self.selection_clipboard.clone();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -30,7 +31,7 @@ impl FlashShotApp {
                             &frame,
                             &document,
                             selection,
-                            &SystemClipboard,
+                            clipboard.as_ref(),
                         )
                     })
                     .await;

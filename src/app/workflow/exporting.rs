@@ -17,6 +17,15 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
+        let demoted_overlays = match self.demote_capture_overlays_for_dialog(cx) {
+            Ok(handles) => handles,
+            Err(error) => {
+                let _ = self.session.export_cancelled();
+                self.status = format!("Could not show Save dialog above capture: {error}");
+                cx.notify();
+                return;
+            }
+        };
 
         self.status = "Choose where to save the selection...".to_owned();
         let generation = self.operation_generation;
@@ -29,7 +38,10 @@ impl FlashShotApp {
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                let outcome = match prompt.await {
+                let prompt_result = prompt.await;
+                // The common dialog is gone now; restore z-order before potentially slow file I/O.
+                Self::restore_capture_overlays_after_dialog(&demoted_overlays);
+                let outcome = match prompt_result {
                     Ok(Ok(Some(path))) => {
                         let path = export_path(path);
                         let result = cx
@@ -190,6 +202,14 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
+        let demoted_overlays = match self.demote_capture_overlays_for_dialog(cx) {
+            Ok(handles) => handles,
+            Err(error) => {
+                self.status = format!("Could not show annotation Save dialog: {error}");
+                cx.notify();
+                return;
+            }
+        };
         self.status = "Choose where to save annotations...".to_owned();
         cx.notify();
         let prompt =
@@ -197,7 +217,10 @@ impl FlashShotApp {
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                let result = match prompt.await {
+                let prompt_result = prompt.await;
+                // The common dialog is gone now; restore z-order before potentially slow file I/O.
+                Self::restore_capture_overlays_after_dialog(&demoted_overlays);
+                let result = match prompt_result {
                     Ok(Ok(Some(path))) => {
                         let path = annotation_document_path(path);
                         cx.background_executor()
@@ -205,15 +228,19 @@ impl FlashShotApp {
                                 save_annotation_document(&document, path.clone()).map(|()| path)
                             })
                             .await
+                            .map(Some)
                     }
-                    Ok(Ok(None)) => return,
+                    Ok(Ok(None)) => Ok(None),
                     Ok(Err(error)) => Err(std::io::Error::other(error)),
                     Err(error) => Err(std::io::Error::other(error.to_string())),
                 };
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.status = match result {
-                            Ok(path) => format!("Annotations saved to {}", path.display()),
+                            Ok(Some(path)) => {
+                                format!("Annotations saved to {}", path.display())
+                            }
+                            Ok(None) => "Annotation save cancelled".to_owned(),
                             Err(error) => format!("Could not save annotations: {error}"),
                         };
                         cx.notify();
@@ -229,13 +256,24 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
+        let demoted_overlays = match self.demote_capture_overlays_for_dialog(cx) {
+            Ok(handles) => handles,
+            Err(error) => {
+                self.status = format!("Could not show editable-project Save dialog: {error}");
+                cx.notify();
+                return;
+            }
+        };
         self.status = "Choose where to save the editable image...".to_owned();
         cx.notify();
         let prompt = cx.prompt_for_new_path(&PathBuf::default(), Some("flash-shot-editable.png"));
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                let result = match prompt.await {
+                let prompt_result = prompt.await;
+                // The common dialog is gone now; restore z-order before potentially slow file I/O.
+                Self::restore_capture_overlays_after_dialog(&demoted_overlays);
+                let result = match prompt_result {
                     Ok(Ok(Some(path))) => {
                         let path = png_path(path);
                         cx.background_executor()
@@ -244,19 +282,21 @@ impl FlashShotApp {
                                     .map(|()| path)
                             })
                             .await
+                            .map(Some)
                     }
-                    Ok(Ok(None)) => return,
+                    Ok(Ok(None)) => Ok(None),
                     Ok(Err(error)) => Err(std::io::Error::other(error)),
                     Err(error) => Err(std::io::Error::other(error.to_string())),
                 };
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.status = match result {
-                            Ok(path) => format!(
+                            Ok(Some(path)) => format!(
                                 "Editable project saved to {} and {}",
                                 path.display(),
                                 annotation_sidecar_path(&path).display()
                             ),
+                            Ok(None) => "Editable-project save cancelled".to_owned(),
                             Err(error) => format!("Could not save editable project: {error}"),
                         };
                         cx.notify();
@@ -267,6 +307,7 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Opens annotations for this capture and ignores a result after a newer capture replaces it.
     pub(in crate::app) fn open_annotation_document(&mut self, cx: &mut Context<Self>) {
         let Some(frame) = self.frame.as_ref() else {
             self.status = "Capture frame is unavailable".to_owned();
@@ -274,6 +315,15 @@ impl FlashShotApp {
             return;
         };
         let bounds = frame.bounds;
+        let generation = self.operation_generation;
+        let demoted_overlays = match self.demote_capture_overlays_for_dialog(cx) {
+            Ok(handles) => handles,
+            Err(error) => {
+                self.status = format!("Could not show annotation Open dialog: {error}");
+                cx.notify();
+                return;
+            }
+        };
         self.status = "Choose annotations to open...".to_owned();
         cx.notify();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
@@ -285,47 +335,142 @@ impl FlashShotApp {
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                let result = match prompt.await {
+                let prompt_result = prompt.await;
+                // The common dialog is gone now; restore z-order before potentially slow file I/O.
+                Self::restore_capture_overlays_after_dialog(&demoted_overlays);
+                let result = match prompt_result {
                     Ok(Ok(Some(mut paths))) => match paths.pop() {
-                        Some(path) => {
-                            cx.background_executor()
-                                .spawn(async move {
-                                    load_annotation_document(&path, bounds)
-                                        .map(|document| (path, document))
-                                })
-                                .await
-                        }
-                        None => return,
+                        Some(path) => cx
+                            .background_executor()
+                            .spawn(async move {
+                                load_annotation_document(&path, bounds)
+                                    .map(|document| (path, document))
+                            })
+                            .await
+                            .map(Some),
+                        None => Ok(None),
                     },
-                    Ok(Ok(None)) => return,
+                    Ok(Ok(None)) => Ok(None),
                     Ok(Err(error)) => Err(std::io::Error::other(error)),
                     Err(error) => Err(std::io::Error::other(error.to_string())),
                 };
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| match result {
-                        Ok((path, document)) => {
-                            let (next_id, next_sequence) = next_annotation_counters(&document);
-                            this.annotation_document = Some(document);
-                            this.annotation_history = Default::default();
-                            this.annotation_editor = Default::default();
-                            this.annotation_tool = None;
-                            this.text_edit = None;
-                            this.text_edit_annotation = None;
-                            this.selected_annotation = None;
-                            this.next_annotation_id = next_id;
-                            this.next_sequence_number = next_sequence;
-                            this.status = format!("Loaded annotations from {}", path.display());
-                            cx.notify();
+                    this.update(&mut cx, |this, cx| {
+                        if !is_current_operation(this.operation_generation, generation) {
+                            return;
                         }
-                        Err(error) => {
-                            this.status = format!("Could not open annotations: {error}");
-                            cx.notify();
+                        match result {
+                            Ok(Some((path, document))) => {
+                                let (next_id, next_sequence) = next_annotation_counters(&document);
+                                this.annotation_document = Some(document);
+                                this.annotation_history = Default::default();
+                                this.annotation_editor = Default::default();
+                                this.annotation_tool = None;
+                                this.text_edit = None;
+                                this.text_edit_annotation = None;
+                                this.selected_annotation = None;
+                                this.next_annotation_id = next_id;
+                                this.next_sequence_number = next_sequence;
+                                this.status = format!("Loaded annotations from {}", path.display());
+                                cx.notify();
+                            }
+                            Ok(None) => {
+                                this.status = "Open annotations cancelled".to_owned();
+                                cx.notify();
+                            }
+                            Err(error) => {
+                                this.status = format!("Could not open annotations: {error}");
+                                cx.notify();
+                            }
                         }
                     });
                 }
             }
         })
         .detach();
+    }
+
+    /// Returns every live capture-overlay HWND so native dialogs can be placed above them.
+    #[cfg(windows)]
+    fn capture_overlay_native_handles(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> std::io::Result<Vec<isize>> {
+        self.overlay_windows
+            .iter()
+            .map(|overlay| {
+                overlay
+                    .update(cx, |_, window, _| {
+                        let handle = window
+                            .window_handle()
+                            .map_err(|error| std::io::Error::other(error.to_string()))?;
+                        match handle.as_raw() {
+                            RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get()),
+                            _ => Err(std::io::Error::new(
+                                std::io::ErrorKind::Unsupported,
+                                "capture overlay does not expose a Win32 HWND",
+                            )),
+                        }
+                    })
+                    .map_err(|error| std::io::Error::other(error.to_string()))?
+            })
+            .collect()
+    }
+
+    /// Demotes all overlays transactionally and returns the exact HWNDs changed by this operation.
+    #[cfg(windows)]
+    fn demote_capture_overlays_for_dialog(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> std::io::Result<Vec<isize>> {
+        let handles = self.capture_overlay_native_handles(cx)?;
+        let mut demoted = Vec::with_capacity(handles.len());
+        for handle in handles {
+            if let Err(error) = window_visibility::make_not_topmost(handle) {
+                for handle in demoted {
+                    let _ = window_visibility::make_topmost(handle);
+                }
+                return Err(error);
+            }
+            demoted.push(handle);
+        }
+        Ok(demoted)
+    }
+
+    /// Other platforms do not have the Windows topmost z-order that obscures common dialogs.
+    #[cfg(not(windows))]
+    fn demote_capture_overlays_for_dialog(
+        &self,
+        _cx: &mut Context<Self>,
+    ) -> std::io::Result<Vec<isize>> {
+        Ok(Vec::new())
+    }
+
+    /// Restores every surviving HWND changed by the matching dialog operation independently.
+    fn restore_capture_overlays_after_dialog(handles: &[isize]) {
+        for handle in handles {
+            if let Err(error) = window_visibility::make_topmost(*handle) {
+                log::warn!(target: "flash_shot::overlay", "overlay_topmost_restore_failed error={error}");
+            }
+        }
+    }
+
+    /// Removes a natively closed overlay by exact ID and cancels an orphaned capture session.
+    pub(in crate::app) fn unregister_capture_overlay(
+        &mut self,
+        closing_id: gpui::WindowId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let removed = remove_capture_overlay_by_id(&mut self.overlay_windows, closing_id);
+        if !removed {
+            return false;
+        }
+        if self.overlay_windows.is_empty() && self.session.state() != CaptureSessionState::Idle {
+            self.reset(cx);
+        } else {
+            cx.notify();
+        }
+        true
     }
 
     pub(super) fn export_source(&mut self) -> Option<(CaptureFrame, AnnotationDocument)> {
@@ -741,6 +886,16 @@ impl FlashShotApp {
     }
 }
 
+/// Applies exact-ID removal without probing a window while its native close is in progress.
+fn remove_capture_overlay_by_id(
+    windows: &mut Vec<gpui::WindowHandle<CaptureOverlay>>,
+    closing_id: gpui::WindowId,
+) -> bool {
+    let previous_len = windows.len();
+    windows.retain(|window| window.window_id() != closing_id);
+    windows.len() != previous_len
+}
+
 /// Claims the single managed pinned-save slot so concurrent Pin windows cannot race on history.
 pub(super) fn claim_pinned_save_slot(in_flight: &mut bool) -> bool {
     if *in_flight {
@@ -748,5 +903,29 @@ pub(super) fn claim_pinned_save_slot(in_flight: &mut bool) -> bool {
     } else {
         *in_flight = true;
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CaptureOverlay, remove_capture_overlay_by_id};
+    use gpui::{WindowHandle, WindowId};
+
+    #[test]
+    fn closing_one_capture_overlay_preserves_other_registered_displays() {
+        let first_id = WindowId::from(11_u64);
+        let closing_id = WindowId::from(12_u64);
+        let third_id = WindowId::from(13_u64);
+        let mut windows = vec![
+            WindowHandle::<CaptureOverlay>::new(first_id),
+            WindowHandle::<CaptureOverlay>::new(closing_id),
+            WindowHandle::<CaptureOverlay>::new(third_id),
+        ];
+
+        assert!(remove_capture_overlay_by_id(&mut windows, closing_id));
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].window_id(), first_id);
+        assert_eq!(windows[1].window_id(), third_id);
+        assert!(!remove_capture_overlay_by_id(&mut windows, closing_id));
     }
 }

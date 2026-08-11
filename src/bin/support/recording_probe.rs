@@ -1,6 +1,7 @@
 //! Shared FFprobe validation used by native recording acceptance executables.
 
 use std::{
+    ffi::OsString,
     io,
     path::Path,
     process::{Child, Command, Output, Stdio},
@@ -77,8 +78,78 @@ fn run_ffprobe(ffprobe: &Path, output: &Path) -> io::Result<Output> {
     child.wait_with_output()
 }
 
+/// Decodes one bounded video frame into PNG for native recording content verification.
+#[allow(dead_code)] // This shared module's metadata-only runner does not extract frames.
+pub(crate) fn extract_video_frame(
+    ffmpeg: &Path,
+    input: &Path,
+    timestamp_seconds: f64,
+    output: &Path,
+) -> io::Result<()> {
+    let arguments = video_frame_arguments(input, timestamp_seconds, output)?;
+    let mut child = Command::new(ffmpeg)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    wait_for_child(&mut child, FFPROBE_TIMEOUT, "FFmpeg frame extraction")?;
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        return Err(io::Error::other(format!(
+            "FFmpeg could not extract a recording frame: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        )));
+    }
+    if !output.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "FFmpeg reported success without writing the extracted frame",
+        ));
+    }
+    Ok(())
+}
+
+/// Builds the one-frame decode contract separately so tests do not need to launch FFmpeg.
+#[allow(dead_code)] // This shared module's metadata-only runner does not extract frames.
+pub(crate) fn video_frame_arguments(
+    input: &Path,
+    timestamp_seconds: f64,
+    output: &Path,
+) -> io::Result<Vec<OsString>> {
+    if !timestamp_seconds.is_finite() || timestamp_seconds < 0.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "video frame timestamp must be finite and non-negative",
+        ));
+    }
+    Ok(vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-loglevel"),
+        OsString::from("error"),
+        OsString::from("-ss"),
+        OsString::from(format!("{timestamp_seconds:.6}")),
+        OsString::from("-i"),
+        input.as_os_str().to_owned(),
+        OsString::from("-map"),
+        OsString::from("0:v:0"),
+        OsString::from("-frames:v"),
+        OsString::from("1"),
+        OsString::from("-an"),
+        OsString::from("-c:v"),
+        OsString::from("png"),
+        OsString::from("-y"),
+        output.as_os_str().to_owned(),
+    ])
+}
+
 /// Polls FFprobe until it exits; a stuck metadata check is terminated and reaped.
 pub(crate) fn wait_for_ffprobe_child(child: &mut Child, timeout: Duration) -> io::Result<()> {
+    wait_for_child(child, timeout, "FFprobe")
+}
+
+/// Polls one probe process until exit and always reaps it after timeout or I/O failure.
+fn wait_for_child(child: &mut Child, timeout: Duration, label: &str) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
@@ -89,7 +160,7 @@ pub(crate) fn wait_for_ffprobe_child(child: &mut Child, timeout: Duration) -> io
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     format!(
-                        "FFprobe exceeded {} ms and was terminated",
+                        "{label} exceeded {} ms and was terminated",
                         timeout.as_millis()
                     ),
                 ));
@@ -149,4 +220,48 @@ pub(crate) fn parse_media_probe(stdout: &[u8]) -> io::Result<MediaMetadata> {
         height,
         duration_seconds: duration,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::video_frame_arguments;
+    use std::{ffi::OsString, path::Path};
+
+    #[test]
+    fn frame_extraction_decodes_one_silent_png_and_overwrites_only_its_target() {
+        let arguments =
+            video_frame_arguments(Path::new("recording.mp4"), 1.25, Path::new("evidence.png"))
+                .unwrap();
+
+        assert_eq!(
+            arguments,
+            [
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "1.250000",
+                "-i",
+                "recording.mp4",
+                "-map",
+                "0:v:0",
+                "-frames:v",
+                "1",
+                "-an",
+                "-c:v",
+                "png",
+                "-y",
+                "evidence.png",
+            ]
+            .map(OsString::from)
+        );
+        assert!(
+            video_frame_arguments(
+                Path::new("recording.mp4"),
+                f64::NAN,
+                Path::new("evidence.png")
+            )
+            .is_err()
+        );
+    }
 }

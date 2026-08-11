@@ -204,6 +204,8 @@ pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
     display: DisplayInfo,
     preview: Arc<RenderImage>,
+    // Only full-display overlays may continue a captured mouse drag onto another monitor.
+    allow_cross_display_drag: bool,
     // The workflow generation prevents queued input from a closed overlay changing a later
     // capture session after the user presses Capture again.
     operation_generation: u64,
@@ -219,6 +221,7 @@ impl CaptureOverlay {
         display: DisplayInfo,
         preview: Arc<RenderImage>,
         operation_generation: u64,
+        allow_cross_display_drag: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         let observation = cx.observe(&app, |_, _, cx| cx.notify());
@@ -226,6 +229,7 @@ impl CaptureOverlay {
             app,
             display,
             preview,
+            allow_cross_display_drag,
             operation_generation,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
@@ -308,11 +312,18 @@ impl CaptureOverlay {
         let app = self.app.clone();
         let preserve_aspect_ratio = event.modifiers.shift;
         let resize_from_center = event.modifiers.alt;
+        // GPUI events are client-local. Mapping them through the preview keeps the selection in
+        // display pixels even when a borderless Win32 client starts a few pixels off-screen.
         let dragging_point = event
             .dragging()
-            .then(cursor::position)
-            .transpose()
-            .ok()
+            .then(|| {
+                selection_point_from_view_or_screen(
+                    transform,
+                    event.position,
+                    self.allow_cross_display_drag,
+                    cursor::position().ok(),
+                )
+            })
             .flatten();
         cx.defer(move |cx| {
             app.update(cx, |app, cx| {
@@ -342,10 +353,13 @@ impl CaptureOverlay {
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
             return;
         }
-        let point = cursor::position().ok().or_else(|| {
-            self.transform(viewport).and_then(|transform| {
-                transform.view_to_physical(clamp_to_view(transform, event.position))
-            })
+        let point = self.transform(viewport).and_then(|transform| {
+            selection_point_from_view_or_screen(
+                transform,
+                event.position,
+                self.allow_cross_display_drag,
+                cursor::position().ok(),
+            )
         });
         let Some(point) = point else { return };
         let app = self.app.clone();
@@ -509,6 +523,7 @@ pub(super) fn open_ui_acceptance(
                     overlay_display,
                     overlay_preview,
                     operation_generation,
+                    false,
                     cx,
                 )
             });
@@ -3177,6 +3192,24 @@ fn clamp_to_view(transform: PreviewTransform, position: gpui::Point<Pixels>) -> 
     }
 }
 
+/// Uses global pixels outside a full-display overlay, while image-editor letterboxing stays local.
+fn selection_point_from_view_or_screen(
+    transform: PreviewTransform,
+    position: gpui::Point<Pixels>,
+    allow_cross_display_drag: bool,
+    outside_screen_point: Option<PhysicalPoint>,
+) -> Option<PhysicalPoint> {
+    let view = view_point(position);
+    if transform.fitted_view().contains(view) {
+        transform.view_to_physical(view)
+    } else {
+        allow_cross_display_drag
+            .then_some(outside_screen_point)
+            .flatten()
+            .or_else(|| transform.view_to_physical(clamp_to_view(transform, position)))
+    }
+}
+
 fn intersect(left: PhysicalRect, right: PhysicalRect) -> Option<PhysicalRect> {
     let result = PhysicalRect {
         left: left.left.max(right.left),
@@ -3849,12 +3882,13 @@ mod tests {
         primary_action_tooltip, recognition_result_preview, recognition_retry_label,
         resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
         secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
-        smart_target_hud_label, smart_target_hud_layout, status_bottom_inset, visible_selection,
+        selection_point_from_view_or_screen, smart_target_hud_label, smart_target_hud_layout,
+        status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
         geometry::{PhysicalPoint, PhysicalRect},
-        selection::{PreviewTransform, SelectionDrag, ViewPoint},
+        selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     };
     use crate::platform::capture::PixelFormat;
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
@@ -3865,6 +3899,57 @@ mod tests {
         assert!(accepts_overlay_input(42, 42));
         assert!(!accepts_overlay_input(42, 43));
         assert!(!accepts_overlay_input(u64::MAX, 0));
+    }
+
+    #[test]
+    fn client_drag_points_preserve_display_crossing_and_image_letterboxing() {
+        let transform = PreviewTransform::contain(
+            PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 2560,
+                bottom: 1440,
+            },
+            ViewRect {
+                left: 0.0,
+                top: 0.0,
+                width: 2560.0,
+                height: 1440.0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            selection_point_from_view_or_screen(
+                transform,
+                point(px(563.0), px(288.0)),
+                true,
+                Some(PhysicalPoint { x: 999, y: 999 }),
+            ),
+            Some(PhysicalPoint { x: 563, y: 288 })
+        );
+        assert_eq!(
+            selection_point_from_view_or_screen(
+                transform,
+                point(px(-4.0), px(1444.0)),
+                true,
+                Some(PhysicalPoint { x: -20, y: 1500 }),
+            ),
+            Some(PhysicalPoint { x: -20, y: 1500 })
+        );
+        assert_eq!(
+            selection_point_from_view_or_screen(
+                transform,
+                point(px(-4.0), px(1444.0)),
+                false,
+                Some(PhysicalPoint { x: -20, y: 1500 }),
+            ),
+            Some(PhysicalPoint { x: 0, y: 1440 })
+        );
+        assert_eq!(
+            selection_point_from_view_or_screen(transform, point(px(-4.0), px(1444.0)), true, None,),
+            Some(PhysicalPoint { x: 0, y: 1440 })
+        );
     }
 
     #[test]

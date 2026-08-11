@@ -247,10 +247,22 @@ The script starts one Release application, triggers and cancels twenty real capt
 gates the current window's frame-ready and overlay p95 values at 100 ms. It requires an
 interactive Windows desktop and no existing Flash Shot process.
 
-Exercise the real single-display overlay entry and Record-page lifecycle in an isolated profile.
-These commands move the global pointer, so run them only in a disposable interactive desktop
-session. Each mode clicks `Record area` or `Record window`, then the real Pause, Resume, and Stop
-buttons, and accepts the run only after FFprobe validates the finalized H.264 MP4. The runner
+Exercise the complete real single-display screenshot path in an isolated profile. The default mode
+drags and nudges a selection, expands and collapses More, recaptures and cancels, drives the native
+Save dialog into an isolated path, opens and closes a Pin, then clicks Copy through a process-local
+image sink. It maps the actual pointer path through the measured client area, checks the committed
+physical selection, compares Save/Pin/Copy pixels with their pre-click source frames, and proves
+the Windows clipboard sequence did not change:
+
+```powershell
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
+```
+
+The recording modes click `Record area` or `Record window`, then the real Pause, Resume, and Stop
+buttons, and accept the run only after FFprobe validates the finalized H.264 MP4. These commands
+move the global pointer, so run them only in a disposable interactive desktop session. The runner
+also requires pause progress to remain frozen, compares the app's source bounds with an independent
+area/window oracle, and decodes a video frame for content comparison with a desktop reference. It
 forces output into its disposable session and clears inherited recording-audio overrides:
 
 ```powershell

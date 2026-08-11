@@ -6,7 +6,7 @@ pub(super) fn copy_annotated_frame_selection(
     frame: &CaptureFrame,
     document: &AnnotationDocument,
     selection: PhysicalRect,
-    clipboard: &impl ClipboardService,
+    clipboard: &(impl ClipboardService + ?Sized),
 ) -> std::io::Result<()> {
     clipboard.copy_image(&frame.composite_annotations(document)?.crop(selection)?)
 }

@@ -51,7 +51,7 @@ pub(super) fn open_capture_overlays(
                         });
                     }
                     let overlay = cx.new(|cx| {
-                        CaptureOverlay::new(app, info, preview, operation_generation, cx)
+                        CaptureOverlay::new(app, info, preview, operation_generation, true, cx)
                     });
                     if primary {
                         overlay.read(cx).focus_handle(cx).focus(window, cx);
@@ -124,7 +124,14 @@ pub(super) fn open_image_overlay(
         },
         move |window, cx| {
             let overlay = cx.new(|cx| {
-                CaptureOverlay::new(overlay_app, display, preview, operation_generation, cx)
+                CaptureOverlay::new(
+                    overlay_app,
+                    display,
+                    preview,
+                    operation_generation,
+                    false,
+                    cx,
+                )
             });
             overlay.read(cx).focus_handle(cx).focus(window, cx);
             overlay

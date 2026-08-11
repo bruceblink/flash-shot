@@ -130,6 +130,18 @@ impl PinnedImage {
         self.show_operation_feedback("Pinned capture", cx);
     }
 
+    /// Returns the uncapped source dimensions while the native acceptance runner owns this Pin.
+    pub(super) const fn source_bounds_for_acceptance(
+        &self,
+    ) -> crate::domain::geometry::PhysicalRect {
+        self.frame.bounds
+    }
+
+    /// Clones the immutable Pin source so acceptance can compare content without screen scraping.
+    pub(super) fn frame_for_acceptance(&self) -> crate::platform::capture::CaptureFrame {
+        self.frame.clone()
+    }
+
     /// Applies the async save result to the originating pin while ignoring a closed window.
     pub(super) fn finish_save_status(&mut self, saved: bool, cx: &mut Context<Self>) {
         self.show_operation_feedback(pinned_save_result_status(saved), cx);

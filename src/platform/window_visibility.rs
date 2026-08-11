@@ -41,6 +41,11 @@ pub fn make_topmost(handle: isize) -> io::Result<()> {
     platform::make_topmost(handle)
 }
 
+/// Temporarily returns a topmost app window to the normal z-order for an owned native dialog.
+pub fn make_not_topmost(handle: isize) -> io::Result<()> {
+    platform::make_not_topmost(handle)
+}
+
 /// Computes the bounded logical content size that GPUI should apply for one Pin zoom step.
 pub fn scaled_pin_size(width: f32, height: f32, scale: f32) -> (f32, f32) {
     (
@@ -86,9 +91,9 @@ mod platform {
     use windows_sys::Win32::{
         Foundation::RECT,
         UI::WindowsAndMessaging::{
-            GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IsWindow, LWA_ALPHA,
-            SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetLayeredWindowAttributes,
+            GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST, IsWindow,
+            LWA_ALPHA, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetLayeredWindowAttributes,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_LAYERED, WS_EX_TRANSPARENT,
         },
     };
@@ -143,6 +148,28 @@ mod platform {
                 0,
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn make_not_topmost(handle: isize) -> io::Result<()> {
+        let window = window(handle)?;
+        // SAFETY: window is live and this only returns it to the ordinary application z-order.
+        // This call must complete before GPUI queues a modal common-file dialog; an asynchronous
+        // z-order request can otherwise remain behind the dialog's own modal message loop.
+        if unsafe {
+            SetWindowPos(
+                window,
+                HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             )
         } == 0
         {
@@ -244,6 +271,10 @@ mod platform {
     }
 
     pub fn make_topmost(_handle: isize) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn make_not_topmost(_handle: isize) -> io::Result<()> {
         Ok(())
     }
 
