@@ -17,6 +17,7 @@ pub(super) fn open_capture_overlays(
     if app.read(cx).session.state() != CaptureSessionState::Selecting {
         return;
     }
+    let operation_generation = app.read(cx).operation_generation;
     let mut windows = Vec::with_capacity(displays.len());
     for display in displays {
         let bounds = display_window_bounds(&display.display);
@@ -49,7 +50,9 @@ pub(super) fn open_capture_overlays(
                             performance.record_capture_pipeline(pipeline.finish(Instant::now()));
                         });
                     }
-                    let overlay = cx.new(|cx| CaptureOverlay::new(app, info, preview, cx));
+                    let overlay = cx.new(|cx| {
+                        CaptureOverlay::new(app, info, preview, operation_generation, cx)
+                    });
                     if primary {
                         overlay.read(cx).focus_handle(cx).focus(window, cx);
                     }
@@ -87,6 +90,7 @@ pub(super) fn open_image_overlay(
     let Some(preview) = app.read(cx).preview.clone() else {
         return;
     };
+    let operation_generation = app.read(cx).operation_generation;
     let display = crate::platform::display::DisplayInfo {
         id: "opened-image".to_owned(),
         platform_id: 0,
@@ -119,7 +123,9 @@ pub(super) fn open_image_overlay(
             ..Default::default()
         },
         move |window, cx| {
-            let overlay = cx.new(|cx| CaptureOverlay::new(overlay_app, display, preview, cx));
+            let overlay = cx.new(|cx| {
+                CaptureOverlay::new(overlay_app, display, preview, operation_generation, cx)
+            });
             overlay.read(cx).focus_handle(cx).focus(window, cx);
             overlay
         },

@@ -204,6 +204,9 @@ pub(super) struct CaptureOverlay {
     app: Entity<FlashShotApp>,
     display: DisplayInfo,
     preview: Arc<RenderImage>,
+    // The workflow generation prevents queued input from a closed overlay changing a later
+    // capture session after the user presses Capture again.
+    operation_generation: u64,
     focus_handle: FocusHandle,
     topmost_requested: bool,
     annotation_arrange_actions_for: Option<AnnotationId>,
@@ -215,6 +218,7 @@ impl CaptureOverlay {
         app: Entity<FlashShotApp>,
         display: DisplayInfo,
         preview: Arc<RenderImage>,
+        operation_generation: u64,
         cx: &mut Context<Self>,
     ) -> Self {
         let observation = cx.observe(&app, |_, _, cx| cx.notify());
@@ -222,6 +226,7 @@ impl CaptureOverlay {
             app,
             display,
             preview,
+            operation_generation,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
             annotation_arrange_actions_for: None,
@@ -239,6 +244,10 @@ impl CaptureOverlay {
         viewport: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) {
+        let operation_generation = self.operation_generation;
+        if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
+            return;
+        }
         let Some(point) = self
             .transform(viewport)
             .and_then(|transform| transform.view_to_physical(view_point(event.position)))
@@ -273,6 +282,9 @@ impl CaptureOverlay {
         let app = self.app.clone();
         cx.defer(move |cx| {
             app.update(cx, |app, cx| {
+                if !accepts_overlay_input(operation_generation, app.operation_generation) {
+                    return;
+                }
                 app.begin_overlay_selection(point, resize_handle, annotation_resize_handle);
                 cx.notify();
             })
@@ -285,6 +297,10 @@ impl CaptureOverlay {
         viewport: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) {
+        let operation_generation = self.operation_generation;
+        if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
+            return;
+        }
         let Some(transform) = self.transform(viewport) else {
             return;
         };
@@ -300,6 +316,9 @@ impl CaptureOverlay {
             .flatten();
         cx.defer(move |cx| {
             app.update(cx, |app, cx| {
+                if !accepts_overlay_input(operation_generation, app.operation_generation) {
+                    return;
+                }
                 app.update_overlay_hover(point, cx);
                 if let Some(point) = dragging_point {
                     app.update_overlay_selection(
@@ -319,6 +338,10 @@ impl CaptureOverlay {
         viewport: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) {
+        let operation_generation = self.operation_generation;
+        if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
+            return;
+        }
         let point = cursor::position().ok().or_else(|| {
             self.transform(viewport).and_then(|transform| {
                 transform.view_to_physical(clamp_to_view(transform, event.position))
@@ -331,6 +354,9 @@ impl CaptureOverlay {
         let copy_on_double_click = capture_double_click(event.click_count);
         cx.defer(move |cx| {
             app.update(cx, |app, cx| {
+                if !accepts_overlay_input(operation_generation, app.operation_generation) {
+                    return;
+                }
                 app.finish_overlay_selection(
                     point,
                     preserve_aspect_ratio,
@@ -348,16 +374,28 @@ impl CaptureOverlay {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let operation_generation = self.operation_generation;
+        if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
+            return;
+        }
         let app = self.app.clone();
         let event = event.clone();
         cx.defer(move |cx| {
             app.update(cx, |app, cx| {
+                if !accepts_overlay_input(operation_generation, app.operation_generation) {
+                    return;
+                }
                 if !app.handle_text_edit_key(&event.keystroke, cx) {
                     app.handle_key_down(&event, cx);
                 }
             })
         });
     }
+}
+
+/// Accepts deferred overlay input only while it still belongs to the active workflow.
+const fn accepts_overlay_input(overlay_generation: u64, current_generation: u64) -> bool {
+    overlay_generation == current_generation
 }
 
 /// Opens one disposable overlay with a seeded visual state for native screenshot acceptance.
@@ -444,6 +482,7 @@ pub(super) fn open_ui_acceptance(
         }
         cx.notify();
     });
+    let operation_generation = app.read(cx).operation_generation;
     let overlay_app = app.clone();
     let overlay_display = display.clone();
     let overlay_preview = preview.clone();
@@ -464,8 +503,15 @@ pub(super) fn open_ui_acceptance(
             ..Default::default()
         },
         move |window, cx| {
-            let overlay =
-                cx.new(|cx| CaptureOverlay::new(overlay_app, overlay_display, overlay_preview, cx));
+            let overlay = cx.new(|cx| {
+                CaptureOverlay::new(
+                    overlay_app,
+                    overlay_display,
+                    overlay_preview,
+                    operation_generation,
+                    cx,
+                )
+            });
             overlay.read(cx).focus_handle(cx).focus(window, cx);
             overlay
         },
@@ -3789,17 +3835,17 @@ mod tests {
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
         OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET,
         OVERLAY_EDGE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
-        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, action_toolbar_height,
-        action_toolbar_layout, action_toolbar_natural_width, annotation_controls_visible,
-        annotation_layer_label, annotation_style_panel_height, annotation_toolbar_height,
-        annotation_toolbar_items, annotation_toolbar_layout, arrange_context_for_selection,
-        arrow_head_points, capture_double_click, intersect, is_text_annotation, magnifier_origin,
-        outline_shape_bounds, overlay_ui_acceptance_frame, overlay_ui_acceptance_selection,
-        overlay_ui_acceptance_target, owns_selection_toolbar, primary_action_tooltip,
-        recognition_result_preview, recognition_retry_label, resize_handle_points,
-        secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
-        selection_cursor, selection_dimension_label_layout, smart_target_hud_label,
-        smart_target_hud_layout, status_bottom_inset, visible_selection,
+        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, accepts_overlay_input,
+        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
+        annotation_controls_visible, annotation_layer_label, annotation_style_panel_height,
+        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
+        arrange_context_for_selection, arrow_head_points, capture_double_click, intersect,
+        is_text_annotation, magnifier_origin, outline_shape_bounds, overlay_ui_acceptance_frame,
+        overlay_ui_acceptance_selection, overlay_ui_acceptance_target, owns_selection_toolbar,
+        primary_action_tooltip, recognition_result_preview, recognition_retry_label,
+        resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
+        secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
+        smart_target_hud_label, smart_target_hud_layout, status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -3809,6 +3855,13 @@ mod tests {
     use crate::platform::capture::PixelFormat;
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use gpui::{Bounds, point, px, size};
+
+    #[test]
+    fn queued_input_only_applies_to_the_overlay_generation_that_created_it() {
+        assert!(accepts_overlay_input(42, 42));
+        assert!(!accepts_overlay_input(42, 43));
+        assert!(!accepts_overlay_input(u64::MAX, 0));
+    }
 
     #[test]
     fn clips_shared_selection_to_each_display() {
