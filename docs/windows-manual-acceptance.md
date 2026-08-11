@@ -38,7 +38,7 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | 负坐标双屏 | 暂缓 | 将副屏放在主屏左侧，跨屏拖动选区并在两屏边缘调整大小。 | 选区和放大镜不跳变；每个显示器只显示自己的覆盖层操作区；导出结果没有偏移或裁切错误。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 混合 DPI 双屏 | 暂缓 | 将两个显示器设置为不同缩放，例如 100% 与 150% 或 200%；跨屏截图、保存并核对像素尺寸。 | 光标、选区、窗口智能识别和导出均以物理像素对齐；无重复或缺失的工具栏。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 窄选区与最小设置窗 | 通过 | 将设置窗口缩小到最小可用尺寸；在屏幕边缘创建窄选区，展开次级操作与标注面板。 | 文本不截断，控件不重叠；主工具栏保持可点击，次级菜单在可用一侧展开。 | `current-narrow-edge-single-100` 在真实 420x420 client 中启动截图，拖出右下 160x96 选区并真实点击 More/Less 与 Mark 开关。 |
-| 多 Pin 生命周期 | 待执行 | 连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | 隔离自动探针已覆盖程序化移动、缩放、透明度、内存复制、保存、Solo、Show all、关闭与截图 preflight；真实鼠标拖动、系统剪贴板和继续进入覆盖层仍待手工执行。 |
+| 多 Pin 生命周期 | 待执行 | 连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | `current-pin-lifecycle-single-100` 覆盖缩放、透明度、内存复制、保存与可见性生命周期；`current-pins-coexist-capture-single-100` 通过三次真实 Pin 点击、真实鼠标拖动和 Pin 共存下的 Capture/Cancel 补齐单屏主链。系统剪贴板和 150%/200% 实机仍待执行。 |
 | OCR、翻译与滚动 | 待执行 | 在含文字的选区运行 OCR；在翻译服务可用时运行翻译并模拟一次失败后重试；执行滚动后自动捕获。 | OCR/翻译结果可复制；失败时保留原选区并显示匹配的重试操作；自动滚动等待目标重绘后只追加一帧。 | |
 | FFmpeg 静态目标录屏生命周期 | 通过 | 使用支持 `ddagrab` 或 `gdigrab` 的 FFmpeg，在单屏 100% 环境分别启动显示器、静态窗口和静态区域录制，暂停、恢复并停止。 | 三种目标均产生可播放 H.264 MP4；目标类型、物理尺寸、状态、时长和隔离保存路径正确。 | 显示器入口见 `current-recording-ui-single-100`；静态区域和静态窗口入口见 `current-overlay-recording-ui-single-100`。 |
 | 窗口录制动态桌面语义 | 通过 | 窗口录制开始后移动、缩放、遮挡并最小化目标窗口。 | 录制边界固定为开始时选中窗口的可见桌面物理矩形，不跟随移动或缩放；遮挡或最小化时记录该矩形中的桌面合成像素。 | `current-overlay-recording-window-dynamics-single-100` 以独立原生 fixture 执行全部状态，并逐阶段比对 MP4 时间线像素。 |
@@ -91,6 +91,8 @@ cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-accep
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
 # 可选窄边场景：要求单屏 100% 缩放，验证真实最小设置窗、右下选区和 More/Mark 命中。
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
+# 可选多 Pin 共存场景：三次真实点击 Pin，真实拖动一张 Pin，并在三张 Pin 存活时截图和取消。
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --output-dir target/overlay-interaction-pins-coexist-acceptance
 # 可选真实录屏闭环：通过 More 菜单点击入口，再点击 Record 页的 Pause、Resume 和 Stop；
 # 每次运行只接受一个隔离 MP4，并通过 FFprobe 校验编码、物理尺寸和时长。
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --record-target area --output-dir target/overlay-recording-interaction-acceptance
@@ -141,6 +143,10 @@ profile，注册 `Ctrl+Alt+F24`，并在每批输入前确认前台 HWND 属于�
 固定为真实 420x420 client 并保留原生截图，再在右下边缘真实拖出 160x96 物理选区。它依次
 点击 More/Less 和 Mark 开关，以进程内状态断言菜单和标注面板只切换一次、选区保持不变，
 并记录选区帧指纹、亮度范围和最终窗口清理；该场景与录屏模式互斥。提供
+`--capture-scenario pins-coexist` 时，探针同样要求单屏 100% 缩放，通过三个互不重叠的
+360x240 选区真实点击 Pin。它按实测外框排列窗口，从 Pin 图片区域注入原生鼠标拖动，随后
+直接从前台 Pin 触发 Capture、真实拖选并 Cancel；报告要求三张 Pin 的 HWND、外框和源帧在
+覆盖层活动期间及取消后保持不变，最后逐一用 Escape 关闭。该场景不写系统剪贴板。提供
 `--record-target area|window` 时，探针改为从同一真实覆盖层点击对应录屏入口，恢复生产 Record 页
 后继续点击 Pause、Resume 和 Stop；它轮询进程内机器可读状态，强制覆盖录制目录并清除继承的
 录制音频变量，只接受隔离目录中的一个 MP4，再用 FFprobe 校验 H.264、物理尺寸和时长。暂停后
@@ -154,8 +160,8 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 像素帧，不污染系统剪贴板。布局使用实测原生外框和显示器缩放比例，截图前拒绝越界或重叠；
 报告还会实测系统服务确已禁用、Show all 未改变前台 HWND、关闭一个 Pin 后仍保留两个可响应句柄，
 并通过生产 Capture 启动谓词确认截图 preflight 无阻塞。`--timeout-ms` 的 watchdog 覆盖完整原生
-生命周期，而不只覆盖 Save 等待。它不能替代真实鼠标拖动、系统剪贴板写入和 Pin 共存时再次
-进入覆盖层的手工矩阵；150%/200% 仍需在对应真实 Windows 缩放环境复核。
+生命周期，而不只覆盖 Save 等待。真实鼠标拖动和 Pin 共存时再次进入覆盖层由上述
+`pins-coexist` 场景补充；系统剪贴板写入及 150%/200% 仍需在对应可丢弃 Windows 环境复核。
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
@@ -267,6 +273,7 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 | 2026-08-11 | `current-overlay-recording-ui-single-100` | 隔离 Release `overlay-interaction-acceptance` 在一块 2560x1440、DPI 96 显示器上分别完成 `More -> Record area` 与 `More -> Record window`，并在生产 Record 页点击 Pause、Resume、Stop；两次都独立校验目标边界、暂停冻结、恢复前进和 H.264 内容。 | 通过 | 区域报告位于 `target/release-acceptance/record-area-content-verified/session-1786439587427-30752/`：H.264 1178x432、5.70 秒、最高 69 帧，暂停采样保持 `37/1166667us -> 37/1166667us`，参考/解码帧网格 MAE `0.793`。窗口报告位于 `target/release-acceptance/record-window-content-verified/session-1786439605291-27088/`：独立解析与应用回报均为 2560x1400，H.264 6.13 秒、最高 55 帧，暂停保持 `25/733333us -> 25/733333us`，MAE `0.465`。两条路径的参考图、解码帧、选区、More、Recording、Paused、Resumed、Saved 均已目视复核，无空白帧、截断、重叠或状态错位。窗口移动、缩放、遮挡、最小化、150%/200% 与已暂缓多屏范围仍待执行。 |
 | 2026-08-11 | `current-overlay-recording-window-dynamics-single-100` | 最终源码的隔离 Release `overlay-interaction-acceptance` 通过真实 `More -> Record window` 入口选择独立进程的原生 fixture；录制期间依次移动、缩放、完全遮挡并最小化目标，再在生产 Record 页完成 Pause、Resume、Stop。 | 通过 | 报告位于 `target/release-acceptance/record-window-dynamic-complete/session-1786445042544-2256/`：初始录制源始终为 `(563,288)-(1741,720)`、H.264 1178x432、10.27 秒；5 fps 时间线的 51 个样本依次命中四组连续稳定帧，网格 MAE 为 `1.378/1.654/1.107/1.250`（上限 18），四个目标状态、固定源边界、不同像素指纹和 fixture 清理均由报告断言。区域回归报告位于 `target/release-acceptance/record-area-regression-complete/session-1786445068433-3736/`，H.264 1178x432、5.67 秒、MAE `0.168`。两条路径的覆盖层、More、Recording、Paused、Resumed、Saved 及全部参考/解码帧已目视复核，无空白、截断、重叠或状态错位；150%/200% 与已暂缓多屏范围仍待执行。 |
 | 2026-08-11 | `current-release-signing-preflight` | 安装器 `-ValidateOnly -RequireSignature` 现在会在提前返回前验证 SignTool、当前用户证书的私钥、有效期和代码签名用途，并固定实际签名使用同一证书；CI 新增缺失工具、非法 thumbprint、无匹配证书和参数误用回归。 | 待执行 | 全部发布脚本 fixture、Rust workspace 测试、严格 Clippy、格式和全目标检查通过。本机真实预检按预期报告缺少 `signtool.exe`；现有 `dist` 只有 portable ZIP，资产门禁按预期报告缺少 setup EXE。真实证书签名、Inno Setup 产物、时间戳与干净 Windows 用户安装仍必须在发布环境执行，因此不提升为“通过”。 |
+| 2026-08-11 | `current-pins-coexist-capture-single-100` | 当前源码的隔离 Release `overlay-interaction-acceptance --capture-scenario pins-coexist` 在一块 2560x1440、DPI 96 显示器通过：三次真实点击 Pin，三张源帧逐像素一致，第一张 Pin 经真实鼠标拖动 `(48,-40)`，随后直接从 Pin 触发 Capture、拖选 1178x432 并 Cancel。 | 通过 | 报告与 7 张原生截图位于 `target/release-acceptance/pins-coexist-final/session-1786450479257-21272/`。三张 Pin 的 HWND、外框与源帧在覆盖层活动期间和取消后保持不变，取消后 Pin 数仍为 3；逐一 Escape 后 overlay=0、Pin=0、无可见探针窗口且 Capture preflight 可用。截图复核三张 Pin 无重叠，拖动时工具栏完整，覆盖层主操作未被 Pin 遮挡。该记录不写系统剪贴板，只覆盖单屏 100%。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

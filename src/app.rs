@@ -829,11 +829,15 @@ impl FlashShotApp {
                                     .as_ref()
                                     .and_then(|frame| frame.crop(selection).ok())
                             });
-                            let pin = this.pinned_windows.last().and_then(|pin| {
-                                pin.update(cx, |pin, _, _| pin.frame_for_acceptance()).ok()
-                            });
+                            let pins = this
+                                .pinned_windows
+                                .iter()
+                                .filter_map(|pin| {
+                                    pin.update(cx, |pin, _, _| pin.frame_for_acceptance()).ok()
+                                })
+                                .collect();
                             let _ = reply
-                                .send(crate::OverlayInteractionCaptureContent { selection, pin });
+                                .send(crate::OverlayInteractionCaptureContent { selection, pins });
                         }
                         crate::OverlayInteractionAcceptanceCommand::ShowCaptureSettings => {
                             this.select_settings_section(SettingsSection::Capture, cx);

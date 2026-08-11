@@ -167,7 +167,7 @@ pub struct OverlayInteractionCaptureState {
 #[derive(Clone, Debug)]
 pub struct OverlayInteractionCaptureContent {
     pub selection: Option<platform::capture::CaptureFrame>,
-    pub pin: Option<platform::capture::CaptureFrame>,
+    pub pins: Vec<platform::capture::CaptureFrame>,
 }
 
 /// Process-local controls for one isolated real-input overlay acceptance session.

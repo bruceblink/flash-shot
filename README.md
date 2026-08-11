@@ -269,6 +269,16 @@ mutually exclusive with recording modes:
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
 ```
 
+Use the opt-in Pin coexistence scenario to create three 360x240 Pins through real toolbar clicks,
+arrange them without overlap, move one through the native image drag surface, and trigger Capture
+from a focused Pin. It requires one 100%-scaled display, proves all three source frames and HWND
+bounds survive the overlay and Cancel, then closes every Pin with Escape without using the system
+clipboard:
+
+```powershell
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --output-dir target/overlay-interaction-pins-coexist-acceptance
+```
+
 The recording modes click `Record area` or `Record window`, then the real Pause, Resume, and Stop
 buttons, and accept the run only after FFprobe validates the finalized H.264 MP4. These commands
 move the global pointer, so run them only in a disposable interactive desktop session. The runner

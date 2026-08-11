@@ -79,9 +79,10 @@ use windows_sys::Win32::{
             GetWindowThreadProcessId, HWND_TOP, IsChild, IsIconic, IsWindow, IsWindowVisible, MSG,
             PostMessageW, PostQuitMessage, RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
             SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE,
-            SWP_SHOWWINDOW, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-            ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WNDCLASSW,
-            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE, WindowFromPoint,
+            SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SetCursorPos, SetForegroundWindow,
+            SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY,
+            WM_ERASEBKGND, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+            WS_VISIBLE, WindowFromPoint,
         },
     },
 };
@@ -114,6 +115,13 @@ const NARROW_EDGE_RIGHT_INSET: f32 = 18.0;
 const NARROW_EDGE_BOTTOM_INSET: f32 = 12.0;
 const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 900.0;
 const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 186.0;
+const PIN_COEXIST_COUNT: usize = 3;
+const PIN_COEXIST_SELECTION_WIDTH: f32 = 360.0;
+const PIN_COEXIST_SELECTION_HEIGHT: f32 = 240.0;
+const PIN_COEXIST_SELECTION_GAP: f32 = 80.0;
+const PIN_COEXIST_SELECTION_TOP: f32 = 160.0;
+const PIN_COEXIST_LAYOUT_GAP: i32 = 100;
+const PIN_COEXIST_LAYOUT_MARGIN: i32 = 80;
 #[cfg(windows)]
 const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
 #[cfg(windows)]
@@ -141,6 +149,7 @@ enum CaptureScenarioOption {
     #[default]
     Standard,
     NarrowEdge,
+    PinsCoexist,
 }
 
 impl CaptureScenarioOption {
@@ -148,7 +157,12 @@ impl CaptureScenarioOption {
         match self {
             Self::Standard => "capture",
             Self::NarrowEdge => "capture_narrow_edge",
+            Self::PinsCoexist => "capture_pins_coexist",
         }
+    }
+
+    const fn requires_100_percent_display(self) -> bool {
+        matches!(self, Self::NarrowEdge | Self::PinsCoexist)
     }
 }
 
@@ -234,7 +248,11 @@ impl Options {
                         .map_err(|_| "capture scenario must be valid Unicode".to_owned())?;
                     options.capture_scenario = match scenario.as_str() {
                         "narrow-edge" => CaptureScenarioOption::NarrowEdge,
-                        _ => return Err("capture scenario must be 'narrow-edge'".to_owned()),
+                        "pins-coexist" => CaptureScenarioOption::PinsCoexist,
+                        _ => {
+                            return Err("capture scenario must be 'narrow-edge' or 'pins-coexist'"
+                                .to_owned());
+                        }
                     };
                     capture_scenario_seen = true;
                 }
@@ -293,7 +311,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge> | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge|pins-coexist> | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -520,6 +538,45 @@ fn narrow_edge_interaction_plan(
     })
 }
 
+/// Places three compact source selections across the upper desktop so their Pins fit side by side.
+fn pin_coexist_interaction_plan(
+    bounds: PhysicalRect,
+    scale: f32,
+    index: usize,
+) -> io::Result<InteractionPlan> {
+    if (scale - 1.0).abs() > 0.001 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Pin coexistence acceptance requires a 100%-scaled overlay",
+        ));
+    }
+    if index >= PIN_COEXIST_COUNT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Pin coexistence selection index is out of range",
+        ));
+    }
+    let (width, height) = overlay_logical_size(bounds, scale)?;
+    let group_width = PIN_COEXIST_SELECTION_WIDTH * PIN_COEXIST_COUNT as f32
+        + PIN_COEXIST_SELECTION_GAP * (PIN_COEXIST_COUNT - 1) as f32;
+    let group_left = (width - group_width) / 2.0;
+    let start = (
+        group_left + index as f32 * (PIN_COEXIST_SELECTION_WIDTH + PIN_COEXIST_SELECTION_GAP),
+        PIN_COEXIST_SELECTION_TOP,
+    );
+    let end = (
+        start.0 + PIN_COEXIST_SELECTION_WIDTH,
+        start.1 + PIN_COEXIST_SELECTION_HEIGHT,
+    );
+    if group_left < 18.0 || end.1 + 96.0 > height {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "display is too small for three compact Pin selections",
+        ));
+    }
+    interaction_plan_for_logical_selection(bounds, scale, width, height, start, end)
+}
+
 /// Verifies that the application's committed selection follows the actual injected pointer path.
 fn validate_selection_geometry(
     requested: PhysicalRect,
@@ -636,6 +693,7 @@ struct AcceptanceReport {
     recording: Option<RecordingReport>,
     capture_actions: Option<CaptureActionReport>,
     narrow_edge: Option<NarrowEdgeReport>,
+    pins_coexist: Option<PinsCoexistReport>,
     error: Option<String>,
 }
 
@@ -648,7 +706,7 @@ struct DisplayReport {
     scale_factor: f32,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, Copy, serde::Serialize)]
 struct WindowReport {
     handle: usize,
     bounds: PhysicalRect,
@@ -794,6 +852,36 @@ struct NarrowEdgeContentReport {
 }
 
 #[derive(serde::Serialize)]
+struct PinsCoexistReport {
+    pins: Vec<PinReport>,
+    arranged_windows: Vec<WindowReport>,
+    pointer_drag: WindowDragReport,
+    requested_capture_selection: PhysicalRect,
+    committed_capture_selection: PhysicalRect,
+    windows_during_capture: Vec<WindowReport>,
+    windows_after_cancel: Vec<WindowReport>,
+    sources_unchanged_during_capture: bool,
+    sources_unchanged_after_cancel: bool,
+    pins_during_capture: usize,
+    pins_after_cancel: usize,
+    closed_with_escape: usize,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct WindowDragReport {
+    handle: usize,
+    before: PhysicalRect,
+    after: PhysicalRect,
+    pointer_start: PhysicalPoint,
+    pointer_end: PhysicalPoint,
+    expected_delta_x: i32,
+    expected_delta_y: i32,
+    actual_delta_x: i32,
+    actual_delta_y: i32,
+}
+
+#[derive(serde::Serialize)]
 struct NudgeReport {
     before: PhysicalRect,
     after: PhysicalRect,
@@ -865,6 +953,14 @@ struct NativeWindow {
 struct InjectedDrag {
     foreground: NativeWindow,
     selection: PhysicalRect,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct InjectedPointerDrag {
+    foreground: NativeWindow,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
 }
 
 #[cfg(windows)]
@@ -1002,7 +1098,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .next()
         .expect("one display was checked");
-    if options.capture_scenario == CaptureScenarioOption::NarrowEdge
+    if options.capture_scenario.requires_100_percent_display()
         && (display.dpi_x != 96
             || display.dpi_y != 96
             || (display.scale_factor - 1.0).abs() > 0.001)
@@ -1010,8 +1106,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!(
-                "narrow-edge acceptance requires one 100%-scaled display, found {}x{} DPI at scale {}",
-                display.dpi_x, display.dpi_y, display.scale_factor
+                "{} acceptance requires one 100%-scaled display, found {}x{} DPI at scale {}",
+                options.capture_scenario.workflow(),
+                display.dpi_x,
+                display.dpi_y,
+                display.scale_factor
             ),
         )
         .into());
@@ -1046,7 +1145,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
         (Some(_), _) => (980.0, 760.0),
         (None, CaptureScenarioOption::NarrowEdge) => (420.0, 420.0),
-        (None, CaptureScenarioOption::Standard) => (520.0, 640.0),
+        (None, CaptureScenarioOption::Standard | CaptureScenarioOption::PinsCoexist) => {
+            (520.0, 640.0)
+        }
     };
 
     let worker_context = WorkerContext {
@@ -1116,7 +1217,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        schema_version: 6,
+        schema_version: 7,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -1140,6 +1241,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         recording: None,
         capture_actions: None,
         narrow_edge: None,
+        pins_coexist: None,
         error: None,
     }
 }
@@ -1871,6 +1973,9 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::NarrowEdge) => {
             execute_narrow_edge_interactions(context, report)
         }
+        (None, CaptureScenarioOption::PinsCoexist) => {
+            execute_pins_coexist_interactions(context, report)
+        }
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
     let cursor_result = cursor.restore();
@@ -2156,6 +2261,323 @@ fn execute_narrow_edge_interactions(
 }
 
 #[cfg(windows)]
+/// Creates three Pins through the real toolbar, drags one, then captures while all three coexist.
+fn execute_pins_coexist_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "pins_controller_ready",
+        controller,
+        None,
+    )?;
+
+    let creation_actions = ["pin_one_created", "pin_two_created", "pin_three_created"];
+    let selection_actions = [
+        "pin_one_selection_ready",
+        "pin_two_selection_ready",
+        "pin_three_selection_ready",
+    ];
+    let selection_files = [
+        "00-pin-one-selection.png",
+        "01-pin-two-selection.png",
+        "02-pin-three-selection.png",
+    ];
+    let mut handles = Vec::with_capacity(PIN_COEXIST_COUNT);
+    let mut sources = Vec::with_capacity(PIN_COEXIST_COUNT);
+    let mut pin_reports = Vec::with_capacity(PIN_COEXIST_COUNT);
+    for (index, action) in creation_actions.into_iter().enumerate() {
+        let (overlay, plan, selection, requested_selection, source) =
+            begin_selected_overlay_with_plan(context, controller, |handle| {
+                pin_coexist_interaction_plan_for_window(handle, index)
+            })?;
+        thread::sleep(context.settle_delay);
+        let selected = capture_evidence(context, selection_files[index], overlay)?;
+        record_step(
+            report,
+            &context.report_path,
+            selection_actions[index],
+            guard_foreground(overlay.handle)?,
+            Some(&selected),
+        )?;
+        let foreground = inject_mouse_click(overlay.handle, plan.pin)?;
+        let state = wait_for_capture_state(context, action, |state| {
+            state.session_state == "idle"
+                && state.overlay_count == 0
+                && state.pinned_count == index + 1
+                && state.pinned_source_bounds == Some(selection)
+                && state.capture_preflight_ready
+        })?;
+        wait_for_overlay_teardown(
+            overlay.handle,
+            context.display.physical_bounds,
+            context.timeout,
+            "Pin creation",
+        )?;
+        let content = query_capture_content(context, context.timeout.min(Duration::from_secs(1)))?;
+        if content.pins.len() != index + 1 {
+            return Err(io::Error::other(format!(
+                "{action} exposed {} Pin source frame(s), expected {}",
+                content.pins.len(),
+                index + 1
+            )));
+        }
+        let pinned = content
+            .pins
+            .last()
+            .ok_or_else(|| io::Error::other("new Pin did not expose its source frame"))?
+            .clone();
+        let pixel_match = validate_same_pixel_content(&source, &pinned, action)?;
+        let pin = wait_for_new_pin(controller.handle, &handles, context.timeout)?;
+        pin_reports.push(PinReport {
+            requested_selection,
+            selection,
+            source_bounds: state
+                .pinned_source_bounds
+                .ok_or_else(|| io::Error::other("new Pin source bounds disappeared"))?,
+            window: pin.report(),
+            content: pixel_match,
+        });
+        handles.push(pin.handle);
+        sources.push(pinned);
+        record_step(report, &context.report_path, action, foreground, None)?;
+    }
+
+    let initial_windows = owned_windows(&handles)?;
+    let layout = horizontal_pin_layout(context.display.physical_bounds, &initial_windows)?;
+    for (window, bounds) in initial_windows.iter().zip(&layout) {
+        move_owned_window(window.handle, *bounds)?;
+    }
+    thread::sleep(context.settle_delay);
+    let arranged_windows = owned_windows(&handles)?;
+    validate_exact_window_bounds(&arranged_windows, &layout, "arranged Pin windows")?;
+    focus_owned_window(arranged_windows[0], context.timeout)?;
+    validate_pin_sources(context, &sources, "arranged Pins")?;
+    let before_region =
+        window_union_with_margin(&arranged_windows, context.display.physical_bounds, 20)?;
+    let before = capture_region_evidence(
+        context,
+        "03-pins-before-capture.png",
+        arranged_windows[0],
+        before_region,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "pins_arranged",
+        arranged_windows[0],
+        Some(&before),
+    )?;
+
+    let drag_before = arranged_windows[0].bounds;
+    let drag_start = PhysicalPoint {
+        x: drag_before.left + drag_before.width() as i32 / 2,
+        y: drag_before.bottom - 24,
+    };
+    let drag_end = PhysicalPoint {
+        x: drag_start.x + 48,
+        y: drag_start.y - 40,
+    };
+    let injected_drag = inject_native_window_drag(handles[0], drag_start, drag_end)?;
+    let drag_after = wait_for_window_drag(
+        handles[0],
+        drag_before,
+        injected_drag.start,
+        injected_drag.end,
+        context.timeout,
+    )?;
+    let dragged_windows = owned_windows(&handles)?;
+    validate_non_overlapping_windows(&dragged_windows, context.display.physical_bounds)?;
+    let dragged_region =
+        window_union_with_margin(&dragged_windows, context.display.physical_bounds, 20)?;
+    let dragged = capture_region_evidence(
+        context,
+        "04-pin-pointer-drag.png",
+        dragged_windows[0],
+        dragged_region,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_pointer_drag",
+        injected_drag.foreground,
+        Some(&dragged),
+    )?;
+    let expected_delta_x = injected_drag.end.x - injected_drag.start.x;
+    let expected_delta_y = injected_drag.end.y - injected_drag.start.y;
+    let pointer_drag = WindowDragReport {
+        handle: handles[0] as usize,
+        before: drag_before,
+        after: drag_after,
+        pointer_start: injected_drag.start,
+        pointer_end: injected_drag.end,
+        expected_delta_x,
+        expected_delta_y,
+        actual_delta_x: drag_after.left - drag_before.left,
+        actual_delta_y: drag_after.top - drag_before.top,
+    };
+
+    validate_pin_sources(context, &sources, "Pins before coexistence capture")?;
+    let baseline_windows = owned_windows(&handles)?;
+    focus_owned_window(baseline_windows[0], context.timeout)?;
+    let foreground = inject_capture_shortcut(baseline_windows[0].handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pins_capture_shortcut",
+        foreground,
+        None,
+    )?;
+    let overlay = wait_for_overlay(
+        controller.handle,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let plan = interaction_plan_for_window(overlay.handle)?;
+    let capture_drag = inject_mouse_drag(
+        overlay.handle,
+        plan.drag_start,
+        plan.drag_end,
+        context.display.physical_bounds,
+    )?;
+    let active = wait_for_capture_state(context, "capture with three Pins", |state| {
+        state.session_state == "selecting"
+            && state.selection.is_some()
+            && state.overlay_count == 1
+            && state.pinned_count == PIN_COEXIST_COUNT
+    })?;
+    let committed_capture_selection = active
+        .selection
+        .ok_or_else(|| io::Error::other("coexistence capture selection disappeared"))?;
+    validate_selection_geometry(
+        capture_drag.selection,
+        committed_capture_selection,
+        "capture with three Pins",
+    )?;
+    validate_pin_sources(context, &sources, "Pins during coexistence capture")?;
+    let windows_during_capture = owned_windows(&handles)?;
+    validate_same_windows(
+        &baseline_windows,
+        &windows_during_capture,
+        "active coexistence overlay",
+    )?;
+    thread::sleep(context.settle_delay);
+    let overlay_evidence = capture_evidence(context, "05-overlay-with-pins.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pins_overlay_selection",
+        capture_drag.foreground,
+        Some(&overlay_evidence),
+    )?;
+
+    let foreground = inject_mouse_click(overlay.handle, plan.cancel)?;
+    wait_for_window_gone(overlay.handle, context.timeout, "Pin coexistence Cancel")?;
+    record_step(
+        report,
+        &context.report_path,
+        "pins_overlay_cancel",
+        foreground,
+        None,
+    )?;
+    let after_cancel = wait_for_capture_state(context, "Pin coexistence Cancel", |state| {
+        state.overlay_count == 0
+            && state.pinned_count == PIN_COEXIST_COUNT
+            && state.capture_preflight_ready
+            && matches!(
+                state.session_state.as_str(),
+                "idle" | "completed" | "cancelled"
+            )
+    })?;
+    validate_pin_sources(context, &sources, "Pins after coexistence Cancel")?;
+    let windows_after_cancel = owned_windows(&handles)?;
+    validate_same_windows(
+        &baseline_windows,
+        &windows_after_cancel,
+        "coexistence Cancel",
+    )?;
+    focus_owned_window(windows_after_cancel[0], context.timeout)?;
+    let after_region =
+        window_union_with_margin(&windows_after_cancel, context.display.physical_bounds, 20)?;
+    let after = capture_region_evidence(
+        context,
+        "06-pins-after-cancel.png",
+        windows_after_cancel[0],
+        after_region,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "pins_survived_cancel",
+        windows_after_cancel[0],
+        Some(&after),
+    )?;
+
+    let close_actions = ["pin_one_escape", "pin_two_escape", "pin_three_escape"];
+    for (index, (handle, action)) in handles.iter().zip(close_actions).enumerate() {
+        let pin = owned_window(*handle)?;
+        focus_owned_window(pin, context.timeout)?;
+        let foreground = inject_key(pin.handle, VK_ESCAPE)?;
+        wait_for_window_gone(pin.handle, context.timeout, action)?;
+        let remaining = PIN_COEXIST_COUNT - index - 1;
+        wait_for_capture_state(context, action, |state| {
+            state.overlay_count == 0
+                && state.pinned_count == remaining
+                && state.capture_preflight_ready
+        })?;
+        record_step(report, &context.report_path, action, foreground, None)?;
+    }
+
+    let final_state = wait_for_capture_state(context, "Pin coexistence cleanup", |state| {
+        state.overlay_count == 0 && state.pinned_count == 0 && state.capture_preflight_ready
+    })?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "Pin coexistence cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.pins_coexist = Some(PinsCoexistReport {
+        pins: pin_reports,
+        arranged_windows: arranged_windows
+            .into_iter()
+            .map(NativeWindow::report)
+            .collect(),
+        pointer_drag,
+        requested_capture_selection: capture_drag.selection,
+        committed_capture_selection,
+        windows_during_capture: windows_during_capture
+            .into_iter()
+            .map(NativeWindow::report)
+            .collect(),
+        windows_after_cancel: windows_after_cancel
+            .into_iter()
+            .map(NativeWindow::report)
+            .collect(),
+        sources_unchanged_during_capture: true,
+        sources_unchanged_after_cancel: true,
+        pins_during_capture: active.pinned_count,
+        pins_after_cancel: after_cancel.pinned_count,
+        closed_with_escape: PIN_COEXIST_COUNT,
+        cleanup: CleanupReport {
+            session_state: final_state.session_state,
+            overlay_count: final_state.overlay_count,
+            pinned_count: final_state.pinned_count,
+            visible_process_windows,
+            capture_preflight_ready: final_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
 /// Drives real selection, toolbar, restart, export, Pin, Copy, and cleanup interactions.
 fn execute_capture_interactions(
     context: &WorkerContext,
@@ -2368,6 +2790,22 @@ fn begin_selected_overlay(
     PhysicalRect,
     CaptureFrame,
 )> {
+    begin_selected_overlay_with_plan(context, controller, interaction_plan_for_window)
+}
+
+#[cfg(windows)]
+/// Opens a fresh production overlay and commits the selection supplied by one measured plan.
+fn begin_selected_overlay_with_plan(
+    context: &WorkerContext,
+    controller: NativeWindow,
+    plan_for_window: impl FnOnce(*mut c_void) -> io::Result<InteractionPlan>,
+) -> io::Result<(
+    NativeWindow,
+    InteractionPlan,
+    PhysicalRect,
+    PhysicalRect,
+    CaptureFrame,
+)> {
     context
         .interaction_commands
         .send_blocking(OverlayInteractionAcceptanceCommand::ShowCaptureSettings)
@@ -2382,7 +2820,7 @@ fn begin_selected_overlay(
     )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
-    let plan = interaction_plan_for_window(overlay.handle)?;
+    let plan = plan_for_window(overlay.handle)?;
     let drag = inject_mouse_drag(
         overlay.handle,
         plan.drag_start,
@@ -2538,7 +2976,9 @@ fn execute_pin_interaction(
         .pinned_source_bounds
         .ok_or_else(|| io::Error::other("Pin source bounds were not reported"))?;
     let pinned = query_capture_content(context, context.timeout.min(Duration::from_secs(1)))?
-        .pin
+        .pins
+        .into_iter()
+        .last()
         .ok_or_else(|| io::Error::other("selected Pin did not expose its source pixels"))?;
     let content = validate_same_pixel_content(&source, &pinned, "pinned frame")?;
     let pin = wait_for_single_visible_pin(controller.handle, context.timeout)?;
@@ -3999,8 +4439,19 @@ fn capture_evidence(
     file_name: &str,
     window: NativeWindow,
 ) -> io::Result<Evidence> {
-    guard_foreground(window.handle)?;
-    let frame = SystemCaptureBackend.capture(window.bounds)?;
+    capture_region_evidence(context, file_name, window, window.bounds)
+}
+
+#[cfg(windows)]
+/// Captures a bounded desktop region only while the expected process window owns foreground input.
+fn capture_region_evidence(
+    context: &WorkerContext,
+    file_name: &str,
+    foreground: NativeWindow,
+    bounds: PhysicalRect,
+) -> io::Result<Evidence> {
+    guard_foreground(foreground.handle)?;
+    let frame = SystemCaptureBackend.capture(bounds)?;
     let path = context.session_root.join("screenshots").join(file_name);
     frame.save_png(&path)?;
     Ok(Evidence {
@@ -4148,6 +4599,35 @@ fn wait_for_window_gone(
 }
 
 #[cfg(windows)]
+/// Accepts a closed overlay HWND even when Windows immediately reuses it for the resulting Pin.
+fn wait_for_overlay_teardown(
+    handle: *mut c_void,
+    display_bounds: PhysicalRect,
+    timeout: Duration,
+    completed_action: &str,
+) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        // SAFETY: both calls only query the borrowed HWND value.
+        if unsafe { IsWindow(handle) } == 0 || unsafe { IsWindowVisible(handle) } == 0 {
+            return Ok(());
+        }
+        if let Ok(window) = owned_window(handle)
+            && !overlay_covers_display(window, display_bounds)
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("full-display overlay remained visible after {completed_action}"),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
 /// Enumerates visible top-level windows owned by this acceptance process only.
 fn process_windows() -> io::Result<Vec<NativeWindow>> {
     struct Search {
@@ -4195,6 +4675,295 @@ fn process_windows() -> io::Result<Vec<NativeWindow>> {
         return Err(io::Error::last_os_error());
     }
     Ok(search.windows)
+}
+
+#[cfg(windows)]
+/// Waits for exactly one newly opened process Pin, excluding Settings and all known Pin handles.
+fn wait_for_new_pin(
+    controller: *mut c_void,
+    known: &[*mut c_void],
+    timeout: Duration,
+) -> io::Result<NativeWindow> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let candidates = process_windows()?
+            .into_iter()
+            .filter(|window| window.handle != controller && !known.contains(&window.handle))
+            .collect::<Vec<_>>();
+        if candidates.len() > 1 {
+            return Err(io::Error::other(
+                "multiple new process windows appeared while creating one Pin",
+            ));
+        }
+        if let Some(pin) = candidates.into_iter().next() {
+            return Ok(pin);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "new Pin window did not appear",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+/// Re-reads native bounds for a stable ordered HWND list and fails if any Pin disappeared.
+fn owned_windows(handles: &[*mut c_void]) -> io::Result<Vec<NativeWindow>> {
+    handles.iter().copied().map(owned_window).collect()
+}
+
+/// Computes a centered bottom row while preserving every measured native Pin size.
+#[cfg(windows)]
+fn horizontal_pin_layout(
+    display: PhysicalRect,
+    windows: &[NativeWindow],
+) -> io::Result<Vec<PhysicalRect>> {
+    if windows.len() != PIN_COEXIST_COUNT
+        || display.right <= display.left
+        || display.bottom <= display.top
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Pin row requires three windows and an increasing display rectangle",
+        ));
+    }
+    let widths = windows
+        .iter()
+        .map(|window| i64::from(window.bounds.width()))
+        .collect::<Vec<_>>();
+    let heights = windows
+        .iter()
+        .map(|window| i64::from(window.bounds.height()))
+        .collect::<Vec<_>>();
+    if widths.iter().any(|width| *width <= 0) || heights.iter().any(|height| *height <= 0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Pin row contains an empty native window",
+        ));
+    }
+    let total_width =
+        widths.iter().sum::<i64>() + i64::from(PIN_COEXIST_LAYOUT_GAP) * (windows.len() as i64 - 1);
+    let available_width = i64::from(display.width()) - i64::from(PIN_COEXIST_LAYOUT_MARGIN) * 2;
+    let maximum_height = heights.iter().copied().max().unwrap_or_default();
+    let available_height = i64::from(display.height()) - i64::from(PIN_COEXIST_LAYOUT_MARGIN) * 2;
+    if total_width > available_width || maximum_height > available_height {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "display is too small for a non-overlapping three-Pin row",
+        ));
+    }
+
+    let mut left = i64::from(display.left) + (i64::from(display.width()) - total_width) / 2;
+    let bottom = i64::from(display.bottom) - i64::from(PIN_COEXIST_LAYOUT_MARGIN);
+    let mut layout = Vec::with_capacity(windows.len());
+    for (width, height) in widths.into_iter().zip(heights) {
+        let right = left + width;
+        let top = bottom - height;
+        layout.push(PhysicalRect {
+            left: i32::try_from(left)
+                .map_err(|_| io::Error::other("Pin row left coordinate overflowed"))?,
+            top: i32::try_from(top)
+                .map_err(|_| io::Error::other("Pin row top coordinate overflowed"))?,
+            right: i32::try_from(right)
+                .map_err(|_| io::Error::other("Pin row right coordinate overflowed"))?,
+            bottom: i32::try_from(bottom)
+                .map_err(|_| io::Error::other("Pin row bottom coordinate overflowed"))?,
+        });
+        left = right + i64::from(PIN_COEXIST_LAYOUT_GAP);
+    }
+    Ok(layout)
+}
+
+#[cfg(windows)]
+/// Moves a verified process-owned Pin without changing its size, z-order, or activation state.
+fn move_owned_window(handle: *mut c_void, bounds: PhysicalRect) -> io::Result<()> {
+    owned_window(handle)?;
+    // SAFETY: the verified process-owned HWND remains borrowed; only its origin changes.
+    if unsafe {
+        SetWindowPos(
+            handle,
+            ptr::null_mut(),
+            bounds.left,
+            bounds.top,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_exact_window_bounds(
+    windows: &[NativeWindow],
+    expected: &[PhysicalRect],
+    stage: &str,
+) -> io::Result<()> {
+    if windows.len() == expected.len()
+        && windows
+            .iter()
+            .zip(expected)
+            .all(|(window, bounds)| window.bounds == *bounds)
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{stage} did not retain the requested native bounds"),
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn validate_non_overlapping_windows(
+    windows: &[NativeWindow],
+    display: PhysicalRect,
+) -> io::Result<()> {
+    for (index, window) in windows.iter().enumerate() {
+        let bounds = window.bounds;
+        if bounds.left < display.left
+            || bounds.top < display.top
+            || bounds.right > display.right
+            || bounds.bottom > display.bottom
+        {
+            return Err(io::Error::other(
+                "Pin window moved outside the acceptance display",
+            ));
+        }
+        for other in &windows[index + 1..] {
+            if bounds.left < other.bounds.right
+                && bounds.right > other.bounds.left
+                && bounds.top < other.bounds.bottom
+                && bounds.bottom > other.bounds.top
+            {
+                return Err(io::Error::other(
+                    "Pin windows overlap after pointer movement",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn window_union_with_margin(
+    windows: &[NativeWindow],
+    display: PhysicalRect,
+    margin: i32,
+) -> io::Result<PhysicalRect> {
+    let first = windows
+        .first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no Pin windows to capture"))?;
+    let union = windows
+        .iter()
+        .skip(1)
+        .fold(first.bounds, |union, window| PhysicalRect {
+            left: union.left.min(window.bounds.left),
+            top: union.top.min(window.bounds.top),
+            right: union.right.max(window.bounds.right),
+            bottom: union.bottom.max(window.bounds.bottom),
+        });
+    let bounds = PhysicalRect {
+        left: union.left.saturating_sub(margin).max(display.left),
+        top: union.top.saturating_sub(margin).max(display.top),
+        right: union.right.saturating_add(margin).min(display.right),
+        bottom: union.bottom.saturating_add(margin).min(display.bottom),
+    };
+    if bounds.right <= bounds.left || bounds.bottom <= bounds.top {
+        return Err(io::Error::other("Pin screenshot union is empty"));
+    }
+    Ok(bounds)
+}
+
+#[cfg(windows)]
+/// Compares every registered Pin source with its creation-time frame in the same stable order.
+fn validate_pin_sources(
+    context: &WorkerContext,
+    expected: &[CaptureFrame],
+    stage: &str,
+) -> io::Result<()> {
+    let observed =
+        query_capture_content(context, context.timeout.min(Duration::from_secs(1)))?.pins;
+    if observed.len() != expected.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{stage} exposed {} Pin frame(s), expected {}",
+                observed.len(),
+                expected.len()
+            ),
+        ));
+    }
+    for (index, (expected, observed)) in expected.iter().zip(&observed).enumerate() {
+        validate_same_pixel_content(expected, observed, &format!("{stage} Pin {}", index + 1))?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_same_windows(
+    expected: &[NativeWindow],
+    observed: &[NativeWindow],
+    stage: &str,
+) -> io::Result<()> {
+    if expected.len() == observed.len()
+        && expected.iter().zip(observed).all(|(expected, observed)| {
+            expected.handle == observed.handle && expected.bounds == observed.bounds
+        })
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{stage} changed the Pin HWND set or native bounds"),
+        ))
+    }
+}
+
+#[cfg(windows)]
+/// Waits until the HWND translation matches the actual cursor delta while preserving Pin size.
+fn wait_for_window_drag(
+    handle: *mut c_void,
+    before: PhysicalRect,
+    pointer_start: PhysicalPoint,
+    pointer_end: PhysicalPoint,
+    timeout: Duration,
+) -> io::Result<PhysicalRect> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let after = owned_window(handle)?.bounds;
+        if window_drag_matches(before, after, pointer_start, pointer_end, 2) {
+            return Ok(after);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("Pin pointer drag ended at {after:?}, starting from {before:?}"),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Allows only small native rounding around the requested pointer translation.
+fn window_drag_matches(
+    before: PhysicalRect,
+    after: PhysicalRect,
+    pointer_start: PhysicalPoint,
+    pointer_end: PhysicalPoint,
+    tolerance: i32,
+) -> bool {
+    let expected_x = pointer_end.x - pointer_start.x;
+    let expected_y = pointer_end.y - pointer_start.y;
+    before.width() == after.width()
+        && before.height() == after.height()
+        && ((after.left - before.left) - expected_x).abs() <= tolerance
+        && ((after.top - before.top) - expected_y).abs() <= tolerance
 }
 
 #[cfg(windows)]
@@ -4496,6 +5265,19 @@ fn narrow_edge_interaction_plan_for_window(
 }
 
 #[cfg(windows)]
+fn pin_coexist_interaction_plan_for_window(
+    handle: *mut c_void,
+    index: usize,
+) -> io::Result<InteractionPlan> {
+    let window = owned_window(handle)?;
+    pin_coexist_interaction_plan(
+        client_bounds_for_window(handle)?,
+        window.dpi as f32 / WINDOWS_BASE_DPI,
+        index,
+    )
+}
+
+#[cfg(windows)]
 /// Re-reads the client origin and DPI immediately before clicking Record-page controls.
 fn recording_control_plan_for_window(handle: *mut c_void) -> io::Result<RecordingControlPlan> {
     let window = owned_window(handle)?;
@@ -4705,6 +5487,56 @@ fn inject_mouse_drag(
             client_bounds_for_window(expected)?,
             capture_bounds,
         )?,
+    })
+}
+
+#[cfg(windows)]
+/// Drags one verified Pin image through native hit testing and returns the actual cursor endpoints.
+fn inject_native_window_drag(
+    expected: *mut c_void,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+) -> io::Result<InjectedPointerDrag> {
+    let foreground = guard_foreground(expected)?;
+    let desktop = virtual_desktop()?;
+    send_input_batch(
+        expected,
+        &[absolute_mouse_input(start, MOUSEEVENTF_MOVE, desktop)],
+    )?;
+    let actual_start = guard_current_pointer_target(expected)?;
+    send_input_batch_with_cleanup(
+        expected,
+        &[mouse_button_input(MOUSEEVENTF_LEFTDOWN)],
+        &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
+    )?;
+
+    let movement_result = (|| {
+        for step in 1..=8 {
+            let point = PhysicalPoint {
+                x: start.x + (end.x - start.x) * step / 8,
+                y: start.y + (end.y - start.y) * step / 8,
+            };
+            send_input_batch(
+                expected,
+                &[absolute_mouse_input(point, MOUSEEVENTF_MOVE, desktop)],
+            )?;
+            // Native caption dragging moves the HWND on its GUI thread. Give that loop one short
+            // dispatch interval before requiring the window to remain beneath the cursor.
+            thread::sleep(Duration::from_millis(15));
+            guard_current_pointer_target(expected)?;
+        }
+        guard_current_pointer_target(expected)
+    })();
+    let release_result = send_input_unchecked(&[mouse_button_input(MOUSEEVENTF_LEFTUP)]);
+    let actual_end = match (movement_result, release_result) {
+        (Ok(point), Ok(())) => point,
+        (Err(error), _) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+    };
+    Ok(InjectedPointerDrag {
+        foreground,
+        start: actual_start,
+        end: actual_end,
     })
 }
 
@@ -4923,15 +5755,17 @@ mod tests {
         CaptureScenarioOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
         ensure_input_authorized, first_stable_recording_match, interaction_command_channel,
         interaction_plan, map_screen_selection_to_capture, narrow_edge_interaction_plan,
-        normalize_axis, recording_control_plan, recording_failed, recording_saved, translated_rect,
-        validate_distinct_recording_phase_fingerprints, validate_paused_progress,
-        validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
+        normalize_axis, pin_coexist_interaction_plan, recording_control_plan, recording_failed,
+        recording_saved, translated_rect, validate_distinct_recording_phase_fingerprints,
+        validate_paused_progress, validate_recorded_media, validate_recording_target_bounds,
+        validate_selection_geometry, window_drag_matches,
     };
     #[cfg(windows)]
     use super::{
-        FixturePhaseState, panic_payload_message, parse_recording_window_fixture_arguments,
-        recording_fixture_dynamic_bounds, request_recording_state, validate_fixture_phase_state,
-        validate_recording_frame_content, validate_same_pixel_content,
+        FixturePhaseState, NativeWindow, horizontal_pin_layout, panic_payload_message,
+        parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
+        request_recording_state, validate_fixture_phase_state, validate_recording_frame_content,
+        validate_same_pixel_content,
     };
     use super::{MediaMetadata, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -5030,7 +5864,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_accepts_only_an_isolated_narrow_edge_capture_scenario() {
+    fn parser_accepts_only_isolated_capture_scenarios() {
         let options = Options::parse_from(arguments(&[
             "--allow-input",
             "--capture-scenario",
@@ -5039,6 +5873,15 @@ mod tests {
         .unwrap();
         assert_eq!(options.capture_scenario, CaptureScenarioOption::NarrowEdge);
         assert_eq!(options.record_target, None);
+
+        let pins = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "pins-coexist",
+        ]))
+        .unwrap();
+        assert_eq!(pins.capture_scenario, CaptureScenarioOption::PinsCoexist);
+        assert_eq!(pins.capture_scenario.workflow(), "capture_pins_coexist");
 
         assert!(
             Options::parse_from(arguments(&[
@@ -5059,6 +5902,107 @@ mod tests {
             ]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn pin_coexist_plan_spreads_three_compact_selections_across_the_upper_overlay() {
+        let client = PhysicalRect {
+            left: 0,
+            top: -4,
+            right: 2560,
+            bottom: 1436,
+        };
+        let expected = [
+            (
+                PhysicalPoint { x: 660, y: 156 },
+                PhysicalPoint { x: 1020, y: 396 },
+            ),
+            (
+                PhysicalPoint { x: 1100, y: 156 },
+                PhysicalPoint { x: 1460, y: 396 },
+            ),
+            (
+                PhysicalPoint { x: 1540, y: 156 },
+                PhysicalPoint { x: 1900, y: 396 },
+            ),
+        ];
+
+        for (index, (start, end)) in expected.into_iter().enumerate() {
+            let plan = pin_coexist_interaction_plan(client, 1.0, index).unwrap();
+            assert_eq!(plan.drag_start, start);
+            assert_eq!(plan.drag_end, end);
+            assert!(client.contains(plan.pin));
+        }
+        assert!(pin_coexist_interaction_plan(client, 1.5, 0).is_err());
+        assert!(pin_coexist_interaction_plan(client, 1.0, 3).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pin_row_layout_preserves_sizes_and_window_drag_follows_pointer_delta() {
+        let display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1440,
+        };
+        let windows = (0..3)
+            .map(|index| NativeWindow {
+                handle: (index + 1) as *mut std::ffi::c_void,
+                bounds: PhysicalRect {
+                    left: 0,
+                    top: 0,
+                    right: 360,
+                    bottom: 240,
+                },
+                dpi: 96,
+            })
+            .collect::<Vec<_>>();
+        let layout = horizontal_pin_layout(display, &windows).unwrap();
+        assert_eq!(
+            layout,
+            vec![
+                PhysicalRect {
+                    left: 640,
+                    top: 1120,
+                    right: 1000,
+                    bottom: 1360,
+                },
+                PhysicalRect {
+                    left: 1100,
+                    top: 1120,
+                    right: 1460,
+                    bottom: 1360,
+                },
+                PhysicalRect {
+                    left: 1560,
+                    top: 1120,
+                    right: 1920,
+                    bottom: 1360,
+                },
+            ]
+        );
+        let before = layout[0];
+        let after = PhysicalRect {
+            left: before.left + 48,
+            top: before.top - 40,
+            right: before.right + 48,
+            bottom: before.bottom - 40,
+        };
+        assert!(window_drag_matches(
+            before,
+            after,
+            PhysicalPoint { x: 820, y: 1336 },
+            PhysicalPoint { x: 868, y: 1296 },
+            2,
+        ));
+        assert!(!window_drag_matches(
+            before,
+            after,
+            PhysicalPoint { x: 820, y: 1336 },
+            PhysicalPoint { x: 870, y: 1296 },
+            1,
+        ));
     }
 
     #[test]
