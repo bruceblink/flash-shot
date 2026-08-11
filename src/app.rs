@@ -2,6 +2,7 @@
 
 mod history_search;
 mod overlay;
+mod pin_acceptance;
 mod pinned;
 mod render_image;
 mod scroll_control;
@@ -61,6 +62,25 @@ pub(crate) fn open_overlay_ui_acceptance(
 ) -> Result<(), Box<dyn std::error::Error>> {
     overlay::open_ui_acceptance(
         started_at,
+        performance,
+        history,
+        settings,
+        settings_path,
+        acceptance,
+        cx,
+    )
+}
+
+/// Opens the isolated multi-Pin lifecycle while keeping Pin internals inside the app module.
+pub(crate) fn open_pin_lifecycle_acceptance(
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    acceptance: crate::PinLifecycleAcceptanceOptions,
+    cx: &mut App,
+) -> Result<(), Box<dyn std::error::Error>> {
+    pin_acceptance::open(
         performance,
         history,
         settings,
@@ -165,9 +185,17 @@ pub struct FlashShotApp {
     history_thumbnails: HashMap<PathBuf, Arc<RenderImage>>,
     history_thumbnail_loading: HashSet<PathBuf>,
     history_thumbnail_failed: HashSet<PathBuf>,
+    system_services: SystemServices,
     _shutdown: Subscription,
+    _window_closed: Subscription,
     _shortcut: Option<GlobalShortcutService>,
     _tray: Option<TrayService>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SystemServices {
+    Production,
+    DisabledForAcceptance,
 }
 
 /// The settings window is intentionally segmented so the capture service has
@@ -412,6 +440,14 @@ impl FlashShotApp {
         self.capture_shortcut_enabled
     }
 
+    /// Verifies that an acceptance app owns no process-wide shortcut or tray integration.
+    pub(crate) fn system_services_disabled_for_acceptance(&self) -> bool {
+        self.system_services == SystemServices::DisabledForAcceptance
+            && self._shortcut.is_none()
+            && self._tray.is_none()
+            && !self.capture_shortcut_enabled
+    }
+
     pub fn new(
         performance: PerformanceRecorder,
         history: ScreenshotHistory,
@@ -419,31 +455,81 @@ impl FlashShotApp {
         settings_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_system_services(
+            performance,
+            history,
+            settings,
+            settings_path,
+            SystemServices::Production,
+            cx,
+        )
+    }
+
+    /// Builds an isolated acceptance app without registering hotkeys, tray icons, or autostart.
+    pub(crate) fn new_for_acceptance(
+        performance: PerformanceRecorder,
+        history: ScreenshotHistory,
+        settings: UserSettings,
+        settings_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_system_services(
+            performance,
+            history,
+            settings,
+            settings_path,
+            SystemServices::DisabledForAcceptance,
+            cx,
+        )
+    }
+
+    /// Initializes shared workflow state while making system-wide services an explicit boundary.
+    fn new_with_system_services(
+        performance: PerformanceRecorder,
+        history: ScreenshotHistory,
+        settings: UserSettings,
+        settings_path: PathBuf,
+        system_services: SystemServices,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let shutdown = cx.on_app_quit(|this, cx| {
             this.shutdown(cx);
             async {}
         });
-        let capture_shortcut = match settings
-            .capture_shortcut
-            .as_deref()
-            .map(str::parse)
-            .transpose()
-        {
-            Ok(Some(shortcut)) => shortcut,
-            Ok(None) => match CaptureShortcut::from_environment() {
-                Ok(shortcut) => shortcut,
+        let app = cx.entity().downgrade();
+        let window_closed = cx.on_window_closed(move |cx, window_id| {
+            if let Some(app) = app.upgrade() {
+                app.update(cx, |app, cx| {
+                    app.unregister_pinned_window(window_id, cx);
+                });
+            }
+        });
+        let production_services = system_services == SystemServices::Production;
+        let capture_shortcut = if production_services {
+            match settings
+                .capture_shortcut
+                .as_deref()
+                .map(str::parse)
+                .transpose()
+            {
+                Ok(Some(shortcut)) => shortcut,
+                Ok(None) => match CaptureShortcut::from_environment() {
+                    Ok(shortcut) => shortcut,
+                    Err(error) => {
+                        log::warn!(target: "flash_shot::shortcut", "capture_hotkey_config_invalid error={error}");
+                        CaptureShortcut::default()
+                    }
+                },
                 Err(error) => {
-                    log::warn!(target: "flash_shot::shortcut", "capture_hotkey_config_invalid error={error}");
+                    log::warn!(target: "flash_shot::shortcut", "saved_capture_hotkey_invalid error={error}");
                     CaptureShortcut::default()
                 }
-            },
-            Err(error) => {
-                log::warn!(target: "flash_shot::shortcut", "saved_capture_hotkey_invalid error={error}");
-                CaptureShortcut::default()
             }
+        } else {
+            CaptureShortcut::default()
         };
         let capture_shortcut_label = capture_shortcut.to_string();
-        let shortcut = if settings.capture_shortcut_enabled {
+        let shortcut = if production_services && settings.capture_shortcut_enabled {
             match register_global_shortcuts(capture_shortcut, &settings) {
                 Ok((service, events)) => {
                     Self::listen_for_shortcut(events, cx);
@@ -458,36 +544,46 @@ impl FlashShotApp {
             None
         };
         let capture_shortcut_enabled = shortcut.is_some();
-        let status = if capture_shortcut_enabled {
+        let status = if !production_services {
+            "Ready - system services disabled for acceptance".to_owned()
+        } else if capture_shortcut_enabled {
             format!("Ready - {capture_shortcut_label}")
         } else if settings.capture_shortcut_enabled {
             "Ready - global shortcut unavailable".to_owned()
         } else {
             "Ready - global shortcut disabled".to_owned()
         };
-        let tray = match TrayService::start() {
-            Ok((service, events)) => {
-                Self::listen_for_tray(events, cx);
-                Some(service)
+        let tray = if production_services {
+            match TrayService::start() {
+                Ok((service, events)) => {
+                    Self::listen_for_tray(events, cx);
+                    Some(service)
+                }
+                Err(error) => {
+                    log::warn!(target: "flash_shot::tray", "tray_unavailable error={error}");
+                    None
+                }
             }
-            Err(error) => {
-                log::warn!(target: "flash_shot::tray", "tray_unavailable error={error}");
-                None
-            }
+        } else {
+            None
         };
-        let auto_start_enabled = match std::env::current_exe()
-            .ok()
-            .map(|executable| SystemAutoStart.state(&executable))
-        {
-            Some(Ok(AutoStartState::Enabled)) => true,
-            Some(Ok(AutoStartState::Disabled | AutoStartState::ManagedByAnotherExecutable)) => {
-                false
+        let auto_start_enabled = if production_services {
+            match std::env::current_exe()
+                .ok()
+                .map(|executable| SystemAutoStart.state(&executable))
+            {
+                Some(Ok(AutoStartState::Enabled)) => true,
+                Some(Ok(AutoStartState::Disabled | AutoStartState::ManagedByAnotherExecutable)) => {
+                    false
+                }
+                Some(Err(error)) => {
+                    log::warn!(target: "flash_shot::autostart", "auto_start_state_read_failed error={error}");
+                    false
+                }
+                None => false,
             }
-            Some(Err(error)) => {
-                log::warn!(target: "flash_shot::autostart", "auto_start_state_read_failed error={error}");
-                false
-            }
-            None => false,
+        } else {
+            false
         };
         if let (Some(tray), Ok(executable)) = (tray.as_ref(), std::env::current_exe())
             && let Ok(state) = SystemAutoStart.state(&executable)
@@ -598,7 +694,9 @@ impl FlashShotApp {
             history_thumbnails: HashMap::new(),
             history_thumbnail_loading: HashSet::new(),
             history_thumbnail_failed: HashSet::new(),
+            system_services,
             _shutdown: shutdown,
+            _window_closed: window_closed,
             _shortcut: shortcut,
             _tray: tray,
         }

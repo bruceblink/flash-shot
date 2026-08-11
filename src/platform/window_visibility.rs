@@ -7,6 +7,12 @@ const PIN_WINDOW_MIN_HEIGHT: i32 = 140;
 const PIN_WINDOW_MAX_WIDTH: i32 = 3_840;
 const PIN_WINDOW_MAX_HEIGHT: i32 = 2_160;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeWindowCenter {
+    x_twice: i64,
+    y_twice: i64,
+}
+
 /// Computes a bounded pixel dimension for a relative Pin-window zoom operation.
 fn scaled_extent(extent: i32, scale: f32, minimum: i32, maximum: i32) -> i32 {
     let extent = extent.max(1);
@@ -35,9 +41,32 @@ pub fn make_topmost(handle: isize) -> io::Result<()> {
     platform::make_topmost(handle)
 }
 
-/// Resizes a native window around its center while preserving its current aspect ratio.
-pub fn resize_centered(handle: isize, scale: f32) -> io::Result<()> {
-    platform::resize_centered(handle, scale)
+/// Computes the bounded logical content size that GPUI should apply for one Pin zoom step.
+pub fn scaled_pin_size(width: f32, height: f32, scale: f32) -> (f32, f32) {
+    (
+        scaled_extent(
+            width.round() as i32,
+            scale,
+            PIN_WINDOW_MIN_WIDTH,
+            PIN_WINDOW_MAX_WIDTH,
+        ) as f32,
+        scaled_extent(
+            height.round() as i32,
+            scale,
+            PIN_WINDOW_MIN_HEIGHT,
+            PIN_WINDOW_MAX_HEIGHT,
+        ) as f32,
+    )
+}
+
+/// Snapshots the native outer-frame center before GPUI queues a content resize.
+pub fn snapshot_window_center(handle: isize) -> io::Result<NativeWindowCenter> {
+    platform::snapshot_window_center(handle)
+}
+
+/// Restores the saved center after GPUI has synchronized its renderer and native size.
+pub fn recenter_window(handle: isize, center: NativeWindowCenter) -> io::Result<()> {
+    platform::recenter_window(handle, center)
 }
 
 /// Applies an alpha value to a native window without changing its z-order or focus.
@@ -52,18 +81,15 @@ pub fn set_mouse_through(handle: isize, enabled: bool) -> io::Result<()> {
 
 #[cfg(windows)]
 mod platform {
-    use super::{
-        PIN_WINDOW_MAX_HEIGHT, PIN_WINDOW_MAX_WIDTH, PIN_WINDOW_MIN_HEIGHT, PIN_WINDOW_MIN_WIDTH,
-        scaled_extent,
-    };
+    use super::{NativeWindowCenter, centered_outer_origin};
     use std::{ffi::c_void, io};
     use windows_sys::Win32::{
         Foundation::RECT,
         UI::WindowsAndMessaging::{
             GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IsWindow, LWA_ALPHA,
-            SW_HIDE, SW_RESTORE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            SWP_NOZORDER, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW,
-            SetWindowPos, ShowWindow, WS_EX_LAYERED, WS_EX_TRANSPARENT,
+            SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
+            SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetLayeredWindowAttributes,
+            SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_LAYERED, WS_EX_TRANSPARENT,
         },
     };
 
@@ -100,7 +126,7 @@ mod platform {
     pub fn show(handle: isize) -> io::Result<()> {
         let window = window(handle)?;
         // SAFETY: window is a live HWND. This restores visibility without requesting foreground.
-        unsafe { ShowWindow(window, SW_RESTORE) };
+        unsafe { ShowWindow(window, SW_SHOWNOACTIVATE) };
         Ok(())
     }
 
@@ -125,32 +151,41 @@ mod platform {
         Ok(())
     }
 
-    pub fn resize_centered(handle: isize, scale: f32) -> io::Result<()> {
+    pub fn snapshot_window_center(handle: isize) -> io::Result<NativeWindowCenter> {
         let window = window(handle)?;
         let mut rect = RECT::default();
-        // SAFETY: window is a live HWND borrowed from GPUI and rect is valid writable storage.
+        // SAFETY: window is live and rect is valid writable storage for its outer bounds.
         if unsafe { GetWindowRect(window, &mut rect) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        let width = rect.right.saturating_sub(rect.left).max(1);
-        let height = rect.bottom.saturating_sub(rect.top).max(1);
-        let target_width = scaled_extent(width, scale, PIN_WINDOW_MIN_WIDTH, PIN_WINDOW_MAX_WIDTH);
-        let target_height =
-            scaled_extent(height, scale, PIN_WINDOW_MIN_HEIGHT, PIN_WINDOW_MAX_HEIGHT);
-        let left = rect.left + (width - target_width) / 2;
-        let top = rect.top + (height - target_height) / 2;
+        Ok(NativeWindowCenter {
+            x_twice: i64::from(rect.left) + i64::from(rect.right),
+            y_twice: i64::from(rect.top) + i64::from(rect.bottom),
+        })
+    }
 
-        // Preserve z-order and focus: Pin zoom should feel like changing the image size,
-        // not like opening or moving a different window.
+    pub fn recenter_window(handle: isize, center: NativeWindowCenter) -> io::Result<()> {
+        let window = window(handle)?;
+        let mut rect = RECT::default();
+        // SAFETY: window is live and rect is valid writable storage for its resized outer bounds.
+        if unsafe { GetWindowRect(window, &mut rect) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let width = rect.right.saturating_sub(rect.left);
+        let height = rect.bottom.saturating_sub(rect.top);
+        let (left, top) = centered_outer_origin(center, width, height).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "resized Pin bounds are invalid")
+        })?;
+        // SAFETY: this task runs after GPUI's queued resize and only restores position.
         if unsafe {
             SetWindowPos(
                 window,
                 std::ptr::null_mut(),
                 left,
                 top,
-                target_width,
-                target_height,
-                SWP_NOACTIVATE | SWP_NOZORDER,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             )
         } == 0
         {
@@ -193,6 +228,7 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
+    use super::NativeWindowCenter;
     use std::io;
 
     pub fn hide(_handle: isize) -> io::Result<()> {
@@ -211,7 +247,14 @@ mod platform {
         Ok(())
     }
 
-    pub fn resize_centered(_handle: isize, _scale: f32) -> io::Result<()> {
+    pub fn snapshot_window_center(_handle: isize) -> io::Result<NativeWindowCenter> {
+        Ok(NativeWindowCenter {
+            x_twice: 0,
+            y_twice: 0,
+        })
+    }
+
+    pub fn recenter_window(_handle: isize, _center: NativeWindowCenter) -> io::Result<()> {
         Ok(())
     }
 
@@ -224,9 +267,27 @@ mod platform {
     }
 }
 
+/// Converts a doubled center and resized outer extent into an origin without losing negative
+/// half-pixel coordinates to truncation toward zero.
+fn centered_outer_origin(
+    center: NativeWindowCenter,
+    width: i32,
+    height: i32,
+) -> Option<(i32, i32)> {
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    let left = (center.x_twice - i64::from(width)).div_euclid(2);
+    let top = (center.y_twice - i64::from(height)).div_euclid(2);
+    Some((i32::try_from(left).ok()?, i32::try_from(top).ok()?))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PIN_WINDOW_MAX_WIDTH, PIN_WINDOW_MIN_WIDTH, scaled_extent};
+    use super::{
+        NativeWindowCenter, PIN_WINDOW_MAX_WIDTH, PIN_WINDOW_MIN_WIDTH, centered_outer_origin,
+        scaled_extent,
+    };
 
     #[test]
     fn pin_window_zoom_scales_and_clamps_the_window_extent() {
@@ -254,6 +315,19 @@ mod tests {
             scaled_extent(400, f32::NAN, PIN_WINDOW_MIN_WIDTH, PIN_WINDOW_MAX_WIDTH),
             400
         );
+    }
+
+    #[test]
+    fn pin_recenter_handles_odd_extents_and_negative_display_coordinates() {
+        let center = NativeWindowCenter {
+            x_twice: -21,
+            y_twice: 19,
+        };
+
+        assert_eq!(centered_outer_origin(center, 5, 4), Some((-13, 7)));
+        assert_eq!(2 * -13 + 5, -21);
+        assert_eq!(2 * 7 + 4, 18);
+        assert_eq!(centered_outer_origin(center, 0, 4), None);
     }
 
     #[cfg(windows)]

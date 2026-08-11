@@ -25,7 +25,11 @@ use history::ScreenshotHistory;
 use performance::PerformanceRecorder;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use settings::UserSettings;
-use std::{path::PathBuf, sync::mpsc::SyncSender, time::Instant};
+use std::{
+    path::PathBuf,
+    sync::mpsc::SyncSender,
+    time::{Duration, Instant},
+};
 
 actions!(flash_shot, [Quit]);
 
@@ -144,6 +148,39 @@ pub fn run_overlay_interaction_acceptance(
             ..SettingsWindowOptions::default()
         },
     )
+}
+
+/// Runtime inputs for one isolated, no-input multi-Pin lifecycle acceptance session.
+#[derive(Clone, Debug)]
+pub struct PinLifecycleAcceptanceOptions {
+    pub session_root: PathBuf,
+    pub display: crate::platform::display::DisplayInfo,
+    pub timeout: Duration,
+    pub settle_delay: Duration,
+}
+
+/// Runs three real Pin windows without the production tray, hotkeys, or single-instance mutex.
+pub fn run_pin_lifecycle_acceptance(
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    acceptance: PinLifecycleAcceptanceOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_native_application(move |cx| {
+        if let Err(error) = app::open_pin_lifecycle_acceptance(
+            performance,
+            history,
+            settings,
+            settings_path,
+            acceptance,
+            cx,
+        ) {
+            log::error!(target: "flash_shot::acceptance", "pin_lifecycle_open_failed error={error}");
+            std::process::exit(1);
+        }
+    })?;
+    Err(std::io::Error::other("GPUI exited before Pin lifecycle acceptance completed").into())
 }
 
 /// Describes the disposable settings window rendered by the native screenshot acceptance probe.

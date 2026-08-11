@@ -38,7 +38,7 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | 负坐标双屏 | 暂缓 | 将副屏放在主屏左侧，跨屏拖动选区并在两屏边缘调整大小。 | 选区和放大镜不跳变；每个显示器只显示自己的覆盖层操作区；导出结果没有偏移或裁切错误。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 混合 DPI 双屏 | 暂缓 | 将两个显示器设置为不同缩放，例如 100% 与 150% 或 200%；跨屏截图、保存并核对像素尺寸。 | 光标、选区、窗口智能识别和导出均以物理像素对齐；无重复或缺失的工具栏。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 窄选区与最小设置窗 | 待执行 | 将设置窗口缩小到最小可用尺寸；在屏幕边缘创建窄选区，展开次级操作与标注面板。 | 文本不截断，控件不重叠；主工具栏保持可点击，次级菜单在可用一侧展开。 | |
-| 多 Pin 生命周期 | 待执行 | 连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | |
+| 多 Pin 生命周期 | 待执行 | 连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | 隔离自动探针已覆盖程序化移动、缩放、透明度、内存复制、保存、Solo、Show all、关闭与截图 preflight；真实鼠标拖动、系统剪贴板和继续进入覆盖层仍待手工执行。 |
 | OCR、翻译与滚动 | 待执行 | 在含文字的选区运行 OCR；在翻译服务可用时运行翻译并模拟一次失败后重试；执行滚动后自动捕获。 | OCR/翻译结果可复制；失败时保留原选区并显示匹配的重试操作；自动滚动等待目标重绘后只追加一帧。 | |
 | FFmpeg 录屏 | 待执行 | 使用支持 `ddagrab` 或 `gdigrab` 的 FFmpeg，分别启动显示器、窗口、区域录制，暂停、恢复并停止。 | 产生可播放 MP4；状态、时长和保存路径正确；停止后无遗留 FFmpeg 子进程。窗口录制固定为开始时选中窗口的可见桌面物理矩形，移动或缩放后不跟随，遮挡或最小化时记录桌面合成像素。 | |
 
@@ -88,6 +88,8 @@ cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-accep
 cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection-bottom-right-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-bottom-right-more
 # 显式输入验收：会短暂取得焦点并移动全局鼠标，仅在可丢弃的单屏桌面会话中运行。
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
+# 无全局输入验收：打开三个真实 Pin，复制使用内存实现，所有保存和截图写入隔离 profile。
+.\scripts\check-pin-lifecycle-acceptance.ps1
 cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
 # 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
@@ -126,6 +128,14 @@ profile，注册 `Ctrl+Alt+F24`，并在每批输入前确认前台 HWND 属于�
 More/Less、覆盖层仍打开时再次 Capture、第二次拖选和 Cancel，保存 JSON 与四张桌面截图，
 最后恢复原始光标。证据会包含当时可见的桌面内容；探针不执行 Copy、Save、Pin 或录屏，
 因此不能单独把完整单屏交互矩阵标为通过。
+`pin-lifecycle-acceptance` 不注册生产托盘、全局快捷键或单实例 mutex，也不注入全局输入。
+它打开三个生产 `PinnedImage` 窗口，只在确认 HWND 属于探针进程后进行程序化移动，随后走真实
+缩放、透明度、保存、Solo、Show all 和 Close 路径；Copy 使用内存 `ClipboardService` 验证完整
+像素帧，不污染系统剪贴板。布局使用实测原生外框和显示器缩放比例，截图前拒绝越界或重叠；
+报告还会实测系统服务确已禁用、Show all 未改变前台 HWND、关闭一个 Pin 后仍保留两个可响应句柄，
+并通过生产 Capture 启动谓词确认截图 preflight 无阻塞。`--timeout-ms` 的 watchdog 覆盖完整原生
+生命周期，而不只覆盖 Save 等待。它不能替代真实鼠标拖动、系统剪贴板写入和 Pin 共存时再次
+进入覆盖层的手工矩阵；150%/200% 仍需在对应真实 Windows 缩放环境复核。
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
@@ -232,6 +242,7 @@ More/Less、覆盖层仍打开时再次 Capture、第二次拖选和 Cancel，�
 | 2026-08-11 | `current-compact-overlay-selection-single-100` | Release `settings-ui-acceptance` 新增固定选区与展开 More 菜单表面；398 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-selection-release.png` 与 `overlay-selection-more-release.png` 的同名 JSON 均记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核 420px 画面里的 Mark、Pin、Copy、Save、More/Less、Cancel 和全部 More 命令均完整可读、未越出安全边距或重叠主动作栏；展开菜单按设计覆盖选区视觉但不遮挡状态与主操作。它不替代真实拖动与点击矩阵。 |
 | 2026-08-11 | `current-bottom-right-overlay-selection-single-100` | Release `settings-ui-acceptance` 增加右下 160x96 固定选区，并以生产 More 状态切换展开菜单；边缘尺寸标签的布局回归验证会避开上翻主操作栏。399 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-selection-bottom-right-more-release.png` 的同名 JSON 记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核全部 More 命令、Less、Cancel、Copy、Save、Pin、Mark 和状态栏均完整可读；主操作栏从右下选区上方显示，菜单保持在画面内。它不替代真实拖动、鼠标命中或多显示器验收。 |
 | 2026-08-11 | `current-overlay-interaction-single-100` | 隔离的 Release `overlay-interaction-acceptance` 在一块 2560x1440、DPI 96 显示器上完成真实拖选、More 展开/收起、活动覆盖层直接重触发 Capture、第二次拖选和 Cancel；独立 `Ctrl+Alt+F24` 注册成功，两个覆盖层 HWND 不同，结束后无探针进程。 | 待执行 | 报告与四张原生截图位于 `target/overlay-interaction-acceptance/session-1786418660219-8616/`；已目视复核选区保持 1185x430 物理像素，More 菜单和主工具栏无重叠，切换后不残留相反状态的 tooltip，第二覆盖层继续响应输入。原 PID 24296 未被操作；Copy、Save、Pin、键盘微调和完整取消清理仍保留在单屏手工矩阵。 |
+| 2026-08-11 | `current-pin-lifecycle-single-100` | 409 项库测试、全目标编译、严格 Clippy 与隔离 Release `pin-lifecycle-acceptance` 通过；在 2560x1440、DPI 96 单屏环境打开三个真实 Pin，验证程序化移动、125% 缩放、75% 透明度、内存 Copy、隔离 Save、Solo、无抢焦点 Show all、关闭一个 Pin 和两 Pin 共存时的生产 Capture preflight。另以 3 秒故障注入确认全流程 watchdog 会写入超时标记并非零退出。 | 待执行 | 报告与两张原生截图位于 `target/pin-lifecycle-acceptance/session-1786424123748-14696/`。目视复核放大 Pin 的 GPUI 内容与原生窗口同步填充并保持中心，两张剩余 Pin 的工具栏完整，无空白区、截断或窗口重叠；报告实测系统服务禁用、Show all 前台 HWND 不变，Solo/Show all 后注册表均保持 3 个句柄，Close 后精确保留 2 个。探针未改系统剪贴板、未注入全局输入，原 PID 24296 保持运行；真实拖动、系统 Copy、150%/200% 实机和共存 Pin 下的真实 Capture 仍待手工执行。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

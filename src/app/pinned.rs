@@ -3,8 +3,8 @@
 use std::{sync::Arc, time::Duration};
 
 use gpui::{
-    AsyncApp, Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, Keystroke, Render,
-    WeakEntity, Window, WindowControlArea, div, img, prelude::*, px,
+    AsyncApp, Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, Keystroke, Pixels,
+    Render, Size, WeakEntity, Window, WindowControlArea, div, img, prelude::*, px, size,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -63,6 +63,7 @@ pub(super) struct PinnedImage {
     status: &'static str,
     feedback_visible: bool,
     feedback_generation: u64,
+    pending_zoom_size: Option<Size<Pixels>>,
 }
 
 impl PinnedImage {
@@ -85,11 +86,21 @@ impl PinnedImage {
             status: "Pinned capture",
             feedback_visible: false,
             feedback_generation: 0,
+            pending_zoom_size: None,
         }
     }
 
     fn copy_image(&mut self, cx: &mut Context<Self>) {
-        let feedback = match copy_pinned_image(&self.frame, &SystemClipboard) {
+        self.copy_image_with(&SystemClipboard, cx);
+    }
+
+    /// Runs the production copy feedback path with an injected clipboard for isolated acceptance.
+    pub(super) fn copy_image_with(
+        &mut self,
+        clipboard: &impl ClipboardService,
+        cx: &mut Context<Self>,
+    ) {
+        let feedback = match copy_pinned_image(&self.frame, clipboard) {
             Ok(()) => "Copied image",
             Err(error) => {
                 log::warn!(target: "flash_shot::pinned", "pinned_window_copy_failed error={error}");
@@ -100,7 +111,7 @@ impl PinnedImage {
     }
 
     /// Delegates the file write to the capture service so history ownership stays centralized.
-    fn save_image(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn save_image(&mut self, cx: &mut Context<Self>) {
         let frame = self.frame.clone();
         let pin = cx.entity().downgrade();
         let accepted = self
@@ -112,6 +123,11 @@ impl PinnedImage {
             "Another pin is already saving"
         };
         self.show_operation_feedback(feedback, cx);
+    }
+
+    /// Keeps controls visible while a no-input acceptance runner exercises native Pin actions.
+    pub(super) fn show_controls_for_acceptance(&mut self, cx: &mut Context<Self>) {
+        self.show_operation_feedback("Pinned capture", cx);
     }
 
     /// Applies the async save result to the originating pin while ignoring a closed window.
@@ -146,34 +162,44 @@ impl PinnedImage {
     }
 
     /// Scales the complete native window so the contained image remains undistorted.
-    fn zoom(&mut self, scale: f32, window: &mut Window, cx: &mut Context<Self>) {
-        let feedback = match window.window_handle() {
-            Ok(handle) => match handle.as_raw() {
-                RawWindowHandle::Win32(handle) => {
-                    match crate::platform::window_visibility::resize_centered(
-                        handle.hwnd.get(),
-                        scale,
-                    ) {
-                        Ok(()) if scale > 1.0 => "Zoomed in",
-                        Ok(()) => "Zoomed out",
-                        Err(error) => {
-                            log::warn!(target: "flash_shot::pinned", "pinned_window_zoom_failed error={error}");
-                            "Could not resize window"
-                        }
-                    }
+    pub(super) fn zoom(&mut self, scale: f32, window: &mut Window, cx: &mut Context<Self>) {
+        let target = next_pin_zoom_size(window.bounds().size, self.pending_zoom_size, scale);
+        self.pending_zoom_size = Some(target);
+        let saved_center = native_window_handle(window).and_then(|handle| {
+            match crate::platform::window_visibility::snapshot_window_center(handle) {
+                Ok(center) => Some((handle, center)),
+                Err(error) => {
+                    log::warn!(target: "flash_shot::pinned", "pinned_window_center_snapshot_failed error={error}");
+                    None
                 }
-                _ => "Window zoom is unavailable",
-            },
-            Err(error) => {
-                log::warn!(target: "flash_shot::pinned", "pinned_window_handle_failed error={error}");
-                "Could not resize window"
             }
+        });
+        // GPUI owns the drawable size and swap chain; resizing through it keeps native bounds,
+        // rendered content, and pointer hit testing synchronized on the next platform tick.
+        window.resize(target);
+        if let Some((handle, center)) = saved_center {
+            // GPUI queues its native resize on this executor. Queueing a move-only task next
+            // preserves the old center without re-entering WM_SIZE from the current callback.
+            cx.foreground_executor()
+                .spawn(async move {
+                    if let Err(error) =
+                        crate::platform::window_visibility::recenter_window(handle, center)
+                    {
+                        log::warn!(target: "flash_shot::pinned", "pinned_window_recenter_failed error={error}");
+                    }
+                })
+                .detach();
+        }
+        let feedback = if scale > 1.0 {
+            "Zoomed in"
+        } else {
+            "Zoomed out"
         };
         self.show_operation_feedback(feedback, cx);
     }
 
     /// Cycles through readable reference-image opacity levels without moving the window.
-    fn cycle_opacity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn cycle_opacity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = next_pin_opacity(self.opacity);
         let feedback = match window.window_handle() {
             Ok(handle) => match handle.as_raw() {
@@ -255,12 +281,12 @@ impl PinnedImage {
     }
 
     /// Keeps one reference image visible without closing the user's other pinned captures.
-    fn hide_other_pinned_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let feedback = match native_window_handle(window) {
-            Some(handle) => {
-                let hidden = self
-                    .app
-                    .update(cx, |app, cx| app.hide_other_pinned_windows(handle, cx));
+    pub(super) fn hide_other_pinned_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let feedback = match gpui::Window::window_handle(window).downcast::<PinnedImage>() {
+            Some(current_window) => {
+                let hidden = self.app.update(cx, |app, cx| {
+                    app.hide_other_pinned_windows(current_window, cx)
+                });
                 if hidden == 0 {
                     "No other pinned images"
                 } else {
@@ -273,25 +299,26 @@ impl PinnedImage {
     }
 
     /// Restores hidden reference images while preserving the active pin's keyboard focus.
-    fn show_all_pinned_images(&mut self, cx: &mut Context<Self>) {
-        let shown = self
-            .app
-            .update(cx, |app, cx| app.show_all_pinned_windows(cx));
-        let feedback = if shown == 0 {
-            "No pinned images to show"
-        } else {
-            "All pinned images shown"
+    pub(super) fn show_all_pinned_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let feedback = match gpui::Window::window_handle(window).downcast::<PinnedImage>() {
+            Some(current_window) => {
+                let shown = self.app.update(cx, |app, cx| {
+                    app.show_all_pinned_windows(current_window, cx)
+                });
+                if shown == 0 {
+                    "No pinned images to show"
+                } else {
+                    "All pinned images shown"
+                }
+            }
+            None => "Pinned window handle is unavailable",
         };
         self.show_operation_feedback(feedback, cx);
     }
 
-    /// Closes this independent pinned window and schedules registry cleanup after native teardown.
-    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let app = self.app.clone();
+    /// Closes this independent Pin; the app's post-close observer unregisters its exact window ID.
+    pub(super) fn close(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
         window.remove_window();
-        cx.defer(move |cx| {
-            app.update(cx, |app, cx| app.prune_closed_pinned_windows(cx));
-        });
     }
 }
 
@@ -309,7 +336,7 @@ impl Focusable for PinnedImage {
 }
 
 /// Returns the native handle only for the focused pin's visibility commands.
-fn native_window_handle(window: &Window) -> Option<isize> {
+pub(super) fn native_window_handle(window: &Window) -> Option<isize> {
     HasWindowHandle::window_handle(window)
         .ok()
         .and_then(|handle| match handle.as_raw() {
@@ -394,6 +421,11 @@ fn pinned_tool_button(
 
 impl Render for PinnedImage {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        if self.pending_zoom_size.is_some_and(|target| {
+            pin_zoom_target_reached(window.bounds().size, target, window.scale_factor())
+        }) {
+            self.pending_zoom_size = None;
+        }
         let colors = self.colors;
         if !self.topmost_requested
             && let Ok(handle) = window.window_handle()
@@ -508,7 +540,7 @@ impl Render for PinnedImage {
                         "show-all",
                         colors,
                         PinnedButtonTone::Neutral,
-                        cx.listener(|this, _, _, cx| this.show_all_pinned_images(cx)),
+                        cx.listener(|this, _, window, cx| this.show_all_pinned_images(window, cx)),
                     ))
                     .child(pinned_tool_button(
                         "pinned-copy",
@@ -553,7 +585,7 @@ impl Render for PinnedImage {
                     Some(PinnedKeyboardCommand::HideOthers) => {
                         this.hide_other_pinned_images(window, cx)
                     }
-                    Some(PinnedKeyboardCommand::ShowAll) => this.show_all_pinned_images(cx),
+                    Some(PinnedKeyboardCommand::ShowAll) => this.show_all_pinned_images(window, cx),
                     None => {}
                 }
             }))
@@ -614,6 +646,33 @@ fn next_pin_opacity(current: u8) -> u8 {
         .unwrap_or(PIN_OPACITY_STEPS[0])
 }
 
+/// Uses an already queued size as the base so rapid zoom commands accumulate predictably.
+fn next_pin_zoom_size(
+    current: Size<Pixels>,
+    pending: Option<Size<Pixels>>,
+    scale: f32,
+) -> Size<Pixels> {
+    let base = pending.unwrap_or(current);
+    let (width, height) = crate::platform::window_visibility::scaled_pin_size(
+        f32::from(base.width),
+        f32::from(base.height),
+        scale,
+    );
+    size(px(width), px(height))
+}
+
+/// Treats sizes as equal when both resolve to the same device pixels at the window's DPI.
+fn pin_zoom_target_reached(actual: Size<Pixels>, target: Size<Pixels>, scale_factor: f32) -> bool {
+    let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    let device_extent = |extent: Pixels| (f32::from(extent) * scale).round();
+    device_extent(actual.width) == device_extent(target.width)
+        && device_extent(actual.height) == device_extent(target.height)
+}
+
 fn opacity_percentage(opacity: u8) -> u8 {
     ((u16::from(opacity) * 100 + 127) / 255) as u8
 }
@@ -644,9 +703,10 @@ fn pin_feedback_timer_is_current(current_generation: u64, timer_generation: u64)
 #[cfg(test)]
 mod tests {
     use super::{
-        PinnedKeyboardCommand, copy_pinned_image, next_pin_opacity, opacity_percentage,
-        pin_feedback_timer_is_current, pinned_close_key, pinned_control_tooltip,
-        pinned_keyboard_command, pinned_save_result_status,
+        PinnedKeyboardCommand, copy_pinned_image, next_pin_opacity, next_pin_zoom_size,
+        opacity_percentage, pin_feedback_timer_is_current, pin_zoom_target_reached,
+        pinned_close_key, pinned_control_tooltip, pinned_keyboard_command,
+        pinned_save_result_status,
     };
     use crate::{
         domain::geometry::PhysicalRect,
@@ -656,6 +716,26 @@ mod tests {
         },
     };
     use std::{cell::RefCell, io, sync::Arc, time::Duration};
+
+    #[test]
+    fn rapid_pin_zoom_uses_the_pending_target_as_its_next_base() {
+        let current = gpui::size(gpui::px(360.0), gpui::px(240.0));
+        let first = next_pin_zoom_size(current, None, 1.25);
+        let second = next_pin_zoom_size(current, Some(first), 1.25);
+
+        assert_eq!(first, gpui::size(gpui::px(450.0), gpui::px(300.0)));
+        assert_eq!(second, gpui::size(gpui::px(563.0), gpui::px(375.0)));
+    }
+
+    #[test]
+    fn fractional_dpi_round_trip_clears_only_the_matching_zoom_target() {
+        let target = gpui::size(gpui::px(563.0), gpui::px(375.0));
+        let rounded = gpui::size(gpui::px(563.2), gpui::px(375.2));
+        let manually_resized = gpui::size(gpui::px(564.0), gpui::px(375.2));
+
+        assert!(pin_zoom_target_reached(rounded, target, 1.25));
+        assert!(!pin_zoom_target_reached(manually_resized, target, 1.25));
+    }
 
     #[derive(Default)]
     struct RecordingClipboard(RefCell<Option<CaptureFrame>>);

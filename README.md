@@ -105,6 +105,14 @@ acceptance record without opening a capture or recording session:
 cargo run --release --bin windows-acceptance-probe -- --output target/windows-acceptance-environment.json
 ```
 
+在单显示器交互桌面上，可运行隔离的三 Pin 生命周期门禁。它不会注册托盘或全局快捷键，
+复制动作使用内存剪贴板，并将保存、报告和原生截图全部写入 `target`。门禁按实测原生边界
+进行 DPI 感知排布，验证 Show all 保持当前焦点，并用全流程超时防止原生验收挂起：
+
+```powershell
+.\scripts\check-pin-lifecycle-acceptance.ps1
+```
+
 ### 文档
 
 - [产品需求](docs/requirements.md)
@@ -233,6 +241,15 @@ Collect an isolated shortcut-to-overlay baseline with the dedicated `Ctrl+Alt+F1
 The script starts one Release application, triggers and cancels twenty real capture overlays, and
 gates the current window's frame-ready and overlay p95 values at 100 ms. It requires an
 interactive Windows desktop and no existing Flash Shot process.
+
+On a single-display interactive desktop, run the isolated three-Pin lifecycle gate without
+registering a tray icon or global shortcuts and without writing to the system clipboard. The gate
+uses measured native bounds for DPI-aware layout, verifies that Show all preserves focus, and
+bounds the complete native lifecycle with a watchdog:
+
+```powershell
+.\scripts\check-pin-lifecycle-acceptance.ps1
+```
 
 ### Documentation
 

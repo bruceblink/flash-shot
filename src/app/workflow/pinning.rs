@@ -165,7 +165,7 @@ impl FlashShotApp {
     }
 
     /// Opens one reusable always-on-top image window from an already decoded frame.
-    pub(super) fn open_pinned_frame(
+    pub(in crate::app) fn open_pinned_frame(
         &mut self,
         pinned_frame: CaptureFrame,
         success_status: &'static str,
@@ -203,14 +203,6 @@ impl FlashShotApp {
                 ..Default::default()
             },
             move |window, cx| {
-                let close_app = pinned_app.clone();
-                window.on_window_should_close(cx, move |_, cx| {
-                    let close_app = close_app.clone();
-                    cx.defer(move |cx| {
-                        close_app.update(cx, |app, cx| app.prune_closed_pinned_windows(cx));
-                    });
-                    true
-                });
                 let pinned = cx.new(|cx| {
                     PinnedImage::new(pinned.image, pinned_frame, pinned_app, pinned_colors, cx)
                 });
@@ -251,28 +243,25 @@ impl FlashShotApp {
     /// Closed windows are dropped from the registry so later focus commands remain harmless.
     pub(in crate::app) fn hide_other_pinned_windows(
         &mut self,
-        current_handle: isize,
+        current_window: gpui::WindowHandle<PinnedImage>,
         cx: &mut Context<Self>,
     ) -> usize {
         let mut hidden = 0;
         self.pinned_windows.retain(|pinned| {
-            match pinned.update(cx, |_, window, _| -> Result<bool, String> {
-                let handle = native_window_handle(window);
-                if handle == Some(current_handle) {
-                    return Ok(false);
-                }
-                handle
+            if is_current_pinned_window(pinned, current_window) {
+                return true;
+            }
+            match pinned.update(cx, |_, window, _| -> Result<(), String> {
+                native_window_handle(window)
                     .ok_or_else(|| "Pinned window handle is unavailable".to_owned())
                     .and_then(|handle| {
                         window_visibility::hide(handle).map_err(|error| error.to_string())
-                    })?;
-                Ok(true)
+                    })
             }) {
-                Ok(Ok(true)) => {
+                Ok(Ok(())) => {
                     hidden += 1;
                     true
                 }
-                Ok(Ok(false)) => true,
                 Ok(Err(error)) => {
                     log::warn!(target: "flash_shot::pinned", "pinned_window_hide_failed error={error}");
                     true
@@ -287,9 +276,16 @@ impl FlashShotApp {
     }
 
     /// Restores all live pinned references without stealing focus from the current image.
-    pub(in crate::app) fn show_all_pinned_windows(&mut self, cx: &mut Context<Self>) -> usize {
+    pub(in crate::app) fn show_all_pinned_windows(
+        &mut self,
+        current_window: gpui::WindowHandle<PinnedImage>,
+        cx: &mut Context<Self>,
+    ) -> usize {
         let mut shown = 0;
         self.pinned_windows.retain(|pinned| {
+            if is_current_pinned_window(pinned, current_window) {
+                return true;
+            }
             match pinned.update(cx, |_, window, _| -> Result<(), String> {
                 let handle = native_window_handle(window)
                     .ok_or_else(|| "Pinned window handle is unavailable".to_owned())?;
@@ -313,10 +309,21 @@ impl FlashShotApp {
         shown
     }
 
-    /// Drops window handles whose native Pin windows were closed by the user.
-    ///
-    /// Explicit Close and Escape actions defer this sweep until native teardown completes, so
-    /// the registry does not retain dead handles or make later multi-Pin commands scan them.
+    /// Removes exactly the Pin whose GPUI window is closing without probing sibling windows
+    /// during native teardown, when otherwise-live handles can be temporarily unavailable.
+    pub(in crate::app) fn unregister_pinned_window(
+        &mut self,
+        closing_id: gpui::WindowId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let removed = remove_pinned_window_by_id(&mut self.pinned_windows, closing_id);
+        if removed {
+            cx.notify();
+        }
+        removed
+    }
+
+    /// Defensively drops stale handles; normal closes are removed exactly by the app observer.
     pub(in crate::app) fn prune_closed_pinned_windows(&mut self, cx: &mut Context<Self>) {
         self.pinned_windows.retain(|pinned| match pinned.update(cx, |_, _, _| {}) {
             Ok(()) => true,
@@ -356,6 +363,25 @@ impl FlashShotApp {
         };
         cx.notify();
     }
+}
+
+/// Skips the active Pin before nested updates because GPUI temporarily removes that window from
+/// its app registry while dispatching the current Pin action.
+fn is_current_pinned_window(
+    candidate: &gpui::WindowHandle<PinnedImage>,
+    current: gpui::WindowHandle<PinnedImage>,
+) -> bool {
+    *candidate == current
+}
+
+/// Applies the exact-ID registry rule independently from GPUI/native window state.
+fn remove_pinned_window_by_id(
+    windows: &mut Vec<gpui::WindowHandle<PinnedImage>>,
+    closing_id: gpui::WindowId,
+) -> bool {
+    let previous_len = windows.len();
+    windows.retain(|window| window.window_id() != closing_id);
+    windows.len() != previous_len
 }
 
 /// Builds a patterned frame so native Pin screenshots show both the image surface and toolbar.
@@ -398,8 +424,12 @@ fn pinned_saved_feedback_preview_frame() -> CaptureFrame {
 
 #[cfg(test)]
 mod tests {
-    use super::pinned_saved_feedback_preview_frame;
+    use super::{
+        PinnedImage, is_current_pinned_window, pinned_saved_feedback_preview_frame,
+        remove_pinned_window_by_id,
+    };
     use crate::domain::geometry::PhysicalPoint;
+    use gpui::{WindowHandle, WindowId};
 
     #[test]
     fn saved_feedback_preview_frame_has_valid_physical_pixels() {
@@ -410,5 +440,32 @@ mod tests {
         assert!(frame.validate().is_ok());
         assert!(frame.pixel_at(PhysicalPoint { x: 0, y: 0 }).is_some());
         assert!(frame.pixel_at(PhysicalPoint { x: 760, y: 480 }).is_none());
+    }
+
+    #[test]
+    fn closing_one_pin_removes_only_its_registered_window() {
+        let first_id = WindowId::from(1_u64);
+        let closing_id = WindowId::from(2_u64);
+        let third_id = WindowId::from(3_u64);
+        let mut windows = vec![
+            WindowHandle::<PinnedImage>::new(first_id),
+            WindowHandle::<PinnedImage>::new(closing_id),
+            WindowHandle::<PinnedImage>::new(third_id),
+        ];
+
+        assert!(remove_pinned_window_by_id(&mut windows, closing_id));
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].window_id(), first_id);
+        assert_eq!(windows[1].window_id(), third_id);
+        assert!(!remove_pinned_window_by_id(&mut windows, closing_id));
+    }
+
+    #[test]
+    fn active_pin_is_identified_before_nested_window_updates() {
+        let active = WindowHandle::<PinnedImage>::new(WindowId::from(7_u64));
+        let sibling = WindowHandle::<PinnedImage>::new(WindowId::from(8_u64));
+
+        assert!(is_current_pinned_window(&active, active));
+        assert!(!is_current_pinned_window(&sibling, active));
     }
 }

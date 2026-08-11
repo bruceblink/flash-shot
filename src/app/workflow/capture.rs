@@ -195,12 +195,7 @@ impl FlashShotApp {
         preselect_full_screen: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.full_screen_copy_generation.is_some()
-            || self.full_screen_save_generation.is_some()
-            || self.full_screen_pin_generation.is_some()
-            || self.clipboard_pin_generation.is_some()
-            || self.history_pin_generation.is_some()
-        {
+        if !self.capture_export_operations_idle() {
             return;
         }
         if self.delayed_capture_generation.is_some() {
@@ -214,6 +209,9 @@ impl FlashShotApp {
         ) {
             self.status = status.to_owned();
             cx.notify();
+            return;
+        }
+        if !self.capture_preflight_ready() {
             return;
         }
         if !self.prepare_capture_restart(cx) {
@@ -252,6 +250,29 @@ impl FlashShotApp {
             }
         })
         .detach();
+    }
+
+    /// Returns the production start predicate without capturing the desktop or opening overlays.
+    pub(in crate::app) fn capture_preflight_ready(&self) -> bool {
+        self.capture_export_operations_idle()
+            && self.delayed_capture_generation.is_none()
+            && capture_start_conflict_status(
+                self.recording_control.is_some() || self.recording_acceptance_active,
+                self.recording_start_in_flight,
+                self.recording_stopping,
+            )
+            .is_none()
+            && (self.session.state() == CaptureSessionState::Idle
+                || capture_session_can_restart(self.session.state()))
+    }
+
+    /// Groups async export owners that must finish before a fresh capture can replace the session.
+    fn capture_export_operations_idle(&self) -> bool {
+        self.full_screen_copy_generation.is_none()
+            && self.full_screen_save_generation.is_none()
+            && self.full_screen_pin_generation.is_none()
+            && self.clipboard_pin_generation.is_none()
+            && self.history_pin_generation.is_none()
     }
 
     /// Clears a replaceable finished selection before a fresh capture request starts.
