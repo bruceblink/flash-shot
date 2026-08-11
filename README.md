@@ -279,6 +279,16 @@ clipboard:
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --output-dir target/overlay-interaction-pins-coexist-acceptance
 ```
 
+Use the opt-in selection-transform scenario to perform real committed-selection gestures in one
+overlay: move from the selection interior, resize the bottom-right corner, resize with Shift to
+preserve the aspect ratio, and resize with Alt around the original center. It requires one
+100%-scaled display, records the actual pointer endpoints and committed physical rectangles, and
+cleans up the overlay and Settings controller without touching the system clipboard:
+
+```powershell
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario selection-transform --output-dir target/overlay-interaction-selection-transform-acceptance
+```
+
 The recording modes click `Record area` or `Record window`, then the real Pause, Resume, and Stop
 buttons, and accept the run only after FFprobe validates the finalized H.264 MP4. These commands
 move the global pointer, so run them only in a disposable interactive desktop session. The runner

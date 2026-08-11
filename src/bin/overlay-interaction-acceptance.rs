@@ -14,6 +14,7 @@ use flash_shot::{
     OverlayInteractionCaptureContent, OverlayInteractionCaptureState,
     OverlayInteractionRecordingState,
     domain::geometry::{PhysicalPoint, PhysicalRect},
+    domain::selection::{ResizeHandle, SelectionDrag},
     history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::display::{DisplayInfo, DisplayProvider, SystemDisplayProvider},
@@ -68,7 +69,7 @@ use windows_sys::Win32::{
             INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
             KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
             MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput, VK_A, VK_CONTROL,
-            VK_ESCAPE, VK_F24, VK_MENU, VK_RETURN, VK_RIGHT,
+            VK_ESCAPE, VK_F24, VK_MENU, VK_RETURN, VK_RIGHT, VK_SHIFT,
         },
         WindowsAndMessaging::{
             BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
@@ -122,6 +123,10 @@ const PIN_COEXIST_SELECTION_GAP: f32 = 80.0;
 const PIN_COEXIST_SELECTION_TOP: f32 = 160.0;
 const PIN_COEXIST_LAYOUT_GAP: i32 = 100;
 const PIN_COEXIST_LAYOUT_MARGIN: i32 = 80;
+const SELECTION_MOVE_DELTA: PhysicalPoint = PhysicalPoint { x: 120, y: 72 };
+const SELECTION_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 144, y: -80 };
+const SELECTION_SHIFT_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 120, y: -24 };
+const SELECTION_ALT_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 80, y: -56 };
 #[cfg(windows)]
 const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
 #[cfg(windows)]
@@ -150,6 +155,7 @@ enum CaptureScenarioOption {
     Standard,
     NarrowEdge,
     PinsCoexist,
+    SelectionTransform,
 }
 
 impl CaptureScenarioOption {
@@ -158,11 +164,15 @@ impl CaptureScenarioOption {
             Self::Standard => "capture",
             Self::NarrowEdge => "capture_narrow_edge",
             Self::PinsCoexist => "capture_pins_coexist",
+            Self::SelectionTransform => "capture_selection_transform",
         }
     }
 
     const fn requires_100_percent_display(self) -> bool {
-        matches!(self, Self::NarrowEdge | Self::PinsCoexist)
+        matches!(
+            self,
+            Self::NarrowEdge | Self::PinsCoexist | Self::SelectionTransform
+        )
     }
 }
 
@@ -249,9 +259,12 @@ impl Options {
                     options.capture_scenario = match scenario.as_str() {
                         "narrow-edge" => CaptureScenarioOption::NarrowEdge,
                         "pins-coexist" => CaptureScenarioOption::PinsCoexist,
+                        "selection-transform" => CaptureScenarioOption::SelectionTransform,
                         _ => {
-                            return Err("capture scenario must be 'narrow-edge' or 'pins-coexist'"
-                                .to_owned());
+                            return Err(
+                                "capture scenario must be 'narrow-edge', 'pins-coexist', or 'selection-transform'"
+                                    .to_owned(),
+                            );
                         }
                     };
                     capture_scenario_seen = true;
@@ -311,7 +324,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge|pins-coexist> | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge|pins-coexist|selection-transform> | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -355,6 +368,70 @@ struct NarrowEdgeInteractionPlan {
     base: InteractionPlan,
     expanded_mark: PhysicalPoint,
     evidence_rest: PhysicalPoint,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionTransformKind {
+    Move,
+    CornerResize,
+    ShiftResize,
+    AltResize,
+}
+
+impl SelectionTransformKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Move => "move",
+            Self::CornerResize => "corner_resize",
+            Self::ShiftResize => "shift_resize",
+            Self::AltResize => "alt_resize",
+        }
+    }
+
+    const fn modifiers(self) -> DragModifiers {
+        match self {
+            Self::Move | Self::CornerResize => DragModifiers::NONE,
+            Self::ShiftResize => DragModifiers::SHIFT,
+            Self::AltResize => DragModifiers::ALT,
+        }
+    }
+
+    const fn delta(self) -> PhysicalPoint {
+        match self {
+            Self::Move => SELECTION_MOVE_DELTA,
+            Self::CornerResize => SELECTION_RESIZE_DELTA,
+            Self::ShiftResize => SELECTION_SHIFT_RESIZE_DELTA,
+            Self::AltResize => SELECTION_ALT_RESIZE_DELTA,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DragModifiers {
+    shift: bool,
+    alt: bool,
+}
+
+impl DragModifiers {
+    const NONE: Self = Self {
+        shift: false,
+        alt: false,
+    };
+    const SHIFT: Self = Self {
+        shift: true,
+        alt: false,
+    };
+    const ALT: Self = Self {
+        shift: false,
+        alt: true,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SelectionTransformGesture {
+    kind: SelectionTransformKind,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -577,6 +654,104 @@ fn pin_coexist_interaction_plan(
     interaction_plan_for_logical_selection(bounds, scale, width, height, start, end)
 }
 
+/// Builds one physical-pixel gesture with enough room to avoid desktop-edge clamping.
+fn selection_transform_gesture(
+    selection: PhysicalRect,
+    capture_bounds: PhysicalRect,
+    kind: SelectionTransformKind,
+) -> io::Result<SelectionTransformGesture> {
+    let start = if kind == SelectionTransformKind::Move {
+        PhysicalPoint {
+            x: selection.left + selection.width() as i32 / 2,
+            y: selection.top + selection.height() as i32 / 2,
+        }
+    } else {
+        PhysicalPoint {
+            x: selection.right,
+            y: selection.bottom,
+        }
+    };
+    let delta = kind.delta();
+    let end = PhysicalPoint {
+        x: start
+            .x
+            .checked_add(delta.x)
+            .ok_or_else(|| io::Error::other("selection gesture X overflowed"))?,
+        y: start
+            .y
+            .checked_add(delta.y)
+            .ok_or_else(|| io::Error::other("selection gesture Y overflowed"))?,
+    };
+    if !capture_bounds.contains(start) || !capture_bounds.contains(end) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "{} gesture from {start:?} to {end:?} does not fit inside {capture_bounds:?}",
+                kind.label()
+            ),
+        ));
+    }
+    Ok(SelectionTransformGesture { kind, start, end })
+}
+
+/// Applies the production selection model to the actual cursor endpoints observed after SendInput.
+fn expected_selection_transform(
+    selection: PhysicalRect,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+    capture_bounds: PhysicalRect,
+    kind: SelectionTransformKind,
+) -> io::Result<PhysicalRect> {
+    let mut drag = SelectionDrag::default();
+    match kind {
+        SelectionTransformKind::Move => {
+            drag.begin_move(selection, start);
+            drag.update_move(end, capture_bounds);
+        }
+        SelectionTransformKind::CornerResize => {
+            drag.begin_resize(selection, ResizeHandle::BottomRight);
+            drag.update(end);
+        }
+        SelectionTransformKind::ShiftResize => {
+            drag.begin_resize(selection, ResizeHandle::BottomRight);
+            drag.update_with_aspect_ratio(end, capture_bounds);
+        }
+        SelectionTransformKind::AltResize => {
+            drag.begin_resize(selection, ResizeHandle::BottomRight);
+            drag.update_from_center(end, capture_bounds, false);
+        }
+    }
+    drag.selection().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} gesture did not produce a selection", kind.label()),
+        )
+    })
+}
+
+/// Checks the production Shift-resize ratio with a one-pixel allowance for integer rounding.
+fn selection_aspect_ratio_preserved(before: PhysicalRect, after: PhysicalRect) -> bool {
+    if before.width() == 0 || before.height() == 0 || after.width() == 0 || after.height() == 0 {
+        return false;
+    }
+    let expected_height =
+        u64::from(after.width()) * u64::from(before.height()) / u64::from(before.width());
+    (i64::from(after.height()) - expected_height as i64).abs() <= 1
+}
+
+/// Checks the production Alt-resize center with the model's integer rounding tolerance.
+fn selection_center_preserved(before: PhysicalRect, after: PhysicalRect) -> bool {
+    let before_center = (
+        i64::from(before.left) + i64::from(before.width() / 2),
+        i64::from(before.top) + i64::from(before.height() / 2),
+    );
+    let after_center = (
+        i64::from(after.left) + i64::from(after.width() / 2),
+        i64::from(after.top) + i64::from(after.height() / 2),
+    );
+    (before_center.0 - after_center.0).abs() <= 1 && (before_center.1 - after_center.1).abs() <= 1
+}
+
 /// Verifies that the application's committed selection follows the actual injected pointer path.
 fn validate_selection_geometry(
     requested: PhysicalRect,
@@ -627,6 +802,114 @@ fn map_screen_selection_to_capture(
         .checked_sub(client_bounds.top)
         .ok_or_else(|| io::Error::other("overlay client-to-display Y offset overflowed"))?;
     translated_rect(screen_selection, delta_x, delta_y)
+}
+
+/// Maps one actual cursor position without normalizing away its drag direction.
+fn map_screen_point_to_capture(
+    point: PhysicalPoint,
+    client_bounds: PhysicalRect,
+    capture_bounds: PhysicalRect,
+) -> io::Result<PhysicalPoint> {
+    if client_bounds.width() != capture_bounds.width()
+        || client_bounds.height() != capture_bounds.height()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "overlay client {:?} does not match capture display {:?}",
+                client_bounds, capture_bounds
+            ),
+        ));
+    }
+    Ok(PhysicalPoint {
+        x: point
+            .x
+            .checked_add(
+                capture_bounds
+                    .left
+                    .checked_sub(client_bounds.left)
+                    .ok_or_else(|| {
+                        io::Error::other("overlay client-to-display X offset overflowed")
+                    })?,
+            )
+            .ok_or_else(|| io::Error::other("screen-to-capture X mapping overflowed"))?,
+        y: point
+            .y
+            .checked_add(
+                capture_bounds
+                    .top
+                    .checked_sub(client_bounds.top)
+                    .ok_or_else(|| {
+                        io::Error::other("overlay client-to-display Y offset overflowed")
+                    })?,
+            )
+            .ok_or_else(|| io::Error::other("screen-to-capture Y mapping overflowed"))?,
+    })
+}
+
+/// Converts a capture pixel back to the screen coordinate consumed by SendInput.
+fn map_capture_point_to_screen(
+    point: PhysicalPoint,
+    client_bounds: PhysicalRect,
+    capture_bounds: PhysicalRect,
+) -> io::Result<PhysicalPoint> {
+    if client_bounds.width() != capture_bounds.width()
+        || client_bounds.height() != capture_bounds.height()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "overlay client {:?} does not match capture display {:?}",
+                client_bounds, capture_bounds
+            ),
+        ));
+    }
+    Ok(PhysicalPoint {
+        x: point
+            .x
+            .checked_add(
+                client_bounds
+                    .left
+                    .checked_sub(capture_bounds.left)
+                    .ok_or_else(|| {
+                        io::Error::other("display-to-overlay client X offset overflowed")
+                    })?,
+            )
+            .ok_or_else(|| io::Error::other("capture-to-screen X mapping overflowed"))?,
+        y: point
+            .y
+            .checked_add(
+                client_bounds
+                    .top
+                    .checked_sub(capture_bounds.top)
+                    .ok_or_else(|| {
+                        io::Error::other("display-to-overlay client Y offset overflowed")
+                    })?,
+            )
+            .ok_or_else(|| io::Error::other("capture-to-screen Y mapping overflowed"))?,
+    })
+}
+
+/// Rejects SendInput coordinates that drift beyond the measured physical-pixel tolerance.
+fn validate_point_geometry(
+    requested: PhysicalPoint,
+    actual: PhysicalPoint,
+    label: &str,
+) -> io::Result<()> {
+    let delta_x = (i64::from(requested.x) - i64::from(actual.x)).abs();
+    let delta_y = (i64::from(requested.y) - i64::from(actual.y)).abs();
+    if delta_x <= i64::from(SELECTION_EDGE_TOLERANCE)
+        && delta_y <= i64::from(SELECTION_EDGE_TOLERANCE)
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{label} reached {actual:?}, requested {requested:?} (maximum tolerance: {SELECTION_EDGE_TOLERANCE}px)"
+            ),
+        ))
+    }
 }
 
 /// Requires the production recorder to expose the independently resolved source rectangle.
@@ -694,6 +977,7 @@ struct AcceptanceReport {
     capture_actions: Option<CaptureActionReport>,
     narrow_edge: Option<NarrowEdgeReport>,
     pins_coexist: Option<PinsCoexistReport>,
+    selection_transform: Option<SelectionTransformReport>,
     error: Option<String>,
 }
 
@@ -869,6 +1153,31 @@ struct PinsCoexistReport {
 }
 
 #[derive(serde::Serialize)]
+struct SelectionTransformReport {
+    initial_requested_selection: PhysicalRect,
+    initial_selection: PhysicalRect,
+    gestures: Vec<SelectionTransformGestureReport>,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct SelectionTransformGestureReport {
+    gesture: &'static str,
+    shift: bool,
+    alt: bool,
+    before: PhysicalRect,
+    pointer_start: PhysicalPoint,
+    pointer_end: PhysicalPoint,
+    expected: PhysicalRect,
+    committed: PhysicalRect,
+    geometry_matches: bool,
+    size_preserved: Option<bool>,
+    opposite_corner_fixed: Option<bool>,
+    aspect_ratio_preserved: Option<bool>,
+    center_preserved: Option<bool>,
+}
+
+#[derive(serde::Serialize)]
 struct WindowDragReport {
     handle: usize,
     before: PhysicalRect,
@@ -953,6 +1262,13 @@ struct NativeWindow {
 struct InjectedDrag {
     foreground: NativeWindow,
     selection: PhysicalRect,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct InjectedSelectionTransform {
+    start: PhysicalPoint,
+    end: PhysicalPoint,
 }
 
 #[cfg(windows)]
@@ -1145,9 +1461,12 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
         (Some(_), _) => (980.0, 760.0),
         (None, CaptureScenarioOption::NarrowEdge) => (420.0, 420.0),
-        (None, CaptureScenarioOption::Standard | CaptureScenarioOption::PinsCoexist) => {
-            (520.0, 640.0)
-        }
+        (
+            None,
+            CaptureScenarioOption::Standard
+            | CaptureScenarioOption::PinsCoexist
+            | CaptureScenarioOption::SelectionTransform,
+        ) => (520.0, 640.0),
     };
 
     let worker_context = WorkerContext {
@@ -1217,7 +1536,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        schema_version: 7,
+        schema_version: 8,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -1242,6 +1561,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         capture_actions: None,
         narrow_edge: None,
         pins_coexist: None,
+        selection_transform: None,
         error: None,
     }
 }
@@ -1976,6 +2296,9 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::PinsCoexist) => {
             execute_pins_coexist_interactions(context, report)
         }
+        (None, CaptureScenarioOption::SelectionTransform) => {
+            execute_selection_transform_interactions(context, report)
+        }
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
     let cursor_result = cursor.restore();
@@ -2566,6 +2889,313 @@ fn execute_pins_coexist_interactions(
         pins_during_capture: active.pinned_count,
         pins_after_cancel: after_cancel.pinned_count,
         closed_with_escape: PIN_COEXIST_COUNT,
+        cleanup: CleanupReport {
+            session_state: final_state.session_state,
+            overlay_count: final_state.overlay_count,
+            pinned_count: final_state.pinned_count,
+            visible_process_windows,
+            capture_preflight_ready: final_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Cancels an active transform overlay before reporting a deterministic geometry preflight error.
+fn cancel_selection_transform_overlay(
+    overlay: NativeWindow,
+    capture_bounds: PhysicalRect,
+    selection: PhysicalRect,
+    timeout: Duration,
+) -> io::Result<()> {
+    let plan = interaction_plan_for_capture_selection(overlay.handle, capture_bounds, selection)?;
+    inject_mouse_click(overlay.handle, plan.cancel)?;
+    wait_for_window_gone(
+        overlay.handle,
+        timeout,
+        "selection transform preflight Cancel",
+    )
+}
+
+#[cfg(windows)]
+/// Verifies real move and corner-resize gestures, including Shift and Alt modifier semantics.
+fn execute_selection_transform_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "selection_transform_controller_ready",
+        controller,
+        None,
+    )?;
+
+    let foreground = inject_capture_shortcut(controller.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "selection_transform_capture_shortcut",
+        foreground,
+        None,
+    )?;
+    let overlay = wait_for_overlay(
+        controller.handle,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let plan = interaction_plan_for_window(overlay.handle)?;
+    let initial_drag = inject_mouse_drag(
+        overlay.handle,
+        plan.drag_start,
+        plan.drag_end,
+        context.display.physical_bounds,
+    )?;
+    let initial_state =
+        wait_for_capture_state(context, "selection transform initial drag", |state| {
+            state.session_state == "selecting"
+                && state.selection.is_some()
+                && state.overlay_count == 1
+                && !state.more_actions_visible
+                && !state.annotation_controls_visible
+        })?;
+    let initial_selection = initial_state
+        .selection
+        .ok_or_else(|| io::Error::other("selection transform initial selection disappeared"))?;
+    validate_selection_geometry(
+        initial_drag.selection,
+        initial_selection,
+        "selection transform initial drag",
+    )?;
+    let evidence_rest = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: context.display.physical_bounds.left + 24,
+            y: context.display.physical_bounds.top + 24,
+        },
+        client_bounds_for_window(overlay.handle)?,
+        context.display.physical_bounds,
+    )?;
+    let foreground = inject_mouse_move(overlay.handle, evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let mut previous_evidence = capture_evidence(context, "00-transform-selected.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "selection_transform_initial",
+        foreground,
+        Some(&previous_evidence),
+    )?;
+
+    let kinds = [
+        SelectionTransformKind::Move,
+        SelectionTransformKind::CornerResize,
+        SelectionTransformKind::ShiftResize,
+        SelectionTransformKind::AltResize,
+    ];
+    let screenshots = [
+        "01-transform-moved.png",
+        "02-transform-resized.png",
+        "03-transform-shift-resized.png",
+        "04-transform-alt-resized.png",
+    ];
+    let mut current = initial_selection;
+
+    // Check the complete fixed gesture sequence before the first transform so a small desktop
+    // fails with a clean Cancel instead of leaving an active overlay after a partial run. Keep
+    // model errors on this same cleanup path because they also happen while the overlay is live.
+    let preflight_result = (|| -> io::Result<()> {
+        let mut preview = current;
+        for kind in kinds {
+            let requested =
+                selection_transform_gesture(preview, context.display.physical_bounds, kind)?;
+            preview = expected_selection_transform(
+                preview,
+                requested.start,
+                requested.end,
+                context.display.physical_bounds,
+                kind,
+            )?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = preflight_result {
+        let cleanup = cancel_selection_transform_overlay(
+            overlay,
+            context.display.physical_bounds,
+            current,
+            context.timeout,
+        );
+        return match cleanup {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(io::Error::other(format!(
+                "{error}; transform preflight cleanup failed: {cleanup_error}"
+            ))),
+        };
+    }
+
+    let mut gestures = Vec::with_capacity(kinds.len());
+    let transform_result = (|| -> io::Result<()> {
+        for (kind, screenshot) in kinds.into_iter().zip(screenshots) {
+            let requested =
+                selection_transform_gesture(current, context.display.physical_bounds, kind)?;
+            let injected = inject_selection_transform_drag(
+                overlay.handle,
+                requested,
+                context.display.physical_bounds,
+            )?;
+            validate_point_geometry(
+                requested.start,
+                injected.start,
+                &format!("{} pointer start", kind.label()),
+            )?;
+            validate_point_geometry(
+                requested.end,
+                injected.end,
+                &format!("{} pointer end", kind.label()),
+            )?;
+            let expected = expected_selection_transform(
+                current,
+                injected.start,
+                injected.end,
+                context.display.physical_bounds,
+                kind,
+            )?;
+            let transformed = wait_for_capture_state(context, kind.label(), |state| {
+                state.session_state == "selecting"
+                    && state
+                        .selection
+                        .is_some_and(|selection| selection != current)
+                    && state.overlay_count == 1
+                    && !state.more_actions_visible
+                    && !state.annotation_controls_visible
+            })?
+            .selection
+            .ok_or_else(|| io::Error::other(format!("{} selection disappeared", kind.label())))?;
+            validate_selection_geometry(expected, transformed, kind.label())?;
+
+            let size_preserved = (kind == SelectionTransformKind::Move).then_some(
+                current.width() == transformed.width() && current.height() == transformed.height(),
+            );
+            let opposite_corner_fixed = matches!(
+                kind,
+                SelectionTransformKind::CornerResize | SelectionTransformKind::ShiftResize
+            )
+            .then_some(current.left == transformed.left && current.top == transformed.top);
+            let aspect_ratio_preserved = matches!(kind, SelectionTransformKind::ShiftResize)
+                .then_some(selection_aspect_ratio_preserved(current, transformed));
+            let center_preserved = matches!(kind, SelectionTransformKind::AltResize)
+                .then_some(selection_center_preserved(current, transformed));
+            if size_preserved == Some(false)
+                || opposite_corner_fixed == Some(false)
+                || aspect_ratio_preserved == Some(false)
+                || center_preserved == Some(false)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{} violated its selection invariant", kind.label()),
+                ));
+            }
+
+            let foreground = inject_mouse_move(overlay.handle, evidence_rest)?;
+            thread::sleep(context.settle_delay);
+            let evidence = capture_evidence(context, screenshot, overlay)?;
+            ensure_evidence_changed(
+                &previous_evidence,
+                &evidence,
+                &format!("{} did not change the overlay", kind.label()),
+            )?;
+            record_step(
+                report,
+                &context.report_path,
+                kind.label(),
+                foreground,
+                Some(&evidence),
+            )?;
+            previous_evidence = evidence;
+            gestures.push(SelectionTransformGestureReport {
+                gesture: kind.label(),
+                shift: kind.modifiers().shift,
+                alt: kind.modifiers().alt,
+                before: current,
+                pointer_start: injected.start,
+                pointer_end: injected.end,
+                expected,
+                committed: transformed,
+                geometry_matches: true,
+                size_preserved,
+                opposite_corner_fixed,
+                aspect_ratio_preserved,
+                center_preserved,
+            });
+            current = transformed;
+        }
+        Ok(())
+    })();
+    if let Err(error) = transform_result {
+        let cleanup = cancel_selection_transform_overlay(
+            overlay,
+            context.display.physical_bounds,
+            current,
+            context.timeout,
+        );
+        return match cleanup {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(io::Error::other(format!(
+                "{error}; transform cleanup failed: {cleanup_error}"
+            ))),
+        };
+    }
+
+    let final_plan = interaction_plan_for_capture_selection(
+        overlay.handle,
+        context.display.physical_bounds,
+        current,
+    )?;
+    let foreground = inject_mouse_click(overlay.handle, final_plan.cancel)?;
+    wait_for_window_gone(
+        overlay.handle,
+        context.timeout,
+        "selection transform Cancel",
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "selection_transform_cancel",
+        foreground,
+        None,
+    )?;
+    let final_state = wait_for_capture_state(context, "selection transform cleanup", |state| {
+        state.overlay_count == 0
+            && state.pinned_count == 0
+            && state.capture_preflight_ready
+            && matches!(
+                state.session_state.as_str(),
+                "idle" | "completed" | "cancelled"
+            )
+    })?;
+    // Cancel restores the Settings controller for normal users; hide this probe-owned window
+    // before asserting that the isolated process has no visible native windows left.
+    unsafe { ShowWindow(controller.handle, SW_HIDE) };
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "selection transform controller hide",
+    )?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "selection transform cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.selection_transform = Some(SelectionTransformReport {
+        initial_requested_selection: initial_drag.selection,
+        initial_selection,
+        gestures,
         cleanup: CleanupReport {
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
@@ -5253,6 +5883,49 @@ fn interaction_plan_for_window(handle: *mut c_void) -> io::Result<InteractionPla
 }
 
 #[cfg(windows)]
+/// Recomputes the production toolbar from the latest committed physical selection.
+fn interaction_plan_for_capture_selection(
+    handle: *mut c_void,
+    capture_bounds: PhysicalRect,
+    selection: PhysicalRect,
+) -> io::Result<InteractionPlan> {
+    let window = owned_window(handle)?;
+    let client = client_bounds_for_window(handle)?;
+    let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
+    let (width, height) = overlay_logical_size(client, scale)?;
+    let top_left = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: selection.left,
+            y: selection.top,
+        },
+        client,
+        capture_bounds,
+    )?;
+    let bottom_right = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: selection.right,
+            y: selection.bottom,
+        },
+        client,
+        capture_bounds,
+    )?;
+    let logical = |point: PhysicalPoint| {
+        (
+            (point.x - client.left) as f32 / scale,
+            (point.y - client.top) as f32 / scale,
+        )
+    };
+    interaction_plan_for_logical_selection(
+        client,
+        scale,
+        width,
+        height,
+        logical(top_left),
+        logical(bottom_right),
+    )
+}
+
+#[cfg(windows)]
 /// Re-measures the overlay before placing the real bottom-right narrow-selection controls.
 fn narrow_edge_interaction_plan_for_window(
     handle: *mut c_void,
@@ -5435,6 +6108,177 @@ fn inject_mouse_click(expected: *mut c_void, point: PhysicalPoint) -> io::Result
         &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
     )?;
     Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Releases only the modifiers owned by one guarded drag, even when SendInput or focus fails.
+struct ModifierReleaseGuard {
+    modifiers: DragModifiers,
+    modifiers_armed: bool,
+    mouse_button_armed: bool,
+}
+
+#[cfg(windows)]
+impl ModifierReleaseGuard {
+    fn new(modifiers: DragModifiers) -> Self {
+        Self {
+            modifiers,
+            // These flags are armed only after their corresponding down input is accepted. If
+            // foreground validation fails before injection, cleanup must not release user input.
+            modifiers_armed: false,
+            mouse_button_armed: false,
+        }
+    }
+
+    fn modifier_cleanup_inputs(&self) -> Vec<INPUT> {
+        let mut inputs = Vec::new();
+        if self.modifiers.alt {
+            inputs.push(keyboard_input(VK_MENU, true));
+        }
+        if self.modifiers.shift {
+            inputs.push(keyboard_input(VK_SHIFT, true));
+        }
+        inputs
+    }
+
+    fn action_cleanup_inputs(&self) -> Vec<INPUT> {
+        let mut inputs = vec![mouse_button_input(MOUSEEVENTF_LEFTUP)];
+        inputs.extend(self.modifier_cleanup_inputs());
+        inputs
+    }
+
+    fn armed_cleanup_inputs(&self) -> Vec<INPUT> {
+        let mut inputs = Vec::new();
+        if self.mouse_button_armed {
+            inputs.push(mouse_button_input(MOUSEEVENTF_LEFTUP));
+        }
+        if self.modifiers_armed {
+            inputs.extend(self.modifier_cleanup_inputs());
+        }
+        inputs
+    }
+
+    fn arm_modifiers(&mut self) {
+        self.modifiers_armed = self.modifiers.alt || self.modifiers.shift;
+    }
+
+    fn arm_mouse_button(&mut self) {
+        self.mouse_button_armed = true;
+    }
+
+    fn disarm(&mut self) {
+        self.modifiers_armed = false;
+        self.mouse_button_armed = false;
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ModifierReleaseGuard {
+    fn drop(&mut self) {
+        let cleanup = self.armed_cleanup_inputs();
+        if !cleanup.is_empty() {
+            let _ = send_input_unchecked(&cleanup);
+        }
+    }
+}
+
+#[cfg(windows)]
+/// Performs one committed-selection drag with real modifier key state and release-safe cleanup.
+fn inject_selection_transform_drag(
+    expected: *mut c_void,
+    gesture: SelectionTransformGesture,
+    capture_bounds: PhysicalRect,
+) -> io::Result<InjectedSelectionTransform> {
+    guard_foreground(expected)?;
+    let desktop = virtual_desktop()?;
+    let client_bounds = client_bounds_for_window(expected)?;
+    let screen_start = map_capture_point_to_screen(gesture.start, client_bounds, capture_bounds)?;
+    let screen_end = map_capture_point_to_screen(gesture.end, client_bounds, capture_bounds)?;
+
+    send_input_batch(
+        expected,
+        &[absolute_mouse_input(
+            screen_start,
+            MOUSEEVENTF_MOVE,
+            desktop,
+        )],
+    )?;
+    let actual_start = guard_current_pointer_target(expected)?;
+    validate_point_geometry(
+        screen_start,
+        actual_start,
+        &format!("{} pointer start", gesture.kind.label()),
+    )?;
+
+    let mut modifiers = ModifierReleaseGuard::new(gesture.kind.modifiers());
+    let mut inputs = Vec::with_capacity(3);
+    if gesture.kind.modifiers().shift {
+        inputs.push(keyboard_input(VK_SHIFT, false));
+    }
+    if gesture.kind.modifiers().alt {
+        inputs.push(keyboard_input(VK_MENU, false));
+    }
+    let modifier_cleanup = modifiers.modifier_cleanup_inputs();
+    if !inputs.is_empty() {
+        // Keep modifier-down separate from the mouse button so a menu/focus transition cannot
+        // turn the following click into an input delivered to an unexpected window.
+        send_modifier_batch_with_cleanup(expected, &inputs, &modifier_cleanup)?;
+        modifiers.arm_modifiers();
+        guard_current_pointer_target(expected)?;
+    }
+    let action_cleanup = modifiers.action_cleanup_inputs();
+    send_input_batch_with_cleanup(
+        expected,
+        &[mouse_button_input(MOUSEEVENTF_LEFTDOWN)],
+        &action_cleanup,
+    )?;
+    modifiers.arm_mouse_button();
+
+    let movement_result = (|| {
+        for step in 1..=8 {
+            guard_current_pointer_target(expected)?;
+            let fraction = step as i64;
+            let point = PhysicalPoint {
+                x: (i64::from(screen_start.x)
+                    + (i64::from(screen_end.x) - i64::from(screen_start.x)) * fraction / 8)
+                    as i32,
+                y: (i64::from(screen_start.y)
+                    + (i64::from(screen_end.y) - i64::from(screen_start.y)) * fraction / 8)
+                    as i32,
+            };
+            send_input_batch(
+                expected,
+                &[absolute_mouse_input(point, MOUSEEVENTF_MOVE, desktop)],
+            )?;
+        }
+        guard_current_pointer_target(expected)
+    })();
+    let release_result = send_input_unchecked(&modifiers.action_cleanup_inputs());
+    if release_result.is_ok() {
+        modifiers.disarm();
+    }
+    let actual_end = match (movement_result, release_result) {
+        (Ok(point), Ok(())) => point,
+        (Err(error), _) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+    };
+
+    let final_client_bounds = client_bounds_for_window(expected)?;
+    if final_client_bounds != client_bounds {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "overlay client bounds changed during {} from {client_bounds:?} to {final_client_bounds:?}",
+                gesture.kind.label()
+            ),
+        ));
+    }
+    let capture_start = map_screen_point_to_capture(actual_start, client_bounds, capture_bounds)?;
+    let capture_end = map_screen_point_to_capture(actual_end, client_bounds, capture_bounds)?;
+    Ok(InjectedSelectionTransform {
+        start: capture_start,
+        end: capture_end,
+    })
 }
 
 #[cfg(windows)]
@@ -5691,6 +6535,22 @@ fn send_input_batch_with_cleanup(
 }
 
 #[cfg(windows)]
+/// Sends modifier-only input without releasing unrelated global buttons or hotkey keys on error.
+fn send_modifier_batch_with_cleanup(
+    expected: *mut c_void,
+    inputs: &[INPUT],
+    modifier_cleanup: &[INPUT],
+) -> io::Result<()> {
+    guard_foreground(expected)?;
+    let result = send_input_unchecked(inputs);
+    if result.is_ok() {
+        return Ok(());
+    }
+    let _ = send_input_unchecked(modifier_cleanup);
+    result
+}
+
+#[cfg(windows)]
 /// Sends release-safe input without a focus guard; callers use this only for cleanup after down.
 fn send_input_unchecked(inputs: &[INPUT]) -> io::Result<()> {
     // SAFETY: every item is initialized according to its INPUT type for this synchronous call.
@@ -5753,12 +6613,15 @@ impl Drop for CursorRestore {
 mod tests {
     use super::{
         CaptureScenarioOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
-        ensure_input_authorized, first_stable_recording_match, interaction_command_channel,
-        interaction_plan, map_screen_selection_to_capture, narrow_edge_interaction_plan,
-        normalize_axis, pin_coexist_interaction_plan, recording_control_plan, recording_failed,
-        recording_saved, translated_rect, validate_distinct_recording_phase_fingerprints,
-        validate_paused_progress, validate_recorded_media, validate_recording_target_bounds,
-        validate_selection_geometry, window_drag_matches,
+        SelectionTransformKind, ensure_input_authorized, expected_selection_transform,
+        first_stable_recording_match, interaction_command_channel, interaction_plan,
+        map_capture_point_to_screen, map_screen_point_to_capture, map_screen_selection_to_capture,
+        narrow_edge_interaction_plan, normalize_axis, pin_coexist_interaction_plan,
+        recording_control_plan, recording_failed, recording_saved,
+        selection_aspect_ratio_preserved, selection_center_preserved, selection_transform_gesture,
+        translated_rect, validate_distinct_recording_phase_fingerprints, validate_paused_progress,
+        validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
+        window_drag_matches,
     };
     #[cfg(windows)]
     use super::{
@@ -5901,6 +6764,137 @@ mod tests {
                 "area",
             ]))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_accepts_selection_transform_scenario() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "selection-transform",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::SelectionTransform
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_selection_transform"
+        );
+    }
+
+    #[test]
+    fn selection_transform_model_matches_move_resize_and_modifier_invariants() {
+        let capture_bounds = PhysicalRect {
+            left: -1920,
+            top: -200,
+            right: 0,
+            bottom: 880,
+        };
+        let selection = PhysicalRect {
+            left: -1500,
+            top: 100,
+            right: -900,
+            bottom: 400,
+        };
+
+        let move_gesture =
+            selection_transform_gesture(selection, capture_bounds, SelectionTransformKind::Move)
+                .unwrap();
+        let moved = expected_selection_transform(
+            selection,
+            move_gesture.start,
+            move_gesture.end,
+            capture_bounds,
+            SelectionTransformKind::Move,
+        )
+        .unwrap();
+        assert_eq!(
+            moved,
+            PhysicalRect {
+                left: -1380,
+                top: 172,
+                right: -780,
+                bottom: 472,
+            }
+        );
+        assert_eq!(moved.width(), selection.width());
+        assert_eq!(moved.height(), selection.height());
+
+        let corner = selection_transform_gesture(
+            selection,
+            capture_bounds,
+            SelectionTransformKind::CornerResize,
+        )
+        .unwrap();
+        let resized = expected_selection_transform(
+            selection,
+            corner.start,
+            corner.end,
+            capture_bounds,
+            SelectionTransformKind::CornerResize,
+        )
+        .unwrap();
+        assert_eq!(resized.left, selection.left);
+        assert_eq!(resized.top, selection.top);
+        assert!(resized.width() > selection.width());
+
+        let shift = selection_transform_gesture(
+            selection,
+            capture_bounds,
+            SelectionTransformKind::ShiftResize,
+        )
+        .unwrap();
+        let shift_resized = expected_selection_transform(
+            selection,
+            shift.start,
+            shift.end,
+            capture_bounds,
+            SelectionTransformKind::ShiftResize,
+        )
+        .unwrap();
+        assert!(selection_aspect_ratio_preserved(selection, shift_resized));
+
+        let alt = selection_transform_gesture(
+            selection,
+            capture_bounds,
+            SelectionTransformKind::AltResize,
+        )
+        .unwrap();
+        let alt_resized = expected_selection_transform(
+            selection,
+            alt.start,
+            alt.end,
+            capture_bounds,
+            SelectionTransformKind::AltResize,
+        )
+        .unwrap();
+        assert!(selection_center_preserved(selection, alt_resized));
+    }
+
+    #[test]
+    fn selection_transform_point_mapping_round_trips_negative_offset_coordinates() {
+        let client = PhysicalRect {
+            left: -300,
+            top: -200,
+            right: 700,
+            bottom: 600,
+        };
+        let capture = PhysicalRect {
+            left: -1920,
+            top: -1080,
+            right: -920,
+            bottom: -280,
+        };
+        let capture_point = PhysicalPoint { x: -1440, y: -720 };
+        let screen_point = map_capture_point_to_screen(capture_point, client, capture).unwrap();
+        assert_eq!(screen_point, PhysicalPoint { x: 180, y: 160 });
+        assert_eq!(
+            map_screen_point_to_capture(screen_point, client, capture).unwrap(),
+            capture_point
         );
     }
 

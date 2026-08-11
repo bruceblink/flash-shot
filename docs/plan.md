@@ -45,7 +45,7 @@ Tauri/WebView/Excalidraw 架构。后续优先级只围绕快捷键到截图导�
    滚动截图、项目文件和颜色相关操作收进次级菜单，并在窄屏时保持可达。
 3. **智能选区与键盘流**：验证窗口/控件候选框、单击采用与自由拖动的优先级；
    保持 Enter 复制、Shift+Enter 快速保存、Escape 取消和方向键物理像素微调的一致性。
-4. **真实环境验收**：当前在单屏环境验证拖动、缩放、导出和取消；混合 DPI 多屏环境已暂缓，恢复范围后执行；
+4. **真实环境验收**：当前在单屏环境已验证拖动、选区移动、普通/Shift/Alt 角点缩放、导出和取消；混合 DPI 多屏环境已暂缓，恢复范围后执行；
    用 Release 压力脚本收集快捷键到覆盖层的 p95，定位并消除超过 100 ms 预算的开销。
 
 边界：取色、OCR、翻译和录屏继续保留，但在上述主链路通过真实交互与性能验收前，
@@ -121,3 +121,8 @@ SignTool、Inno Setup 和可用签名证书，因此这里只关闭“预检可�
 
 - 2026-07-16 首次 Windows 启动冒烟打开了可响应的 `Flash Shot` 窗口，但 GPUI 记录了 DirectX 错误 `0x887A002D`，表示该开发机缺少或不匹配 Windows SDK/图形组件。编译和测试已经通过；修复本机 DirectX/SDK 环境并完成视觉验证之前，里程碑 0 不能关闭。
 - 2026-07-18 的 [Windows 截图技术验证报告](windows-capture-validation.md) 记录了 Release 快捷键采样、像素复制清单和当前限制。单次覆盖层首帧为 113.85 ms，不足以证明 100 ms p95 预算达标；需要真实混合 DPI 硬件矩阵和多次热启动采样。
+- 2026-08-11 的 `overlay-interaction-acceptance --capture-scenario selection-transform` 在单屏
+  2560x1440、DPI 96 环境完成真实选区移动、普通角点缩放、Shift 等比缩放和 Alt 中心缩放；
+  报告与五张原生截图记录实际指针端点、提交矩形、不变量和 Cancel 后零残留。详见
+  [Windows 手工验收记录](windows-manual-acceptance.md)中的
+  `current-selection-transform-single-100`。
