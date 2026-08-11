@@ -88,6 +88,15 @@ foreach ($record in $records) {
     }
 }
 
+$portableRecords = @($records | Where-Object { $_.name.EndsWith(".zip") })
+if ($portableRecords.Count -ne 1) {
+    throw "Release manifest must contain exactly one portable ZIP asset; found $($portableRecords.Count)."
+}
+$installerRecords = @($records | Where-Object { $_.name.EndsWith("-windows-setup.exe") })
+if ($installerRecords.Count -ne 1) {
+    throw "Release manifest must contain exactly one setup EXE asset; found $($installerRecords.Count)."
+}
+
 $downloadedAssets = Get-ChildItem -LiteralPath $assetRoot -File |
     ForEach-Object Name |
     Sort-Object
@@ -98,11 +107,6 @@ foreach ($name in $names.Keys) {
 $expectedFiles = $expectedFiles | Sort-Object
 if (($downloadedAssets -join "`n") -ne ($expectedFiles -join "`n")) {
     throw "Downloaded release files do not exactly match the release manifest and SHA-256 sidecars."
-}
-
-$portableRecords = @($records | Where-Object { $_.name.EndsWith(".zip") })
-if ($portableRecords.Count -eq 0) {
-    throw "Release manifest has no portable ZIP asset."
 }
 
 $verifyPortable = Join-Path $PSScriptRoot "verify-portable-package.ps1"

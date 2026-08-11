@@ -38,8 +38,13 @@ if ($uniqueAssetNames.Count -ne $assetNames.Count) {
     throw "GitHub release $Tag has duplicate asset names."
 }
 $principalAssets = @($assetNames | Where-Object { Test-AssetName $_ $Tag.Substring(1) })
-if ($principalAssets.Count -eq 0 -or -not ($principalAssets | Where-Object { $_.EndsWith(".zip") })) {
-    throw "GitHub release $Tag has no portable Flash Shot asset."
+$portableAssets = @($principalAssets | Where-Object { $_.EndsWith(".zip") })
+if ($portableAssets.Count -ne 1) {
+    throw "GitHub release $Tag must contain exactly one portable ZIP asset; found $($portableAssets.Count)."
+}
+$installerAssets = @($principalAssets | Where-Object { $_.EndsWith("-windows-setup.exe") })
+if ($installerAssets.Count -ne 1) {
+    throw "GitHub release $Tag must contain exactly one setup EXE asset; found $($installerAssets.Count)."
 }
 $expectedAssets = @("release-manifest.json")
 foreach ($asset in $principalAssets) {
