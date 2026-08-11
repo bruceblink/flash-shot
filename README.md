@@ -27,7 +27,9 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 - 显示器、窗口和区域录制，以及音频选择、暂停/恢复、进度与 Job Object 清理；
 - 可重复性能/资源压力工具、结构化诊断和本地质量门禁。
 
-录屏后端和单屏显示器录屏 UI 手工验收已完成；生成 MP4 需要安装支持 `ddagrab` 或 `gdigrab` 的 FFmpeg。
+录屏后端和单屏 100% 下显示器、静态窗口与静态区域的录屏 UI 生命周期验收已完成；
+生成 MP4 需要安装支持 `ddagrab` 或 `gdigrab` 的 FFmpeg。窗口移动、缩放、遮挡和最小化
+期间的动态桌面语义，以及 150%/200% 缩放，仍保留在真实环境矩阵中。
 
 ### 运行
 
@@ -144,7 +146,10 @@ The repository currently includes:
 - display, window, and region recording with audio selection, pause/resume, progress, and Job Object cleanup;
 - repeatable performance/resource stress tooling, structured diagnostics, and local quality gates.
 
-The recording backend and the single-display display-recording UI have passed manual acceptance. Producing an MP4 requires an FFmpeg build that supports `ddagrab` or `gdigrab`.
+The recording backend and the display, static-window, and static-region UI lifecycles have passed
+acceptance on one 100%-scaled display. Producing an MP4 requires an FFmpeg build that supports
+`ddagrab` or `gdigrab`. Dynamic window movement, resizing, occlusion, and minimization semantics,
+plus 150%/200% scaling, remain in the real-environment matrix.
 
 ### Run
 
@@ -241,6 +246,17 @@ Collect an isolated shortcut-to-overlay baseline with the dedicated `Ctrl+Alt+F1
 The script starts one Release application, triggers and cancels twenty real capture overlays, and
 gates the current window's frame-ready and overlay p95 values at 100 ms. It requires an
 interactive Windows desktop and no existing Flash Shot process.
+
+Exercise the real single-display overlay entry and Record-page lifecycle in an isolated profile.
+These commands move the global pointer, so run them only in a disposable interactive desktop
+session. Each mode clicks `Record area` or `Record window`, then the real Pause, Resume, and Stop
+buttons, and accepts the run only after FFprobe validates the finalized H.264 MP4. The runner
+forces output into its disposable session and clears inherited recording-audio overrides:
+
+```powershell
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --record-target area --output-dir target/overlay-recording-interaction-acceptance
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --record-target window --output-dir target/overlay-recording-interaction-acceptance
+```
 
 On a single-display interactive desktop, run the isolated three-Pin lifecycle gate without
 registering a tray icon or global shortcuts and without writing to the system clipboard. The gate

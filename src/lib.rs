@@ -90,6 +90,7 @@ pub fn run_settings_ui_acceptance(
             display_index: acceptance.display_index,
             pinned_saved_feedback_preview: acceptance.pinned_saved_feedback_preview,
             interaction_shortcut_readiness: None,
+            interaction_commands: None,
         },
     )
 }
@@ -120,6 +121,35 @@ pub fn run_overlay_ui_acceptance(
     })
 }
 
+/// Commands that let the input probe observe recording state and restore the real Record page.
+#[derive(Debug)]
+pub enum OverlayInteractionAcceptanceCommand {
+    Snapshot(SyncSender<OverlayInteractionRecordingState>),
+    ShowRecordingSettings,
+}
+
+/// Minimal production recording state returned to the isolated input probe.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OverlayInteractionRecordingState {
+    pub active: bool,
+    pub starting: bool,
+    pub stopping: bool,
+    pub paused: bool,
+    pub target: Option<String>,
+    pub target_bounds: Option<domain::geometry::PhysicalRect>,
+    pub progress_frame: u64,
+    pub progress_time_us: u64,
+    pub status: String,
+}
+
+/// Process-local controls for one isolated real-input overlay acceptance session.
+pub struct OverlayInteractionAcceptanceOptions {
+    pub window_width: f32,
+    pub window_height: f32,
+    pub shortcut_readiness: SyncSender<bool>,
+    pub commands: async_channel::Receiver<OverlayInteractionAcceptanceCommand>,
+}
+
 /// Starts the real capture service with a visible, disposable settings window for input-driven QA.
 ///
 /// The caller supplies isolated settings and history paths. Unlike the production binary, this
@@ -131,7 +161,7 @@ pub fn run_overlay_interaction_acceptance(
     history: ScreenshotHistory,
     settings: UserSettings,
     settings_path: PathBuf,
-    shortcut_readiness: SyncSender<bool>,
+    acceptance: OverlayInteractionAcceptanceOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     run_with_settings_window(
         started_at,
@@ -140,11 +170,12 @@ pub fn run_overlay_interaction_acceptance(
         settings,
         settings_path,
         SettingsWindowOptions {
-            width: 520.0,
-            height: 640.0,
+            width: acceptance.window_width.max(420.0),
+            height: acceptance.window_height.max(420.0),
             show: true,
             section: "capture".to_owned(),
-            interaction_shortcut_readiness: Some(shortcut_readiness),
+            interaction_shortcut_readiness: Some(acceptance.shortcut_readiness),
+            interaction_commands: Some(acceptance.commands),
             ..SettingsWindowOptions::default()
         },
     )
@@ -298,6 +329,8 @@ struct SettingsWindowOptions {
     pinned_saved_feedback_preview: bool,
     /// Reports whether the isolated acceptance shortcut was registered before input starts.
     interaction_shortcut_readiness: Option<SyncSender<bool>>,
+    /// Receives process-local recording observations and Record-page restore requests.
+    interaction_commands: Option<async_channel::Receiver<OverlayInteractionAcceptanceCommand>>,
 }
 
 impl Default for SettingsWindowOptions {
@@ -315,6 +348,7 @@ impl Default for SettingsWindowOptions {
             display_index: None,
             pinned_saved_feedback_preview: false,
             interaction_shortcut_readiness: None,
+            interaction_commands: None,
         }
     }
 }
@@ -375,6 +409,7 @@ fn run_with_settings_window(
         let update_check_state = window_options.update_check_state;
         let pinned_saved_feedback_preview = window_options.pinned_saved_feedback_preview;
         let interaction_shortcut_readiness = window_options.interaction_shortcut_readiness;
+        let interaction_commands = window_options.interaction_commands;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
@@ -382,6 +417,11 @@ fn run_with_settings_window(
                 cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx));
             if let Some(readiness) = interaction_shortcut_readiness {
                 let _ = readiness.send(app.read(cx).capture_shortcut_active_for_acceptance());
+            }
+            if let Some(commands) = interaction_commands {
+                app.update(cx, |_, cx| {
+                    FlashShotApp::listen_for_overlay_interaction_commands(commands, cx)
+                });
             }
             app.update(cx, |app, _| {
                 app.set_settings_section_for_acceptance(&initial_section);

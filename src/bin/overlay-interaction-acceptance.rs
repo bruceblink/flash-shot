@@ -9,12 +9,26 @@ use std::{
 };
 
 use flash_shot::{
+    OverlayInteractionAcceptanceCommand, OverlayInteractionAcceptanceOptions,
+    OverlayInteractionRecordingState,
     domain::geometry::{PhysicalPoint, PhysicalRect},
     history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::display::{DisplayInfo, DisplayProvider, SystemDisplayProvider},
     settings::UserSettings,
 };
+#[cfg(windows)]
+use flash_shot::{
+    platform::window_inspector::{SystemWindowInspector, WindowInspector},
+    recording::discover,
+};
+
+#[path = "support/recording_probe.rs"]
+mod recording_probe;
+
+use recording_probe::MediaMetadata;
+#[cfg(windows)]
+use recording_probe::probe_media;
 
 #[cfg(windows)]
 use flash_shot::platform::capture::{CaptureBackend, SystemCaptureBackend};
@@ -23,11 +37,12 @@ use std::{
     ffi::c_void,
     mem::size_of,
     panic::AssertUnwindSafe,
-    sync::mpsc::{self, Receiver},
+    sync::mpsc::{self, Receiver, RecvTimeoutError},
 };
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::{LPARAM, POINT, RECT},
+    Graphics::Gdi::ClientToScreen,
     System::Threading::GetCurrentProcessId,
     UI::{
         HiDpi::GetDpiForWindow,
@@ -37,10 +52,10 @@ use windows_sys::Win32::{
             MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput, VK_CONTROL, VK_F24, VK_MENU,
         },
         WindowsAndMessaging::{
-            BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics,
-            GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SetCursorPos,
-            SetForegroundWindow,
+            BringWindowToTop, EnumWindows, GetClientRect, GetCursorPos, GetForegroundWindow,
+            GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
+            SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+            SetCursorPos, SetForegroundWindow,
         },
     },
 };
@@ -56,6 +71,14 @@ const MAX_TIMEOUT: Duration = Duration::from_secs(60);
 const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(5);
 const WINDOWS_BASE_DPI: f32 = 96.0;
+#[cfg(windows)]
+const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
+#[cfg(windows)]
+const RECORDING_DIRECTORY_ENV: &str = "FLASH_SHOT_RECORDING_DIRECTORY";
+#[cfg(windows)]
+const RECORDING_MICROPHONE_ENV: &str = "FLASH_SHOT_RECORDING_MICROPHONE";
+#[cfg(windows)]
+const RECORDING_SYSTEM_AUDIO_ENV: &str = "FLASH_SHOT_RECORDING_SYSTEM_AUDIO";
 
 #[derive(Debug, Eq, PartialEq)]
 struct Options {
@@ -63,6 +86,29 @@ struct Options {
     output_dir: PathBuf,
     timeout: Duration,
     settle_delay: Duration,
+    record_target: Option<RecordTargetOption>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordTargetOption {
+    Area,
+    Window,
+}
+
+impl RecordTargetOption {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Area => "selected area",
+            Self::Window => "window",
+        }
+    }
+
+    const fn workflow(self) -> &'static str {
+        match self {
+            Self::Area => "record_area",
+            Self::Window => "record_window",
+        }
+    }
 }
 
 impl Options {
@@ -77,11 +123,13 @@ impl Options {
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             timeout: DEFAULT_TIMEOUT,
             settle_delay: DEFAULT_SETTLE_DELAY,
+            record_target: None,
         };
         let mut arguments = arguments.into_iter();
         let mut output_seen = false;
         let mut timeout_seen = false;
         let mut settle_seen = false;
+        let mut record_target_seen = false;
         while let Some(argument) = arguments.next() {
             let argument = argument
                 .into_string()
@@ -113,7 +161,20 @@ impl Options {
                     )?;
                     settle_seen = true;
                 }
-                "--output-dir" | "--timeout-ms" | "--settle-ms" => {
+                "--record-target" if !record_target_seen => {
+                    let target = arguments
+                        .next()
+                        .ok_or_else(usage)?
+                        .into_string()
+                        .map_err(|_| "record target must be valid Unicode".to_owned())?;
+                    options.record_target = Some(match target.as_str() {
+                        "area" => RecordTargetOption::Area,
+                        "window" => RecordTargetOption::Window,
+                        _ => return Err("record target must be 'area' or 'window'".to_owned()),
+                    });
+                    record_target_seen = true;
+                }
+                "--output-dir" | "--timeout-ms" | "--settle-ms" | "--record-target" => {
                     return Err(format!("{argument} may only be supplied once"));
                 }
                 _ => return Err(usage()),
@@ -149,7 +210,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -164,12 +225,62 @@ fn ensure_input_authorized(options: &Options) -> io::Result<()> {
     }
 }
 
+/// Creates the process-local command bridge without a capacity wait that could defeat the runner
+/// deadline. Only the single acceptance worker owns a sender, so the overall timeout also bounds
+/// the maximum number of queued snapshots.
+fn interaction_command_channel() -> (
+    async_channel::Sender<OverlayInteractionAcceptanceCommand>,
+    async_channel::Receiver<OverlayInteractionAcceptanceCommand>,
+) {
+    async_channel::unbounded()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InteractionPlan {
     drag_start: PhysicalPoint,
     drag_end: PhysicalPoint,
     more: PhysicalPoint,
     cancel: PhysicalPoint,
+    record_area: PhysicalPoint,
+    record_window: PhysicalPoint,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RecordingControlPlan {
+    stop: PhysicalPoint,
+    pause_or_resume: PhysicalPoint,
+}
+
+/// Converts stable logical Record-page controls through the measured client-area DPI.
+fn recording_control_plan(
+    client_origin: PhysicalPoint,
+    client_width: u32,
+    client_height: u32,
+    scale: f32,
+) -> io::Result<RecordingControlPlan> {
+    if !scale.is_finite() || !(1.0..=4.0).contains(&scale) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording controller scale must be between 1.0 and 4.0",
+        ));
+    }
+    let logical_width = client_width as f32 / scale;
+    let logical_height = client_height as f32 / scale;
+    if logical_width < 640.0 || logical_height < 500.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording controller did not retain the wide Record-page layout",
+        ));
+    }
+    let point = |x: f32, y: f32| PhysicalPoint {
+        x: client_origin.x + (x * scale).round() as i32,
+        y: client_origin.y + (y * scale).round() as i32,
+    };
+    Ok(RecordingControlPlan {
+        stop: point(386.0, 426.0),
+        // Pause changes to the wider Resume label in place; this point stays inside both buttons.
+        pause_or_resume: point(493.0, 426.0),
+    })
 }
 
 /// Converts the overlay's logical toolbar geometry into physical screen points for SendInput.
@@ -215,6 +326,10 @@ fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionP
         // The primary row is fixed: Mark, Pin, Copy, Save, More, then Cancel.
         more: screen_point((toolbar_left + 247.0, toolbar_top + 25.0)),
         cancel: screen_point((toolbar_left + 312.0, toolbar_top + 25.0)),
+        // The expanded 342 px menu wraps into five right-aligned rows. Recording occupies the
+        // final item of row four and the sole item of row five above this toolbar.
+        record_area: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 75.0)),
+        record_window: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 33.0)),
     })
 }
 
@@ -222,6 +337,7 @@ fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionP
 struct AcceptanceReport {
     schema_version: u32,
     test: &'static str,
+    workflow: &'static str,
     status: String,
     process_id: u32,
     shortcut: &'static str,
@@ -230,6 +346,8 @@ struct AcceptanceReport {
     display: DisplayReport,
     controller_window: Option<WindowReport>,
     steps: Vec<StepReport>,
+    recording_states: Vec<RecordingStateReport>,
+    recording: Option<RecordingReport>,
     error: Option<String>,
 }
 
@@ -257,6 +375,53 @@ struct StepReport {
     pixel_fingerprint: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+struct RecordingStateReport {
+    stage: &'static str,
+    active: bool,
+    starting: bool,
+    stopping: bool,
+    paused: bool,
+    target: Option<String>,
+    target_bounds: Option<PhysicalRect>,
+    progress_frame: u64,
+    progress_time_us: u64,
+    status: String,
+}
+
+impl RecordingStateReport {
+    fn from_state(stage: &'static str, state: OverlayInteractionRecordingState) -> Self {
+        Self {
+            stage,
+            active: state.active,
+            starting: state.starting,
+            stopping: state.stopping,
+            paused: state.paused,
+            target: state.target,
+            target_bounds: state.target_bounds,
+            progress_frame: state.progress_frame,
+            progress_time_us: state.progress_time_us,
+            status: state.status,
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RecordingReport {
+    target: &'static str,
+    source_bounds: PhysicalRect,
+    output: String,
+    output_bytes: u64,
+    ffmpeg_version: String,
+    codec_name: String,
+    width: u32,
+    height: u32,
+    duration_seconds: f64,
+    pause_observed: bool,
+    resume_observed: bool,
+    maximum_progress_frame: u64,
+}
+
 #[cfg(windows)]
 #[derive(Clone, Copy)]
 struct NativeWindow {
@@ -282,8 +447,10 @@ struct WorkerContext {
     report_path: PathBuf,
     display: DisplayInfo,
     shortcut_readiness: Receiver<bool>,
+    interaction_commands: async_channel::Sender<OverlayInteractionAcceptanceCommand>,
     timeout: Duration,
     settle_delay: Duration,
+    record_target: Option<RecordTargetOption>,
 }
 
 fn main() {
@@ -338,8 +505,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&session_root)?;
     fs::create_dir_all(session_root.join("screenshots"))?;
 
-    // This happens before GPUI or worker threads start, so every later path lookup is isolated.
-    unsafe { std::env::set_var("FLASH_SHOT_PROFILE_DIR", &session_root) };
+    isolate_process_environment(&session_root);
     let settings_path = session_root.join("settings.json");
     let mut settings = UserSettings::default();
     settings.capture_shortcut = Some(CAPTURE_SHORTCUT.to_owned());
@@ -355,14 +521,22 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let report_path = session_root.join("report.json");
     println!("overlay interaction report: {}", report_path.display());
     let (shortcut_ready_tx, shortcut_ready_rx) = mpsc::sync_channel(1);
+    let (interaction_tx, interaction_rx) = interaction_command_channel();
+    let (window_width, window_height) = if options.record_target.is_some() {
+        (980.0, 760.0)
+    } else {
+        (520.0, 640.0)
+    };
 
     let worker_context = WorkerContext {
         session_root,
         report_path,
         display,
         shortcut_readiness: shortcut_ready_rx,
+        interaction_commands: interaction_tx,
         timeout: options.timeout,
         settle_delay: options.settle_delay,
+        record_target: options.record_target,
     };
     thread::Builder::new()
         .name("overlay-interaction-acceptance".to_owned())
@@ -390,17 +564,39 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         history,
         settings,
         settings_path,
-        shortcut_ready_tx,
+        OverlayInteractionAcceptanceOptions {
+            window_width,
+            window_height,
+            shortcut_readiness: shortcut_ready_tx,
+            commands: interaction_rx,
+        },
     )?;
     Err(io::Error::other("GPUI exited before the interaction worker completed").into())
+}
+
+#[cfg(windows)]
+/// Pins all writable recording state to this session and disables inherited audio capture.
+fn isolate_process_environment(session_root: &Path) {
+    let recording_directory = session_root.join("recordings");
+    // SAFETY: this runs before GPUI and the acceptance worker start, so no other thread can read
+    // a partially updated process environment. The process exits after this one isolated run.
+    unsafe {
+        std::env::set_var(PROFILE_DIRECTORY_ENV, session_root);
+        std::env::set_var(RECORDING_DIRECTORY_ENV, recording_directory);
+        std::env::remove_var(RECORDING_MICROPHONE_ENV);
+        std::env::remove_var(RECORDING_SYSTEM_AUDIO_ENV);
+    }
 }
 
 #[cfg(windows)]
 /// Waits for shortcut registration, owns cursor restoration, and finalizes one truthful report.
 fn run_interaction_sequence(context: WorkerContext) -> io::Result<()> {
     let mut report = AcceptanceReport {
-        schema_version: 1,
+        schema_version: 2,
         test: "overlay_interaction_acceptance",
+        workflow: context
+            .record_target
+            .map_or("capture", RecordTargetOption::workflow),
         status: "running".to_owned(),
         process_id: unsafe { GetCurrentProcessId() },
         shortcut: CAPTURE_SHORTCUT,
@@ -415,6 +611,8 @@ fn run_interaction_sequence(context: WorkerContext) -> io::Result<()> {
         },
         controller_window: None,
         steps: Vec::new(),
+        recording_states: Vec::new(),
+        recording: None,
         error: None,
     };
     write_report(&context.report_path, &report)?;
@@ -454,7 +652,11 @@ fn run_interaction_sequence(context: WorkerContext) -> io::Result<()> {
         }
     };
 
-    let outcome = execute_interactions(&context, &mut report);
+    let outcome = if context.record_target.is_some() {
+        execute_recording_interactions(&context, &mut report)
+    } else {
+        execute_capture_interactions(&context, &mut report)
+    };
     let cursor_result = cursor.restore();
     let final_result = match (outcome, cursor_result) {
         (Ok(()), Ok(())) => Ok(()),
@@ -483,7 +685,10 @@ fn run_interaction_sequence(context: WorkerContext) -> io::Result<()> {
 
 #[cfg(windows)]
 /// Drives the two capture lifecycles without invoking Copy, Save, Pin, or recording commands.
-fn execute_interactions(context: &WorkerContext, report: &mut AcceptanceReport) -> io::Result<()> {
+fn execute_capture_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
     let controller = wait_for_controller(context.timeout)?;
     focus_owned_window(controller, context.timeout)?;
     report.controller_window = Some(controller.report());
@@ -558,7 +763,7 @@ fn execute_interactions(context: &WorkerContext, report: &mut AcceptanceReport) 
         foreground,
         None,
     )?;
-    wait_for_window_gone(first_overlay.handle, context.timeout)?;
+    wait_for_window_gone(first_overlay.handle, context.timeout, "Capture restart")?;
     let second_overlay = wait_for_overlay(
         controller.handle,
         context.display.physical_bounds,
@@ -584,7 +789,7 @@ fn execute_interactions(context: &WorkerContext, report: &mut AcceptanceReport) 
     )?;
 
     let foreground = inject_mouse_click(second_overlay.handle, second_plan.cancel)?;
-    wait_for_window_gone(second_overlay.handle, context.timeout)?;
+    wait_for_window_gone(second_overlay.handle, context.timeout, "Cancel")?;
     record_step(
         report,
         &context.report_path,
@@ -592,6 +797,392 @@ fn execute_interactions(context: &WorkerContext, report: &mut AcceptanceReport) 
         foreground,
         None,
     )
+}
+
+#[cfg(windows)]
+/// Drives the real overlay entry plus Record-page pause, resume, stop, and MP4 verification.
+fn execute_recording_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let target = context
+        .record_target
+        .ok_or_else(|| io::Error::other("recording workflow requires a target"))?;
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "controller_ready",
+        controller,
+        None,
+    )?;
+
+    let foreground = inject_capture_shortcut(controller.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "capture_shortcut",
+        foreground,
+        None,
+    )?;
+    let overlay = wait_for_overlay(
+        controller.handle,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let scale = (overlay.dpi as f32 / WINDOWS_BASE_DPI).max(1.0);
+    let plan = interaction_plan(overlay.bounds, scale)?;
+    let selection = PhysicalRect::new(plan.drag_start, plan.drag_end);
+    if target == RecordTargetOption::Window {
+        let center = PhysicalPoint {
+            x: selection.left + selection.width() as i32 / 2,
+            y: selection.top + selection.height() as i32 / 2,
+        };
+        let _window_target = SystemWindowInspector
+            .window_capture_target_at(center)?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "no external titled window is visible beneath the selection center",
+                )
+            })?;
+    }
+
+    let foreground = inject_mouse_drag(overlay.handle, plan.drag_start, plan.drag_end)?;
+    thread::sleep(context.settle_delay);
+    let selected = capture_evidence(context, "01-selected.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "selection_drag",
+        foreground,
+        Some(&selected),
+    )?;
+
+    let foreground = inject_mouse_click(overlay.handle, plan.more)?;
+    thread::sleep(context.settle_delay);
+    let more = capture_evidence(context, "02-more.png", overlay)?;
+    ensure_evidence_changed(&selected, &more, "More did not change the overlay")?;
+    record_step(
+        report,
+        &context.report_path,
+        "more",
+        foreground,
+        Some(&more),
+    )?;
+
+    let record_point = match target {
+        RecordTargetOption::Area => plan.record_area,
+        RecordTargetOption::Window => plan.record_window,
+    };
+    let foreground = inject_mouse_click(overlay.handle, record_point)?;
+    record_step(
+        report,
+        &context.report_path,
+        match target {
+            RecordTargetOption::Area => "record_area_click",
+            RecordTargetOption::Window => "record_window_click",
+        },
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(
+        overlay.handle,
+        context.timeout,
+        match target {
+            RecordTargetOption::Area => "Record area",
+            RecordTargetOption::Window => "Record window",
+        },
+    )?;
+
+    let active = wait_for_recording_state(context, "active recording", |state| {
+        state.active
+            && !state.starting
+            && !state.stopping
+            && state.target.as_deref() == Some(target.label())
+            && state.progress_frame >= 10
+    })?;
+    let source_bounds = active.target_bounds.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "active recording did not report physical source bounds",
+        )
+    })?;
+    let mut maximum_progress_frame = active.progress_frame;
+    record_recording_state(report, &context.report_path, "recording", active)?;
+
+    context
+        .interaction_commands
+        .send_blocking(OverlayInteractionAcceptanceCommand::ShowRecordingSettings)
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Record page command closed"))?;
+    let controller = wait_for_owned_window_visible(controller.handle, context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let controls = recording_control_plan_for_window(controller.handle)?;
+    let recording = capture_evidence(context, "03-recording.png", controller)?;
+    record_step(
+        report,
+        &context.report_path,
+        "record_page_visible",
+        controller,
+        Some(&recording),
+    )?;
+
+    let foreground = inject_mouse_click(controller.handle, controls.pause_or_resume)?;
+    let paused = wait_for_recording_state(context, "paused recording", |state| {
+        state.active && state.paused && !state.stopping
+    })?;
+    maximum_progress_frame = maximum_progress_frame.max(paused.progress_frame);
+    let paused_frame = paused.progress_frame;
+    record_recording_state(report, &context.report_path, "paused", paused)?;
+    thread::sleep(context.settle_delay);
+    let paused_evidence = capture_evidence(
+        context,
+        "04-paused.png",
+        guard_foreground(controller.handle)?,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "pause_click",
+        foreground,
+        Some(&paused_evidence),
+    )?;
+
+    let foreground = inject_mouse_click(controller.handle, controls.pause_or_resume)?;
+    let resumed = wait_for_recording_state(context, "resumed recording", |state| {
+        state.active && !state.paused && !state.stopping && state.progress_frame > paused_frame
+    })?;
+    maximum_progress_frame = maximum_progress_frame.max(resumed.progress_frame);
+    record_recording_state(report, &context.report_path, "resumed", resumed)?;
+    thread::sleep(context.settle_delay);
+    let resumed_evidence = capture_evidence(
+        context,
+        "05-resumed.png",
+        guard_foreground(controller.handle)?,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "resume_click",
+        foreground,
+        Some(&resumed_evidence),
+    )?;
+
+    let foreground = inject_mouse_click(controller.handle, controls.stop)?;
+    record_step(report, &context.report_path, "stop_click", foreground, None)?;
+    let stopping = wait_for_recording_state(context, "stopping recording", |state| state.stopping)?;
+    maximum_progress_frame = maximum_progress_frame.max(stopping.progress_frame);
+    record_recording_state(report, &context.report_path, "stopping", stopping)?;
+
+    // Stopping may finish between two frames, so it is recorded from production state rather than
+    // attaching that label to a screenshot which might already contain the Saved UI.
+    let saved = wait_for_recording_state(context, "saved recording", recording_saved)?;
+    maximum_progress_frame = maximum_progress_frame.max(saved.progress_frame);
+    record_recording_state(report, &context.report_path, "saved", saved)?;
+    thread::sleep(context.settle_delay);
+    let saved_evidence = capture_evidence(
+        context,
+        "06-saved.png",
+        guard_foreground(controller.handle)?,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "saved_visible",
+        guard_foreground(controller.handle)?,
+        Some(&saved_evidence),
+    )?;
+
+    let output = single_recording_output(&context.session_root.join("recordings"))?;
+    let output_bytes = fs::metadata(&output)?.len();
+    if output_bytes == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "recorded MP4 is empty",
+        ));
+    }
+    let capabilities = discover()?;
+    let media = probe_media(capabilities.executable(), &output)?;
+    validate_recorded_media(source_bounds, &media)?;
+    let relative_output = output
+        .strip_prefix(&context.session_root)
+        .unwrap_or(&output)
+        .to_string_lossy()
+        .into_owned();
+    report.recording = Some(RecordingReport {
+        target: target.label(),
+        source_bounds,
+        output: relative_output,
+        output_bytes,
+        ffmpeg_version: capabilities.version().to_owned(),
+        codec_name: media.codec_name,
+        width: media.width,
+        height: media.height,
+        duration_seconds: media.duration_seconds,
+        pause_observed: true,
+        resume_observed: true,
+        maximum_progress_frame,
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+fn query_recording_state(
+    context: &WorkerContext,
+    timeout: Duration,
+) -> io::Result<OverlayInteractionRecordingState> {
+    request_recording_state(&context.interaction_commands, timeout)
+}
+
+#[cfg(windows)]
+/// Sends one snapshot request without a capacity wait and bounds the corresponding reply.
+fn request_recording_state(
+    commands: &async_channel::Sender<OverlayInteractionAcceptanceCommand>,
+    timeout: Duration,
+) -> io::Result<OverlayInteractionRecordingState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(OverlayInteractionAcceptanceCommand::Snapshot(reply_tx))
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "recording state channel closed"))?;
+    reply_rx.recv_timeout(timeout).map_err(|error| match error {
+        RecvTimeoutError::Timeout => io::Error::new(
+            io::ErrorKind::TimedOut,
+            "recording state reply did not arrive",
+        ),
+        RecvTimeoutError::Disconnected => io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "recording state reply channel disconnected",
+        ),
+    })
+}
+
+#[cfg(windows)]
+/// Polls process-local state while failing fast on the product's explicit recording errors.
+fn wait_for_recording_state(
+    context: &WorkerContext,
+    stage: &str,
+    expected: impl Fn(&OverlayInteractionRecordingState) -> bool,
+) -> io::Result<OverlayInteractionRecordingState> {
+    let deadline = Instant::now() + context.timeout;
+    let mut last_status = None;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "timed out waiting for {stage}; last status: {}",
+                    last_status.as_deref().unwrap_or("no state reply received")
+                ),
+            ));
+        }
+        let state = match query_recording_state(context, remaining.min(Duration::from_secs(1))) {
+            Ok(state) => state,
+            Err(error) if error.kind() == io::ErrorKind::TimedOut && Instant::now() < deadline => {
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if expected(&state) {
+            return Ok(state);
+        }
+        if recording_failed(&state) {
+            return Err(io::Error::other(state.status));
+        }
+        last_status = Some(state.status.clone());
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "timed out waiting for {stage}; last status: {}",
+                    state.status
+                ),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn recording_failed(state: &OverlayInteractionRecordingState) -> bool {
+    !state.active
+        && !state.starting
+        && !state.stopping
+        && [
+            "Recording is unavailable",
+            "This FFmpeg build cannot",
+            "Could not start screen recording",
+            "Screen recording failed",
+        ]
+        .iter()
+        .any(|prefix| state.status.starts_with(prefix))
+}
+
+fn recording_saved(state: &OverlayInteractionRecordingState) -> bool {
+    !state.active
+        && !state.starting
+        && !state.stopping
+        && state.status.starts_with("Screen recording saved to ")
+}
+
+fn record_recording_state(
+    report: &mut AcceptanceReport,
+    report_path: &Path,
+    stage: &'static str,
+    state: OverlayInteractionRecordingState,
+) -> io::Result<()> {
+    report
+        .recording_states
+        .push(RecordingStateReport::from_state(stage, state));
+    write_report(report_path, report)
+}
+
+fn single_recording_output(directory: &Path) -> io::Result<PathBuf> {
+    let mut outputs = fs::read_dir(directory)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"))
+        })
+        .collect::<Vec<_>>();
+    outputs.sort();
+    match outputs.as_slice() {
+        [output] => Ok(output.clone()),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "expected exactly one finalized MP4, found {}",
+                outputs.len()
+            ),
+        )),
+    }
+}
+
+fn validate_recorded_media(source_bounds: PhysicalRect, media: &MediaMetadata) -> io::Result<()> {
+    if media.codec_name != "h264" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("expected H.264 video, found {}", media.codec_name),
+        ));
+    }
+    let expected_width = (source_bounds.width() + 1) & !1;
+    let expected_height = (source_bounds.height() + 1) & !1;
+    if media.width != expected_width || media.height != expected_height {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "recording is {}x{}, expected {}x{} from the selected source",
+                media.width, media.height, expected_width, expected_height
+            ),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -673,6 +1264,28 @@ fn wait_for_controller(timeout: Duration) -> io::Result<NativeWindow> {
 }
 
 #[cfg(windows)]
+fn wait_for_owned_window_visible(
+    handle: *mut c_void,
+    timeout: Duration,
+) -> io::Result<NativeWindow> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if unsafe { IsWindowVisible(handle) } != 0
+            && let Ok(window) = owned_window(handle)
+        {
+            return Ok(window);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Record page did not become visible",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
 /// Waits for a process-owned window large enough to be the single-display capture overlay.
 fn wait_for_overlay(
     controller: *mut c_void,
@@ -711,7 +1324,12 @@ fn overlay_covers_display(window: NativeWindow, display_bounds: PhysicalRect) ->
 }
 
 #[cfg(windows)]
-fn wait_for_window_gone(window: *mut c_void, timeout: Duration) -> io::Result<()> {
+/// Waits for one overlay transition and keeps the triggering action in timeout diagnostics.
+fn wait_for_window_gone(
+    window: *mut c_void,
+    timeout: Duration,
+    completed_action: &str,
+) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
     loop {
         // SAFETY: both functions only query the borrowed HWND value.
@@ -721,7 +1339,7 @@ fn wait_for_window_gone(window: *mut c_void, timeout: Duration) -> io::Result<()
         if Instant::now() >= deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "capture overlay did not close after Cancel",
+                format!("capture overlay did not close after {completed_action}"),
             ));
         }
         thread::sleep(Duration::from_millis(25));
@@ -811,6 +1429,37 @@ fn owned_window(handle: *mut c_void) -> io::Result<NativeWindow> {
         },
         dpi: unsafe { GetDpiForWindow(handle) }.max(WINDOWS_BASE_DPI as u32),
     })
+}
+
+#[cfg(windows)]
+/// Re-reads the client origin and DPI immediately before clicking Record-page controls.
+fn recording_control_plan_for_window(handle: *mut c_void) -> io::Result<RecordingControlPlan> {
+    let window = owned_window(handle)?;
+    let mut client = RECT::default();
+    if unsafe { GetClientRect(handle, &mut client) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if client.right <= client.left || client.bottom <= client.top {
+        return Err(io::Error::other(
+            "recording controller client area is empty",
+        ));
+    }
+    let mut origin = POINT {
+        x: client.left,
+        y: client.top,
+    };
+    if unsafe { ClientToScreen(handle, &mut origin) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    recording_control_plan(
+        PhysicalPoint {
+            x: origin.x,
+            y: origin.y,
+        },
+        (client.right - client.left) as u32,
+        (client.bottom - client.top) as u32,
+        window.dpi as f32 / WINDOWS_BASE_DPI,
+    )
 }
 
 #[cfg(windows)]
@@ -1058,10 +1707,17 @@ impl Drop for CursorRestore {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::request_recording_state;
     use super::{
-        DEFAULT_OUTPUT_DIR, Options, ensure_input_authorized, interaction_plan, normalize_axis,
+        DEFAULT_OUTPUT_DIR, Options, RecordTargetOption, ensure_input_authorized,
+        interaction_command_channel, interaction_plan, normalize_axis, recording_control_plan,
+        recording_failed, recording_saved, validate_recorded_media,
     };
+    use super::{MediaMetadata, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
+    #[cfg(windows)]
+    use std::time::Instant;
     use std::{ffi::OsString, path::PathBuf, time::Duration};
 
     fn arguments(values: &[&str]) -> Vec<OsString> {
@@ -1082,6 +1738,23 @@ mod tests {
     }
 
     #[test]
+    fn interaction_command_sends_never_wait_for_receiver_capacity() {
+        let (commands, _receiver) = interaction_command_channel();
+        assert_eq!(commands.capacity(), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn undrained_recording_state_request_respects_its_reply_timeout() {
+        let (commands, _receiver) = interaction_command_channel();
+        let started = Instant::now();
+        let error = request_recording_state(&commands, Duration::from_millis(20)).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
     fn parser_accepts_bounded_delays_and_rejects_duplicate_authorization() {
         let options = Options::parse_from(arguments(&[
             "--allow-input",
@@ -1091,14 +1764,33 @@ mod tests {
             "12000",
             "--settle-ms",
             "350",
+            "--record-target",
+            "window",
         ]))
         .unwrap();
         assert_eq!(options.output_dir, PathBuf::from("evidence"));
         assert_eq!(options.timeout, Duration::from_secs(12));
         assert_eq!(options.settle_delay, Duration::from_millis(350));
+        assert_eq!(options.record_target, Some(RecordTargetOption::Window));
         assert!(Options::parse_from(arguments(&["--allow-input", "--allow-input"])).is_err());
         assert!(Options::parse_from(arguments(&["--timeout-ms", "2999"])).is_err());
         assert!(Options::parse_from(arguments(&["--settle-ms", "5001"])).is_err());
+        assert!(Options::parse_from(arguments(&["--record-target", "display"])).is_err());
+        assert_eq!(
+            Options::parse_from(arguments(&["--record-target", "area"]))
+                .unwrap()
+                .record_target,
+            Some(RecordTargetOption::Area)
+        );
+        assert!(
+            Options::parse_from(arguments(&[
+                "--record-target",
+                "area",
+                "--record-target",
+                "window"
+            ]))
+            .is_err()
+        );
     }
 
     #[test]
@@ -1110,13 +1802,23 @@ mod tests {
             bottom: 1080,
         };
         let plan = interaction_plan(bounds, 1.5).unwrap();
-        for point in [plan.drag_start, plan.drag_end, plan.more, plan.cancel] {
+        for point in [
+            plan.drag_start,
+            plan.drag_end,
+            plan.more,
+            plan.cancel,
+            plan.record_area,
+            plan.record_window,
+        ] {
             assert!(bounds.contains(point), "{point:?}");
         }
         assert!(plan.drag_start.x < plan.drag_end.x);
         assert!(plan.drag_start.y < plan.drag_end.y);
         assert!(plan.more.x < plan.cancel.x);
         assert!(plan.more.y > plan.drag_end.y);
+        assert_eq!(plan.record_area.x, plan.record_window.x);
+        assert!(plan.record_area.y < plan.record_window.y);
+        assert!(plan.record_window.y < plan.more.y);
     }
 
     #[test]
@@ -1160,5 +1862,69 @@ mod tests {
             }
         );
         assert_ne!(plan.more, PhysicalPoint::default());
+    }
+
+    #[test]
+    fn record_page_control_points_use_client_coordinates_and_dpi() {
+        let unscaled =
+            recording_control_plan(PhysicalPoint { x: 10, y: 20 }, 980, 760, 1.0).unwrap();
+        assert_eq!(unscaled.stop, PhysicalPoint { x: 396, y: 446 });
+        assert_eq!(unscaled.pause_or_resume, PhysicalPoint { x: 503, y: 446 });
+
+        let plan =
+            recording_control_plan(PhysicalPoint { x: 100, y: 200 }, 1470, 1140, 1.5).unwrap();
+
+        assert_eq!(plan.stop, PhysicalPoint { x: 679, y: 839 });
+        assert_eq!(plan.pause_or_resume, PhysicalPoint { x: 840, y: 839 });
+        assert!(recording_control_plan(PhysicalPoint::default(), 600, 480, 1.0).is_err());
+        assert!(recording_control_plan(PhysicalPoint::default(), 980, 760, 0.0).is_err());
+    }
+
+    #[test]
+    fn recording_media_validation_accepts_the_even_padding_contract() {
+        let media = MediaMetadata {
+            codec_name: "h264".to_owned(),
+            width: 642,
+            height: 362,
+            duration_seconds: 1.25,
+        };
+        let source = PhysicalRect {
+            left: -200,
+            top: 40,
+            right: 441,
+            bottom: 401,
+        };
+        assert!(validate_recorded_media(source, &media).is_ok());
+
+        let wrong_size = MediaMetadata {
+            width: 640,
+            ..media
+        };
+        assert!(validate_recorded_media(source, &wrong_size).is_err());
+    }
+
+    #[test]
+    fn recording_state_checks_distinguish_saved_output_from_failures() {
+        let state = |status: &str| OverlayInteractionRecordingState {
+            active: false,
+            starting: false,
+            stopping: false,
+            paused: false,
+            target: None,
+            target_bounds: None,
+            progress_frame: 0,
+            progress_time_us: 0,
+            status: status.to_owned(),
+        };
+
+        assert!(recording_saved(&state(
+            "Screen recording saved to C:\\recordings\\clip.mp4"
+        )));
+        assert!(!recording_failed(&state(
+            "Screen recording saved to C:\\recordings\\clip.mp4"
+        )));
+        assert!(recording_failed(&state(
+            "Could not start screen recording: missing encoder"
+        )));
     }
 }

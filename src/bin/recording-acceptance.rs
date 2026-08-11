@@ -3,7 +3,6 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -14,10 +13,14 @@ use flash_shot::{
     platform::window_inspector::SystemWindowInspector,
     recording::{RecordingEvent, RecordingRequest, RecordingTarget, discover, start_recording},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+
+#[path = "support/recording_probe.rs"]
+mod recording_probe;
+
+use recording_probe::probe_media;
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(20);
-const FFPROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const ACTIVE_CAPTURE_DELAY: Duration = Duration::from_millis(900);
 const PAUSE_DELAY: Duration = Duration::from_millis(350);
 
@@ -83,33 +86,6 @@ struct AcceptanceReport {
     pause_observed: bool,
     resume_observed: bool,
     maximum_progress_frame: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProbeOutput {
-    #[serde(default)]
-    streams: Vec<ProbeStream>,
-    format: Option<ProbeFormat>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProbeStream {
-    codec_name: Option<String>,
-    width: Option<u32>,
-    height: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProbeFormat {
-    duration: Option<String>,
-}
-
-#[derive(Debug, PartialEq)]
-struct MediaMetadata {
-    codec_name: String,
-    width: u32,
-    height: u32,
-    duration_seconds: f64,
 }
 
 #[derive(Default)]
@@ -335,124 +311,12 @@ fn wait_for_event(
     }
 }
 
-/// Uses the FFprobe installed beside FFmpeg to prove the finalized MP4's media metadata.
-fn probe_media(ffmpeg: &Path, output: &Path) -> io::Result<MediaMetadata> {
-    let ffprobe = ffmpeg.with_file_name(if cfg!(windows) {
-        "ffprobe.exe"
-    } else {
-        "ffprobe"
-    });
-    let result = run_ffprobe(&ffprobe, output)?;
-    if !result.status.success() {
-        return Err(io::Error::other(format!(
-            "FFprobe rejected the MP4: {}",
-            String::from_utf8_lossy(&result.stderr).trim()
-        )));
-    }
-    parse_media_probe(&result.stdout)
-}
-
-fn run_ffprobe(ffprobe: &Path, output: &Path) -> io::Result<Output> {
-    let mut child = Command::new(ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_name,width,height:format=duration",
-            "-of",
-            "json",
-        ])
-        .arg(output)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    wait_for_ffprobe_child(&mut child, FFPROBE_TIMEOUT)?;
-    child.wait_with_output()
-}
-
-/// Polls FFprobe until it exits; a stuck metadata check is terminated and reaped.
-fn wait_for_ffprobe_child(child: &mut Child, timeout: Duration) -> io::Result<()> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!(
-                        "FFprobe exceeded {} ms and was terminated",
-                        timeout.as_millis()
-                    ),
-                ));
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(10)),
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
-        }
-    }
-}
-
-/// Parses and validates the small FFprobe JSON contract written into acceptance reports.
-fn parse_media_probe(stdout: &[u8]) -> io::Result<MediaMetadata> {
-    let probe: ProbeOutput = serde_json::from_slice(stdout).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid FFprobe JSON: {error}"),
-        )
-    })?;
-    let stream = probe.streams.into_iter().next().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "FFprobe found no video stream")
-    })?;
-    let codec_name = stream
-        .codec_name
-        .filter(|codec| !codec.trim().is_empty())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "FFprobe reported no codec"))?;
-    let width = stream.width.filter(|width| *width > 0).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "FFprobe reported no video width",
-        )
-    })?;
-    let height = stream.height.filter(|height| *height > 0).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "FFprobe reported no video height",
-        )
-    })?;
-    let duration = probe
-        .format
-        .and_then(|format| format.duration)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "FFprobe reported no duration"))?
-        .parse::<f64>()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid FFprobe duration"))?;
-    if !duration.is_finite() || duration <= 0.0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "FFprobe reported an empty recording",
-        ));
-    }
-    Ok(MediaMetadata {
-        codec_name,
-        width,
-        height,
-        duration_seconds: duration,
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        FFPROBE_TIMEOUT, centered_region, parse_media_probe, prepare_reusable_output,
-        wait_for_ffprobe_child,
+    use super::recording_probe::{
+        FFPROBE_TIMEOUT, MediaMetadata, parse_media_probe, wait_for_ffprobe_child,
     };
+    use super::{centered_region, prepare_reusable_output};
     use flash_shot::domain::geometry::PhysicalRect;
     use std::{
         process::{Command, Stdio},
@@ -537,7 +401,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             metadata,
-            super::MediaMetadata {
+            MediaMetadata {
                 codec_name: "h264".to_owned(),
                 width: 520,
                 height: 640,

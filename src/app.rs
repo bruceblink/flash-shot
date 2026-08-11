@@ -702,6 +702,70 @@ impl FlashShotApp {
         }
     }
 
+    /// Bridges the isolated input runner to recording state without bypassing product UI actions.
+    ///
+    /// Snapshot replies are process-local and bounded. The only mutating command mirrors opening
+    /// the Record page from the tray; pause, resume, and stop still require real button clicks.
+    pub(crate) fn listen_for_overlay_interaction_commands(
+        commands: async_channel::Receiver<crate::OverlayInteractionAcceptanceCommand>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                while let Ok(command) = commands.recv().await {
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    this.update(&mut cx, |this, cx| match command {
+                        crate::OverlayInteractionAcceptanceCommand::Snapshot(reply) => {
+                            let target = this.recording_control.as_ref().map(|control| {
+                                match control.target() {
+                                    crate::recording::RecordingTarget::Display { .. } => "display",
+                                    crate::recording::RecordingTarget::Window { .. } => "window",
+                                    crate::recording::RecordingTarget::Region { .. } => {
+                                        "selected area"
+                                    }
+                                }
+                                .to_owned()
+                            });
+                            let target_bounds = this.recording_control.as_ref().map(|control| {
+                                match control.target() {
+                                    crate::recording::RecordingTarget::Display { bounds }
+                                    | crate::recording::RecordingTarget::Window {
+                                        bounds, ..
+                                    }
+                                    | crate::recording::RecordingTarget::Region { bounds } => {
+                                        *bounds
+                                    }
+                                }
+                            });
+                            let _ = reply.send(crate::OverlayInteractionRecordingState {
+                                active: this.recording_control.is_some(),
+                                starting: this.recording_start_in_flight,
+                                stopping: this.recording_stopping,
+                                paused: this.recording_paused,
+                                target,
+                                target_bounds,
+                                progress_frame: this.recording_progress.frame.unwrap_or_default(),
+                                progress_time_us: this
+                                    .recording_progress
+                                    .output_time_us
+                                    .unwrap_or_default(),
+                                status: this.status.clone(),
+                            });
+                        }
+                        crate::OverlayInteractionAcceptanceCommand::ShowRecordingSettings => {
+                            this.select_settings_section(SettingsSection::Recording, cx);
+                            this.show_settings_window(cx);
+                        }
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn listen_for_shortcut(events: async_channel::Receiver<ShortcutEvent>, cx: &mut Context<Self>) {
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
