@@ -27,9 +27,10 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 - 显示器、窗口和区域录制，以及音频选择、暂停/恢复、进度与 Job Object 清理；
 - 可重复性能/资源压力工具、结构化诊断和本地质量门禁。
 
-录屏后端和单屏 100% 下显示器、静态窗口与静态区域的录屏 UI 生命周期验收已完成；
-生成 MP4 需要安装支持 `ddagrab` 或 `gdigrab` 的 FFmpeg。窗口移动、缩放、遮挡和最小化
-期间的动态桌面语义，以及 150%/200% 缩放，仍保留在真实环境矩阵中。
+录屏后端和单屏 100% 下显示器、窗口与区域的录屏 UI 生命周期验收已完成；窗口录制在
+移动、缩放、遮挡和最小化后的固定源边界与桌面合成像素语义也已通过 Release 原生探针。
+生成 MP4 需要安装支持 `ddagrab` 或 `gdigrab` 的 FFmpeg；150%/200% 缩放仍保留在真实
+环境矩阵中。
 
 ### 运行
 
@@ -146,10 +147,11 @@ The repository currently includes:
 - display, window, and region recording with audio selection, pause/resume, progress, and Job Object cleanup;
 - repeatable performance/resource stress tooling, structured diagnostics, and local quality gates.
 
-The recording backend and the display, static-window, and static-region UI lifecycles have passed
-acceptance on one 100%-scaled display. Producing an MP4 requires an FFmpeg build that supports
-`ddagrab` or `gdigrab`. Dynamic window movement, resizing, occlusion, and minimization semantics,
-plus 150%/200% scaling, remain in the real-environment matrix.
+The recording backend and the display, window, and region UI lifecycles have passed acceptance on
+one 100%-scaled display. Fixed-source desktop-composition semantics after moving, resizing,
+occluding, and minimizing a recorded window are also covered by a native Release probe. Producing
+an MP4 requires an FFmpeg build that supports `ddagrab` or `gdigrab`; 150%/200% scaling remains in
+the real-environment matrix.
 
 ### Run
 

@@ -21,7 +21,10 @@ use flash_shot::{
 };
 #[cfg(windows)]
 use flash_shot::{
-    platform::window_inspector::{SystemWindowInspector, WindowInspector},
+    platform::{
+        process_group::ProcessGroup,
+        window_inspector::{SystemWindowInspector, WindowInspector},
+    },
     recording::discover,
 };
 
@@ -30,7 +33,7 @@ mod recording_probe;
 
 use recording_probe::MediaMetadata;
 #[cfg(windows)]
-use recording_probe::{extract_video_frame, probe_media};
+use recording_probe::{extract_video_frame, extract_video_frame_series, probe_media};
 
 #[cfg(windows)]
 use flash_shot::platform::capture::{CaptureBackend, CaptureFrame, SystemCaptureBackend};
@@ -39,15 +42,28 @@ use std::{
     ffi::c_void,
     mem::size_of,
     panic::AssertUnwindSafe,
-    sync::mpsc::{self, Receiver, RecvTimeoutError},
+    ptr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError},
+    },
 };
 #[cfg(windows)]
 use windows_sys::Win32::{
-    Foundation::{LPARAM, POINT, RECT},
-    Graphics::Gdi::ClientToScreen,
-    System::{DataExchange::GetClipboardSequenceNumber, Threading::GetCurrentProcessId},
+    Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+    Graphics::Gdi::{
+        BeginPaint, ClientToScreen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
+        PAINTSTRUCT, UpdateWindow,
+    },
+    System::{
+        DataExchange::GetClipboardSequenceNumber, LibraryLoader::GetModuleHandleW,
+        Threading::GetCurrentProcessId,
+    },
     UI::{
-        HiDpi::GetDpiForWindow,
+        HiDpi::{
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow,
+            SetProcessDpiAwarenessContext,
+        },
         Input::KeyboardAndMouse::{
             INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
             KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
@@ -55,12 +71,17 @@ use windows_sys::Win32::{
             VK_ESCAPE, VK_F24, VK_MENU, VK_RETURN, VK_RIGHT,
         },
         WindowsAndMessaging::{
-            BringWindowToTop, EnumChildWindows, EnumWindows, GUITHREADINFO, GW_OWNER,
-            GetClassNameW, GetClientRect, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo,
-            GetSystemMetrics, GetWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-            GetWindowThreadProcessId, IsChild, IsWindow, IsWindowVisible, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SetCursorPos,
-            SetForegroundWindow, WindowFromPoint,
+            BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
+            DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows, FindWindowW,
+            GUITHREADINFO, GW_OWNER, GWLP_USERDATA, GetClassNameW, GetClientRect, GetCursorPos,
+            GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindow,
+            GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+            GetWindowThreadProcessId, HWND_TOP, IsChild, IsIconic, IsWindow, IsWindowVisible, MSG,
+            PostMessageW, PostQuitMessage, RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE,
+            SWP_SHOWWINDOW, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+            ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WNDCLASSW,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE, WindowFromPoint,
         },
     },
 };
@@ -79,6 +100,14 @@ const WINDOWS_BASE_DPI: f32 = 96.0;
 const SELECTION_EDGE_TOLERANCE: i32 = 1;
 const PAUSE_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
 const MAX_RECORDING_GRID_MAE: f64 = 18.0;
+const WINDOW_TARGET_CHILD_MODE: &str = "--window-target-child";
+const WINDOW_FIXTURE_CLASS: &str = "FlashShotRecordingWindowFixture";
+const WINDOW_PHASE_SETTLE_US: u64 = 300_000;
+const WINDOW_PHASE_HOLD_US: u64 = 300_000;
+const WINDOW_TIMELINE_FRAMES_PER_SECOND: u16 = 5;
+const WINDOW_TIMELINE_STABLE_FRAMES: usize = 2;
+const MIN_WINDOW_FIXTURE_WIDTH: i64 = 240;
+const MIN_WINDOW_FIXTURE_HEIGHT: i64 = 120;
 #[cfg(windows)]
 const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
 #[cfg(windows)]
@@ -87,6 +116,9 @@ const RECORDING_DIRECTORY_ENV: &str = "FLASH_SHOT_RECORDING_DIRECTORY";
 const RECORDING_MICROPHONE_ENV: &str = "FLASH_SHOT_RECORDING_MICROPHONE";
 #[cfg(windows)]
 const RECORDING_SYSTEM_AUDIO_ENV: &str = "FLASH_SHOT_RECORDING_SYSTEM_AUDIO";
+
+#[cfg(windows)]
+static LIVE_FIXTURE_WINDOWS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Eq, PartialEq)]
 struct Options {
@@ -538,6 +570,7 @@ struct RecordingReport {
     resume_observed: bool,
     maximum_progress_frame: u64,
     content: RecordingContentReport,
+    window_dynamics: Option<RecordingWindowDynamicsReport>,
 }
 
 #[derive(serde::Serialize)]
@@ -553,6 +586,33 @@ struct RecordingContentReport {
     decoded_luma_max: u8,
     grid_mean_absolute_error: f64,
     maximum_allowed_error: f64,
+}
+
+#[derive(serde::Serialize)]
+struct RecordingWindowDynamicsReport {
+    fixture_process_id: u32,
+    target_title: String,
+    initial_target_bounds: PhysicalRect,
+    moved_target_bounds: PhysicalRect,
+    resized_target_bounds: PhysicalRect,
+    source_bounds_fixed: bool,
+    fixture_cleaned_up: bool,
+    timeline_frames_per_second: u16,
+    timeline_sample_count: usize,
+    phases: Vec<RecordingWindowPhaseReport>,
+}
+
+#[derive(serde::Serialize)]
+struct RecordingWindowPhaseReport {
+    stage: &'static str,
+    progress_timestamp_seconds: f64,
+    target_bounds: PhysicalRect,
+    target_visible: bool,
+    target_minimized: bool,
+    backdrop_visible: bool,
+    occluder_visible: bool,
+    reported_source_bounds: PhysicalRect,
+    content: RecordingContentReport,
 }
 
 #[derive(serde::Serialize)]
@@ -641,6 +701,64 @@ struct InjectedDrag {
 }
 
 #[cfg(windows)]
+struct RecordingWindowFixture {
+    child: process::Child,
+    process_group: ProcessGroup,
+    process_id: u32,
+    target_title: String,
+    target: HWND,
+    backdrop: HWND,
+    occluder: HWND,
+    initial_bounds: PhysicalRect,
+    moved_bounds: PhysicalRect,
+    resized_bounds: PhysicalRect,
+    stopped: bool,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct FixturePhaseState {
+    target_bounds: PhysicalRect,
+    target_visible: bool,
+    target_minimized: bool,
+    backdrop_visible: bool,
+    occluder_visible: bool,
+}
+
+#[cfg(windows)]
+struct PendingRecordingWindowPhase {
+    stage: &'static str,
+    reference_file: String,
+    decoded_file: String,
+    timestamp_seconds: f64,
+    reference: CaptureFrame,
+    fixture: FixturePhaseState,
+    reported_source_bounds: PhysicalRect,
+    maximum_progress_frame: u64,
+}
+
+#[cfg(windows)]
+struct RecordingTimelineCandidate {
+    timestamp_seconds: f64,
+    path: PathBuf,
+}
+
+#[cfg(windows)]
+struct StableRecordingFrameMatch {
+    candidate_index: usize,
+    comparison: RecordingFrameContentComparison,
+}
+
+#[cfg(windows)]
+struct RecordingWindowFixtureReportSeed {
+    process_id: u32,
+    target_title: String,
+    initial_bounds: PhysicalRect,
+    moved_bounds: PhysicalRect,
+    resized_bounds: PhysicalRect,
+}
+
+#[cfg(windows)]
 impl NativeWindow {
     fn report(self) -> WindowReport {
         WindowReport {
@@ -665,6 +783,15 @@ struct WorkerContext {
 }
 
 fn main() {
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(WINDOW_TARGET_CHILD_MODE))
+    {
+        if let Err(error) = run_recording_window_fixture_child(std::env::args_os().skip(2)) {
+            eprintln!("recording window fixture failed: {error}");
+            process::exit(1);
+        }
+        return;
+    }
     if let Err(error) = run() {
         eprintln!("overlay interaction acceptance failed: {error}");
         process::exit(1);
@@ -806,7 +933,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        schema_version: 4,
+        schema_version: 5,
         test: "overlay_interaction_acceptance",
         workflow: context
             .record_target
@@ -859,6 +986,658 @@ fn isolate_process_environment(session_root: &Path) {
         std::env::remove_var(RECORDING_MICROPHONE_ENV);
         std::env::remove_var(RECORDING_SYSTEM_AUDIO_ENV);
     }
+}
+
+#[cfg(windows)]
+/// Runs the private child mode that paints deterministic windows for recording verification.
+fn run_recording_window_fixture_child(
+    arguments: impl IntoIterator<Item = OsString>,
+) -> io::Result<()> {
+    let (token, bounds) = parse_recording_window_fixture_arguments(arguments)?;
+    // A manifest may have set this already; AccessDenied means the process is already locked in.
+    if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(5) {
+            return Err(error);
+        }
+    }
+    LIVE_FIXTURE_WINDOWS.store(0, Ordering::Release);
+    let class_name = wide_null(WINDOW_FIXTURE_CLASS);
+    // SAFETY: a null module name requests the executable module for this child process.
+    let instance = unsafe { GetModuleHandleW(ptr::null()) };
+    if instance.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let window_class = WNDCLASSW {
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(recording_fixture_window_proc),
+        hInstance: instance,
+        lpszClassName: class_name.as_ptr(),
+        ..Default::default()
+    };
+    // SAFETY: the class strings and callback remain valid for this process lifetime.
+    if unsafe { RegisterClassW(&window_class) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(1410) {
+            return Err(error);
+        }
+    }
+
+    let mut windows = Vec::with_capacity(3);
+    let create_result = (|| {
+        let backdrop = create_recording_fixture_window(
+            instance,
+            &class_name,
+            &recording_fixture_title(&token, "Backdrop"),
+            bounds,
+            2,
+            true,
+        )?;
+        windows.push(backdrop);
+        let target = create_recording_fixture_window(
+            instance,
+            &class_name,
+            &recording_fixture_title(&token, "Target"),
+            bounds,
+            1,
+            true,
+        )?;
+        windows.push(target);
+        let occluder = create_recording_fixture_window(
+            instance,
+            &class_name,
+            &recording_fixture_title(&token, "Occluder"),
+            bounds,
+            3,
+            false,
+        )?;
+        windows.push(occluder);
+        set_fixture_window_bounds(backdrop, bounds, true)?;
+        set_fixture_window_bounds(target, bounds, true)?;
+        Ok::<(), io::Error>(())
+    })();
+    if let Err(error) = create_result {
+        destroy_recording_fixture_windows(&windows);
+        return Err(error);
+    }
+
+    let mut message = MSG::default();
+    loop {
+        // SAFETY: message is writable and this thread owns every fixture window.
+        let result = unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) };
+        if result == -1 {
+            let error = io::Error::last_os_error();
+            destroy_recording_fixture_windows(&windows);
+            return Err(error);
+        }
+        if result == 0 {
+            break;
+        }
+        // SAFETY: GetMessageW initialized this message for the current GUI thread.
+        unsafe {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    destroy_recording_fixture_windows(&windows);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn parse_recording_window_fixture_arguments(
+    arguments: impl IntoIterator<Item = OsString>,
+) -> io::Result<(String, PhysicalRect)> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    if arguments.len() != 5 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "window fixture child requires TOKEN LEFT TOP RIGHT BOTTOM",
+        ));
+    }
+    let token = arguments[0]
+        .to_str()
+        .filter(|value| !value.is_empty() && !value.contains('\0'))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid fixture token"))?
+        .to_owned();
+    let coordinate = |index: usize, label: &str| {
+        arguments[index]
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid coordinate"))?
+            .parse::<i32>()
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("fixture {label} must be a 32-bit integer"),
+                )
+            })
+    };
+    let bounds = PhysicalRect {
+        left: coordinate(1, "left")?,
+        top: coordinate(2, "top")?,
+        right: coordinate(3, "right")?,
+        bottom: coordinate(4, "bottom")?,
+    };
+    validate_recording_fixture_bounds(bounds)?;
+    Ok((token, bounds))
+}
+
+#[cfg(windows)]
+fn validate_recording_fixture_bounds(bounds: PhysicalRect) -> io::Result<()> {
+    let width = i64::from(bounds.right) - i64::from(bounds.left);
+    let height = i64::from(bounds.bottom) - i64::from(bounds.top);
+    if width < MIN_WINDOW_FIXTURE_WIDTH || height < MIN_WINDOW_FIXTURE_HEIGHT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "window fixture must be at least {MIN_WINDOW_FIXTURE_WIDTH}x{MIN_WINDOW_FIXTURE_HEIGHT} physical pixels"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn recording_fixture_title(token: &str, role: &str) -> String {
+    format!("Flash Shot Recording Fixture {token} {role}")
+}
+
+#[cfg(windows)]
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(windows)]
+fn create_recording_fixture_window(
+    instance: *mut c_void,
+    class_name: &[u16],
+    title: &str,
+    bounds: PhysicalRect,
+    pattern: isize,
+    visible: bool,
+) -> io::Result<HWND> {
+    let title = wide_null(title);
+    let style = WS_POPUP | if visible { WS_VISIBLE } else { 0 };
+    // SAFETY: all string pointers are NUL-terminated and valid for the duration of this call.
+    let window = unsafe {
+        CreateWindowExW(
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            class_name.as_ptr(),
+            title.as_ptr(),
+            style,
+            bounds.left,
+            bounds.top,
+            bounds.width() as i32,
+            bounds.height() as i32,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            instance,
+            ptr::null(),
+        )
+    };
+    if window.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    LIVE_FIXTURE_WINDOWS.fetch_add(1, Ordering::AcqRel);
+    // SAFETY: this child owns the window; the small role value is read only by its window proc.
+    unsafe {
+        SetWindowLongPtrW(window, GWLP_USERDATA, pattern);
+        UpdateWindow(window);
+    }
+    Ok(window)
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn recording_fixture_window_proc(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_PAINT => {
+            paint_recording_fixture_window(window);
+            0
+        }
+        WM_ERASEBKGND => 1,
+        WM_CLOSE => {
+            // SAFETY: this callback runs on the GUI thread that created the fixture window.
+            unsafe { DestroyWindow(window) };
+            0
+        }
+        WM_DESTROY => {
+            if LIVE_FIXTURE_WINDOWS.fetch_sub(1, Ordering::AcqRel) == 1 {
+                // SAFETY: ending the child message loop after its final window closes is intended.
+                unsafe { PostQuitMessage(0) };
+            }
+            0
+        }
+        _ => {
+            // SAFETY: unhandled messages use the standard top-level window behavior.
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn paint_recording_fixture_window(window: HWND) {
+    let mut paint = PAINTSTRUCT::default();
+    // SAFETY: paint is writable and this call is paired with EndPaint below.
+    let device = unsafe { BeginPaint(window, &mut paint) };
+    if device.is_null() {
+        return;
+    }
+    let mut client = RECT::default();
+    // SAFETY: both calls borrow the live window and initialized paint data.
+    if unsafe { GetClientRect(window, &mut client) } != 0 {
+        // SAFETY: the role was installed immediately after CreateWindowExW returned.
+        let pattern = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as usize;
+        for row in 0..4 {
+            for column in 0..4 {
+                let cell = RECT {
+                    left: client.left + (client.right - client.left) * column / 4,
+                    top: client.top + (client.bottom - client.top) * row / 4,
+                    right: client.left + (client.right - client.left) * (column + 1) / 4,
+                    bottom: client.top + (client.bottom - client.top) * (row + 1) / 4,
+                };
+                // SAFETY: the brush is deleted after FillRect and the rectangle is initialized.
+                let brush = unsafe {
+                    CreateSolidBrush(recording_fixture_color(
+                        pattern,
+                        row as usize,
+                        column as usize,
+                    ))
+                };
+                if !brush.is_null() {
+                    unsafe {
+                        FillRect(device, &cell, brush);
+                        DeleteObject(brush);
+                    }
+                }
+            }
+        }
+    }
+    // SAFETY: BeginPaint succeeded and paint remains initialized.
+    unsafe { EndPaint(window, &paint) };
+}
+
+#[cfg(windows)]
+fn recording_fixture_color(pattern: usize, row: usize, column: usize) -> u32 {
+    const TARGET: [u32; 4] = [0x002040f0, 0x00e0c020, 0x0030c060, 0x00f0f0f0];
+    const BACKDROP: [u32; 4] = [0x00181818, 0x00d040b0, 0x00e0a030, 0x0040d8e8];
+    const OCCLUDER: [u32; 4] = [0x000020f0, 0x00080808, 0x00f0e040, 0x00e8e8e8];
+    let palette = match pattern {
+        2 => BACKDROP,
+        3 => OCCLUDER,
+        _ => TARGET,
+    };
+    palette[(row * 3 + column) % palette.len()]
+}
+
+#[cfg(windows)]
+fn destroy_recording_fixture_windows(windows: &[HWND]) {
+    for window in windows.iter().rev().copied() {
+        // SAFETY: this helper is called only on the creating GUI thread.
+        if !window.is_null() && unsafe { IsWindow(window) } != 0 {
+            unsafe { DestroyWindow(window) };
+        }
+    }
+}
+
+#[cfg(windows)]
+/// Derives one pure move and one pure resize from the committed recording selection.
+fn recording_fixture_dynamic_bounds(
+    initial_bounds: PhysicalRect,
+) -> io::Result<(PhysicalRect, PhysicalRect)> {
+    validate_recording_fixture_bounds(initial_bounds)?;
+    let moved = translated_rect(
+        initial_bounds,
+        (initial_bounds.width() as i32 / 10).max(32),
+        (initial_bounds.height() as i32 / 10).max(24),
+    )?;
+    let resized = PhysicalRect {
+        left: initial_bounds.left,
+        top: initial_bounds.top,
+        right: initial_bounds.left + (initial_bounds.width() * 3 / 4) as i32,
+        bottom: initial_bounds.top + (initial_bounds.height() * 3 / 4) as i32,
+    };
+    validate_recording_fixture_bounds(resized)?;
+    Ok((moved, resized))
+}
+
+#[cfg(windows)]
+/// Rejects a helper transition unless visibility, minimization, and bounds match its contract.
+fn validate_fixture_phase_state(
+    stage: &str,
+    state: FixturePhaseState,
+    expected_bounds: Option<PhysicalRect>,
+    expected_minimized: bool,
+    expected_occluder: bool,
+) -> io::Result<()> {
+    if !state.target_visible
+        || !state.backdrop_visible
+        || state.target_minimized != expected_minimized
+        || state.occluder_visible != expected_occluder
+        || expected_bounds.is_some_and(|bounds| state.target_bounds != bounds)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "fixture {stage} state is bounds={:?}, visible={}, minimized={}, backdrop={}, occluder={}",
+                state.target_bounds,
+                state.target_visible,
+                state.target_minimized,
+                state.backdrop_visible,
+                state.occluder_visible
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+impl RecordingWindowFixture {
+    /// Starts the same executable in child mode and verifies all three cross-process HWNDs.
+    fn launch(initial_bounds: PhysicalRect, timeout: Duration) -> io::Result<Self> {
+        validate_recording_fixture_bounds(initial_bounds)?;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let token = format!("{}-{timestamp}", process::id());
+        let target_title = recording_fixture_title(&token, "Target");
+        let backdrop_title = recording_fixture_title(&token, "Backdrop");
+        let occluder_title = recording_fixture_title(&token, "Occluder");
+        let process_group = ProcessGroup::create()?;
+        let mut child = process::Command::new(std::env::current_exe()?)
+            .arg(WINDOW_TARGET_CHILD_MODE)
+            .arg(&token)
+            .arg(initial_bounds.left.to_string())
+            .arg(initial_bounds.top.to_string())
+            .arg(initial_bounds.right.to_string())
+            .arg(initial_bounds.bottom.to_string())
+            .stdin(process::Stdio::null())
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::inherit())
+            .spawn()?;
+        if let Err(error) = process_group.assign(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        let process_id = child.id();
+        let handles = match wait_for_recording_fixture_windows(
+            &mut child,
+            process_id,
+            [&target_title, &backdrop_title, &occluder_title],
+            timeout,
+        ) {
+            Ok(handles) => handles,
+            Err(error) => {
+                let _ = process_group.terminate();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+        let target = handles[0];
+        let backdrop = handles[1];
+        let occluder = handles[2];
+        for (label, window) in [
+            ("target", target),
+            ("backdrop", backdrop),
+            ("occluder", occluder),
+        ] {
+            let observed = external_window_bounds(window, process_id)?;
+            if observed != initial_bounds {
+                let _ = process_group.terminate();
+                let _ = child.wait();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("fixture {label} bounds are {observed:?}, expected {initial_bounds:?}"),
+                ));
+            }
+        }
+        if unsafe { IsWindowVisible(target) } == 0
+            || unsafe { IsWindowVisible(backdrop) } == 0
+            || unsafe { IsWindowVisible(occluder) } != 0
+        {
+            let _ = process_group.terminate();
+            let _ = child.wait();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "fixture windows did not start in target/backdrop visible, occluder hidden state",
+            ));
+        }
+        let (moved_bounds, resized_bounds) = recording_fixture_dynamic_bounds(initial_bounds)?;
+        Ok(Self {
+            child,
+            process_group,
+            process_id,
+            target_title,
+            target,
+            backdrop,
+            occluder,
+            initial_bounds,
+            moved_bounds,
+            resized_bounds,
+            stopped: false,
+        })
+    }
+
+    fn move_target(&self) -> io::Result<FixturePhaseState> {
+        self.set_target_bounds(self.moved_bounds)?;
+        let state = self.phase_state()?;
+        validate_fixture_phase_state("moved", state, Some(self.moved_bounds), false, false)?;
+        Ok(state)
+    }
+
+    fn resize_target(&self) -> io::Result<FixturePhaseState> {
+        self.set_target_bounds(self.resized_bounds)?;
+        let state = self.phase_state()?;
+        validate_fixture_phase_state("resized", state, Some(self.resized_bounds), false, false)?;
+        Ok(state)
+    }
+
+    fn occlude_target(&self) -> io::Result<FixturePhaseState> {
+        self.set_target_bounds(self.initial_bounds)?;
+        self.ensure_handle(self.occluder)?;
+        set_fixture_window_bounds(self.occluder, self.initial_bounds, true)?;
+        let state = self.phase_state()?;
+        validate_fixture_phase_state("occluded", state, Some(self.initial_bounds), false, true)?;
+        Ok(state)
+    }
+
+    fn minimize_target(&self, timeout: Duration) -> io::Result<FixturePhaseState> {
+        self.ensure_handle(self.occluder)?;
+        // ShowWindow reports prior visibility, so the postcondition is checked separately.
+        unsafe { ShowWindow(self.occluder, SW_HIDE) };
+        self.set_target_bounds(self.initial_bounds)?;
+        unsafe { ShowWindow(self.target, SW_MINIMIZE) };
+        let deadline = Instant::now() + timeout;
+        while unsafe { IsIconic(self.target) } == 0 {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "fixture target did not become minimized",
+                ));
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let state = self.phase_state()?;
+        validate_fixture_phase_state("minimized", state, None, true, false)?;
+        Ok(state)
+    }
+
+    fn hide_all(&self) -> io::Result<()> {
+        for window in [self.occluder, self.target, self.backdrop] {
+            self.ensure_handle(window)?;
+            unsafe { ShowWindow(window, SW_HIDE) };
+        }
+        Ok(())
+    }
+
+    fn set_target_bounds(&self, bounds: PhysicalRect) -> io::Result<()> {
+        self.ensure_handle(self.backdrop)?;
+        self.ensure_handle(self.target)?;
+        // Re-raise the backdrop before the target so exposed pixels never depend on user windows.
+        set_fixture_window_bounds(self.backdrop, self.initial_bounds, true)?;
+        unsafe { ShowWindow(self.target, SW_RESTORE) };
+        set_fixture_window_bounds(self.target, bounds, true)?;
+        let observed = external_window_bounds(self.target, self.process_id)?;
+        if observed != bounds {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("fixture target bounds are {observed:?}, expected {bounds:?}"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn phase_state(&self) -> io::Result<FixturePhaseState> {
+        Ok(FixturePhaseState {
+            target_bounds: external_window_bounds(self.target, self.process_id)?,
+            target_visible: unsafe { IsWindowVisible(self.target) } != 0,
+            target_minimized: unsafe { IsIconic(self.target) } != 0,
+            backdrop_visible: unsafe { IsWindowVisible(self.backdrop) } != 0,
+            occluder_visible: unsafe { IsWindowVisible(self.occluder) } != 0,
+        })
+    }
+
+    fn ensure_handle(&self, window: HWND) -> io::Result<()> {
+        external_window_bounds(window, self.process_id).map(|_| ())
+    }
+
+    /// Closes the helper gracefully and uses its Job Object only as a bounded fallback.
+    fn shutdown(&mut self, timeout: Duration) -> io::Result<()> {
+        if self.stopped {
+            return Ok(());
+        }
+        for window in [self.occluder, self.target, self.backdrop] {
+            if !window.is_null() && unsafe { IsWindow(window) } != 0 {
+                unsafe { PostMessageW(window, WM_CLOSE, 0, 0) };
+            }
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.child.try_wait()?.is_some() {
+                self.stopped = true;
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                let _ = self.process_group.terminate();
+                let _ = self.child.wait();
+                self.stopped = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "recording fixture required forced process cleanup",
+                ));
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RecordingWindowFixture {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = self.process_group.terminate();
+            let _ = self.child.wait();
+            self.stopped = true;
+        }
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_recording_fixture_windows(
+    child: &mut process::Child,
+    process_id: u32,
+    titles: [&str; 3],
+    timeout: Duration,
+) -> io::Result<[HWND; 3]> {
+    let wide_titles = titles.map(wide_null);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Err(io::Error::other(format!(
+                "recording fixture exited before its windows were ready: {status}"
+            )));
+        }
+        let handles = [
+            unsafe { FindWindowW(ptr::null(), wide_titles[0].as_ptr()) },
+            unsafe { FindWindowW(ptr::null(), wide_titles[1].as_ptr()) },
+            unsafe { FindWindowW(ptr::null(), wide_titles[2].as_ptr()) },
+        ];
+        if handles.iter().all(|window| !window.is_null())
+            && handles
+                .iter()
+                .all(|window| external_window_bounds(*window, process_id).is_ok())
+        {
+            return Ok(handles);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "recording fixture windows did not become ready",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+fn external_window_bounds(window: HWND, expected_process_id: u32) -> io::Result<PhysicalRect> {
+    if window.is_null() || unsafe { IsWindow(window) } == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "recording fixture window is unavailable",
+        ));
+    }
+    let mut process_id = 0;
+    unsafe { GetWindowThreadProcessId(window, &mut process_id) };
+    if process_id != expected_process_id {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "recording fixture HWND belongs to an unexpected process",
+        ));
+    }
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(window, &mut rect) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let bounds = PhysicalRect {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    };
+    if bounds.left >= bounds.right || bounds.top >= bounds.bottom {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "recording fixture window has invalid bounds",
+        ));
+    }
+    Ok(bounds)
+}
+
+#[cfg(windows)]
+fn set_fixture_window_bounds(window: HWND, bounds: PhysicalRect, show: bool) -> io::Result<()> {
+    let flags = SWP_NOACTIVATE | if show { SWP_SHOWWINDOW } else { 0 };
+    // SAFETY: the caller validated the HWND and supplies increasing physical bounds.
+    if unsafe {
+        SetWindowPos(
+            window,
+            HWND_TOP,
+            bounds.left,
+            bounds.top,
+            bounds.width() as i32,
+            bounds.height() as i32,
+            flags,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1515,6 +2294,7 @@ struct FrameContentMetrics {
 }
 
 #[cfg(windows)]
+#[derive(Clone, Copy)]
 struct RecordingFrameContentComparison {
     mean_absolute_error: f64,
     reference: FrameContentMetrics,
@@ -1617,8 +2397,8 @@ fn frame_content_metrics(frame: &CaptureFrame) -> io::Result<FrameContentMetrics
 }
 
 #[cfg(windows)]
-/// Compares a lossy H.264 frame with its desktop reference using stable 16x16 RGB tile means.
-fn validate_recording_frame_content(
+/// Measures a lossy H.264 frame against its desktop reference using stable RGB tile means.
+fn compare_recording_frame_content(
     reference: &CaptureFrame,
     decoded: &CaptureFrame,
 ) -> io::Result<RecordingFrameContentComparison> {
@@ -1668,19 +2448,326 @@ fn validate_recording_frame_content(
         .map(|(left, right)| (f64::from(*left) - f64::from(*right)).abs())
         .sum::<f64>();
     let mean_absolute_error = absolute_error / (reference_grid.len() * 3) as f64;
-    if mean_absolute_error > MAX_RECORDING_GRID_MAE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "decoded recording frame differs from its desktop reference: grid MAE {mean_absolute_error:.3} > {MAX_RECORDING_GRID_MAE:.3}"
-            ),
-        ));
-    }
     Ok(RecordingFrameContentComparison {
         mean_absolute_error,
         reference: reference_metrics,
         decoded: decoded_metrics,
     })
+}
+
+#[cfg(windows)]
+fn validate_recording_frame_content(
+    reference: &CaptureFrame,
+    decoded: &CaptureFrame,
+) -> io::Result<RecordingFrameContentComparison> {
+    let comparison = compare_recording_frame_content(reference, decoded)?;
+    if comparison.mean_absolute_error > MAX_RECORDING_GRID_MAE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "decoded recording frame differs from its desktop reference: grid MAE {:.3} > {MAX_RECORDING_GRID_MAE:.3}",
+                comparison.mean_absolute_error
+            ),
+        ));
+    }
+    Ok(comparison)
+}
+
+#[cfg(windows)]
+/// Captures one stable desktop-composition phase while independently rechecking source bounds.
+fn capture_recording_window_phase(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    stage: &'static str,
+    file_stem: &str,
+    expected_source_bounds: PhysicalRect,
+    fixture: FixturePhaseState,
+) -> io::Result<PendingRecordingWindowPhase> {
+    let baseline = wait_for_recording_state(context, stage, |state| {
+        state.active && !state.paused && !state.starting && !state.stopping
+    })?;
+    let baseline_bounds = baseline.target_bounds.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{stage} did not report physical source bounds"),
+        )
+    })?;
+    validate_recording_target_bounds(
+        RecordTargetOption::Window,
+        expected_source_bounds,
+        baseline_bounds,
+    )?;
+    let stable_after = baseline
+        .progress_time_us
+        .checked_add(WINDOW_PHASE_SETTLE_US)
+        .ok_or_else(|| io::Error::other("recording phase timestamp overflow"))?;
+    let stable = wait_for_recording_state(context, stage, |state| {
+        state.active && !state.paused && !state.stopping && state.progress_time_us >= stable_after
+    })?;
+    let reported_source_bounds = stable.target_bounds.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{stage} lost its physical source bounds"),
+        )
+    })?;
+    validate_recording_target_bounds(
+        RecordTargetOption::Window,
+        expected_source_bounds,
+        reported_source_bounds,
+    )?;
+    let reference = SystemCaptureBackend.capture(expected_source_bounds)?;
+    if reference.bounds != expected_source_bounds {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{stage} reference captured {:?}, expected {expected_source_bounds:?}",
+                reference.bounds
+            ),
+        ));
+    }
+    let reference_file = format!("screenshots/{file_stem}-reference.png");
+    reference.save_png(context.session_root.join(&reference_file))?;
+    let timestamp_seconds = stable.progress_time_us as f64 / 1_000_000.0;
+    record_recording_state(report, &context.report_path, stage, stable.clone())?;
+    let held_after = stable
+        .progress_time_us
+        .checked_add(WINDOW_PHASE_HOLD_US)
+        .ok_or_else(|| io::Error::other("recording phase hold timestamp overflow"))?;
+    let held = wait_for_recording_state(context, stage, |state| {
+        state.active && !state.paused && !state.stopping && state.progress_time_us >= held_after
+    })?;
+    let held_bounds = held.target_bounds.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{stage} lost source bounds during its stable hold"),
+        )
+    })?;
+    validate_recording_target_bounds(
+        RecordTargetOption::Window,
+        expected_source_bounds,
+        held_bounds,
+    )?;
+    Ok(PendingRecordingWindowPhase {
+        stage,
+        reference_file,
+        decoded_file: format!("screenshots/{file_stem}-decoded.png"),
+        timestamp_seconds,
+        reference,
+        fixture,
+        reported_source_bounds,
+        maximum_progress_frame: held.progress_frame.max(stable.progress_frame),
+    })
+}
+
+#[cfg(windows)]
+/// Matches every dynamic reference to two consecutive low-rate frames in chronological order.
+fn finalize_recording_window_timeline(
+    ffmpeg: &Path,
+    output: &Path,
+    session_root: &Path,
+    initial_reference: &CaptureFrame,
+    phases: Vec<PendingRecordingWindowPhase>,
+) -> io::Result<(
+    RecordingContentReport,
+    Vec<RecordingWindowPhaseReport>,
+    usize,
+)> {
+    let candidates = extract_recording_timeline(ffmpeg, output, session_root)?;
+    let (initial_match, mut next_candidate) =
+        match_stable_recording_frame(initial_reference, &candidates, 0, "initial")?;
+    let initial_decoded = "screenshots/recording-decoded-frame.png".to_owned();
+    fs::copy(
+        &candidates[initial_match.candidate_index].path,
+        session_root.join(&initial_decoded),
+    )?;
+    let initial_content = recording_content_report(
+        "screenshots/recording-source-reference.png".to_owned(),
+        initial_decoded,
+        candidates[initial_match.candidate_index].timestamp_seconds,
+        initial_match.comparison,
+    );
+    let mut reports = Vec::with_capacity(phases.len());
+    for phase in phases {
+        let (matched, next) = match_stable_recording_frame(
+            &phase.reference,
+            &candidates,
+            next_candidate,
+            phase.stage,
+        )?;
+        next_candidate = next;
+        fs::copy(
+            &candidates[matched.candidate_index].path,
+            session_root.join(&phase.decoded_file),
+        )?;
+        reports.push(RecordingWindowPhaseReport {
+            stage: phase.stage,
+            progress_timestamp_seconds: phase.timestamp_seconds,
+            target_bounds: phase.fixture.target_bounds,
+            target_visible: phase.fixture.target_visible,
+            target_minimized: phase.fixture.target_minimized,
+            backdrop_visible: phase.fixture.backdrop_visible,
+            occluder_visible: phase.fixture.occluder_visible,
+            reported_source_bounds: phase.reported_source_bounds,
+            content: recording_content_report(
+                phase.reference_file,
+                phase.decoded_file,
+                candidates[matched.candidate_index].timestamp_seconds,
+                matched.comparison,
+            ),
+        });
+    }
+    Ok((initial_content, reports, candidates.len()))
+}
+
+#[cfg(windows)]
+fn extract_recording_timeline(
+    ffmpeg: &Path,
+    output: &Path,
+    session_root: &Path,
+) -> io::Result<Vec<RecordingTimelineCandidate>> {
+    let timeline_directory = session_root
+        .join("screenshots")
+        .join("recording-window-timeline");
+    fs::create_dir_all(&timeline_directory)?;
+    let pattern = timeline_directory.join("frame-%05d.png");
+    extract_video_frame_series(ffmpeg, output, WINDOW_TIMELINE_FRAMES_PER_SECOND, &pattern)?;
+    let mut indexed = fs::read_dir(&timeline_directory)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let index = path
+                .file_stem()?
+                .to_str()?
+                .strip_prefix("frame-")?
+                .parse::<usize>()
+                .ok()?;
+            Some((index, path))
+        })
+        .collect::<Vec<_>>();
+    indexed.sort_by_key(|(index, _)| *index);
+    if indexed.is_empty()
+        || indexed
+            .iter()
+            .enumerate()
+            .any(|(expected, (observed, _))| expected != *observed)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "FFmpeg recording timeline is empty or has non-contiguous frame names",
+        ));
+    }
+    Ok(indexed
+        .into_iter()
+        .map(|(index, path)| RecordingTimelineCandidate {
+            timestamp_seconds: index as f64 / f64::from(WINDOW_TIMELINE_FRAMES_PER_SECOND),
+            path,
+        })
+        .collect())
+}
+
+#[cfg(windows)]
+/// Finds the first stable matching run so a transient repaint cannot satisfy a phase.
+fn match_stable_recording_frame(
+    reference: &CaptureFrame,
+    candidates: &[RecordingTimelineCandidate],
+    start_index: usize,
+    stage: &str,
+) -> io::Result<(StableRecordingFrameMatch, usize)> {
+    let mut comparisons = vec![None; candidates.len()];
+    let mut errors = vec![f64::INFINITY; candidates.len()];
+    let mut best_error = f64::INFINITY;
+    for (index, candidate) in candidates.iter().enumerate().skip(start_index) {
+        let decoded = CaptureFrame::open_png(&candidate.path)?;
+        if let Ok(comparison) = compare_recording_frame_content(reference, &decoded) {
+            best_error = best_error.min(comparison.mean_absolute_error);
+            errors[index] = comparison.mean_absolute_error;
+            comparisons[index] = Some(comparison);
+        }
+    }
+    if let Some((candidate_index, next_candidate)) = first_stable_recording_match(
+        &errors,
+        start_index,
+        MAX_RECORDING_GRID_MAE,
+        WINDOW_TIMELINE_STABLE_FRAMES,
+    ) {
+        return Ok((
+            StableRecordingFrameMatch {
+                candidate_index,
+                comparison: comparisons[candidate_index]
+                    .expect("a passing timeline error has a comparison"),
+            },
+            next_candidate,
+        ));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "recording timeline has no stable {stage} match after sample {start_index}; best grid MAE {best_error:.3}"
+        ),
+    ))
+}
+
+/// Selects the lowest-error sample in the first consecutive passing run.
+fn first_stable_recording_match(
+    errors: &[f64],
+    start_index: usize,
+    maximum_error: f64,
+    stable_frames: usize,
+) -> Option<(usize, usize)> {
+    if stable_frames == 0 || start_index >= errors.len() || stable_frames > errors.len() {
+        return None;
+    }
+    let last_start = errors.len().checked_sub(stable_frames)?;
+    for run_start in start_index..=last_start {
+        let run = &errors[run_start..run_start + stable_frames];
+        if run
+            .iter()
+            .all(|error| error.is_finite() && *error <= maximum_error)
+        {
+            let best_offset = run
+                .iter()
+                .enumerate()
+                .min_by(|left, right| left.1.total_cmp(right.1))?
+                .0;
+            return Some((run_start + best_offset, run_start + stable_frames));
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn recording_content_report(
+    reference: String,
+    decoded_frame: String,
+    timestamp_seconds: f64,
+    comparison: RecordingFrameContentComparison,
+) -> RecordingContentReport {
+    RecordingContentReport {
+        reference,
+        decoded_frame,
+        timestamp_seconds,
+        reference_fingerprint: format!("{:016x}", comparison.reference.fingerprint),
+        decoded_fingerprint: format!("{:016x}", comparison.decoded.fingerprint),
+        reference_luma_min: comparison.reference.luma_min,
+        reference_luma_max: comparison.reference.luma_max,
+        decoded_luma_min: comparison.decoded.luma_min,
+        decoded_luma_max: comparison.decoded.luma_max,
+        grid_mean_absolute_error: comparison.mean_absolute_error,
+        maximum_allowed_error: MAX_RECORDING_GRID_MAE,
+    }
+}
+
+/// Ensures every dynamic phase actually presented a different desktop composition.
+fn validate_distinct_recording_phase_fingerprints(fingerprints: &[&str]) -> io::Result<()> {
+    for (index, fingerprint) in fingerprints.iter().enumerate() {
+        if fingerprints[..index].contains(fingerprint) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("recording phase fingerprint {fingerprint} was repeated"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1801,9 +2888,13 @@ fn execute_recording_interactions(
         committed_selection,
         "recording overlay selection",
     )?;
+    let mut window_fixture = None;
     let (expected_source_bounds, window_title) = match target {
         RecordTargetOption::Area => (committed_selection, None),
         RecordTargetOption::Window => {
+            let fixture = RecordingWindowFixture::launch(committed_selection, context.timeout)?;
+            focus_owned_window(overlay, context.timeout)?;
+            thread::sleep(context.settle_delay);
             let center = PhysicalPoint {
                 x: committed_selection.left + committed_selection.width() as i32 / 2,
                 y: committed_selection.top + committed_selection.height() as i32 / 2,
@@ -1816,7 +2907,24 @@ fn execute_recording_interactions(
                         "no external titled window is visible beneath the selection center",
                     )
                 })?;
-            (window_target.bounds, Some(window_target.title))
+            if window_target.title != fixture.target_title
+                || window_target.bounds != fixture.initial_bounds
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "window inspector selected {:?} at {:?}, expected fixture {:?} at {:?}",
+                        window_target.title,
+                        window_target.bounds,
+                        fixture.target_title,
+                        fixture.initial_bounds
+                    ),
+                ));
+            }
+            let bounds = fixture.initial_bounds;
+            let title = fixture.target_title.clone();
+            window_fixture = Some(fixture);
+            (bounds, Some(title))
         }
     };
 
@@ -1888,7 +2996,83 @@ fn execute_recording_interactions(
         .join("recording-source-reference.png");
     recording_reference.save_png(&reference_path)?;
     let mut maximum_progress_frame = active.progress_frame;
-    record_recording_state(report, &context.report_path, "recording", active)?;
+    record_recording_state(report, &context.report_path, "recording", active.clone())?;
+    let mut pending_window_phases = Vec::new();
+    let mut window_fixture_seed = None;
+    if let Some(fixture) = window_fixture.as_ref() {
+        let initial_hold_after = active
+            .progress_time_us
+            .checked_add(WINDOW_PHASE_HOLD_US)
+            .ok_or_else(|| io::Error::other("initial recording timestamp overflow"))?;
+        let initial_held = wait_for_recording_state(context, "initial window hold", |state| {
+            state.active
+                && !state.paused
+                && !state.stopping
+                && state.progress_time_us >= initial_hold_after
+        })?;
+        let initial_held_bounds = initial_held.target_bounds.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "initial window hold lost physical source bounds",
+            )
+        })?;
+        validate_recording_target_bounds(
+            RecordTargetOption::Window,
+            expected_source_bounds,
+            initial_held_bounds,
+        )?;
+        maximum_progress_frame = maximum_progress_frame.max(initial_held.progress_frame);
+
+        let moved = fixture.move_target()?;
+        pending_window_phases.push(capture_recording_window_phase(
+            context,
+            report,
+            "window_moved",
+            "recording-window-moved",
+            expected_source_bounds,
+            moved,
+        )?);
+        let resized = fixture.resize_target()?;
+        pending_window_phases.push(capture_recording_window_phase(
+            context,
+            report,
+            "window_resized",
+            "recording-window-resized",
+            expected_source_bounds,
+            resized,
+        )?);
+        let occluded = fixture.occlude_target()?;
+        pending_window_phases.push(capture_recording_window_phase(
+            context,
+            report,
+            "window_occluded",
+            "recording-window-occluded",
+            expected_source_bounds,
+            occluded,
+        )?);
+        let minimized = fixture.minimize_target(context.timeout)?;
+        pending_window_phases.push(capture_recording_window_phase(
+            context,
+            report,
+            "window_minimized",
+            "recording-window-minimized",
+            expected_source_bounds,
+            minimized,
+        )?);
+        maximum_progress_frame = pending_window_phases
+            .iter()
+            .fold(maximum_progress_frame, |maximum, phase| {
+                maximum.max(phase.maximum_progress_frame)
+            });
+        fixture.hide_all()?;
+        window_fixture_seed = Some(RecordingWindowFixtureReportSeed {
+            process_id: fixture.process_id,
+            target_title: fixture.target_title.clone(),
+            initial_bounds: fixture.initial_bounds,
+            moved_bounds: fixture.moved_bounds,
+            resized_bounds: fixture.resized_bounds,
+        });
+    }
 
     context
         .interaction_commands
@@ -1996,6 +3180,13 @@ fn execute_recording_interactions(
         Some(&saved_evidence),
     )?;
 
+    let fixture_cleaned_up = if let Some(fixture) = window_fixture.as_mut() {
+        fixture.shutdown(context.timeout.min(Duration::from_secs(3)))?;
+        true
+    } else {
+        false
+    };
+
     let output = single_recording_output(&context.session_root.join("recordings"))?;
     let output_bytes = fs::metadata(&output)?.len();
     if output_bytes == 0 {
@@ -2007,19 +3198,85 @@ fn execute_recording_interactions(
     let capabilities = discover()?;
     let media = probe_media(capabilities.executable(), &output)?;
     validate_recorded_media(expected_source_bounds, &media)?;
-    let decoded_path = context
-        .session_root
-        .join("screenshots")
-        .join("recording-decoded-frame.png");
-    extract_video_frame(
-        capabilities.executable(),
-        &output,
-        reference_timestamp_seconds,
-        &decoded_path,
-    )?;
-    let decoded_frame = CaptureFrame::open_png(&decoded_path)?;
-    let content_comparison =
-        validate_recording_frame_content(&recording_reference, &decoded_frame)?;
+    let (content, window_phases, timeline_sample_count) = if window_fixture_seed.is_some() {
+        finalize_recording_window_timeline(
+            capabilities.executable(),
+            &output,
+            &context.session_root,
+            &recording_reference,
+            pending_window_phases,
+        )?
+    } else {
+        if !pending_window_phases.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "area recording unexpectedly produced window dynamic phases",
+            ));
+        }
+        let decoded_path = context
+            .session_root
+            .join("screenshots")
+            .join("recording-decoded-frame.png");
+        extract_video_frame(
+            capabilities.executable(),
+            &output,
+            reference_timestamp_seconds,
+            &decoded_path,
+        )?;
+        let decoded_frame = CaptureFrame::open_png(&decoded_path)?;
+        let content_comparison =
+            validate_recording_frame_content(&recording_reference, &decoded_frame)?;
+        (
+            recording_content_report(
+                "screenshots/recording-source-reference.png".to_owned(),
+                "screenshots/recording-decoded-frame.png".to_owned(),
+                reference_timestamp_seconds,
+                content_comparison,
+            ),
+            Vec::new(),
+            0,
+        )
+    };
+    let window_dynamics = match window_fixture_seed {
+        Some(seed) => {
+            if window_phases.len() != 4 || !fixture_cleaned_up {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "window recording did not finish four dynamic phases and helper cleanup",
+                ));
+            }
+            let source_bounds_fixed = window_phases
+                .iter()
+                .all(|phase| phase.reported_source_bounds == expected_source_bounds);
+            if !source_bounds_fixed {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "window recording source bounds changed during a dynamic phase",
+                ));
+            }
+            let mut fingerprints = Vec::with_capacity(window_phases.len() + 1);
+            fingerprints.push(content.reference_fingerprint.as_str());
+            fingerprints.extend(
+                window_phases
+                    .iter()
+                    .map(|phase| phase.content.reference_fingerprint.as_str()),
+            );
+            validate_distinct_recording_phase_fingerprints(&fingerprints)?;
+            Some(RecordingWindowDynamicsReport {
+                fixture_process_id: seed.process_id,
+                target_title: seed.target_title,
+                initial_target_bounds: seed.initial_bounds,
+                moved_target_bounds: seed.moved_bounds,
+                resized_target_bounds: seed.resized_bounds,
+                source_bounds_fixed,
+                fixture_cleaned_up,
+                timeline_frames_per_second: WINDOW_TIMELINE_FRAMES_PER_SECOND,
+                timeline_sample_count,
+                phases: window_phases,
+            })
+        }
+        None => None,
+    };
     let relative_output = output
         .strip_prefix(&context.session_root)
         .unwrap_or(&output)
@@ -2041,19 +3298,8 @@ fn execute_recording_interactions(
         pause_observed: true,
         resume_observed: true,
         maximum_progress_frame,
-        content: RecordingContentReport {
-            reference: "screenshots/recording-source-reference.png".to_owned(),
-            decoded_frame: "screenshots/recording-decoded-frame.png".to_owned(),
-            timestamp_seconds: reference_timestamp_seconds,
-            reference_fingerprint: format!("{:016x}", content_comparison.reference.fingerprint),
-            decoded_fingerprint: format!("{:016x}", content_comparison.decoded.fingerprint),
-            reference_luma_min: content_comparison.reference.luma_min,
-            reference_luma_max: content_comparison.reference.luma_max,
-            decoded_luma_min: content_comparison.decoded.luma_min,
-            decoded_luma_max: content_comparison.decoded.luma_max,
-            grid_mean_absolute_error: content_comparison.mean_absolute_error,
-            maximum_allowed_error: MAX_RECORDING_GRID_MAE,
-        },
+        content,
+        window_dynamics,
     });
     write_report(&context.report_path, report)
 }
@@ -3206,17 +4452,19 @@ impl Drop for CursorRestore {
 mod tests {
     use super::{
         DEFAULT_OUTPUT_DIR, Options, RecordTargetOption, ensure_input_authorized,
-        interaction_command_channel, interaction_plan, map_screen_selection_to_capture,
-        normalize_axis, recording_control_plan, recording_failed, recording_saved, translated_rect,
+        first_stable_recording_match, interaction_command_channel, interaction_plan,
+        map_screen_selection_to_capture, normalize_axis, recording_control_plan, recording_failed,
+        recording_saved, translated_rect, validate_distinct_recording_phase_fingerprints,
         validate_paused_progress, validate_recorded_media, validate_recording_target_bounds,
         validate_selection_geometry,
     };
-    use super::{MediaMetadata, OverlayInteractionRecordingState};
     #[cfg(windows)]
     use super::{
-        panic_payload_message, request_recording_state, validate_recording_frame_content,
-        validate_same_pixel_content,
+        FixturePhaseState, panic_payload_message, parse_recording_window_fixture_arguments,
+        recording_fixture_dynamic_bounds, request_recording_state, validate_fixture_phase_state,
+        validate_recording_frame_content, validate_same_pixel_content,
     };
+    use super::{MediaMetadata, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
     #[cfg(windows)]
     use flash_shot::platform::capture::{CaptureFrame, PixelFormat};
@@ -3572,6 +4820,73 @@ mod tests {
         );
         assert!(
             validate_recording_target_bounds(RecordTargetOption::Window, expected, wrong).is_err()
+        );
+    }
+
+    #[test]
+    fn recording_phase_fingerprints_must_identify_distinct_compositions() {
+        assert!(validate_distinct_recording_phase_fingerprints(&["a", "b", "c"]).is_ok());
+        assert!(validate_distinct_recording_phase_fingerprints(&["a", "b", "a"]).is_err());
+    }
+
+    #[test]
+    fn recording_timeline_requires_consecutive_ordered_matches() {
+        let errors = [50.0, 4.0, 40.0, 3.0, 2.0, 1.0, 80.0];
+        assert_eq!(
+            first_stable_recording_match(&errors, 0, 18.0, 2),
+            Some((4, 5))
+        );
+        assert_eq!(first_stable_recording_match(&errors, 5, 18.0, 2), None);
+        assert_eq!(first_stable_recording_match(&errors, 0, 18.0, 0), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn window_fixture_child_geometry_separates_move_resize_and_state_rules() {
+        let (token, initial) = parse_recording_window_fixture_arguments(arguments(&[
+            "probe", "100", "200", "1100", "700",
+        ]))
+        .unwrap();
+        assert_eq!(token, "probe");
+        let (moved, resized) = recording_fixture_dynamic_bounds(initial).unwrap();
+        assert_eq!(moved.width(), initial.width());
+        assert_eq!(moved.height(), initial.height());
+        assert!(moved.left > initial.left && moved.top > initial.top);
+        assert_eq!((resized.left, resized.top), (initial.left, initial.top));
+        assert!(resized.width() < initial.width());
+        assert!(resized.height() < initial.height());
+
+        let compact = PhysicalRect {
+            left: 293,
+            top: 181,
+            right: 881,
+            bottom: 397,
+        };
+        let (_, compact_resized) = recording_fixture_dynamic_bounds(compact).unwrap();
+        assert_eq!(
+            (compact_resized.width(), compact_resized.height()),
+            (441, 162)
+        );
+
+        let moved_state = FixturePhaseState {
+            target_bounds: moved,
+            target_visible: true,
+            target_minimized: false,
+            backdrop_visible: true,
+            occluder_visible: false,
+        };
+        assert!(
+            validate_fixture_phase_state("moved", moved_state, Some(moved), false, false).is_ok()
+        );
+        assert!(
+            validate_fixture_phase_state("moved", moved_state, Some(initial), false, false)
+                .is_err()
+        );
+        assert!(
+            parse_recording_window_fixture_arguments(arguments(&[
+                "probe", "100", "200", "300", "250",
+            ]))
+            .is_err()
         );
     }
 

@@ -110,6 +110,69 @@ pub(crate) fn extract_video_frame(
     Ok(())
 }
 
+/// Decodes a low-rate PNG timeline so dynamic recording phases can be matched in order.
+#[allow(dead_code)] // The metadata-only runner does not need frame timelines.
+pub(crate) fn extract_video_frame_series(
+    ffmpeg: &Path,
+    input: &Path,
+    frames_per_second: u16,
+    output_pattern: &Path,
+) -> io::Result<()> {
+    let arguments = video_frame_series_arguments(input, frames_per_second, output_pattern)?;
+    let mut child = Command::new(ffmpeg)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    wait_for_child(
+        &mut child,
+        FFPROBE_TIMEOUT,
+        "FFmpeg frame timeline extraction",
+    )?;
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        return Err(io::Error::other(format!(
+            "FFmpeg could not extract the recording timeline: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+/// Builds the bounded timeline command independently for focused argument tests.
+#[allow(dead_code)] // The metadata-only runner does not need frame timelines.
+pub(crate) fn video_frame_series_arguments(
+    input: &Path,
+    frames_per_second: u16,
+    output_pattern: &Path,
+) -> io::Result<Vec<OsString>> {
+    if !(1..=30).contains(&frames_per_second) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording timeline rate must be between 1 and 30 frames per second",
+        ));
+    }
+    Ok(vec![
+        OsString::from("-hide_banner"),
+        OsString::from("-loglevel"),
+        OsString::from("error"),
+        OsString::from("-i"),
+        input.as_os_str().to_owned(),
+        OsString::from("-map"),
+        OsString::from("0:v:0"),
+        OsString::from("-vf"),
+        OsString::from(format!("fps={frames_per_second}:start_time=0:round=near")),
+        OsString::from("-an"),
+        OsString::from("-c:v"),
+        OsString::from("png"),
+        OsString::from("-start_number"),
+        OsString::from("0"),
+        OsString::from("-y"),
+        output_pattern.as_os_str().to_owned(),
+    ])
+}
+
 /// Builds the one-frame decode contract separately so tests do not need to launch FFmpeg.
 #[allow(dead_code)] // This shared module's metadata-only runner does not extract frames.
 pub(crate) fn video_frame_arguments(
@@ -224,7 +287,7 @@ pub(crate) fn parse_media_probe(stdout: &[u8]) -> io::Result<MediaMetadata> {
 
 #[cfg(test)]
 mod tests {
-    use super::video_frame_arguments;
+    use super::{video_frame_arguments, video_frame_series_arguments};
     use std::{ffi::OsString, path::Path};
 
     #[test]
@@ -262,6 +325,43 @@ mod tests {
                 Path::new("evidence.png")
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn frame_timeline_uses_a_bounded_rate_and_zero_based_output_names() {
+        let arguments = video_frame_series_arguments(
+            Path::new("recording.mp4"),
+            5,
+            Path::new("timeline/frame-%05d.png"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            arguments,
+            [
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                "recording.mp4",
+                "-map",
+                "0:v:0",
+                "-vf",
+                "fps=5:start_time=0:round=near",
+                "-an",
+                "-c:v",
+                "png",
+                "-start_number",
+                "0",
+                "-y",
+                "timeline/frame-%05d.png",
+            ]
+            .map(OsString::from)
+        );
+        assert!(
+            video_frame_series_arguments(Path::new("recording.mp4"), 0, Path::new("frame-%d.png"))
+                .is_err()
         );
     }
 }
