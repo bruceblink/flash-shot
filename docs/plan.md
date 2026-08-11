@@ -97,6 +97,11 @@ Tauri/WebView/Excalidraw 架构。后续优先级只围绕快捷键到截图导�
 - [x] 发布资产清单与 SHA-256 验证。
 - [x] 更新发布策略与本地预发布验收（便携包、隔离 profile 启动冒烟、manifest、SHA-256、fixture 和安装器配置门禁均已通过）。
 - [ ] 发布时真实验收（签名、安装器和干净 Windows 用户账户仍需在发布环境执行）。
+
+当前发布预检会在 `-ValidateOnly -RequireSignature` 下同时要求可执行的 SignTool 和当前用户证书库中
+带私钥、未过期且含代码签名用途的证书；实际签名固定使用该次预检选中的证书。当前本机仍缺少
+SignTool、Inno Setup 和可用签名证书，因此这里只关闭“预检可能误报成功”的脚本缺口，不将发布时
+真实验收标记为完成。
 - macOS 截图与平台实现，以及权限交互。
 - 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 

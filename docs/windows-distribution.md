@@ -53,7 +53,20 @@ To require an Authenticode signature for both the installed executable and setup
 .\scripts\package-installer.ps1 -RequireSignature
 ```
 
-`-RequireSignature` fails instead of silently publishing an unsigned artifact. The installer does not bundle FFmpeg.
+Before building on a release machine, validate the signing prerequisites without producing or
+signing an artifact:
+
+```powershell
+.\scripts\package-installer.ps1 -ValidateOnly -RequireSignature
+```
+
+The preflight requires `signtool.exe` and a currently valid code-signing certificate with a private
+key in `Cert:\CurrentUser\My`. Use `-SignToolPath <absolute-path>` when SignTool is not on `PATH`,
+and `-CertificateThumbprint <sha1>` to select a specific certificate. The same validated certificate
+is then used for both `flash-shot.exe` and the setup executable. This preflight does not contact the
+timestamp service or replace the final signature verification performed during actual packaging.
+`-RequireSignature` fails instead of silently publishing an unsigned artifact. The installer does
+not bundle FFmpeg.
 
 ## Release manifest
 
