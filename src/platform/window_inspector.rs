@@ -16,9 +16,19 @@ pub struct InspectionTarget {
     pub kind: InspectionKind,
 }
 
+/// Identifies a visible top-level window and the exact desktop pixels used for recording it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WindowCaptureTarget {
+    pub title: String,
+    pub bounds: PhysicalRect,
+}
+
 pub trait WindowInspector {
     fn target_at(&self, point: PhysicalPoint) -> io::Result<Option<InspectionTarget>>;
-    fn window_title_at(&self, point: PhysicalPoint) -> io::Result<Option<String>>;
+    fn window_capture_target_at(
+        &self,
+        point: PhysicalPoint,
+    ) -> io::Result<Option<WindowCaptureTarget>>;
     fn focused_window_target(&self) -> io::Result<Option<InspectionTarget>>;
 }
 
@@ -30,8 +40,11 @@ impl WindowInspector for SystemWindowInspector {
         platform::target_at(point)
     }
 
-    fn window_title_at(&self, point: PhysicalPoint) -> io::Result<Option<String>> {
-        platform::window_title_at(point)
+    fn window_capture_target_at(
+        &self,
+        point: PhysicalPoint,
+    ) -> io::Result<Option<WindowCaptureTarget>> {
+        platform::window_capture_target_at(point)
     }
 
     fn focused_window_target(&self) -> io::Result<Option<InspectionTarget>> {
@@ -39,9 +52,20 @@ impl WindowInspector for SystemWindowInspector {
     }
 }
 
+impl SystemWindowInspector {
+    /// Finds one visible window by title for the recording acceptance probe.
+    ///
+    /// The production overlay resolves from a user-selected point instead; this title lookup keeps
+    /// the command-line probe on the same physical-bounds recording path without guessing among
+    /// duplicate visible windows.
+    pub fn visible_window_with_title(title: &str) -> io::Result<Option<WindowCaptureTarget>> {
+        platform::visible_window_with_title(title)
+    }
+}
+
 #[cfg(windows)]
 mod platform {
-    use super::{InspectionKind, InspectionTarget};
+    use super::{InspectionKind, InspectionTarget, WindowCaptureTarget};
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     use std::io;
     use windows::{
@@ -57,8 +81,9 @@ mod platform {
             UI::{
                 Accessibility::{CUIAutomation8, IUIAutomation, IUIAutomationElement},
                 WindowsAndMessaging::{
-                    EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextW,
-                    GetWindowThreadProcessId, IsWindowVisible,
+                    EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
+                    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+                    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
                 },
             },
         },
@@ -83,18 +108,107 @@ mod platform {
         }))
     }
 
-    pub fn window_title_at(point: PhysicalPoint) -> io::Result<Option<String>> {
-        let Some((window, _)) = window_at(point)? else {
+    /// Resolves both a top-level window title and its physical bounds from one selected point.
+    pub fn window_capture_target_at(
+        point: PhysicalPoint,
+    ) -> io::Result<Option<WindowCaptureTarget>> {
+        let Some((window, bounds)) = window_at(point)? else {
             return Ok(None);
         };
+        Ok(window_capture_target(window, bounds))
+    }
+
+    /// Finds one visible exact-title match, rejecting ambiguity for repeatable CLI acceptance.
+    pub fn visible_window_with_title(title: &str) -> io::Result<Option<WindowCaptureTarget>> {
+        struct Search<'a> {
+            title: &'a str,
+            found: Option<WindowCaptureTarget>,
+            ambiguous: bool,
+        }
+
+        unsafe extern "system" fn callback(window: HWND, parameter: LPARAM) -> windows::core::BOOL {
+            // SAFETY: EnumWindows passes the Search pointer supplied by visible_window_with_title.
+            let search = unsafe { &mut *(parameter.0 as *mut Search<'_>) };
+            // A minimized window has no stable visible desktop content to record.
+            if !unsafe { IsWindowVisible(window) }.as_bool()
+                || unsafe { IsIconic(window) }.as_bool()
+            {
+                return true.into();
+            }
+            let mut rect = RECT::default();
+            if unsafe { GetWindowRect(window, &mut rect) }.is_err() {
+                return true.into();
+            }
+            let Some(target) = window_capture_target(window, physical_rect(rect)) else {
+                return true.into();
+            };
+            if target.title != search.title {
+                return true.into();
+            }
+            if search.found.is_some() {
+                search.ambiguous = true;
+                return false.into();
+            }
+            search.found = Some(target);
+            true.into()
+        }
+
+        let title = title.trim();
+        if title.is_empty() {
+            return Ok(None);
+        }
+        let mut search = Search {
+            title,
+            found: None,
+            ambiguous: false,
+        };
+        let result = unsafe {
+            EnumWindows(
+                Some(callback),
+                LPARAM((&mut search as *mut Search<'_>) as isize),
+            )
+        };
+        if let Err(error) = result
+            && search.found.is_none()
+        {
+            return Err(windows_error(error));
+        }
+        if search.ambiguous {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("more than one visible window matches title '{title}'"),
+            ));
+        }
+        Ok(search.found)
+    }
+
+    fn window_capture_target(window: HWND, bounds: PhysicalRect) -> Option<WindowCaptureTarget> {
+        let bounds = clip_to_virtual_desktop(bounds)?;
         let mut buffer = vec![0_u16; 512];
         // SAFETY: buffer is writable and its declared capacity matches the supplied length.
         let length = unsafe { GetWindowTextW(window, &mut buffer) };
         if length == 0 {
-            return Ok(None);
+            return None;
         }
         let title = String::from_utf16_lossy(&buffer[..length as usize]);
-        Ok((!title.trim().is_empty()).then_some(title))
+        (!title.trim().is_empty()).then_some(WindowCaptureTarget { title, bounds })
+    }
+
+    /// Clips a Win32 outer-window rectangle to the pixels that can actually be sampled.
+    fn clip_to_virtual_desktop(bounds: PhysicalRect) -> Option<PhysicalRect> {
+        let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+        let top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+        let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+        let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+        let right = left.checked_add(width)?;
+        let bottom = top.checked_add(height)?;
+        let clipped = PhysicalRect {
+            left: bounds.left.max(left),
+            top: bounds.top.max(top),
+            right: bounds.right.min(right),
+            bottom: bounds.bottom.min(bottom),
+        };
+        (clipped.left < clipped.right && clipped.top < clipped.bottom).then_some(clipped)
     }
 
     /// Resolves the visible foreground window without using pointer position or UI Automation.
@@ -250,7 +364,7 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::InspectionTarget;
+    use super::{InspectionTarget, WindowCaptureTarget};
     use crate::domain::geometry::PhysicalPoint;
     use std::io;
 
@@ -258,7 +372,13 @@ mod platform {
         Ok(None)
     }
 
-    pub fn window_title_at(_point: PhysicalPoint) -> io::Result<Option<String>> {
+    pub fn window_capture_target_at(
+        _point: PhysicalPoint,
+    ) -> io::Result<Option<WindowCaptureTarget>> {
+        Ok(None)
+    }
+
+    pub fn visible_window_with_title(_title: &str) -> io::Result<Option<WindowCaptureTarget>> {
         Ok(None)
     }
 

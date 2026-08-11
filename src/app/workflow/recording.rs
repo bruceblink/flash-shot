@@ -446,7 +446,7 @@ impl FlashShotApp {
         };
         self.recording_start_in_flight = true;
         self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
-        self.status = "Looking up selected window for recording...".to_owned();
+        self.status = "Looking up selected window bounds for recording...".to_owned();
         self.close_capture_overlays(cx);
         let _ = self.session.cancel();
         let _ = self.session.reset();
@@ -461,25 +461,31 @@ impl FlashShotApp {
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                let result =
-                    cx.background_executor()
-                        .spawn(async move {
-                            let title = SystemWindowInspector.window_title_at(center)?.ok_or_else(
-                                || {
-                                    std::io::Error::new(
-                                        std::io::ErrorKind::NotFound,
-                                        "no recordable top-level window at the selected area",
-                                    )
-                                },
-                            )?;
-                            start_recording_target(
-                                Some(RecordingTarget::Window { title }),
-                                audio,
-                                display,
-                                recording_directory,
-                            )
-                        })
-                        .await;
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        // GPU-backed windows can return black pixels through gdigrab's
+                        // title input. Resolve the actual visible window bounds so recording
+                        // follows the desktop capture path that users see on screen.
+                        let target = SystemWindowInspector
+                            .window_capture_target_at(center)?
+                            .ok_or_else(|| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::NotFound,
+                                    "no recordable top-level window at the selected area",
+                                )
+                            })?;
+                        start_recording_target(
+                            Some(RecordingTarget::Window {
+                                title: target.title,
+                                bounds: target.bounds,
+                            }),
+                            audio,
+                            display,
+                            recording_directory,
+                        )
+                    })
+                    .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.recording_started(result, generation, cx)

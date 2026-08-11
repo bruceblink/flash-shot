@@ -81,7 +81,9 @@ fn secondary_action_tooltip(action_id: &str) -> &'static str {
         "ocr" => "Recognize text locally with Tesseract",
         "translate" => "Recognize text, then use the configured translation service",
         "record-area" => "Start recording the selected area",
-        "record-window" => "Record the top-level window under this selection",
+        "record-window" => {
+            "Record the visible desktop pixels of the top-level window under this selection"
+        }
         _ => "",
     }
 }

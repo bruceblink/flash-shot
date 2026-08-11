@@ -11,6 +11,7 @@ use std::{
 use flash_shot::{
     domain::geometry::PhysicalRect,
     platform::display::{DisplayProvider, SystemDisplayProvider},
+    platform::window_inspector::SystemWindowInspector,
     recording::{RecordingEvent, RecordingRequest, RecordingTarget, discover, start_recording},
 };
 use serde::{Deserialize, Serialize};
@@ -226,7 +227,22 @@ fn prepare_reusable_output(path: &Path) -> io::Result<()> {
 /// Resolves a CLI target into the same physical-pixel request used by the product UI.
 fn resolve_target(option: TargetOption) -> io::Result<(&'static str, RecordingTarget)> {
     match option {
-        TargetOption::Window(title) => Ok(("window", RecordingTarget::Window { title })),
+        TargetOption::Window(title) => {
+            let target =
+                SystemWindowInspector::visible_window_with_title(&title)?.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("no visible window matches title '{title}'"),
+                    )
+                })?;
+            Ok((
+                "window",
+                RecordingTarget::Window {
+                    title: target.title,
+                    bounds: target.bounds,
+                },
+            ))
+        }
         TargetOption::Display | TargetOption::Region => {
             let display = SystemDisplayProvider
                 .displays()?

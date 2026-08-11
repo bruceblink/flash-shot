@@ -1426,6 +1426,12 @@ fn recording_status_identifies_each_capture_target() {
     assert_eq!(
         recording_target_label(&crate::recording::RecordingTarget::Window {
             title: "Editor".to_owned(),
+            bounds: PhysicalRect {
+                left: 10,
+                top: 10,
+                right: 100,
+                bottom: 100,
+            },
         }),
         "window"
     );

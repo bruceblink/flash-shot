@@ -76,9 +76,9 @@ impl FfmpegCapabilities {
         self.supports_input("ddagrab") || self.supports_input("gdigrab")
     }
 
-    /// A window is captured by a Windows screen input selected by title or bounds.
+    /// A window is captured from the visible physical desktop bounds resolved by the overlay.
     pub fn supports_window_capture(&self) -> bool {
-        self.supports_input("gdigrab")
+        self.supports_display_capture()
     }
 
     pub fn supports_region_capture(&self) -> bool {
@@ -126,8 +126,10 @@ fn compact_version_label(version: &str) -> String {
 pub enum RecordingTarget {
     /// A complete display represented by its physical desktop bounds.
     Display { bounds: PhysicalRect },
-    /// A top-level Windows window addressed by its visible title.
-    Window { title: String },
+    /// A visible top-level Windows window identified by title and captured through its desktop
+    /// bounds. Keeping the bounds avoids black frames from title-based GDI capture of GPU-backed
+    /// windows while retaining a stable label for lifecycle feedback.
+    Window { title: String, bounds: PhysicalRect },
     /// A user-selected physical-pixel rectangle in virtual desktop coordinates.
     Region { bounds: PhysicalRect },
 }
@@ -916,6 +918,11 @@ pub fn build_recording_command(
     request: &RecordingRequest,
 ) -> io::Result<FfmpegCommand> {
     validate_request(request)?;
+    let bounds = match &request.target {
+        RecordingTarget::Display { bounds }
+        | RecordingTarget::Window { bounds, .. }
+        | RecordingTarget::Region { bounds } => *bounds,
+    };
     let mut arguments = vec![
         OsString::from("-hide_banner"),
         OsString::from("-n"),
@@ -928,21 +935,9 @@ pub fn build_recording_command(
             let input = desktop_input(capabilities, *bounds, request.frame_rate)?;
             arguments.extend(input);
         }
-        RecordingTarget::Window { title } => {
-            if !capabilities.supports_window_capture() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "FFmpeg does not support Windows window capture (gdigrab unavailable)",
-                ));
-            }
-            arguments.extend([
-                OsString::from("-f"),
-                OsString::from("gdigrab"),
-                OsString::from("-framerate"),
-                OsString::from(request.frame_rate.to_string()),
-                OsString::from("-i"),
-                OsString::from(format!("title={title}")),
-            ]);
+        RecordingTarget::Window { bounds, .. } => {
+            let input = desktop_input(capabilities, *bounds, request.frame_rate)?;
+            arguments.extend(input);
         }
     }
     let has_audio = if let Some(audio) = &request.audio {
@@ -951,6 +946,12 @@ pub fn build_recording_command(
     } else {
         false
     };
+    if h264_padding_required(bounds) {
+        arguments.extend([
+            OsString::from("-vf"),
+            OsString::from("pad=ceil(iw/2)*2:ceil(ih/2)*2"),
+        ]);
+    }
     arguments.extend([
         OsString::from("-c:v"),
         OsString::from("libx264"),
@@ -1010,6 +1011,7 @@ fn desktop_input(
     bounds: PhysicalRect,
     frame_rate: u16,
 ) -> io::Result<Vec<OsString>> {
+    validate_capture_bounds(bounds)?;
     let input = if capabilities.supports_input("ddagrab") {
         "ddagrab"
     } else if capabilities.supports_input("gdigrab") {
@@ -1036,6 +1038,26 @@ fn desktop_input(
     ])
 }
 
+/// Rejects invalid desktop rectangles before their signed coordinates reach FFmpeg arguments.
+fn validate_capture_bounds(bounds: PhysicalRect) -> io::Result<()> {
+    let width = i64::from(bounds.right) - i64::from(bounds.left);
+    let height = i64::from(bounds.bottom) - i64::from(bounds.top);
+    if width < 2 || height < 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording bounds must use increasing coordinates and be at least 2x2 physical pixels",
+        ));
+    }
+    Ok(())
+}
+
+/// Pads odd desktop extents instead of dropping the user's final row or column for yuv420p.
+fn h264_padding_required(bounds: PhysicalRect) -> bool {
+    let width = i64::from(bounds.right) - i64::from(bounds.left);
+    let height = i64::from(bounds.bottom) - i64::from(bounds.top);
+    width % 2 != 0 || height % 2 != 0
+}
+
 fn validate_request(request: &RecordingRequest) -> io::Result<()> {
     if !(1..=240).contains(&request.frame_rate) {
         return Err(io::Error::new(
@@ -1054,30 +1076,31 @@ fn validate_request(request: &RecordingRequest) -> io::Result<()> {
         ));
     }
     match &request.target {
-        RecordingTarget::Display { bounds } | RecordingTarget::Region { bounds }
-            if bounds.width() == 0 || bounds.height() == 0 =>
-        {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "recording bounds must have a positive width and height",
-            ))
+        RecordingTarget::Display { bounds }
+        | RecordingTarget::Region { bounds }
+        | RecordingTarget::Window { bounds, .. } => {
+            validate_capture_bounds(*bounds)?;
         }
-        RecordingTarget::Window { title } if title.trim().is_empty() => Err(io::Error::new(
+    }
+    if let RecordingTarget::Window { title, .. } = &request.target
+        && title.trim().is_empty()
+    {
+        return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "recording window title must not be empty",
-        )),
-        _ if request
-            .audio
-            .as_ref()
-            .is_some_and(|audio| audio_device_name(audio).trim().is_empty()) =>
-        {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "recording audio device name must not be empty",
-            ))
-        }
-        _ => Ok(()),
+        ));
     }
+    if request
+        .audio
+        .as_ref()
+        .is_some_and(|audio| audio_device_name(audio).trim().is_empty())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording audio device name must not be empty",
+        ));
+    }
+    Ok(())
 }
 
 fn audio_device_name(audio: &AudioSource) -> &str {
@@ -1551,12 +1574,18 @@ mod tests {
     }
 
     #[test]
-    fn window_recording_uses_gdigrab_title_input_without_a_shell() {
+    fn window_recording_uses_visible_desktop_bounds_without_a_shell() {
         let command = build_recording_command(
             &capabilities(),
             &RecordingRequest {
                 target: RecordingTarget::Window {
                     title: "Editor & terminal".to_owned(),
+                    bounds: PhysicalRect {
+                        left: 40,
+                        top: 80,
+                        right: 1640,
+                        bottom: 980,
+                    },
                 },
                 audio: None,
                 frame_rate: 30,
@@ -1565,11 +1594,63 @@ mod tests {
         )
         .unwrap();
 
-        assert!(command.arguments().windows(2).any(|pair| pair
-            == [
-                OsString::from("-i"),
-                OsString::from("title=Editor & terminal")
-            ]));
+        assert!(
+            command
+                .arguments()
+                .windows(2)
+                .any(|pair| { pair == [OsString::from("-i"), OsString::from("desktop")] })
+        );
+        assert!(
+            command
+                .arguments()
+                .windows(2)
+                .any(|pair| { pair == [OsString::from("-offset_x"), OsString::from("40")] })
+        );
+        assert!(
+            command.arguments().windows(2).any(|pair| {
+                pair == [OsString::from("-video_size"), OsString::from("1600x900")]
+            })
+        );
+        assert!(
+            !command
+                .arguments()
+                .iter()
+                .any(|argument| argument == &OsString::from("title=Editor & terminal"))
+        );
+    }
+
+    #[test]
+    fn recording_command_pads_odd_bounds_without_dropping_selected_pixels() {
+        let command = build_recording_command(
+            &capabilities(),
+            &RecordingRequest {
+                target: RecordingTarget::Region {
+                    bounds: PhysicalRect {
+                        left: 10,
+                        top: 20,
+                        right: 651,
+                        bottom: 381,
+                    },
+                },
+                audio: None,
+                frame_rate: 30,
+                output: PathBuf::from("odd-region.mp4"),
+            },
+        )
+        .unwrap();
+
+        assert!(
+            command
+                .arguments()
+                .windows(2)
+                .any(|pair| { pair == [OsString::from("-video_size"), OsString::from("641x361")] })
+        );
+        assert!(command.arguments().windows(2).any(|pair| {
+            pair == [
+                OsString::from("-vf"),
+                OsString::from("pad=ceil(iw/2)*2:ceil(ih/2)*2"),
+            ]
+        }));
     }
 
     #[test]
@@ -1599,8 +1680,32 @@ mod tests {
             build_recording_command(
                 &capabilities,
                 &invalid(
+                    RecordingTarget::Region {
+                        bounds: PhysicalRect {
+                            left: 640,
+                            top: 360,
+                            right: 0,
+                            bottom: 0,
+                        },
+                    },
+                    60,
+                    "recording.mp4",
+                ),
+            )
+            .is_err()
+        );
+        assert!(
+            build_recording_command(
+                &capabilities,
+                &invalid(
                     RecordingTarget::Window {
                         title: " ".to_owned(),
+                        bounds: PhysicalRect {
+                            left: 0,
+                            top: 0,
+                            right: 640,
+                            bottom: 360,
+                        },
                     },
                     0,
                     "recording.webm",

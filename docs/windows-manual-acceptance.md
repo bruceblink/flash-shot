@@ -40,7 +40,7 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | 窄选区与最小设置窗 | 待执行 | 将设置窗口缩小到最小可用尺寸；在屏幕边缘创建窄选区，展开次级操作与标注面板。 | 文本不截断，控件不重叠；主工具栏保持可点击，次级菜单在可用一侧展开。 | |
 | 多 Pin 生命周期 | 待执行 | 连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | |
 | OCR、翻译与滚动 | 待执行 | 在含文字的选区运行 OCR；在翻译服务可用时运行翻译并模拟一次失败后重试；执行滚动后自动捕获。 | OCR/翻译结果可复制；失败时保留原选区并显示匹配的重试操作；自动滚动等待目标重绘后只追加一帧。 | |
-| FFmpeg 录屏 | 待执行 | 使用支持 `ddagrab` 或 `gdigrab` 的 FFmpeg，分别启动显示器、窗口、区域录制，暂停、恢复并停止。 | 产生可播放 MP4；状态、时长和保存路径正确；停止后无遗留 FFmpeg 子进程。 | |
+| FFmpeg 录屏 | 待执行 | 使用支持 `ddagrab` 或 `gdigrab` 的 FFmpeg，分别启动显示器、窗口、区域录制，暂停、恢复并停止。 | 产生可播放 MP4；状态、时长和保存路径正确；停止后无遗留 FFmpeg 子进程。窗口录制固定为开始时选中窗口的可见桌面物理矩形，移动或缩放后不跟随，遮挡或最小化时记录桌面合成像素。 | |
 
 ## 自动证据
 
@@ -202,6 +202,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-11 | `current-recording-ui-single-100` | 当前单屏 2560x1440、DPI 96 环境使用 Release `settings-ui-acceptance` 完成真实应用内显示器录屏生命周期：开始、录制、暂停、恢复、停止和保存。 | 通过 | 截图 `target/ui-acceptance/recording-ui-live-fixed-recording.png`、`recording-ui-live-fixed-paused.png`、`recording-ui-live-fixed-resumed.png`、`recording-ui-live-fixed-stopping.png` 与 `recording-ui-live-fixed-saved.png` 已目视复核；实际 MP4 `target/ui-acceptance/live-recordings/FlashShot-1786396112305.mp4` 经 FFprobe 校验为 H.264、2560x1440、32 秒，录制结束后无残留 FFmpeg。双屏和混合 DPI 按当前范围暂缓。 |
 | 2026-08-11 | `current-recording-folder-single-100` | Record 页新增持久化 `Video folder`，提供选择、恢复默认、可写性检查和打开目录操作；用户目录优先于 Videos 与应用数据回退，环境变量保持最高优先级。 | 通过 | 389 项库测试中的设置往返、目录归一化、候选优先级和不可写首选目录回退用例通过；Release 原生截图 `target/ui-acceptance/recording-folder-dark-980x760-20260811.png`、`recording-folder-light-520x640-20260811.png` 与 `recording-folder-dark-420x420-20260811.png` 均记录 DPI 96、scale 1.0、`scale_match: true`。目视复核宽屏、窄屏和最小窗口下路径尾部、目录动作、录屏动作和固定状态栏无重叠；420x420 的后续动作保留在可滚动内容区。 |
 | 2026-08-11 | `current-recording-no-overwrite` | 自动生成的 MP4 名称会跳过同毫秒的现有文件并追加编号；FFmpeg 使用 `-n` 拒绝覆盖，使外部并发创建同名文件时以失败而非覆盖收尾。 | 通过 | 391 项库测试包含现有 MP4 保留与 FFmpeg no-overwrite 参数回归；验收探针另有显式输出清理回归。Release `recording-acceptance` 的区域目标在 `target/ui-acceptance/recording-no-overwrite-region-20260811.mp4` 生成 H.264 640x360、2.4 秒 MP4，暂停/恢复与 30 帧进度均观测到，机器可读报告位于同名 JSON。 |
+| 2026-08-11 | `current-window-recording-visible-bounds` | 窗口录制改为解析选中顶层窗口的可见桌面物理边界，不再向 `gdigrab` 传递易产生黑帧的 `title=` 输入；奇数尺寸在编码前向右/下补齐为 yuv420p。 | 通过 | 当前 Release `recording-acceptance` 录制可见 `Flash Shot` Record 窗口，输出 H.264 1012x838、2.6 秒，暂停/恢复和 32 帧进度均观察到。`recording-window-visible-bounds-fix-frame.png` 已目视复核为非黑帧，首帧 YMIN/YAVG/YMAX 为 11/41.6404/241；报告位于 `target/ui-acceptance/recording-window-visible-bounds-fix.json`。完整应用内录屏 UI 矩阵仍待执行。 |
 | 2026-08-12 | `current-recording-backend-20260812` | 当前 Release `recording-acceptance` 重新完成显示器、区域和窗口三种目标；三份 MP4 均由探针内部及 FFprobe 校验为 H.264，暂停/恢复均观察到，结束后没有残留 FFmpeg 或 FFprobe 进程。 | 待执行 | 报告位于 `target/ui-acceptance/recording-current-20260812-display.json`、`recording-current-20260812-region.json` 和 `recording-current-20260812-window.json`；输出分别为 2560x1440、640x360、1904x984，时长约 2.53s、2.93s、2.53s，最高进度帧分别为 32、37、32。该记录确认当前后端能力，不替代完整应用内录屏 UI 手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
