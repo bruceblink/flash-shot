@@ -83,6 +83,8 @@ cargo run --release --bin settings-ui-acceptance -- dark 760 480 target/ui-accep
 # 覆盖层智能候选提示：使用隔离 BGRA 预览和真实 GPUI CaptureOverlay，不启动生产主程序。
 cargo run --release --bin settings-ui-acceptance -- dark 1280 720 target/ui-acceptance/overlay-control.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-control
 cargo run --release --bin settings-ui-acceptance -- dark 1280 720 target/ui-acceptance/overlay-window.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-window
+cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection
+cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-more
 cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
 # 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
@@ -110,6 +112,9 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 `CaptureOverlay`，使用合成 BGRA 预览和固定智能候选来复核候选框、HUD、放大镜和底部动作。
 该路径不经过生产入口，因此不会争用主程序的单实例锁；它证明渲染与布局，不替代真实拖动、
 点击采用或应用内录屏手工矩阵。
+最后一个可选参数为 `overlay-selection` 或 `overlay-selection-more` 时，探针会打开固定的
+已选区域，并分别显示主动作栏或已展开的 More 菜单。用最小 420px 画面复核窄选区的动作
+排序、换行、状态和安全边距；这同样只证明原生渲染与布局，不替代真实点击矩阵。
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
@@ -212,6 +217,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-11 | `current-window-recording-visible-bounds` | 窗口录制改为解析选中顶层窗口的可见桌面物理边界，不再向 `gdigrab` 传递易产生黑帧的 `title=` 输入；奇数尺寸在编码前向右/下补齐为 yuv420p。 | 通过 | 当前 Release `recording-acceptance` 录制可见 `Flash Shot` Record 窗口，输出 H.264 1012x838、2.6 秒，暂停/恢复和 32 帧进度均观察到。`recording-window-visible-bounds-fix-frame.png` 已目视复核为非黑帧，首帧 YMIN/YAVG/YMAX 为 11/41.6404/241；报告位于 `target/ui-acceptance/recording-window-visible-bounds-fix.json`。完整应用内录屏 UI 矩阵仍待执行。 |
 | 2026-08-12 | `current-recording-backend-20260812` | 当前 Release `recording-acceptance` 重新完成显示器、区域和窗口三种目标；三份 MP4 均由探针内部及 FFprobe 校验为 H.264，暂停/恢复均观察到，结束后没有残留 FFmpeg 或 FFprobe 进程。 | 待执行 | 报告位于 `target/ui-acceptance/recording-current-20260812-display.json`、`recording-current-20260812-region.json` 和 `recording-current-20260812-window.json`；输出分别为 2560x1440、640x360、1904x984，时长约 2.53s、2.93s、2.53s，最高进度帧分别为 32、37、32。该记录确认当前后端能力，不替代完整应用内录屏 UI 手工矩阵。 |
 | 2026-08-11 | `current-overlay-ui-acceptance-single-100` | Release `settings-ui-acceptance` 新增隔离的 `CaptureOverlay` 表面；397 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-control-release.png` 与 `overlay-window-release.png` 的同名 JSON 均记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核候选框、Control/Window 像素 HUD、放大镜和 Cancel 无文字截断或重叠。它避免与生产单实例锁竞争，但只证明固定候选的原生渲染，不替代真实拖动、点击采用或完整录屏 UI 矩阵。 |
+| 2026-08-11 | `current-compact-overlay-selection-single-100` | Release `settings-ui-acceptance` 新增固定选区与展开 More 菜单表面；398 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-selection-release.png` 与 `overlay-selection-more-release.png` 的同名 JSON 均记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核 420px 画面里的 Mark、Pin、Copy、Save、More/Less、Cancel 和全部 More 命令均完整可读、未越出安全边距或重叠主动作栏；展开菜单按设计覆盖选区视觉但不遮挡状态与主操作。它不替代真实拖动与点击矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

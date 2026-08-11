@@ -360,7 +360,7 @@ impl CaptureOverlay {
     }
 }
 
-/// Opens one disposable overlay with a seeded smart target for native screenshot acceptance.
+/// Opens one disposable overlay with a seeded visual state for native screenshot acceptance.
 pub(super) fn open_ui_acceptance(
     started_at: Instant,
     performance: PerformanceRecorder,
@@ -396,11 +396,6 @@ pub(super) fn open_ui_acceptance(
     };
     let frame = overlay_ui_acceptance_frame(display.physical_bounds)?;
     let preview = super::render_image::render_image_from_capture(&frame)?.image;
-    let target = overlay_ui_acceptance_target(display.physical_bounds, acceptance.target_kind);
-    let hover_pixel = PhysicalPoint {
-        x: target.bounds.left + target.bounds.width() as i32 / 2,
-        y: target.bounds.top + target.bounds.height() as i32 / 2,
-    };
     // A disposable probe should render the overlay without registering user-facing hotkeys.
     settings.capture_shortcut_enabled = false;
     let readiness = performance.clone();
@@ -410,13 +405,38 @@ pub(super) fn open_ui_acceptance(
         let _ = app.session.frames_ready();
         app.frame = Some(frame);
         app.preview = Some(preview.clone());
-        app.inspection_target = Some(target);
-        app.hover_pixel = Some(hover_pixel);
-        app.status = format!(
-            "Smart target ready: {} x {} physical pixels",
-            target.bounds.width(),
-            target.bounds.height()
-        );
+        match acceptance.scenario {
+            crate::OverlayUiAcceptanceScenario::SmartTarget { kind } => {
+                let target = overlay_ui_acceptance_target(display.physical_bounds, kind);
+                app.inspection_target = Some(target);
+                app.hover_pixel = Some(PhysicalPoint {
+                    x: target.bounds.left + target.bounds.width() as i32 / 2,
+                    y: target.bounds.top + target.bounds.height() as i32 / 2,
+                });
+                app.status = format!(
+                    "Smart target ready: {} x {} physical pixels",
+                    target.bounds.width(),
+                    target.bounds.height()
+                );
+            }
+            crate::OverlayUiAcceptanceScenario::SelectedRegion { show_more_actions } => {
+                let selection = overlay_ui_acceptance_selection(display.physical_bounds);
+                match app.session.select(selection) {
+                    Ok(()) => {
+                        app.selection_drag.select(selection);
+                        app.overlay_more_actions = show_more_actions;
+                        app.status = format!(
+                            "Selection ready: {} x {} physical pixels",
+                            selection.width(),
+                            selection.height()
+                        );
+                    }
+                    Err(error) => {
+                        app.status = format!("Could not seed acceptance selection: {error}");
+                    }
+                }
+            }
+        }
         cx.notify();
     });
     let overlay_app = app.clone();
@@ -495,6 +515,20 @@ fn overlay_ui_acceptance_target(bounds: PhysicalRect, kind: InspectionKind) -> I
             bottom: top + height,
         },
         kind,
+    }
+}
+
+/// Places a compact committed region where its toolbar and expanded menu both stay observable.
+fn overlay_ui_acceptance_selection(bounds: PhysicalRect) -> PhysicalRect {
+    let width = (bounds.width() / 2).clamp(160, 320) as i32;
+    let height = (bounds.height() / 4).clamp(96, 160) as i32;
+    let left = bounds.left + (bounds.width() as i32 - width) / 2;
+    let top = bounds.top + (bounds.height() as i32 - height) * 2 / 5;
+    PhysicalRect {
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
     }
 }
 
@@ -3718,12 +3752,12 @@ mod tests {
         annotation_layer_label, annotation_style_panel_height, annotation_toolbar_height,
         annotation_toolbar_items, annotation_toolbar_layout, arrange_context_for_selection,
         arrow_head_points, capture_double_click, intersect, is_text_annotation, magnifier_origin,
-        outline_shape_bounds, overlay_ui_acceptance_frame, overlay_ui_acceptance_target,
-        owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
-        recognition_retry_label, resize_handle_points, secondary_action_menu_height,
-        secondary_action_tooltip, secondary_menu_opens_above, selection_cursor,
-        selection_dimension_label_layout, smart_target_hud_label, smart_target_hud_layout,
-        status_bottom_inset, visible_selection,
+        outline_shape_bounds, overlay_ui_acceptance_frame, overlay_ui_acceptance_selection,
+        overlay_ui_acceptance_target, owns_selection_toolbar, primary_action_tooltip,
+        recognition_result_preview, recognition_retry_label, resize_handle_points,
+        secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
+        selection_cursor, selection_dimension_label_layout, smart_target_hud_label,
+        smart_target_hud_layout, status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -4547,6 +4581,17 @@ mod tests {
         assert!(bounds.contains(PhysicalPoint {
             x: target.bounds.right - 1,
             y: target.bounds.bottom - 1,
+        }));
+
+        let selection = overlay_ui_acceptance_selection(bounds);
+        assert!(selection.width() > 0 && selection.height() > 0);
+        assert!(bounds.contains(PhysicalPoint {
+            x: selection.left,
+            y: selection.top,
+        }));
+        assert!(bounds.contains(PhysicalPoint {
+            x: selection.right - 1,
+            y: selection.bottom - 1,
         }));
     }
 

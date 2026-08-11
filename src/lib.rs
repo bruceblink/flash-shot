@@ -142,7 +142,18 @@ pub struct SettingsUiAcceptanceOptions {
 pub struct OverlayUiAcceptanceOptions {
     pub width: f32,
     pub height: f32,
-    pub target_kind: platform::window_inspector::InspectionKind,
+    pub scenario: OverlayUiAcceptanceScenario,
+}
+
+/// Selects the fixed overlay state shown by the native screenshot acceptance probe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OverlayUiAcceptanceScenario {
+    /// Shows an uncommitted smart target under the current pointer.
+    SmartTarget {
+        kind: platform::window_inspector::InspectionKind,
+    },
+    /// Shows a committed region and optionally opens the progressive action menu.
+    SelectedRegion { show_more_actions: bool },
 }
 
 /// Synthetic Record page states used only by the native screenshot acceptance probe.

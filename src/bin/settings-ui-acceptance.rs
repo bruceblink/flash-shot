@@ -8,8 +8,9 @@ use std::{
 };
 
 use flash_shot::{
-    OcrSupportUiAcceptanceState, OverlayUiAcceptanceOptions, RecordingSupportUiAcceptanceState,
-    RecordingUiAcceptanceState, TranslationServiceUiAcceptanceState, UpdateUiAcceptanceState,
+    OcrSupportUiAcceptanceState, OverlayUiAcceptanceOptions, OverlayUiAcceptanceScenario,
+    RecordingSupportUiAcceptanceState, RecordingUiAcceptanceState,
+    TranslationServiceUiAcceptanceState, UpdateUiAcceptanceState,
     history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::capture::{CaptureBackend, SystemCaptureBackend},
@@ -71,6 +72,8 @@ enum AcceptanceSurface {
     PinnedSavedFeedback,
     OverlayControl,
     OverlayWindow,
+    OverlaySelection,
+    OverlaySelectionMore,
 }
 
 #[derive(Debug)]
@@ -179,7 +182,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback|overlay-control|overlay-window]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback|overlay-control|overlay-window|overlay-selection|overlay-selection-more]"
         .to_owned()
 }
 
@@ -357,8 +360,7 @@ fn parse_surface(value: std::ffi::OsString) -> Result<AcceptanceSurface, String>
     match value
         .into_string()
         .map_err(|_| {
-            "surface must be settings, pin-saved-feedback, overlay-control, or overlay-window"
-                .to_owned()
+            "surface must be settings, pin-saved-feedback, overlay-control, overlay-window, overlay-selection, or overlay-selection-more".to_owned()
         })?
         .as_str()
     {
@@ -366,9 +368,10 @@ fn parse_surface(value: std::ffi::OsString) -> Result<AcceptanceSurface, String>
         "pin-saved-feedback" => Ok(AcceptanceSurface::PinnedSavedFeedback),
         "overlay-control" => Ok(AcceptanceSurface::OverlayControl),
         "overlay-window" => Ok(AcceptanceSurface::OverlayWindow),
+        "overlay-selection" => Ok(AcceptanceSurface::OverlaySelection),
+        "overlay-selection-more" => Ok(AcceptanceSurface::OverlaySelectionMore),
         _ => Err(
-            "surface must be settings, pin-saved-feedback, overlay-control, or overlay-window"
-                .to_owned(),
+            "surface must be settings, pin-saved-feedback, overlay-control, overlay-window, overlay-selection, or overlay-selection-more".to_owned(),
         ),
     }
 }
@@ -406,16 +409,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     let settings_path = session_root.join("settings.json");
     match options.surface {
-        AcceptanceSurface::OverlayControl | AcceptanceSurface::OverlayWindow => {
-            let target_kind = match options.surface {
-                AcceptanceSurface::OverlayControl => {
-                    flash_shot::platform::window_inspector::InspectionKind::Control
+        AcceptanceSurface::OverlayControl
+        | AcceptanceSurface::OverlayWindow
+        | AcceptanceSurface::OverlaySelection
+        | AcceptanceSurface::OverlaySelectionMore => {
+            let scenario = match options.surface {
+                AcceptanceSurface::OverlayControl => OverlayUiAcceptanceScenario::SmartTarget {
+                    kind: flash_shot::platform::window_inspector::InspectionKind::Control,
+                },
+                AcceptanceSurface::OverlayWindow => OverlayUiAcceptanceScenario::SmartTarget {
+                    kind: flash_shot::platform::window_inspector::InspectionKind::Window,
+                },
+                AcceptanceSurface::OverlaySelection => {
+                    OverlayUiAcceptanceScenario::SelectedRegion {
+                        show_more_actions: false,
+                    }
                 }
-                AcceptanceSurface::OverlayWindow => {
-                    flash_shot::platform::window_inspector::InspectionKind::Window
+                AcceptanceSurface::OverlaySelectionMore => {
+                    OverlayUiAcceptanceScenario::SelectedRegion {
+                        show_more_actions: true,
+                    }
                 }
                 AcceptanceSurface::Settings | AcceptanceSurface::PinnedSavedFeedback => {
-                    unreachable!("overlay surface determines an inspection target")
+                    unreachable!("settings surfaces do not create overlay scenarios")
                 }
             };
             flash_shot::run_overlay_ui_acceptance(
@@ -427,7 +443,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 OverlayUiAcceptanceOptions {
                     width: options.width,
                     height: options.height,
-                    target_kind,
+                    scenario,
                 },
             )
         }
@@ -745,6 +761,14 @@ mod tests {
         assert_eq!(
             parse_surface(OsString::from("overlay-window")).unwrap(),
             AcceptanceSurface::OverlayWindow
+        );
+        assert_eq!(
+            parse_surface(OsString::from("overlay-selection")).unwrap(),
+            AcceptanceSurface::OverlaySelection
+        );
+        assert_eq!(
+            parse_surface(OsString::from("overlay-selection-more")).unwrap(),
+            AcceptanceSurface::OverlaySelectionMore
         );
         assert!(parse_surface(OsString::from("pin")).is_err());
     }
