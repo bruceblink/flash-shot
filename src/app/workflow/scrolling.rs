@@ -5,6 +5,8 @@ use super::*;
 const AUTO_SCROLL_SETTLE_DELAY: Duration = Duration::from_millis(400);
 
 impl FlashShotApp {
+    /// Starts a scrolling session from the selected viewport and replaces the capture overlay
+    /// with the compact scrolling controller.
     pub(in crate::app) fn start_manual_scroll(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = self.session.selection() else {
             self.status = "Select an area before starting a scrolling screenshot".to_owned();
@@ -38,6 +40,10 @@ impl FlashShotApp {
             return;
         }
         self.manual_scroll_selection = Some(selection);
+        // More is opened only to choose Scroll shot. Do not carry that transient menu into the
+        // stitched-image editor that opens after Finish.
+        self.overlay_more_actions = false;
+        self.overlay_annotation_controls = false;
         self.status = "Scrolling screenshot ready. One frame captured.".to_owned();
         self.close_capture_overlays(cx);
         let app = cx.entity();
