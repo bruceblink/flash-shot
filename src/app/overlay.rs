@@ -19,8 +19,11 @@ use crate::{
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     },
-    platform::cursor,
-    platform::display::DisplayInfo,
+    platform::{
+        cursor,
+        display::DisplayInfo,
+        window_inspector::{InspectionKind, InspectionTarget},
+    },
     theme::ThemeColors,
 };
 
@@ -41,6 +44,9 @@ const OVERLAY_RECOGNITION_PREVIEW_LIMIT: usize = 240;
 const OVERLAY_DIMENSION_LABEL_WIDTH: f32 = 112.0;
 const OVERLAY_DIMENSION_LABEL_HEIGHT: f32 = 26.0;
 const OVERLAY_DIMENSION_LABEL_GAP: f32 = 8.0;
+const OVERLAY_SMART_TARGET_HUD_WIDTH: f32 = 224.0;
+const OVERLAY_SMART_TARGET_HUD_HEIGHT: f32 = 26.0;
+const OVERLAY_SMART_TARGET_HUD_GAP: f32 = 8.0;
 const ANNOTATION_TOOL_ESTIMATED_WIDTH: f32 = 104.0;
 const ANNOTATION_TOOL_ROW_HEIGHT: f32 = 34.0;
 const ANNOTATION_TOOL_GAP: f32 = 8.0;
@@ -529,6 +535,14 @@ impl Render for CaptureOverlay {
             .is_none()
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
             .flatten();
+        let smart_target_hud = smart_target_hud_layout(
+            selection,
+            hover_pixel,
+            inspection_target,
+            display_bounds,
+            transform,
+            viewport,
+        );
         let has_selection = selection.is_some();
         let can_export = has_selection && owns_action_toolbar;
         let show_action_toolbar = !has_selection || owns_action_toolbar;
@@ -697,6 +711,36 @@ impl Render for CaptureOverlay {
                         .font_weight(FontWeight::SEMIBOLD)
                         .shadow_lg()
                         .child(format!("{} x {} px", selection.width(), selection.height())),
+                )
+            })
+            .when_some(smart_target_hud, |overlay, layout| {
+                // Keep this read-only HUD out of hit testing so selection gestures still reach
+                // the full-screen canvas behind it.
+                overlay.child(
+                    div()
+                        .absolute()
+                        .left(px(layout.left))
+                        .top(px(layout.top))
+                        .w(px(layout.width))
+                        .h(px(OVERLAY_SMART_TARGET_HUD_HEIGHT))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(colors.accent)
+                        .bg(rgba(0x0B0D10E6))
+                        .text_color(colors.text)
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .shadow_lg()
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w(px(0.0))
+                                .text_ellipsis()
+                                .child(smart_target_hud_label(layout.target)),
+                        ),
                 )
             })
             .when_some(annotation_layout, |overlay, layout| {
@@ -2945,6 +2989,14 @@ struct SelectionDimensionLayout {
     top: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SmartTargetHudLayout {
+    target: InspectionTarget,
+    left: f32,
+    top: f32,
+    width: f32,
+}
+
 /// Keeps style controls at a stable height while revealing text-only sizing choices when needed.
 fn annotation_style_panel_height(can_adjust_font_size: bool) -> f32 {
     if can_adjust_font_size { 158.0 } else { 128.0 }
@@ -3191,6 +3243,71 @@ fn selection_dimension_label_layout(
         below.min(viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - OVERLAY_DIMENSION_LABEL_HEIGHT)
     };
     Some(SelectionDimensionLayout { left, top })
+}
+
+/// Places a candidate HUD only on the display under the current pointer and only before selection.
+fn smart_target_hud_layout(
+    selection: Option<PhysicalRect>,
+    hover_pixel: Option<PhysicalPoint>,
+    target: Option<InspectionTarget>,
+    display_bounds: PhysicalRect,
+    transform: Option<PreviewTransform>,
+    viewport: Bounds<Pixels>,
+) -> Option<SmartTargetHudLayout> {
+    if selection.is_some() {
+        return None;
+    }
+    let hover_pixel = hover_pixel?;
+    let target = target.filter(|target| target.bounds.contains(hover_pixel))?;
+    if !display_bounds.contains(hover_pixel) {
+        return None;
+    }
+    let visible_bounds = intersect(target.bounds, display_bounds)?;
+    let transform = transform?;
+    let viewport = view_rect(viewport);
+    let top_left = transform.physical_to_view(PhysicalPoint {
+        x: visible_bounds.left,
+        y: visible_bounds.top,
+    });
+    let bottom_right = transform.physical_to_view(PhysicalPoint {
+        x: visible_bounds.right,
+        y: visible_bounds.bottom,
+    });
+    let left_min = viewport.left + OVERLAY_EDGE_INSET;
+    let width =
+        OVERLAY_SMART_TARGET_HUD_WIDTH.min((viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0));
+    let left_max = (viewport.right() - OVERLAY_EDGE_INSET - width).max(left_min);
+    let top_min = viewport.top + OVERLAY_EDGE_INSET;
+    let top_max = (viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - OVERLAY_SMART_TARGET_HUD_HEIGHT)
+        .max(top_min);
+    let above = top_left.y - OVERLAY_SMART_TARGET_HUD_HEIGHT - OVERLAY_SMART_TARGET_HUD_GAP;
+    let below = bottom_right.y + OVERLAY_SMART_TARGET_HUD_GAP;
+    let top = if above >= top_min {
+        above.min(top_max)
+    } else if below <= top_max {
+        below
+    } else {
+        above.max(top_min).min(top_max)
+    };
+    Some(SmartTargetHudLayout {
+        target,
+        left: top_left.x.clamp(left_min, left_max),
+        top,
+        width,
+    })
+}
+
+/// Identifies the bounds a near-click would adopt without exposing a window title.
+fn smart_target_hud_label(target: InspectionTarget) -> String {
+    let kind = match target.kind {
+        InspectionKind::Control => "Control",
+        InspectionKind::Window => "Window",
+    };
+    format!(
+        "{kind} | {} x {} px",
+        target.bounds.width(),
+        target.bounds.height()
+    )
 }
 
 fn action_toolbar_layout(
@@ -3449,21 +3566,23 @@ mod tests {
     use super::{
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
         OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
-        SelectionCursor, SelectionDimensionLayout, action_toolbar_height, action_toolbar_layout,
-        action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
-        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_items,
-        annotation_toolbar_layout, arrange_context_for_selection, arrow_head_points,
-        capture_double_click, intersect, is_text_annotation, magnifier_origin,
+        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, action_toolbar_height,
+        action_toolbar_layout, action_toolbar_natural_width, annotation_controls_visible,
+        annotation_layer_label, annotation_style_panel_height, annotation_toolbar_height,
+        annotation_toolbar_items, annotation_toolbar_layout, arrange_context_for_selection,
+        arrow_head_points, capture_double_click, intersect, is_text_annotation, magnifier_origin,
         outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip,
         recognition_result_preview, recognition_retry_label, resize_handle_points,
         secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
-        selection_cursor, selection_dimension_label_layout, status_bottom_inset, visible_selection,
+        selection_cursor, selection_dimension_label_layout, smart_target_hud_label,
+        smart_target_hud_layout, status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint},
     };
+    use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use gpui::{Bounds, point, px, size};
 
     #[test]
@@ -4035,6 +4154,222 @@ mod tests {
                 left: 100.0,
                 top: 266.0,
             })
+        );
+    }
+
+    #[test]
+    fn smart_target_hud_belongs_to_the_display_under_the_pointer() {
+        let left_display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let right_display = PhysicalRect {
+            left: 1920,
+            top: 0,
+            right: 3840,
+            bottom: 1080,
+        };
+        let target = InspectionTarget {
+            bounds: PhysicalRect {
+                left: 1800,
+                top: 100,
+                right: 2200,
+                bottom: 500,
+            },
+            kind: InspectionKind::Window,
+        };
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0)));
+        let left_transform = PreviewTransform::contain(left_display, super::view_rect(viewport));
+        let right_transform = PreviewTransform::contain(right_display, super::view_rect(viewport));
+
+        assert_eq!(
+            smart_target_hud_layout(
+                None,
+                Some(PhysicalPoint { x: 1850, y: 200 }),
+                Some(target),
+                left_display,
+                left_transform,
+                viewport,
+            ),
+            Some(SmartTargetHudLayout {
+                target,
+                left: 1678.0,
+                top: 66.0,
+                width: 224.0,
+            })
+        );
+        assert_eq!(
+            smart_target_hud_layout(
+                None,
+                Some(PhysicalPoint { x: 1850, y: 200 }),
+                Some(target),
+                right_display,
+                right_transform,
+                viewport,
+            ),
+            None
+        );
+        assert_eq!(
+            smart_target_hud_layout(
+                None,
+                Some(PhysicalPoint { x: 2000, y: 200 }),
+                Some(target),
+                right_display,
+                right_transform,
+                viewport,
+            ),
+            Some(SmartTargetHudLayout {
+                target,
+                left: 18.0,
+                top: 66.0,
+                width: 224.0,
+            })
+        );
+    }
+
+    #[test]
+    fn smart_target_hud_flips_and_clamps_at_viewport_edges() {
+        let display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1280,
+            bottom: 720,
+        };
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let transform = PreviewTransform::contain(display, super::view_rect(viewport));
+        let top_target = InspectionTarget {
+            bounds: PhysicalRect {
+                left: 1100,
+                top: 10,
+                right: 1250,
+                bottom: 64,
+            },
+            kind: InspectionKind::Control,
+        };
+        let bottom_target = InspectionTarget {
+            bounds: PhysicalRect {
+                left: 1100,
+                top: 660,
+                right: 1250,
+                bottom: 700,
+            },
+            kind: InspectionKind::Control,
+        };
+
+        assert_eq!(
+            smart_target_hud_layout(
+                None,
+                Some(PhysicalPoint { x: 1150, y: 20 }),
+                Some(top_target),
+                display,
+                transform,
+                viewport,
+            ),
+            Some(SmartTargetHudLayout {
+                target: top_target,
+                left: 1038.0,
+                top: 72.0,
+                width: 224.0,
+            })
+        );
+        assert_eq!(
+            smart_target_hud_layout(
+                None,
+                Some(PhysicalPoint { x: 1150, y: 680 }),
+                Some(bottom_target),
+                display,
+                transform,
+                viewport,
+            ),
+            Some(SmartTargetHudLayout {
+                target: bottom_target,
+                left: 1038.0,
+                top: 598.0,
+                width: 224.0,
+            })
+        );
+    }
+
+    #[test]
+    fn smart_target_hud_hides_after_selection_or_stale_hover() {
+        let display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1280,
+            bottom: 720,
+        };
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let transform = PreviewTransform::contain(display, super::view_rect(viewport));
+        let target = InspectionTarget {
+            bounds: PhysicalRect {
+                left: 100,
+                top: 200,
+                right: 600,
+                bottom: 500,
+            },
+            kind: InspectionKind::Control,
+        };
+
+        assert_eq!(
+            smart_target_hud_layout(
+                Some(PhysicalRect {
+                    left: 110,
+                    top: 210,
+                    right: 200,
+                    bottom: 300,
+                }),
+                Some(PhysicalPoint { x: 150, y: 250 }),
+                Some(target),
+                display,
+                transform,
+                viewport,
+            ),
+            None
+        );
+        assert_eq!(
+            smart_target_hud_layout(None, None, Some(target), display, transform, viewport),
+            None
+        );
+        assert_eq!(
+            smart_target_hud_layout(
+                None,
+                Some(PhysicalPoint { x: 900, y: 250 }),
+                Some(target),
+                display,
+                transform,
+                viewport,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn smart_target_hud_labels_the_full_detected_bounds() {
+        assert_eq!(
+            smart_target_hud_label(InspectionTarget {
+                bounds: PhysicalRect {
+                    left: 1800,
+                    top: 100,
+                    right: 2200,
+                    bottom: 500,
+                },
+                kind: InspectionKind::Window,
+            }),
+            "Window | 400 x 400 px"
+        );
+        assert_eq!(
+            smart_target_hud_label(InspectionTarget {
+                bounds: PhysicalRect {
+                    left: 20,
+                    top: 30,
+                    right: 500,
+                    bottom: 150,
+                },
+                kind: InspectionKind::Control,
+            }),
+            "Control | 480 x 120 px"
         );
     }
 
