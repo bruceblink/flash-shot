@@ -8,8 +8,8 @@ use std::{
 };
 
 use flash_shot::{
-    OcrSupportUiAcceptanceState, RecordingSupportUiAcceptanceState, RecordingUiAcceptanceState,
-    TranslationServiceUiAcceptanceState, UpdateUiAcceptanceState,
+    OcrSupportUiAcceptanceState, OverlayUiAcceptanceOptions, RecordingSupportUiAcceptanceState,
+    RecordingUiAcceptanceState, TranslationServiceUiAcceptanceState, UpdateUiAcceptanceState,
     history::ScreenshotHistory,
     performance::PerformanceRecorder,
     platform::capture::{CaptureBackend, SystemCaptureBackend},
@@ -64,6 +64,15 @@ struct VisibleProcessWindow {
     handle: *mut c_void,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum AcceptanceSurface {
+    #[default]
+    Settings,
+    PinnedSavedFeedback,
+    OverlayControl,
+    OverlayWindow,
+}
+
 #[derive(Debug)]
 struct Options {
     theme: ThemeMode,
@@ -80,7 +89,7 @@ struct Options {
     translation_service_test_state: TranslationServiceUiAcceptanceState,
     ocr_support_check_state: OcrSupportUiAcceptanceState,
     update_check_state: UpdateUiAcceptanceState,
-    pinned_saved_feedback_preview: bool,
+    surface: AcceptanceSurface,
 }
 
 impl Options {
@@ -136,11 +145,11 @@ impl Options {
             .map(parse_update_check_state)
             .transpose()?
             .unwrap_or_default();
-        let pinned_saved_feedback_preview = arguments
+        let surface = arguments
             .next()
-            .map(parse_pinned_saved_feedback_preview)
+            .map(parse_surface)
             .transpose()?
-            .unwrap_or(false);
+            .unwrap_or_default();
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -164,13 +173,13 @@ impl Options {
             translation_service_test_state,
             ocr_support_check_state,
             update_check_state,
-            pinned_saved_feedback_preview,
+            surface,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback|overlay-control|overlay-window]"
         .to_owned()
 }
 
@@ -343,16 +352,24 @@ fn parse_update_check_state(value: std::ffi::OsString) -> Result<UpdateUiAccepta
     }
 }
 
-/// Selects the ordinary settings page or a Pin window after its saved-state feedback appears.
-fn parse_pinned_saved_feedback_preview(value: std::ffi::OsString) -> Result<bool, String> {
+/// Selects the native surface rendered by this disposable screenshot process.
+fn parse_surface(value: std::ffi::OsString) -> Result<AcceptanceSurface, String> {
     match value
         .into_string()
-        .map_err(|_| "surface must be settings or pin-saved-feedback".to_owned())?
+        .map_err(|_| {
+            "surface must be settings, pin-saved-feedback, overlay-control, or overlay-window"
+                .to_owned()
+        })?
         .as_str()
     {
-        "settings" => Ok(false),
-        "pin-saved-feedback" => Ok(true),
-        _ => Err("surface must be settings or pin-saved-feedback".to_owned()),
+        "settings" => Ok(AcceptanceSurface::Settings),
+        "pin-saved-feedback" => Ok(AcceptanceSurface::PinnedSavedFeedback),
+        "overlay-control" => Ok(AcceptanceSurface::OverlayControl),
+        "overlay-window" => Ok(AcceptanceSurface::OverlayWindow),
+        _ => Err(
+            "surface must be settings, pin-saved-feedback, overlay-control, or overlay-window"
+                .to_owned(),
+        ),
     }
 }
 
@@ -387,25 +404,58 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         options.linger_delay,
         options.expected_scale,
     );
-    flash_shot::run_settings_ui_acceptance(
-        Instant::now(),
-        performance,
-        history,
-        settings,
-        session_root.join("settings.json"),
-        flash_shot::SettingsUiAcceptanceOptions {
-            width: options.width,
-            height: options.height,
-            section: options.section,
-            display_index: options.display_index,
-            recording_state: options.recording_state,
-            recording_support_check_state: options.recording_support_check_state,
-            translation_service_test_state: options.translation_service_test_state,
-            ocr_support_check_state: options.ocr_support_check_state,
-            update_check_state: options.update_check_state,
-            pinned_saved_feedback_preview: options.pinned_saved_feedback_preview,
-        },
-    )
+    let settings_path = session_root.join("settings.json");
+    match options.surface {
+        AcceptanceSurface::OverlayControl | AcceptanceSurface::OverlayWindow => {
+            let target_kind = match options.surface {
+                AcceptanceSurface::OverlayControl => {
+                    flash_shot::platform::window_inspector::InspectionKind::Control
+                }
+                AcceptanceSurface::OverlayWindow => {
+                    flash_shot::platform::window_inspector::InspectionKind::Window
+                }
+                AcceptanceSurface::Settings | AcceptanceSurface::PinnedSavedFeedback => {
+                    unreachable!("overlay surface determines an inspection target")
+                }
+            };
+            flash_shot::run_overlay_ui_acceptance(
+                Instant::now(),
+                performance,
+                history,
+                settings,
+                settings_path,
+                OverlayUiAcceptanceOptions {
+                    width: options.width,
+                    height: options.height,
+                    target_kind,
+                },
+            )
+        }
+        AcceptanceSurface::Settings | AcceptanceSurface::PinnedSavedFeedback => {
+            flash_shot::run_settings_ui_acceptance(
+                Instant::now(),
+                performance,
+                history,
+                settings,
+                settings_path,
+                flash_shot::SettingsUiAcceptanceOptions {
+                    width: options.width,
+                    height: options.height,
+                    section: options.section,
+                    display_index: options.display_index,
+                    recording_state: options.recording_state,
+                    recording_support_check_state: options.recording_support_check_state,
+                    translation_service_test_state: options.translation_service_test_state,
+                    ocr_support_check_state: options.ocr_support_check_state,
+                    update_check_state: options.update_check_state,
+                    pinned_saved_feedback_preview: matches!(
+                        options.surface,
+                        AcceptanceSurface::PinnedSavedFeedback
+                    ),
+                },
+            )
+        }
+    }
 }
 
 /// Waits for GPUI to paint, captures the window, optionally keeps it alive, then exits.
@@ -571,11 +621,10 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_display_index, parse_expected_scale, parse_linger_delay,
-        parse_ocr_support_check_state, parse_pinned_saved_feedback_preview, parse_recording_state,
-        parse_recording_support_check_state, parse_section, parse_settle_delay,
-        parse_translation_service_test_state, parse_update_check_state, scale_factor_for_dpi,
-        scale_matches, screenshot_metadata_path,
+        AcceptanceSurface, parse_display_index, parse_expected_scale, parse_linger_delay,
+        parse_ocr_support_check_state, parse_recording_state, parse_recording_support_check_state,
+        parse_section, parse_settle_delay, parse_surface, parse_translation_service_test_state,
+        parse_update_check_state, scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
     };
     use flash_shot::{
         OcrSupportUiAcceptanceState, RecordingSupportUiAcceptanceState, RecordingUiAcceptanceState,
@@ -680,10 +729,24 @@ mod tests {
     }
 
     #[test]
-    fn acceptance_surface_parser_enables_the_saved_pin_preview() {
-        assert!(parse_pinned_saved_feedback_preview(OsString::from("pin-saved-feedback")).unwrap());
-        assert!(!parse_pinned_saved_feedback_preview(OsString::from("settings")).unwrap());
-        assert!(parse_pinned_saved_feedback_preview(OsString::from("pin")).is_err());
+    fn acceptance_surface_parser_names_each_native_surface() {
+        assert_eq!(
+            parse_surface(OsString::from("settings")).unwrap(),
+            AcceptanceSurface::Settings
+        );
+        assert_eq!(
+            parse_surface(OsString::from("pin-saved-feedback")).unwrap(),
+            AcceptanceSurface::PinnedSavedFeedback
+        );
+        assert_eq!(
+            parse_surface(OsString::from("overlay-control")).unwrap(),
+            AcceptanceSurface::OverlayControl
+        );
+        assert_eq!(
+            parse_surface(OsString::from("overlay-window")).unwrap(),
+            AcceptanceSurface::OverlayWindow
+        );
+        assert!(parse_surface(OsString::from("pin")).is_err());
     }
 
     #[test]

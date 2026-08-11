@@ -1,12 +1,17 @@
 //! Per-display borderless capture overlays backed by the shared capture session.
 
-use std::sync::Arc;
+use std::{
+    io,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use gpui::{
-    Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render,
-    RenderImage, Subscription, TextAlign, TextRun, Window, canvas, div, fill, img, point,
-    prelude::*, px, rgba, size,
+    App, Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, FontWeight,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels,
+    Render, RenderImage, Subscription, TextAlign, TextRun, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowKind, WindowOptions, canvas, div, fill, img, point, prelude::*, px, rgba,
+    size,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -19,11 +24,15 @@ use crate::{
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     },
+    history::ScreenshotHistory,
+    performance::PerformanceRecorder,
     platform::{
+        capture::{CaptureFrame, PixelFormat},
         cursor,
-        display::DisplayInfo,
+        display::{DisplayInfo, DisplayRotation},
         window_inspector::{InspectionKind, InspectionTarget},
     },
+    settings::UserSettings,
     theme::ThemeColors,
 };
 
@@ -348,6 +357,144 @@ impl CaptureOverlay {
                 }
             })
         });
+    }
+}
+
+/// Opens one disposable overlay with a seeded smart target for native screenshot acceptance.
+pub(super) fn open_ui_acceptance(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    mut settings: UserSettings,
+    settings_path: std::path::PathBuf,
+    acceptance: crate::OverlayUiAcceptanceOptions,
+    cx: &mut App,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let width = acceptance.width.max(420.0).round() as u32;
+    let height = acceptance.height.max(320.0).round() as u32;
+    let display = DisplayInfo {
+        id: "overlay-ui-acceptance".to_owned(),
+        platform_id: 0,
+        physical_bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: width as i32,
+            bottom: height as i32,
+        },
+        work_area: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: width as i32,
+            bottom: height as i32,
+        },
+        dpi_x: 96,
+        dpi_y: 96,
+        scale_factor: 1.0,
+        rotation: DisplayRotation::Landscape,
+        bits_per_pixel: 32,
+        primary: true,
+    };
+    let frame = overlay_ui_acceptance_frame(display.physical_bounds)?;
+    let preview = super::render_image::render_image_from_capture(&frame)?.image;
+    let target = overlay_ui_acceptance_target(display.physical_bounds, acceptance.target_kind);
+    let hover_pixel = PhysicalPoint {
+        x: target.bounds.left + target.bounds.width() as i32 / 2,
+        y: target.bounds.top + target.bounds.height() as i32 / 2,
+    };
+    // A disposable probe should render the overlay without registering user-facing hotkeys.
+    settings.capture_shortcut_enabled = false;
+    let readiness = performance.clone();
+    let app = cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx));
+    app.update(cx, |app, cx| {
+        let _ = app.session.begin();
+        let _ = app.session.frames_ready();
+        app.frame = Some(frame);
+        app.preview = Some(preview.clone());
+        app.inspection_target = Some(target);
+        app.hover_pixel = Some(hover_pixel);
+        app.status = format!(
+            "Smart target ready: {} x {} physical pixels",
+            target.bounds.width(),
+            target.bounds.height()
+        );
+        cx.notify();
+    });
+    let overlay_app = app.clone();
+    let overlay_display = display.clone();
+    let overlay_preview = preview.clone();
+    let window = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::centered(
+                size(px(width as f32), px(height as f32)),
+                cx,
+            )),
+            titlebar: None,
+            focus: true,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: WindowBackgroundAppearance::Opaque,
+            ..Default::default()
+        },
+        move |window, cx| {
+            let overlay =
+                cx.new(|cx| CaptureOverlay::new(overlay_app, overlay_display, overlay_preview, cx));
+            overlay.read(cx).focus_handle(cx).focus(window, cx);
+            overlay
+        },
+    )?;
+    app.update(cx, |app, _| app.overlay_windows = vec![window]);
+    readiness.record_duration("startup_to_overlay_acceptance_ready", started_at.elapsed());
+    Ok(())
+}
+
+/// Builds a bounded BGRA frame so the acceptance overlay exercises the real image upload path.
+fn overlay_ui_acceptance_frame(bounds: PhysicalRect) -> io::Result<CaptureFrame> {
+    let width = bounds.width();
+    let height = bounds.height();
+    let stride = width as usize * 4;
+    let length = stride
+        .checked_mul(height as usize)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "acceptance frame too large"))?;
+    let mut pixels = vec![0; length];
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let offset = y * stride + x * 4;
+            let grid = ((x / 32 + y / 32) % 2) as u8;
+            pixels[offset] = 0x36 + grid * 0x10;
+            pixels[offset + 1] = 0x2D + grid * 0x0C;
+            pixels[offset + 2] = 0x22 + grid * 0x08;
+            pixels[offset + 3] = 0xFF;
+        }
+    }
+    Ok(CaptureFrame {
+        bounds,
+        width,
+        height,
+        stride,
+        format: PixelFormat::Bgra8,
+        pixels: pixels.into(),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 0,
+    })
+}
+
+/// Seeds a visible candidate with enough surrounding space to inspect the HUD in a screenshot.
+fn overlay_ui_acceptance_target(bounds: PhysicalRect, kind: InspectionKind) -> InspectionTarget {
+    let width = (bounds.width() / 2).clamp(180, 720) as i32;
+    let height = (bounds.height() / 4).clamp(96, 300) as i32;
+    let left = bounds.left + (bounds.width() as i32 - width) / 2;
+    let top = bounds.top + (bounds.height() as i32 - height) / 2;
+    InspectionTarget {
+        bounds: PhysicalRect {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+        },
+        kind,
     }
 }
 
@@ -3571,17 +3718,19 @@ mod tests {
         annotation_layer_label, annotation_style_panel_height, annotation_toolbar_height,
         annotation_toolbar_items, annotation_toolbar_layout, arrange_context_for_selection,
         arrow_head_points, capture_double_click, intersect, is_text_annotation, magnifier_origin,
-        outline_shape_bounds, owns_selection_toolbar, primary_action_tooltip,
-        recognition_result_preview, recognition_retry_label, resize_handle_points,
-        secondary_action_menu_height, secondary_action_tooltip, secondary_menu_opens_above,
-        selection_cursor, selection_dimension_label_layout, smart_target_hud_label,
-        smart_target_hud_layout, status_bottom_inset, visible_selection,
+        outline_shape_bounds, overlay_ui_acceptance_frame, overlay_ui_acceptance_target,
+        owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
+        recognition_retry_label, resize_handle_points, secondary_action_menu_height,
+        secondary_action_tooltip, secondary_menu_opens_above, selection_cursor,
+        selection_dimension_label_layout, smart_target_hud_label, smart_target_hud_layout,
+        status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint},
     };
+    use crate::platform::capture::PixelFormat;
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use gpui::{Bounds, point, px, size};
 
@@ -4371,6 +4520,34 @@ mod tests {
             }),
             "Control | 480 x 120 px"
         );
+    }
+
+    #[test]
+    fn overlay_ui_acceptance_fixture_preserves_frame_and_target_geometry() {
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1280,
+            bottom: 720,
+        };
+        let frame = overlay_ui_acceptance_frame(bounds).expect("fixture frame should be valid");
+        assert_eq!(frame.bounds, bounds);
+        assert_eq!(frame.width, 1280);
+        assert_eq!(frame.height, 720);
+        assert_eq!(frame.stride, 5120);
+        assert_eq!(frame.format, PixelFormat::Bgra8);
+        assert!(frame.validate().is_ok());
+
+        let target = overlay_ui_acceptance_target(bounds, InspectionKind::Control);
+        assert_eq!(target.kind, InspectionKind::Control);
+        assert!(bounds.contains(PhysicalPoint {
+            x: target.bounds.left,
+            y: target.bounds.top,
+        }));
+        assert!(bounds.contains(PhysicalPoint {
+            x: target.bounds.right - 1,
+            y: target.bounds.bottom - 1,
+        }));
     }
 
     #[test]

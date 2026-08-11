@@ -13,10 +13,11 @@ use std::{
     ops::Range,
     path::PathBuf,
     sync::Arc,
+    time::Instant,
 };
 
 use gpui::{
-    AsyncApp, Context, EntityInputHandler, FocusHandle, Focusable, RenderImage, Subscription,
+    App, AsyncApp, Context, EntityInputHandler, FocusHandle, Focusable, RenderImage, Subscription,
     UTF16Selection, WeakEntity, Window, WindowHandle,
 };
 
@@ -47,6 +48,27 @@ use crate::{
     settings::UserSettings,
     theme::ThemeColors,
 };
+
+/// Opens the capture-overlay acceptance surface while keeping the overlay implementation private.
+pub(crate) fn open_overlay_ui_acceptance(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    acceptance: crate::OverlayUiAcceptanceOptions,
+    cx: &mut App,
+) -> Result<(), Box<dyn std::error::Error>> {
+    overlay::open_ui_acceptance(
+        started_at,
+        performance,
+        history,
+        settings,
+        settings_path,
+        acceptance,
+        cx,
+    )
+}
 
 pub struct FlashShotApp {
     colors: ThemeColors,

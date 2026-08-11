@@ -89,6 +89,32 @@ pub fn run_settings_ui_acceptance(
     )
 }
 
+/// Starts a disposable capture overlay for native screenshot acceptance without using the
+/// production process entry point or its single-instance mutex.
+pub fn run_overlay_ui_acceptance(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    acceptance: OverlayUiAcceptanceOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_native_application(move |cx| {
+        if let Err(error) = app::open_overlay_ui_acceptance(
+            started_at,
+            performance,
+            history,
+            settings,
+            settings_path,
+            acceptance,
+            cx,
+        ) {
+            log::error!(target: "flash_shot::acceptance", "overlay_ui_open_failed error={error}");
+            cx.quit();
+        }
+    })
+}
+
 /// Describes the disposable settings window rendered by the native screenshot acceptance probe.
 #[derive(Clone, Debug)]
 pub struct SettingsUiAcceptanceOptions {
@@ -109,6 +135,14 @@ pub struct SettingsUiAcceptanceOptions {
     pub display_index: Option<usize>,
     /// Opens a disposable Pin window that displays the same saved-state feedback as production.
     pub pinned_saved_feedback_preview: bool,
+}
+
+/// Describes a synthetic but fully rendered capture overlay used for native screenshot QA.
+#[derive(Clone, Copy, Debug)]
+pub struct OverlayUiAcceptanceOptions {
+    pub width: f32,
+    pub height: f32,
+    pub target_kind: platform::window_inspector::InspectionKind,
 }
 
 /// Synthetic Record page states used only by the native screenshot acceptance probe.
@@ -220,20 +254,7 @@ fn run_with_settings_window(
         })
         .transpose()?;
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let _guard = runtime.enter();
-
-    gpui_platform::application().run(move |cx| {
-        cx.set_menus(build_menus());
-        cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("ctrl-q", Quit, None),
-            KeyBinding::new("alt-f4", Quit, None),
-        ]);
-
+    run_native_application(move |cx| {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(
                 size(px(window_options.width), px(window_options.height)),
@@ -300,6 +321,26 @@ fn run_with_settings_window(
             log::error!(target: "flash_shot::lifecycle", "main_window_open_failed error={error}");
             cx.quit();
         }
+    })
+}
+
+/// Configures one disposable GPUI process with the shared menu and shutdown conventions.
+fn run_native_application(
+    startup: impl FnOnce(&mut App) + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let _guard = runtime.enter();
+    gpui_platform::application().run(move |cx| {
+        cx.set_menus(build_menus());
+        cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+        cx.bind_keys([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("ctrl-q", Quit, None),
+            KeyBinding::new("alt-f4", Quit, None),
+        ]);
+        startup(cx);
     });
     Ok(())
 }
