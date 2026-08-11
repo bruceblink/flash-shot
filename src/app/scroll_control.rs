@@ -8,6 +8,11 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::FlashShotApp;
 
+const MANUAL_SCROLL_BUTTON_HEIGHT: f32 = 32.0;
+const MANUAL_SCROLL_PRIMARY_BUTTON_MIN_WIDTH: f32 = 156.0;
+const MANUAL_SCROLL_SECONDARY_BUTTON_MIN_WIDTH: f32 = 96.0;
+const MANUAL_SCROLL_STATUS_MAX_WIDTH: f32 = 200.0;
+
 pub(super) struct ManualScrollControl {
     app: Entity<FlashShotApp>,
     focus_handle: FocusHandle,
@@ -67,9 +72,30 @@ enum ManualScrollShortcut {
     Finish,
 }
 
+impl ManualScrollShortcut {
+    /// Returns the stable keyboard order used by the visible scrolling commands.
+    const fn tab_index(self) -> isize {
+        match self {
+            Self::AutoCapture => 0,
+            Self::Capture => 1,
+            Self::Finish => 2,
+            Self::Cancel => 3,
+        }
+    }
+
+    /// Reserves enough room for the primary label while keeping secondary buttons compact.
+    const fn min_width(self) -> f32 {
+        match self {
+            Self::AutoCapture => MANUAL_SCROLL_PRIMARY_BUTTON_MIN_WIDTH,
+            Self::Capture | Self::Finish | Self::Cancel => MANUAL_SCROLL_SECONDARY_BUTTON_MIN_WIDTH,
+        }
+    }
+}
+
 /// Builds one scroll command with a stable size and an explicit enabled/disabled state.
 fn manual_scroll_button(
     id: &'static str,
+    action: ManualScrollShortcut,
     label: impl Into<String>,
     colors: crate::theme::ThemeColors,
     enabled: bool,
@@ -84,7 +110,9 @@ fn manual_scroll_button(
     };
     div()
         .id(id)
-        .h(px(32.0))
+        .h(px(MANUAL_SCROLL_BUTTON_HEIGHT))
+        .flex_1()
+        .min_w(px(action.min_width()))
         .px_3()
         .flex()
         .items_center()
@@ -111,13 +139,20 @@ fn manual_scroll_button(
         .font_weight(FontWeight::SEMIBOLD)
         .when(enabled, |button| {
             button
-                .focusable()
+                .tab_index(action.tab_index())
                 .focus_visible(|style| style.border_color(colors.accent))
                 .cursor_pointer()
                 .hover(|style| style.bg(colors.background).text_color(colors.text))
                 .on_click(on_click)
         })
-        .child(label.into())
+        .child(
+            div()
+                .w_full()
+                .min_w(px(0.0))
+                .truncate()
+                .text_center()
+                .child(label.into()),
+        )
 }
 
 impl Render for ManualScrollControl {
@@ -159,39 +194,53 @@ impl Render for ManualScrollControl {
             .border_color(colors.border)
             .rounded_lg()
             .track_focus(&self.focus_handle)
+            .tab_group()
+            .tab_stop(false)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 this.handle_key_down(event, cx);
             }))
             .child(
                 div()
+                    .w_full()
+                    .min_w(px(0.0))
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .gap_2()
                     .child(
                         div()
+                            .flex_1()
+                            .min_w(px(0.0))
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(colors.text)
+                            .truncate()
                             .child("Scrolling screenshot"),
                     )
                     .child(
                         div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .max_w(px(MANUAL_SCROLL_STATUS_MAX_WIDTH))
                             .px_2()
                             .py_1()
                             .rounded_sm()
                             .bg(colors.panel)
                             .text_xs()
                             .text_color(colors.muted)
+                            .truncate()
                             .child(frame_count_label),
                     ),
             )
             .child(
                 div()
+                    .w_full()
+                    .min_w(px(0.0))
                     .flex()
                     .flex_wrap()
                     .gap_2()
                     .child(manual_scroll_button(
                         "scroll-auto-capture-next",
+                        ManualScrollShortcut::AutoCapture,
                         auto_scroll_capture_label(auto_capture_pending),
                         colors,
                         !controls_busy,
@@ -205,6 +254,7 @@ impl Render for ManualScrollControl {
                     ))
                     .child(manual_scroll_button(
                         "scroll-capture-next",
+                        ManualScrollShortcut::Capture,
                         manual_scroll_capture_label(capture_in_flight, retry_available),
                         colors,
                         !controls_busy,
@@ -218,6 +268,7 @@ impl Render for ManualScrollControl {
                     ))
                     .child(manual_scroll_button(
                         "scroll-finish",
+                        ManualScrollShortcut::Finish,
                         manual_scroll_finish_label(can_finish),
                         colors,
                         !controls_busy && can_finish,
@@ -235,6 +286,7 @@ impl Render for ManualScrollControl {
                     ))
                     .child(manual_scroll_button(
                         "scroll-cancel",
+                        ManualScrollShortcut::Cancel,
                         "Cancel",
                         colors,
                         true,
@@ -249,12 +301,15 @@ impl Render for ManualScrollControl {
             )
             .child(
                 div()
+                    .w_full()
+                    .min_w(px(0.0))
                     .px_2()
                     .py_1()
                     .rounded_sm()
                     .bg(colors.panel)
                     .text_xs()
                     .text_color(colors.muted)
+                    .truncate()
                     .child(status),
             )
     }
@@ -326,6 +381,7 @@ fn manual_scroll_frame_count_label(frame_count: usize, can_finish: bool) -> Stri
 #[cfg(test)]
 mod tests {
     use super::{
+        MANUAL_SCROLL_PRIMARY_BUTTON_MIN_WIDTH, MANUAL_SCROLL_SECONDARY_BUTTON_MIN_WIDTH,
         ManualScrollShortcut, auto_scroll_capture_label, manual_scroll_capture_label,
         manual_scroll_finish_label, manual_scroll_frame_count_label, manual_scroll_shortcut,
     };
@@ -364,6 +420,26 @@ mod tests {
     fn automatic_capture_action_reports_its_settle_delay() {
         assert_eq!(auto_scroll_capture_label(false), "Scroll down + capture");
         assert_eq!(auto_scroll_capture_label(true), "Scrolling...");
+    }
+
+    #[test]
+    fn visible_actions_keep_primary_width_and_keyboard_order() {
+        assert_eq!(ManualScrollShortcut::AutoCapture.tab_index(), 0);
+        assert_eq!(ManualScrollShortcut::Capture.tab_index(), 1);
+        assert_eq!(ManualScrollShortcut::Finish.tab_index(), 2);
+        assert_eq!(ManualScrollShortcut::Cancel.tab_index(), 3);
+        assert_eq!(
+            ManualScrollShortcut::AutoCapture.min_width(),
+            MANUAL_SCROLL_PRIMARY_BUTTON_MIN_WIDTH
+        );
+        assert_eq!(
+            ManualScrollShortcut::Capture.min_width(),
+            MANUAL_SCROLL_SECONDARY_BUTTON_MIN_WIDTH
+        );
+        assert!(
+            ManualScrollShortcut::AutoCapture.min_width()
+                > ManualScrollShortcut::Capture.min_width()
+        );
     }
 
     #[test]
