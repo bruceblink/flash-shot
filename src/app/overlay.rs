@@ -1958,7 +1958,11 @@ impl Render for CaptureOverlay {
                             )
                             .child(
                                 div()
-                                    .id("overlay-more-actions")
+                                    .id(if show_more_actions {
+                                        "overlay-less-actions"
+                                    } else {
+                                        "overlay-more-actions"
+                                    })
                                     .w(px(48.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
