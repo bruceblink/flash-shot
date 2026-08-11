@@ -37,7 +37,9 @@ use recording_probe::MediaMetadata;
 use recording_probe::{extract_video_frame, extract_video_frame_series, probe_media};
 
 #[cfg(windows)]
-use flash_shot::platform::capture::{CaptureBackend, CaptureFrame, SystemCaptureBackend};
+use flash_shot::platform::capture::{
+    CaptureBackend, CaptureFrame, PixelFormat, SystemCaptureBackend,
+};
 #[cfg(windows)]
 use std::{
     ffi::c_void,
@@ -45,7 +47,7 @@ use std::{
     panic::AssertUnwindSafe,
     ptr,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicI32, AtomicUsize, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
     },
 };
@@ -54,7 +56,7 @@ use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::Gdi::{
         BeginPaint, ClientToScreen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
-        PAINTSTRUCT, UpdateWindow,
+        InvalidateRect, PAINTSTRUCT, UpdateWindow,
     },
     System::{
         DataExchange::GetClipboardSequenceNumber, LibraryLoader::GetModuleHandleW,
@@ -66,10 +68,11 @@ use windows_sys::Win32::{
             SetProcessDpiAwarenessContext,
         },
         Input::KeyboardAndMouse::{
-            INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
-            KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-            MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput, VK_A, VK_CONTROL,
-            VK_ESCAPE, VK_F24, VK_MENU, VK_RETURN, VK_RIGHT, VK_SHIFT,
+            GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
+            KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
+            MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
+            VK_A, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_RETURN, VK_RIGHT,
+            VK_SHIFT, VK_SPACE,
         },
         WindowsAndMessaging::{
             BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
@@ -77,13 +80,15 @@ use windows_sys::Win32::{
             GUITHREADINFO, GW_OWNER, GWLP_USERDATA, GetClassNameW, GetClientRect, GetCursorPos,
             GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindow,
             GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-            GetWindowThreadProcessId, HWND_TOP, IsChild, IsIconic, IsWindow, IsWindowVisible, MSG,
-            PostMessageW, PostQuitMessage, RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE,
-            SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SetCursorPos, SetForegroundWindow,
-            SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY,
-            WM_ERASEBKGND, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
-            WS_VISIBLE, WindowFromPoint,
+            GetWindowThreadProcessId, HTCAPTION, HWND_TOP, IsChild, IsIconic, IsWindow,
+            IsWindowVisible, MOUSEWHEEL_ROUTING_MOUSE_POS, MSG, PostMessageW, PostQuitMessage,
+            RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN, SPI_GETMOUSEWHEELROUTING, SW_HIDE, SW_MINIMIZE, SW_RESTORE,
+            SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW, SetCursorPos,
+            SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, SwitchToThisWindow,
+            SystemParametersInfoW, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
+            WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+            WS_POPUP, WS_VISIBLE, WindowFromPoint,
         },
     },
 };
@@ -103,7 +108,9 @@ const SELECTION_EDGE_TOLERANCE: i32 = 1;
 const PAUSE_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
 const MAX_RECORDING_GRID_MAE: f64 = 18.0;
 const WINDOW_TARGET_CHILD_MODE: &str = "--window-target-child";
+const SCROLL_TARGET_CHILD_MODE: &str = "--scroll-target-child";
 const WINDOW_FIXTURE_CLASS: &str = "FlashShotRecordingWindowFixture";
+const SCROLL_FIXTURE_CLASS: &str = "FlashShotScrollWindowFixture";
 const WINDOW_PHASE_SETTLE_US: u64 = 300_000;
 const WINDOW_PHASE_HOLD_US: u64 = 300_000;
 const WINDOW_TIMELINE_FRAMES_PER_SECOND: u16 = 5;
@@ -127,6 +134,11 @@ const SELECTION_MOVE_DELTA: PhysicalPoint = PhysicalPoint { x: 120, y: 72 };
 const SELECTION_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 144, y: -80 };
 const SELECTION_SHIFT_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 120, y: -24 };
 const SELECTION_ALT_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 80, y: -56 };
+const SCROLL_SECONDARY_MENU_HEIGHT: f32 = 218.0;
+const SCROLL_SECONDARY_MENU_ROW: f32 = 90.0;
+const SCROLL_SECONDARY_MENU_SCROLL_ROW_WIDTH: f32 = 323.0;
+const SCROLL_SECONDARY_MENU_CONTENT_RIGHT_INSET: f32 = 7.0;
+const SCROLL_FIXTURE_SCROLL_STEP: i32 = 96;
 #[cfg(windows)]
 const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
 #[cfg(windows)]
@@ -138,6 +150,8 @@ const RECORDING_SYSTEM_AUDIO_ENV: &str = "FLASH_SHOT_RECORDING_SYSTEM_AUDIO";
 
 #[cfg(windows)]
 static LIVE_FIXTURE_WINDOWS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(windows)]
+static SCROLL_FIXTURE_OFFSET: AtomicI32 = AtomicI32::new(0);
 
 #[derive(Debug, Eq, PartialEq)]
 struct Options {
@@ -156,6 +170,7 @@ enum CaptureScenarioOption {
     NarrowEdge,
     PinsCoexist,
     SelectionTransform,
+    ScrollRoundtrip,
 }
 
 impl CaptureScenarioOption {
@@ -165,13 +180,14 @@ impl CaptureScenarioOption {
             Self::NarrowEdge => "capture_narrow_edge",
             Self::PinsCoexist => "capture_pins_coexist",
             Self::SelectionTransform => "capture_selection_transform",
+            Self::ScrollRoundtrip => "capture_scroll_roundtrip",
         }
     }
 
     const fn requires_100_percent_display(self) -> bool {
         matches!(
             self,
-            Self::NarrowEdge | Self::PinsCoexist | Self::SelectionTransform
+            Self::NarrowEdge | Self::PinsCoexist | Self::SelectionTransform | Self::ScrollRoundtrip
         )
     }
 }
@@ -260,9 +276,10 @@ impl Options {
                         "narrow-edge" => CaptureScenarioOption::NarrowEdge,
                         "pins-coexist" => CaptureScenarioOption::PinsCoexist,
                         "selection-transform" => CaptureScenarioOption::SelectionTransform,
+                        "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
                         _ => {
                             return Err(
-                                "capture scenario must be 'narrow-edge', 'pins-coexist', or 'selection-transform'"
+                                "capture scenario must be 'narrow-edge', 'pins-coexist', 'selection-transform', or 'scroll-roundtrip'"
                                     .to_owned(),
                             );
                         }
@@ -324,7 +341,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge|pins-coexist|selection-transform> | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge|pins-coexist|selection-transform|scroll-roundtrip> | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -559,6 +576,94 @@ fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionP
         (width * 0.22, height * 0.20),
         (width * 0.68, height * 0.50),
     )
+}
+
+/// Locates the production Scroll shot item in the expanded More menu using its fixed width rows.
+fn scroll_shot_point_for_logical_selection(
+    bounds: PhysicalRect,
+    scale: f32,
+    width: f32,
+    height: f32,
+    start: (f32, f32),
+    end: (f32, f32),
+) -> io::Result<PhysicalPoint> {
+    if start.0 < 0.0
+        || start.1 < 0.0
+        || end.0 <= start.0
+        || end.1 <= start.1
+        || end.0 > width
+        || end.1 > height
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "scroll-shot selection must be increasing and inside the overlay client",
+        ));
+    }
+    let toolbar_width = 342.0_f32.min(width - 36.0).min(620.0);
+    let toolbar_height = 50.0;
+    let left_min = 18.0;
+    let left_limit = (width - 18.0 - toolbar_width).max(left_min);
+    let toolbar_left = (end.0 - toolbar_width).clamp(left_min, left_limit);
+    let lowest_top = (height - 96.0 - toolbar_height).max(18.0);
+    let below = end.1 + 12.0;
+    let above = start.1 - toolbar_height - 12.0;
+    let toolbar_top = if below <= lowest_top {
+        below
+    } else {
+        above.max(18.0).min(lowest_top)
+    };
+
+    // The 11 production secondary actions wrap into five natural-width rows at the 342px
+    // toolbar width; Scroll shot is the leftmost item in the 323px third row (65px wide).
+    let menu_above = toolbar_top - 8.0 - SCROLL_SECONDARY_MENU_HEIGHT >= 18.0
+        || toolbar_top + toolbar_height + 8.0 + SCROLL_SECONDARY_MENU_HEIGHT > height - 96.0;
+    let menu_top = if menu_above {
+        toolbar_top - 8.0 - SCROLL_SECONDARY_MENU_HEIGHT
+    } else {
+        toolbar_top + toolbar_height + 8.0
+    };
+    let scroll_center = (
+        toolbar_left + toolbar_width
+            - SCROLL_SECONDARY_MENU_CONTENT_RIGHT_INSET
+            - SCROLL_SECONDARY_MENU_SCROLL_ROW_WIDTH
+            + 32.5,
+        menu_top + SCROLL_SECONDARY_MENU_ROW + 18.0,
+    );
+    Ok(PhysicalPoint {
+        x: bounds.left + (scroll_center.0 * scale).round() as i32,
+        y: bounds.top + (scroll_center.1 * scale).round() as i32,
+    })
+}
+
+/// Chooses a tall viewport that stays inside the fixture and above the scrolling controller.
+fn scroll_roundtrip_interaction_plan(
+    bounds: PhysicalRect,
+    scale: f32,
+) -> io::Result<InteractionPlan> {
+    let (width, height) = overlay_logical_size(bounds, scale)?;
+    if height < 740.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "scroll roundtrip acceptance requires at least 740 logical pixels of height",
+        ));
+    }
+    let start = (width * 0.16, (height * 0.12).max(120.0));
+    let end = (width * 0.74, (start.1 + 380.0).min(height - 180.0));
+    interaction_plan_for_logical_selection(bounds, scale, width, height, start, end)
+}
+
+const fn rect_contains_rect(outer: PhysicalRect, inner: PhysicalRect) -> bool {
+    outer.left <= inner.left
+        && outer.top <= inner.top
+        && outer.right >= inner.right
+        && outer.bottom >= inner.bottom
+}
+
+const fn rects_overlap(first: PhysicalRect, second: PhysicalRect) -> bool {
+    first.left < second.right
+        && first.right > second.left
+        && first.top < second.bottom
+        && first.bottom > second.top
 }
 
 /// Places a 160x96 selection at the bottom-right edge and predicts the relocated Mark control.
@@ -978,6 +1083,7 @@ struct AcceptanceReport {
     narrow_edge: Option<NarrowEdgeReport>,
     pins_coexist: Option<PinsCoexistReport>,
     selection_transform: Option<SelectionTransformReport>,
+    scroll_roundtrip: Option<ScrollRoundtripReport>,
     error: Option<String>,
 }
 
@@ -1178,6 +1284,33 @@ struct SelectionTransformGestureReport {
 }
 
 #[derive(serde::Serialize)]
+struct ScrollRoundtripReport {
+    fixture_process_id: u32,
+    fixture_window: WindowReport,
+    wheel_routing: u32,
+    requested_selection: PhysicalRect,
+    initial_selection: PhysicalRect,
+    scroll_control: WindowReport,
+    ready_status: String,
+    initial_frame: ScrollFrameReport,
+    auto_capture_status: String,
+    second_frame: ScrollFrameReport,
+    finish_status: String,
+    stitched_selection: PhysicalRect,
+    stitched_height_increased: bool,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct ScrollFrameReport {
+    bounds: PhysicalRect,
+    width: u32,
+    height: u32,
+    screenshot: String,
+    fingerprint: String,
+}
+
+#[derive(serde::Serialize)]
 struct WindowDragReport {
     handle: usize,
     before: PhysicalRect,
@@ -1295,6 +1428,16 @@ struct RecordingWindowFixture {
 }
 
 #[cfg(windows)]
+struct ScrollWindowFixture {
+    child: process::Child,
+    process_group: ProcessGroup,
+    process_id: u32,
+    target: HWND,
+    target_bounds: PhysicalRect,
+    stopped: bool,
+}
+
+#[cfg(windows)]
 #[derive(Clone, Copy)]
 struct FixturePhaseState {
     target_bounds: PhysicalRect,
@@ -1368,6 +1511,15 @@ fn main() {
     {
         if let Err(error) = run_recording_window_fixture_child(std::env::args_os().skip(2)) {
             eprintln!("recording window fixture failed: {error}");
+            process::exit(1);
+        }
+        return;
+    }
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(SCROLL_TARGET_CHILD_MODE))
+    {
+        if let Err(error) = run_scroll_fixture_child(std::env::args_os().skip(2)) {
+            eprintln!("scroll fixture failed: {error}");
             process::exit(1);
         }
         return;
@@ -1465,7 +1617,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             None,
             CaptureScenarioOption::Standard
             | CaptureScenarioOption::PinsCoexist
-            | CaptureScenarioOption::SelectionTransform,
+            | CaptureScenarioOption::SelectionTransform
+            | CaptureScenarioOption::ScrollRoundtrip,
         ) => (520.0, 640.0),
     };
 
@@ -1536,7 +1689,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        schema_version: 8,
+        schema_version: 9,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -1562,6 +1715,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         narrow_edge: None,
         pins_coexist: None,
         selection_transform: None,
+        scroll_roundtrip: None,
         error: None,
     }
 }
@@ -1688,6 +1842,179 @@ fn run_recording_window_fixture_child(
     }
     destroy_recording_fixture_windows(&windows);
     Ok(())
+}
+
+#[cfg(windows)]
+/// Runs a single disposable window whose deterministic content advances on real wheel input.
+fn run_scroll_fixture_child(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
+    let (token, bounds) = parse_recording_window_fixture_arguments(arguments)?;
+    if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(5) {
+            return Err(error);
+        }
+    }
+    LIVE_FIXTURE_WINDOWS.store(0, Ordering::Release);
+    SCROLL_FIXTURE_OFFSET.store(0, Ordering::Release);
+    let class_name = wide_null(SCROLL_FIXTURE_CLASS);
+    let instance = unsafe { GetModuleHandleW(ptr::null()) };
+    if instance.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let window_class = WNDCLASSW {
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(scroll_fixture_window_proc),
+        hInstance: instance,
+        lpszClassName: class_name.as_ptr(),
+        ..Default::default()
+    };
+    if unsafe { RegisterClassW(&window_class) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(1410) {
+            return Err(error);
+        }
+    }
+    let title = wide_null(&scroll_fixture_title(&token));
+    let window = unsafe {
+        CreateWindowExW(
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            class_name.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP | WS_VISIBLE,
+            bounds.left,
+            bounds.top,
+            bounds.width() as i32,
+            bounds.height() as i32,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            instance,
+            ptr::null(),
+        )
+    };
+    if window.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    LIVE_FIXTURE_WINDOWS.fetch_add(1, Ordering::AcqRel);
+    unsafe { UpdateWindow(window) };
+
+    let mut message = MSG::default();
+    loop {
+        let result = unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) };
+        if result == -1 {
+            let error = io::Error::last_os_error();
+            if unsafe { IsWindow(window) } != 0 {
+                unsafe { DestroyWindow(window) };
+            }
+            return Err(error);
+        }
+        if result == 0 {
+            break;
+        }
+        unsafe {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    if unsafe { IsWindow(window) } != 0 {
+        unsafe { DestroyWindow(window) };
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn scroll_fixture_title(token: &str) -> String {
+    format!("Flash Shot Scroll Fixture {token}")
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn scroll_fixture_window_proc(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_PAINT => {
+            paint_scroll_fixture_window(window);
+            0
+        }
+        WM_MOUSEWHEEL => {
+            let delta = ((wparam >> 16) & 0xFFFF) as u16 as i16 as i32;
+            let steps = delta / 120;
+            if steps != 0 {
+                // Negative wheel notches move the document down so the next viewport overlaps
+                // the lower portion of the previous one, matching the production scroll helper.
+                let offset = -steps * SCROLL_FIXTURE_SCROLL_STEP;
+                SCROLL_FIXTURE_OFFSET.fetch_add(offset, Ordering::AcqRel);
+                unsafe {
+                    InvalidateRect(window, ptr::null(), 1);
+                    UpdateWindow(window);
+                }
+            }
+            0
+        }
+        WM_ERASEBKGND => 1,
+        WM_CLOSE => {
+            unsafe { DestroyWindow(window) };
+            0
+        }
+        WM_DESTROY => {
+            if LIVE_FIXTURE_WINDOWS.fetch_sub(1, Ordering::AcqRel) == 1 {
+                unsafe { PostQuitMessage(0) };
+            }
+            0
+        }
+        _ => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+    }
+}
+
+#[cfg(windows)]
+fn paint_scroll_fixture_window(window: HWND) {
+    let mut paint = PAINTSTRUCT::default();
+    let device = unsafe { BeginPaint(window, &mut paint) };
+    if device.is_null() {
+        return;
+    }
+    let mut client = RECT::default();
+    if unsafe { GetClientRect(window, &mut client) } != 0 {
+        const ROW_HEIGHT: i32 = 48;
+        const COLUMN_WIDTH: i32 = 128;
+        let offset = SCROLL_FIXTURE_OFFSET.load(Ordering::Acquire);
+        let row_count = (client.bottom - client.top + ROW_HEIGHT - 1) / ROW_HEIGHT;
+        let column_count = (client.right - client.left + COLUMN_WIDTH - 1) / COLUMN_WIDTH;
+        for row in 0..row_count {
+            let content_row = (row * ROW_HEIGHT + offset).div_euclid(ROW_HEIGHT);
+            for column in 0..column_count {
+                let cell = RECT {
+                    left: client.left + column * COLUMN_WIDTH,
+                    top: client.top + row * ROW_HEIGHT,
+                    right: (client.left + (column + 1) * COLUMN_WIDTH).min(client.right),
+                    bottom: (client.top + (row + 1) * ROW_HEIGHT).min(client.bottom),
+                };
+                let brush = unsafe { CreateSolidBrush(scroll_fixture_color(content_row, column)) };
+                if !brush.is_null() {
+                    unsafe {
+                        FillRect(device, &cell, brush);
+                        DeleteObject(brush);
+                    }
+                }
+            }
+        }
+    }
+    unsafe { EndPaint(window, &paint) };
+}
+
+#[cfg(windows)]
+fn scroll_fixture_color(row: i32, column: i32) -> u32 {
+    const COLORS: [u32; 12] = [
+        0x001C4E80, 0x00B23A48, 0x002C8A63, 0x00C47B2D, 0x005C3FA6, 0x008E5A2A, 0x002D728F,
+        0x00A53F72, 0x003E8C4A, 0x00C04F2A, 0x004D5D9A, 0x009B6A24,
+    ];
+    let index = row
+        .wrapping_mul(7)
+        .wrapping_add(column.wrapping_mul(3))
+        .rem_euclid(COLORS.len() as i32) as usize;
+    COLORS[index]
 }
 
 #[cfg(windows)]
@@ -2155,6 +2482,149 @@ impl Drop for RecordingWindowFixture {
 }
 
 #[cfg(windows)]
+impl ScrollWindowFixture {
+    /// Starts the deterministic wheel target in a separate process so the capture area contains
+    /// no acceptance-process controls when the production auto-capture hides its own controller.
+    fn launch(target_bounds: PhysicalRect, timeout: Duration) -> io::Result<Self> {
+        validate_recording_fixture_bounds(target_bounds)?;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let token = format!("{}-{timestamp}", process::id());
+        let title = scroll_fixture_title(&token);
+        let process_group = ProcessGroup::create()?;
+        let mut child = process::Command::new(std::env::current_exe()?)
+            .arg(SCROLL_TARGET_CHILD_MODE)
+            .arg(&token)
+            .arg(target_bounds.left.to_string())
+            .arg(target_bounds.top.to_string())
+            .arg(target_bounds.right.to_string())
+            .arg(target_bounds.bottom.to_string())
+            .stdin(process::Stdio::null())
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::inherit())
+            .spawn()?;
+        if let Err(error) = process_group.assign(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        let process_id = child.id();
+        let target = wait_for_scroll_fixture_window(&mut child, process_id, &title, timeout)?;
+        let observed = external_window_bounds(target, process_id)?;
+        if observed != target_bounds || unsafe { IsWindowVisible(target) } == 0 {
+            let _ = process_group.terminate();
+            let _ = child.wait();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "scroll fixture target is bounds={observed:?}, visible={}, expected {target_bounds:?}",
+                    unsafe { IsWindowVisible(target) } != 0
+                ),
+            ));
+        }
+        Ok(Self {
+            child,
+            process_group,
+            process_id,
+            target,
+            target_bounds,
+            stopped: false,
+        })
+    }
+
+    fn report(&self) -> io::Result<WindowReport> {
+        let bounds = external_window_bounds(self.target, self.process_id)?;
+        if bounds != self.target_bounds {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "scroll fixture moved to {bounds:?}, expected {:?}",
+                    self.target_bounds
+                ),
+            ));
+        }
+        let dpi = unsafe { GetDpiForWindow(self.target) };
+        if dpi == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(WindowReport {
+            handle: self.target as usize,
+            bounds,
+            dpi,
+        })
+    }
+
+    /// Closes the fixture on its own GUI thread and bounds forced cleanup if it stops responding.
+    fn shutdown(&mut self, timeout: Duration) -> io::Result<()> {
+        if self.stopped {
+            return Ok(());
+        }
+        if !self.target.is_null() && unsafe { IsWindow(self.target) } != 0 {
+            unsafe { PostMessageW(self.target, WM_CLOSE, 0, 0) };
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.child.try_wait()?.is_some() {
+                self.stopped = true;
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                let _ = self.process_group.terminate();
+                let _ = self.child.wait();
+                self.stopped = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "scroll fixture required forced process cleanup",
+                ));
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ScrollWindowFixture {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = self.process_group.terminate();
+            let _ = self.child.wait();
+            self.stopped = true;
+        }
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_scroll_fixture_window(
+    child: &mut process::Child,
+    process_id: u32,
+    title: &str,
+    timeout: Duration,
+) -> io::Result<HWND> {
+    let wide_title = wide_null(title);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Err(io::Error::other(format!(
+                "scroll fixture exited before its window was ready: {status}"
+            )));
+        }
+        let window = unsafe { FindWindowW(ptr::null(), wide_title.as_ptr()) };
+        if !window.is_null() && external_window_bounds(window, process_id).is_ok() {
+            return Ok(window);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "scroll fixture window did not become ready",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
 fn wait_for_recording_fixture_windows(
     child: &mut process::Child,
     process_id: u32,
@@ -2298,6 +2768,9 @@ fn run_interaction_sequence(
         }
         (None, CaptureScenarioOption::SelectionTransform) => {
             execute_selection_transform_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::ScrollRoundtrip) => {
+            execute_scroll_roundtrip_interactions(context, report)
         }
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
@@ -3196,6 +3669,310 @@ fn execute_selection_transform_interactions(
         initial_requested_selection: initial_drag.selection,
         initial_selection,
         gestures,
+        cleanup: CleanupReport {
+            session_state: final_state.session_state,
+            overlay_count: final_state.overlay_count,
+            pinned_count: final_state.pinned_count,
+            visible_process_windows,
+            capture_preflight_ready: final_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Drives More -> Scroll shot -> real auto-scroll capture -> Finish, then proves teardown.
+fn execute_scroll_roundtrip_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let display = context.display.physical_bounds;
+    let fixture_bounds = PhysicalRect {
+        left: display.left.saturating_add(120),
+        top: display.top.saturating_add(100),
+        right: display.right.saturating_sub(120),
+        bottom: display.bottom.saturating_sub(100),
+    };
+    let mut controller = wait_for_controller(context.timeout)?;
+    let controller_right = display.right.saturating_sub(20);
+    let controller_bottom = display.bottom.saturating_sub(20);
+    move_owned_window(
+        controller.handle,
+        PhysicalRect {
+            left: controller_right.saturating_sub(controller.bounds.width() as i32),
+            top: controller_bottom.saturating_sub(controller.bounds.height() as i32),
+            right: controller_right,
+            bottom: controller_bottom,
+        },
+    )?;
+    controller = owned_window(controller.handle)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_controller_ready",
+        controller,
+        None,
+    )?;
+    // Launch the external target only after the acceptance controller owns foreground input; the
+    // no-activate fixture style keeps that ownership while still receiving wheel hit testing.
+    let mut fixture = ScrollWindowFixture::launch(fixture_bounds, context.timeout)?;
+    let fixture_window = fixture.report()?;
+    focus_owned_window(controller, context.timeout)?;
+
+    let foreground = inject_capture_shortcut(controller.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_capture_shortcut",
+        foreground,
+        None,
+    )?;
+    let overlay = wait_for_overlay(controller.handle, display, context.timeout)?;
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let plan = scroll_roundtrip_interaction_plan_for_window(overlay.handle)?;
+    let drag = inject_mouse_drag(overlay.handle, plan.drag_start, plan.drag_end, display)?;
+    let selected = capture_evidence(context, "00-scroll-selected.png", drag.foreground)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_selection",
+        drag.foreground,
+        Some(&selected),
+    )?;
+    let initial_state = wait_for_capture_state(context, "scroll roundtrip selection", |state| {
+        state.session_state == "selecting" && state.selection.is_some() && state.overlay_count == 1
+    })?;
+    let initial_selection = initial_state
+        .selection
+        .ok_or_else(|| io::Error::other("scroll roundtrip selection disappeared"))?;
+    validate_selection_geometry(
+        drag.selection,
+        initial_selection,
+        "scroll roundtrip selection",
+    )?;
+    if !rect_contains_rect(fixture.target_bounds, initial_selection) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "scroll fixture {:?} does not contain the full selection {initial_selection:?}",
+                fixture.target_bounds
+            ),
+        ));
+    }
+
+    let initial_frame = query_capture_content(context, context.timeout)?
+        .selection
+        .ok_or_else(|| {
+            io::Error::other("scroll roundtrip did not expose the initial selection frame")
+        })?;
+    validate_scroll_fixture_frame(&initial_frame, fixture.target_bounds, 0)?;
+    let initial_frame_report =
+        save_scroll_frame_report(context, "01-scroll-initial-frame.png", initial_frame)?;
+
+    let foreground = inject_mouse_click(overlay.handle, plan.more)?;
+    let _more_state = wait_for_capture_state(context, "scroll roundtrip More", |state| {
+        state.session_state == "selecting" && state.more_actions_visible && state.overlay_count == 1
+    })?;
+    let more = capture_evidence(context, "02-scroll-more.png", overlay)?;
+    ensure_evidence_changed(
+        &selected,
+        &more,
+        "Scroll roundtrip More did not change the overlay",
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_more",
+        foreground,
+        Some(&more),
+    )?;
+    let scroll_point =
+        scroll_shot_point_for_capture_selection(overlay.handle, display, initial_selection)?;
+    if !overlay.bounds.contains(scroll_point) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("computed Scroll shot point {scroll_point:?} escaped overlay"),
+        ));
+    }
+    let foreground = inject_mouse_click(overlay.handle, scroll_point)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_scroll_shot",
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(overlay.handle, context.timeout, "Scroll shot")?;
+    let ready = wait_for_capture_state(context, "scroll roundtrip ready", |state| {
+        state.overlay_count == 0
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+            && state.status == "Scrolling screenshot ready. One frame captured."
+    })?;
+    let mut scroll_control = wait_for_scroll_control(controller.handle, context.timeout)?;
+    let preferred_top = initial_selection.bottom.saturating_add(12);
+    let preferred_bottom = preferred_top.saturating_add(scroll_control.bounds.height() as i32);
+    if preferred_bottom <= display.bottom.saturating_sub(12) {
+        move_owned_window(
+            scroll_control.handle,
+            PhysicalRect {
+                left: scroll_control.bounds.left,
+                top: preferred_top,
+                right: scroll_control.bounds.right,
+                bottom: preferred_bottom,
+            },
+        )?;
+        scroll_control = owned_window(scroll_control.handle)?;
+    }
+    if rects_overlap(initial_selection, scroll_control.bounds) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "scroll control {:?} overlaps capture selection {initial_selection:?}",
+                scroll_control.bounds
+            ),
+        ));
+    }
+    focus_owned_window(scroll_control, context.timeout)?;
+    let scroll_control_report = scroll_control.report();
+    set_fixture_window_bounds(fixture.target, fixture.target_bounds, true)?;
+    let wheel_routing = preflight_scroll_input(initial_selection, fixture.target)?;
+
+    let foreground = inject_scroll_auto_capture(scroll_control.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_auto_capture",
+        foreground,
+        None,
+    )?;
+    let auto = wait_for_capture_state(context, "scroll roundtrip auto capture", |state| {
+        state.overlay_count == 0 && state.status.starts_with("Captured scroll frame 2 (")
+    })?;
+    thread::sleep(context.settle_delay);
+    let second_frame_report = capture_scroll_region_evidence(
+        context,
+        "03-scroll-second-frame.png",
+        initial_selection,
+        fixture.target,
+        fixture.target_bounds,
+        SCROLL_FIXTURE_SCROLL_STEP * 3,
+    )?;
+    if second_frame_report.fingerprint == initial_frame_report.fingerprint {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "auto scroll completed but the fixture viewport did not change",
+        ));
+    }
+
+    focus_owned_window(scroll_control, context.timeout)?;
+    let foreground = inject_key(scroll_control.handle, VK_RETURN)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_finish",
+        foreground,
+        None,
+    )?;
+    let finished = wait_for_capture_state(context, "scroll roundtrip Finish", |state| {
+        state.overlay_count == 1
+            && state.selection.is_some()
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+            && state
+                .status
+                .starts_with("Scrolling screenshot stitched 2 frames")
+    })?;
+    let stitched_selection = finished
+        .selection
+        .ok_or_else(|| io::Error::other("finished scrolling selection disappeared"))?;
+    if stitched_selection.height() <= initial_selection.height() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "stitched selection {stitched_selection:?} did not grow beyond viewport {initial_selection:?}"
+            ),
+        ));
+    }
+    wait_for_window_gone(
+        scroll_control.handle,
+        context.timeout,
+        "scroll Finish control close",
+    )?;
+    let stitched_overlay =
+        wait_for_finished_image_overlay(controller.handle, scroll_control.handle, context.timeout)?;
+    focus_owned_window(stitched_overlay, context.timeout)?;
+    let stitched_evidence =
+        capture_evidence(context, "04-scroll-stitched-overlay.png", stitched_overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_stitched_overlay",
+        stitched_overlay,
+        Some(&stitched_evidence),
+    )?;
+    let foreground = inject_key(stitched_overlay.handle, VK_ESCAPE)?;
+    wait_for_window_gone(
+        stitched_overlay.handle,
+        context.timeout,
+        "scroll Finish Cancel",
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_cancel",
+        foreground,
+        None,
+    )?;
+    let final_state = wait_for_capture_state(context, "scroll roundtrip cleanup", |state| {
+        state.overlay_count == 0
+            && state.pinned_count == 0
+            && state.capture_preflight_ready
+            && matches!(
+                state.session_state.as_str(),
+                "idle" | "completed" | "cancelled"
+            )
+    })?;
+    ensure_input_keys_released(&[
+        (VK_CONTROL, "Control"),
+        (VK_MENU, "Alt"),
+        (VK_F24, "F24"),
+        (VK_SHIFT, "Shift"),
+        (VK_SPACE, "Space"),
+        (VK_RETURN, "Enter"),
+        (VK_ESCAPE, "Escape"),
+        (VK_LBUTTON, "left mouse button"),
+    ])?;
+    unsafe { ShowWindow(controller.handle, SW_HIDE) };
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "scroll roundtrip controller hide",
+    )?;
+    fixture.shutdown(context.timeout.min(Duration::from_secs(3)))?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "scroll roundtrip cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.scroll_roundtrip = Some(ScrollRoundtripReport {
+        fixture_process_id: fixture.process_id,
+        fixture_window,
+        wheel_routing,
+        requested_selection: drag.selection,
+        initial_selection,
+        scroll_control: scroll_control_report,
+        ready_status: ready.status,
+        initial_frame: initial_frame_report,
+        auto_capture_status: auto.status,
+        second_frame: second_frame_report,
+        finish_status: finished.status,
+        stitched_selection,
+        stitched_height_increased: stitched_selection.height() > initial_selection.height(),
         cleanup: CleanupReport {
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
@@ -5091,6 +5868,154 @@ fn capture_region_evidence(
 }
 
 #[cfg(windows)]
+/// Refuses assisted scrolling unless Windows routes the wheel to the verified hovered fixture.
+fn preflight_scroll_input(bounds: PhysicalRect, target: HWND) -> io::Result<u32> {
+    let mut routing = 0_u32;
+    // SAFETY: `routing` is a writable u32 output for SPI_GETMOUSEWHEELROUTING.
+    if unsafe {
+        SystemParametersInfoW(
+            SPI_GETMOUSEWHEELROUTING,
+            0,
+            (&mut routing as *mut u32).cast::<c_void>(),
+            0,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    if routing != MOUSEWHEEL_ROUTING_MOUSE_POS {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "scroll roundtrip requires mouse-position wheel routing; observed mode {routing}"
+            ),
+        ));
+    }
+    let center = POINT {
+        x: bounds.left + bounds.width() as i32 / 2,
+        y: bounds.top + bounds.height() as i32 / 2,
+    };
+    let hit = unsafe { WindowFromPoint(center) };
+    if hit != target && unsafe { IsChild(target, hit) } == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("scroll input point is under HWND {hit:?}, expected fixture target {target:?}"),
+        ));
+    }
+    Ok(routing)
+}
+
+#[cfg(windows)]
+/// Captures the selected viewport while proving the wheel target is the disposable fixture.
+fn capture_scroll_region_evidence(
+    context: &WorkerContext,
+    file_name: &str,
+    bounds: PhysicalRect,
+    target: HWND,
+    fixture_bounds: PhysicalRect,
+    expected_offset: i32,
+) -> io::Result<ScrollFrameReport> {
+    let center = POINT {
+        x: bounds.left + bounds.width() as i32 / 2,
+        y: bounds.top + bounds.height() as i32 / 2,
+    };
+    let hit = unsafe { WindowFromPoint(center) };
+    if hit != target && unsafe { IsChild(target, hit) } == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "scroll viewport center is under HWND {hit:?}, expected fixture target {target:?}"
+            ),
+        ));
+    }
+    let frame = SystemCaptureBackend.capture(bounds)?;
+    validate_scroll_fixture_frame(&frame, fixture_bounds, expected_offset)?;
+    let path = context.session_root.join("screenshots").join(file_name);
+    frame.save_png(&path)?;
+    Ok(ScrollFrameReport {
+        bounds: frame.bounds,
+        width: frame.width,
+        height: frame.height,
+        screenshot: format!("screenshots/{file_name}"),
+        fingerprint: format!("{:016x}", pixel_fingerprint(&frame.pixels)),
+    })
+}
+
+#[cfg(windows)]
+/// Proves every captured BGR pixel came from the deterministic scrolling fixture, not a window on top.
+fn validate_scroll_fixture_frame(
+    frame: &CaptureFrame,
+    fixture_bounds: PhysicalRect,
+    offset: i32,
+) -> io::Result<()> {
+    const ROW_HEIGHT: i32 = 48;
+    const COLUMN_WIDTH: i32 = 128;
+    // A repainted GDI fixture can round capture channels by at most two levels on this path.
+    // Larger differences indicate that another window or control contributed the pixel.
+    const GDI_CHANNEL_TOLERANCE: u8 = 2;
+    frame.validate()?;
+    if frame.format != PixelFormat::Bgra8 || !rect_contains_rect(fixture_bounds, frame.bounds) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "scroll fixture {:?} cannot provide frame {:?} in {:?}",
+                fixture_bounds, frame.bounds, frame.format
+            ),
+        ));
+    }
+
+    for y in 0..frame.height as usize {
+        let screen_y = frame.bounds.top.saturating_add(y as i32);
+        let fixture_y = screen_y.saturating_sub(fixture_bounds.top);
+        let content_row =
+            (fixture_y.div_euclid(ROW_HEIGHT) * ROW_HEIGHT + offset).div_euclid(ROW_HEIGHT);
+        for x in 0..frame.width as usize {
+            let screen_x = frame.bounds.left.saturating_add(x as i32);
+            let fixture_x = screen_x.saturating_sub(fixture_bounds.left);
+            let column = fixture_x.div_euclid(COLUMN_WIDTH);
+            let color = scroll_fixture_color(content_row, column);
+            let expected = [
+                ((color >> 16) & 0xff) as u8,
+                ((color >> 8) & 0xff) as u8,
+                (color & 0xff) as u8,
+            ];
+            let index = y * frame.stride + x * 4;
+            let actual = &frame.pixels[index..index + 3];
+            let differs = actual
+                .iter()
+                .zip(expected)
+                .any(|(observed, expected)| observed.abs_diff(expected) > GDI_CHANNEL_TOLERANCE);
+            if differs {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "scroll fixture pixel mismatch at ({screen_x}, {screen_y}): expected BGR {expected:?}, observed {actual:?}"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn save_scroll_frame_report(
+    context: &WorkerContext,
+    file_name: &str,
+    frame: CaptureFrame,
+) -> io::Result<ScrollFrameReport> {
+    let path = context.session_root.join("screenshots").join(file_name);
+    frame.save_png(&path)?;
+    Ok(ScrollFrameReport {
+        bounds: frame.bounds,
+        width: frame.width,
+        height: frame.height,
+        screenshot: format!("screenshots/{file_name}"),
+        fingerprint: format!("{:016x}", pixel_fingerprint(&frame.pixels)),
+    })
+}
+
+#[cfg(windows)]
 fn pixel_fingerprint(pixels: &[u8]) -> u64 {
     pixels.iter().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
@@ -5139,6 +6064,60 @@ fn wait_for_controller(timeout: Duration) -> io::Result<NativeWindow> {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "visible acceptance controller did not appear",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+/// Finds the one visible process window created by the manual scrolling workflow.
+fn wait_for_scroll_control(controller: *mut c_void, timeout: Duration) -> io::Result<NativeWindow> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let candidates = process_windows()?
+            .into_iter()
+            .filter(|window| window.handle != controller)
+            .collect::<Vec<_>>();
+        if candidates.len() == 1 {
+            return Ok(candidates[0]);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "scroll controller did not become the only visible acceptance window; found {}",
+                    candidates.len()
+                ),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+/// Finds the centered image editor produced after the scrolling stitch completes.
+fn wait_for_finished_image_overlay(
+    controller: *mut c_void,
+    closed_scroll_control: *mut c_void,
+    timeout: Duration,
+) -> io::Result<NativeWindow> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let candidates = process_windows()?
+            .into_iter()
+            .filter(|window| window.handle != controller && window.handle != closed_scroll_control)
+            .collect::<Vec<_>>();
+        if candidates.len() == 1 {
+            return Ok(candidates[0]);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "finished scroll image editor did not become the only visible workflow window; found {}",
+                    candidates.len()
+                ),
             ));
         }
         thread::sleep(Duration::from_millis(25));
@@ -5883,6 +6862,17 @@ fn interaction_plan_for_window(handle: *mut c_void) -> io::Result<InteractionPla
 }
 
 #[cfg(windows)]
+fn scroll_roundtrip_interaction_plan_for_window(
+    handle: *mut c_void,
+) -> io::Result<InteractionPlan> {
+    let window = owned_window(handle)?;
+    scroll_roundtrip_interaction_plan(
+        client_bounds_for_window(handle)?,
+        window.dpi as f32 / WINDOWS_BASE_DPI,
+    )
+}
+
+#[cfg(windows)]
 /// Recomputes the production toolbar from the latest committed physical selection.
 fn interaction_plan_for_capture_selection(
     handle: *mut c_void,
@@ -5916,6 +6906,48 @@ fn interaction_plan_for_capture_selection(
         )
     };
     interaction_plan_for_logical_selection(
+        client,
+        scale,
+        width,
+        height,
+        logical(top_left),
+        logical(bottom_right),
+    )
+}
+
+#[cfg(windows)]
+fn scroll_shot_point_for_capture_selection(
+    handle: *mut c_void,
+    capture_bounds: PhysicalRect,
+    selection: PhysicalRect,
+) -> io::Result<PhysicalPoint> {
+    let window = owned_window(handle)?;
+    let client = client_bounds_for_window(handle)?;
+    let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
+    let (width, height) = overlay_logical_size(client, scale)?;
+    let top_left = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: selection.left,
+            y: selection.top,
+        },
+        client,
+        capture_bounds,
+    )?;
+    let bottom_right = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: selection.right,
+            y: selection.bottom,
+        },
+        client,
+        capture_bounds,
+    )?;
+    let logical = |point: PhysicalPoint| {
+        (
+            (point.x - client.left) as f32 / scale,
+            (point.y - client.top) as f32 / scale,
+        )
+    };
+    scroll_shot_point_for_logical_selection(
         client,
         scale,
         width,
@@ -5988,13 +7020,228 @@ fn guard_foreground(expected: *mut c_void) -> io::Result<NativeWindow> {
 }
 
 #[cfg(windows)]
+/// Confirms that acceptance-owned key and button presses left no global held-input state behind.
+fn ensure_input_keys_released(keys: &[(u16, &str)]) -> io::Result<()> {
+    let held = keys
+        .iter()
+        .filter_map(|(virtual_key, name)| {
+            ((unsafe { GetAsyncKeyState(*virtual_key as i32) } as u16 & 0x8000) != 0)
+                .then_some(*name)
+        })
+        .collect::<Vec<_>>();
+    if held.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "scroll roundtrip left injected input held: {}",
+                held.join(", ")
+            ),
+        ))
+    }
+}
+
+#[cfg(windows)]
+/// Activates a verified window through its non-client title bar without touching global modifiers.
+fn activate_owned_window_via_titlebar(window: NativeWindow) -> io::Result<()> {
+    if left_button_held() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "left mouse button is already held; title-bar activation was aborted",
+        ));
+    }
+    let client = client_bounds_for_window(window.handle)?;
+    if client.top <= window.bounds.top.saturating_add(4) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "process-owned window has no safe non-client title-bar activation point",
+        ));
+    }
+    let point = find_visible_titlebar_point(window, client)?;
+    let cursor = CursorRestore::capture()?;
+    let desktop = virtual_desktop()?;
+    let activation = (|| -> io::Result<()> {
+        send_input_unchecked(&[absolute_mouse_input(point, MOUSEEVENTF_MOVE, desktop)])?;
+        send_titlebar_click(window.handle)
+    })();
+    let cursor_restore = cursor.restore();
+    match (activation, cursor_restore) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(io::Error::other(format!(
+            "window activation succeeded, but restoring the cursor failed: {error}"
+        ))),
+        (Err(error), Err(restore_error)) => Err(io::Error::new(
+            error.kind(),
+            format!("{error}; restoring the cursor also failed: {restore_error}"),
+        )),
+    }
+}
+
+#[cfg(windows)]
+/// Finds an uncovered point in the middle half of a title bar, away from its icon and buttons.
+fn find_visible_titlebar_point(
+    window: NativeWindow,
+    client: PhysicalRect,
+) -> io::Result<PhysicalPoint> {
+    let width = window.bounds.width() as i32;
+    let left = window.bounds.left.saturating_add(width / 4);
+    let right = window.bounds.right.saturating_sub(width / 4);
+    let center = window.bounds.left.saturating_add(width / 2);
+    let y = window.bounds.top + (client.top - window.bounds.top) / 2;
+    let step = 8_i32;
+    let max_steps = ((right - left) / step).max(0);
+
+    for index in 0..=max_steps {
+        let offset = ((index + 1) / 2) * step;
+        let x = if index % 2 == 0 {
+            center.saturating_add(offset)
+        } else {
+            center.saturating_sub(offset)
+        };
+        if x < left || x > right {
+            continue;
+        }
+        let point = PhysicalPoint { x, y };
+        if is_caption_point(window.handle, point)? {
+            return Ok(PhysicalPoint { x, y });
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "no uncovered safe title-bar point belongs to the expected process window",
+    ))
+}
+
+#[cfg(windows)]
+fn left_button_held() -> bool {
+    (unsafe { GetAsyncKeyState(VK_LBUTTON as i32) } as u16 & 0x8000) != 0
+}
+
+#[cfg(windows)]
+/// Checks both z-order ownership and non-client hit testing for one physical screen point.
+fn is_caption_point(expected: HWND, point: PhysicalPoint) -> io::Result<bool> {
+    let native_point = POINT {
+        x: point.x,
+        y: point.y,
+    };
+    let hit = unsafe { WindowFromPoint(native_point) };
+    if hit != expected {
+        return Ok(false);
+    }
+    owned_window(expected)?;
+    let packed_point = ((point.y as u32 & 0xffff) << 16) | (point.x as u32 & 0xffff);
+    let hit_test = unsafe { SendMessageW(expected, WM_NCHITTEST, 0, packed_point as isize) };
+    Ok(hit_test == HTCAPTION as isize)
+}
+
+#[cfg(windows)]
+/// Reads the rounded cursor position and verifies it is still a safe caption on the owned window.
+fn guard_current_caption_target(expected: HWND) -> io::Result<PhysicalPoint> {
+    owned_window(expected)?;
+    let mut point = POINT::default();
+    if unsafe { GetCursorPos(&mut point) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let point = PhysicalPoint {
+        x: point.x,
+        y: point.y,
+    };
+    if !is_caption_point(expected, point)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("actual cursor point {point:?} is not the expected process window's caption"),
+        ));
+    }
+    Ok(point)
+}
+
+#[cfg(windows)]
+/// Clicks once and releases only when Windows confirms this batch inserted the button-down event.
+fn send_titlebar_click(expected: HWND) -> io::Result<()> {
+    guard_current_caption_target(expected)?;
+    if left_button_held() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "left mouse button became held before title-bar activation",
+        ));
+    }
+    let inputs = [
+        mouse_button_input(MOUSEEVENTF_LEFTDOWN),
+        mouse_button_input(MOUSEEVENTF_LEFTUP),
+    ];
+    let sent = unsafe {
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            size_of::<INPUT>() as i32,
+        )
+    };
+    if sent == inputs.len() as u32 {
+        return if left_button_held() {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "left mouse button remained held after title-bar activation",
+            ))
+        } else {
+            Ok(())
+        };
+    }
+
+    let click_error = io::Error::last_os_error();
+    let release_error = if sent == 1 {
+        send_input_unchecked(&[mouse_button_input(MOUSEEVENTF_LEFTUP)]).err()
+    } else {
+        None
+    };
+    let still_held = left_button_held();
+    let detail = match (release_error, still_held) {
+        (Some(error), true) => format!(
+            "title-bar click inserted {sent}/2 events ({click_error}); releasing the accepted button-down failed ({error}) and the button is still held"
+        ),
+        (Some(error), false) => format!(
+            "title-bar click inserted {sent}/2 events ({click_error}); defensive release reported {error}"
+        ),
+        (None, true) => format!(
+            "title-bar click inserted {sent}/2 events ({click_error}); the left button is still held"
+        ),
+        (None, false) => {
+            format!("title-bar click inserted {sent}/2 events: {click_error}")
+        }
+    };
+    Err(io::Error::other(detail))
+}
+
+#[cfg(windows)]
 /// Raises a verified window, then waits until Windows confirms foreground ownership.
 fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()> {
     owned_window(window.handle)?;
     // SAFETY: both calls borrow a verified process-owned HWND without transferring ownership.
     unsafe {
+        ShowWindow(window.handle, SW_RESTORE);
         BringWindowToTop(window.handle);
+        // Reassert activation with the measured rectangle; unlike SWP_NOACTIVATE this also
+        // works when a fresh GPUI popup was created by a background acceptance worker thread.
+        SetWindowPos(
+            window.handle,
+            HWND_TOP,
+            window.bounds.left,
+            window.bounds.top,
+            window.bounds.width() as i32,
+            window.bounds.height() as i32,
+            SWP_SHOWWINDOW,
+        );
         SetForegroundWindow(window.handle);
+    }
+    if unsafe { GetForegroundWindow() } != window.handle {
+        // Switch only to the process-owned HWND already validated above. Unlike an Alt tap, this
+        // cannot leak modifier state into whichever unrelated window currently owns input.
+        unsafe { SwitchToThisWindow(window.handle, 1) };
+    }
+    if unsafe { GetForegroundWindow() } != window.handle {
+        activate_owned_window_via_titlebar(window)?;
     }
     let deadline = Instant::now() + timeout.min(Duration::from_secs(3));
     loop {
@@ -6002,10 +7249,24 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
             return Ok(());
         }
         if Instant::now() >= deadline {
+            let foreground = unsafe { GetForegroundWindow() };
+            let mut foreground_process = 0;
+            unsafe { GetWindowThreadProcessId(foreground, &mut foreground_process) };
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "acceptance window could not become foreground; input injection was aborted",
+                format!(
+                    "acceptance window could not become foreground (expected {:?}, observed {:?}, process {foreground_process}); input injection was aborted",
+                    window.handle, foreground
+                ),
             ));
+        }
+        // Foreground policy may briefly defer activation while a popup is being created. Retry
+        // only the verified process-owned HWND; never send a modifier to the unrelated window
+        // that currently owns global input.
+        unsafe {
+            BringWindowToTop(window.handle);
+            SetForegroundWindow(window.handle);
+            SwitchToThisWindow(window.handle, 1);
         }
         thread::sleep(Duration::from_millis(25));
     }
@@ -6035,6 +7296,24 @@ fn inject_key(expected: *mut c_void, virtual_key: u16) -> io::Result<NativeWindo
         keyboard_input(virtual_key, true),
     ];
     let cleanup = [keyboard_input(virtual_key, true)];
+    send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Activates the scroll controller's explicit Shift+Space auto-capture command.
+fn inject_scroll_auto_capture(expected: *mut c_void) -> io::Result<NativeWindow> {
+    let foreground = guard_foreground(expected)?;
+    let inputs = [
+        keyboard_input(VK_SHIFT, false),
+        keyboard_input(VK_SPACE, false),
+        keyboard_input(VK_SPACE, true),
+        keyboard_input(VK_SHIFT, true),
+    ];
+    let cleanup = [
+        keyboard_input(VK_SPACE, true),
+        keyboard_input(VK_SHIFT, true),
+    ];
     send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
     Ok(foreground)
 }
@@ -6590,6 +7869,15 @@ impl CursorRestore {
 
     /// Restores eagerly so a successful report also proves the cursor side effect was removed.
     fn restore(mut self) -> io::Result<()> {
+        if left_button_held() {
+            // Moving while a title-bar click is still held would drag a native window. Leave the
+            // pointer in place and make the unsafe cleanup state explicit to the caller instead.
+            self.restored = true;
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "cursor was not restored because the left mouse button is still held",
+            ));
+        }
         // SAFETY: the coordinates came from GetCursorPos in this process.
         if unsafe { SetCursorPos(self.original.x, self.original.y) } == 0 {
             return Err(io::Error::last_os_error());
@@ -6602,7 +7890,7 @@ impl CursorRestore {
 #[cfg(windows)]
 impl Drop for CursorRestore {
     fn drop(&mut self) {
-        if !self.restored {
+        if !self.restored && !left_button_held() {
             // SAFETY: the coordinates came from GetCursorPos; Drop is a best-effort fallback.
             unsafe { SetCursorPos(self.original.x, self.original.y) };
         }
@@ -6617,7 +7905,8 @@ mod tests {
         first_stable_recording_match, interaction_command_channel, interaction_plan,
         map_capture_point_to_screen, map_screen_point_to_capture, map_screen_selection_to_capture,
         narrow_edge_interaction_plan, normalize_axis, pin_coexist_interaction_plan,
-        recording_control_plan, recording_failed, recording_saved,
+        recording_control_plan, recording_failed, recording_saved, rect_contains_rect,
+        scroll_roundtrip_interaction_plan, scroll_shot_point_for_logical_selection,
         selection_aspect_ratio_preserved, selection_center_preserved, selection_transform_gesture,
         translated_rect, validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
@@ -6628,7 +7917,7 @@ mod tests {
         FixturePhaseState, NativeWindow, horizontal_pin_layout, panic_payload_message,
         parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
         request_recording_state, validate_fixture_phase_state, validate_recording_frame_content,
-        validate_same_pixel_content,
+        validate_same_pixel_content, validate_scroll_fixture_frame,
     };
     use super::{MediaMetadata, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -6784,6 +8073,111 @@ mod tests {
             options.capture_scenario.workflow(),
             "capture_selection_transform"
         );
+    }
+
+    #[test]
+    fn parser_accepts_scroll_roundtrip_scenario() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "scroll-roundtrip",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::ScrollRoundtrip
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_scroll_roundtrip"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+    }
+
+    #[test]
+    fn scroll_roundtrip_plan_keeps_scroll_shot_inside_the_expanded_menu() {
+        let bounds = PhysicalRect {
+            left: 0,
+            top: -4,
+            right: 2560,
+            bottom: 1436,
+        };
+        let plan = scroll_roundtrip_interaction_plan(bounds, 1.0).unwrap();
+        let point = scroll_shot_point_for_logical_selection(
+            bounds,
+            1.0,
+            2560.0,
+            1440.0,
+            (2560.0 * 0.16, (1440.0_f32 * 0.12).max(120.0)),
+            (2560.0 * 0.74, (1440.0_f32 * 0.12).max(120.0) + 380.0),
+        )
+        .unwrap();
+        assert_eq!(
+            PhysicalRect::new(plan.drag_start, plan.drag_end),
+            PhysicalRect {
+                left: 410,
+                top: 169,
+                right: 1894,
+                bottom: 549,
+            }
+        );
+        assert_eq!(point, PhysicalPoint { x: 1597, y: 443 });
+        assert!(bounds.contains(point));
+    }
+
+    #[test]
+    fn scroll_roundtrip_minimum_height_keeps_the_full_selection_inside_the_fixture() {
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1280,
+            bottom: 740,
+        };
+        let fixture = PhysicalRect {
+            left: 120,
+            top: 100,
+            right: 1160,
+            bottom: 640,
+        };
+        let plan = scroll_roundtrip_interaction_plan(bounds, 1.0).unwrap();
+        let selection = PhysicalRect::new(plan.drag_start, plan.drag_end);
+
+        assert!(rect_contains_rect(fixture, selection));
+        assert!(selection.height() >= 16);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scroll_fixture_oracle_rejects_one_foreign_pixel() {
+        let fixture = PhysicalRect {
+            left: 100,
+            top: 100,
+            right: 500,
+            bottom: 500,
+        };
+        let bounds = PhysicalRect {
+            left: 100,
+            top: 100,
+            right: 102,
+            bottom: 102,
+        };
+        let mut pixels = [0x1c, 0x4e, 0x80, 0xff].repeat(4);
+        let frame = |pixels: Vec<u8>| CaptureFrame {
+            bounds,
+            width: 2,
+            height: 2,
+            stride: 8,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(pixels),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        assert!(validate_scroll_fixture_frame(&frame(pixels.clone()), fixture, 0).is_ok());
+        pixels[5] ^= 0xff;
+        let error = validate_scroll_fixture_frame(&frame(pixels), fixture, 0).unwrap_err();
+        assert!(error.to_string().contains("pixel mismatch"));
     }
 
     #[test]
