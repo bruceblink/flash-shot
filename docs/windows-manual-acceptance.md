@@ -86,6 +86,8 @@ cargo run --release --bin settings-ui-acceptance -- dark 1280 720 target/ui-acce
 cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection
 cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-more
 cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection-bottom-right-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-bottom-right-more
+# 显式输入验收：会短暂取得焦点并移动全局鼠标，仅在可丢弃的单屏桌面会话中运行。
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
 cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
 # 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
@@ -119,6 +121,11 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 `overlay-selection-bottom-right-more` 会把 160x96 物理像素选区放在右下边缘，并通过生产
 的 More 状态切换路径展开菜单；用它复核工具栏上翻、菜单避边和状态栏共存。这仍不注入
 鼠标输入，真实拖动与命中测试继续保留在手工矩阵。
+`overlay-interaction-acceptance` 默认拒绝运行；只有显式提供 `--allow-input` 后才会创建隔离
+profile，注册 `Ctrl+Alt+F24`，并在每批输入前确认前台 HWND 属于探针进程。它执行真实拖选、
+More/Less、覆盖层仍打开时再次 Capture、第二次拖选和 Cancel，保存 JSON 与四张桌面截图，
+最后恢复原始光标。证据会包含当时可见的桌面内容；探针不执行 Copy、Save、Pin 或录屏，
+因此不能单独把完整单屏交互矩阵标为通过。
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
@@ -224,6 +231,7 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 | 2026-08-11 | `current-overlay-ui-acceptance-single-100` | Release `settings-ui-acceptance` 新增隔离的 `CaptureOverlay` 表面；397 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-control-release.png` 与 `overlay-window-release.png` 的同名 JSON 均记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核候选框、Control/Window 像素 HUD、放大镜和 Cancel 无文字截断或重叠。它避免与生产单实例锁竞争，但只证明固定候选的原生渲染，不替代真实拖动、点击采用或完整录屏 UI 矩阵。 |
 | 2026-08-11 | `current-compact-overlay-selection-single-100` | Release `settings-ui-acceptance` 新增固定选区与展开 More 菜单表面；398 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-selection-release.png` 与 `overlay-selection-more-release.png` 的同名 JSON 均记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核 420px 画面里的 Mark、Pin、Copy、Save、More/Less、Cancel 和全部 More 命令均完整可读、未越出安全边距或重叠主动作栏；展开菜单按设计覆盖选区视觉但不遮挡状态与主操作。它不替代真实拖动与点击矩阵。 |
 | 2026-08-11 | `current-bottom-right-overlay-selection-single-100` | Release `settings-ui-acceptance` 增加右下 160x96 固定选区，并以生产 More 状态切换展开菜单；边缘尺寸标签的布局回归验证会避开上翻主操作栏。399 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-selection-bottom-right-more-release.png` 的同名 JSON 记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核全部 More 命令、Less、Cancel、Copy、Save、Pin、Mark 和状态栏均完整可读；主操作栏从右下选区上方显示，菜单保持在画面内。它不替代真实拖动、鼠标命中或多显示器验收。 |
+| 2026-08-11 | `current-overlay-interaction-single-100` | 隔离的 Release `overlay-interaction-acceptance` 在一块 2560x1440、DPI 96 显示器上完成真实拖选、More 展开/收起、活动覆盖层直接重触发 Capture、第二次拖选和 Cancel；独立 `Ctrl+Alt+F24` 注册成功，两个覆盖层 HWND 不同，结束后无探针进程。 | 待执行 | 报告与四张原生截图位于 `target/overlay-interaction-acceptance/session-1786418660219-8616/`；已目视复核选区保持 1185x430 物理像素，More 菜单和主工具栏无重叠，切换后不残留相反状态的 tooltip，第二覆盖层继续响应输入。原 PID 24296 未被操作；Copy、Save、Pin、键盘微调和完整取消清理仍保留在单屏手工矩阵。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

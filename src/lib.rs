@@ -25,7 +25,7 @@ use history::ScreenshotHistory;
 use performance::PerformanceRecorder;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use settings::UserSettings;
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, sync::mpsc::SyncSender, time::Instant};
 
 actions!(flash_shot, [Quit]);
 
@@ -85,6 +85,7 @@ pub fn run_settings_ui_acceptance(
             update_check_state: acceptance.update_check_state,
             display_index: acceptance.display_index,
             pinned_saved_feedback_preview: acceptance.pinned_saved_feedback_preview,
+            interaction_shortcut_readiness: None,
         },
     )
 }
@@ -113,6 +114,36 @@ pub fn run_overlay_ui_acceptance(
             cx.quit();
         }
     })
+}
+
+/// Starts the real capture service with a visible, disposable settings window for input-driven QA.
+///
+/// The caller supplies isolated settings and history paths. Unlike the production binary, this
+/// entry point does not acquire the single-instance mutex, so an acceptance process can exercise
+/// the normal global-shortcut and overlay workflow without reading the user's profile.
+pub fn run_overlay_interaction_acceptance(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    shortcut_readiness: SyncSender<bool>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_with_settings_window(
+        started_at,
+        performance,
+        history,
+        settings,
+        settings_path,
+        SettingsWindowOptions {
+            width: 520.0,
+            height: 640.0,
+            show: true,
+            section: "capture".to_owned(),
+            interaction_shortcut_readiness: Some(shortcut_readiness),
+            ..SettingsWindowOptions::default()
+        },
+    )
 }
 
 /// Describes the disposable settings window rendered by the native screenshot acceptance probe.
@@ -228,6 +259,8 @@ struct SettingsWindowOptions {
     update_check_state: UpdateUiAcceptanceState,
     display_index: Option<usize>,
     pinned_saved_feedback_preview: bool,
+    /// Reports whether the isolated acceptance shortcut was registered before input starts.
+    interaction_shortcut_readiness: Option<SyncSender<bool>>,
 }
 
 impl Default for SettingsWindowOptions {
@@ -244,6 +277,7 @@ impl Default for SettingsWindowOptions {
             update_check_state: UpdateUiAcceptanceState::Idle,
             display_index: None,
             pinned_saved_feedback_preview: false,
+            interaction_shortcut_readiness: None,
         }
     }
 }
@@ -303,11 +337,15 @@ fn run_with_settings_window(
         let ocr_support_check_state = window_options.ocr_support_check_state;
         let update_check_state = window_options.update_check_state;
         let pinned_saved_feedback_preview = window_options.pinned_saved_feedback_preview;
+        let interaction_shortcut_readiness = window_options.interaction_shortcut_readiness;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
             let app =
                 cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx));
+            if let Some(readiness) = interaction_shortcut_readiness {
+                let _ = readiness.send(app.read(cx).capture_shortcut_active_for_acceptance());
+            }
             app.update(cx, |app, _| {
                 app.set_settings_section_for_acceptance(&initial_section);
                 app.set_recording_state_for_acceptance(recording_state);

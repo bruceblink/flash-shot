@@ -407,6 +407,11 @@ impl FlashShotApp {
         }
     }
 
+    /// Lets the isolated input runner refuse before sending keys when F24 registration failed.
+    pub(crate) const fn capture_shortcut_active_for_acceptance(&self) -> bool {
+        self.capture_shortcut_enabled
+    }
+
     pub fn new(
         performance: PerformanceRecorder,
         history: ScreenshotHistory,
