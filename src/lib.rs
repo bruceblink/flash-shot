@@ -155,6 +155,8 @@ pub struct OverlayInteractionCaptureState {
     pub session_state: String,
     pub selection: Option<domain::geometry::PhysicalRect>,
     pub overlay_count: usize,
+    pub more_actions_visible: bool,
+    pub annotation_controls_visible: bool,
     pub pinned_count: usize,
     pub pinned_source_bounds: Option<domain::geometry::PhysicalRect>,
     pub capture_preflight_ready: bool,

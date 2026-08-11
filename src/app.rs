@@ -815,6 +815,8 @@ impl FlashShotApp {
                                 // Copy, never an in-flight mouse-move preview awaiting mouse-up.
                                 selection: this.session.selection(),
                                 overlay_count: this.overlay_windows.len(),
+                                more_actions_visible: this.overlay_more_actions,
+                                annotation_controls_visible: this.overlay_annotation_controls,
                                 pinned_count: this.pinned_windows.len(),
                                 pinned_source_bounds,
                                 capture_preflight_ready: this.capture_preflight_ready(),

@@ -4580,6 +4580,64 @@ mod tests {
     }
 
     #[test]
+    fn real_display_narrow_edge_marking_dock_stays_above_the_selection() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(2560.0), px(1440.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1440,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+        let selection = overlay_ui_acceptance_selection(
+            bounds,
+            crate::OverlayUiAcceptanceSelectionPlacement::BottomRight,
+        );
+        assert_eq!(
+            selection,
+            PhysicalRect {
+                left: 2382,
+                top: 1332,
+                right: 2542,
+                bottom: 1428,
+            }
+        );
+
+        let primary = action_toolbar_layout(Some(selection), transform, viewport).unwrap();
+        assert_eq!(
+            primary,
+            ActionToolbarLayout {
+                left: 2200.0,
+                top: 1270.0,
+                width: 342.0,
+                height: 50.0,
+            }
+        );
+        let marking = annotation_toolbar_layout(
+            Some(selection),
+            transform,
+            viewport,
+            Some(primary),
+            annotation_toolbar_items(false, false, false, false, false),
+            annotation_style_panel_height(false),
+        )
+        .unwrap();
+        assert_eq!(marking.left, 1642.0);
+        assert_eq!(marking.top, 1134.0);
+        assert_eq!(marking.width, 900.0);
+        assert_eq!(marking.height, 186.0);
+        assert_eq!(marking.tools_width, 728.0);
+        assert_eq!(marking.tools_top, 1192.0);
+        assert_eq!(marking.style_left, 2378.0);
+        assert_eq!(marking.style_top, 1192.0);
+        assert_eq!(marking.action_toolbar.left, primary.left);
+        assert_eq!(marking.action_toolbar.top, 1134.0);
+        assert!(marking.actions_above_tools);
+        assert!(marking.top >= OVERLAY_EDGE_INSET);
+        assert!(marking.top + marking.height + OVERLAY_ACTION_BAR_GAP <= selection.top as f32);
+    }
+
+    #[test]
     fn smart_target_hud_belongs_to_the_display_under_the_pointer() {
         let left_display = PhysicalRect {
             left: 0,

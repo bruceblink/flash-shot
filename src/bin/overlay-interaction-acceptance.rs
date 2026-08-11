@@ -108,6 +108,12 @@ const WINDOW_TIMELINE_FRAMES_PER_SECOND: u16 = 5;
 const WINDOW_TIMELINE_STABLE_FRAMES: usize = 2;
 const MIN_WINDOW_FIXTURE_WIDTH: i64 = 240;
 const MIN_WINDOW_FIXTURE_HEIGHT: i64 = 120;
+const NARROW_EDGE_SELECTION_WIDTH: f32 = 160.0;
+const NARROW_EDGE_SELECTION_HEIGHT: f32 = 96.0;
+const NARROW_EDGE_RIGHT_INSET: f32 = 18.0;
+const NARROW_EDGE_BOTTOM_INSET: f32 = 12.0;
+const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 900.0;
+const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 186.0;
 #[cfg(windows)]
 const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
 #[cfg(windows)]
@@ -126,7 +132,24 @@ struct Options {
     output_dir: PathBuf,
     timeout: Duration,
     settle_delay: Duration,
+    capture_scenario: CaptureScenarioOption,
     record_target: Option<RecordTargetOption>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum CaptureScenarioOption {
+    #[default]
+    Standard,
+    NarrowEdge,
+}
+
+impl CaptureScenarioOption {
+    const fn workflow(self) -> &'static str {
+        match self {
+            Self::Standard => "capture",
+            Self::NarrowEdge => "capture_narrow_edge",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,12 +186,14 @@ impl Options {
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             timeout: DEFAULT_TIMEOUT,
             settle_delay: DEFAULT_SETTLE_DELAY,
+            capture_scenario: CaptureScenarioOption::Standard,
             record_target: None,
         };
         let mut arguments = arguments.into_iter();
         let mut output_seen = false;
         let mut timeout_seen = false;
         let mut settle_seen = false;
+        let mut capture_scenario_seen = false;
         let mut record_target_seen = false;
         while let Some(argument) = arguments.next() {
             let argument = argument
@@ -201,6 +226,18 @@ impl Options {
                     )?;
                     settle_seen = true;
                 }
+                "--capture-scenario" if !capture_scenario_seen => {
+                    let scenario = arguments
+                        .next()
+                        .ok_or_else(usage)?
+                        .into_string()
+                        .map_err(|_| "capture scenario must be valid Unicode".to_owned())?;
+                    options.capture_scenario = match scenario.as_str() {
+                        "narrow-edge" => CaptureScenarioOption::NarrowEdge,
+                        _ => return Err("capture scenario must be 'narrow-edge'".to_owned()),
+                    };
+                    capture_scenario_seen = true;
+                }
                 "--record-target" if !record_target_seen => {
                     let target = arguments
                         .next()
@@ -214,7 +251,8 @@ impl Options {
                     });
                     record_target_seen = true;
                 }
-                "--output-dir" | "--timeout-ms" | "--settle-ms" | "--record-target" => {
+                "--output-dir" | "--timeout-ms" | "--settle-ms" | "--capture-scenario"
+                | "--record-target" => {
                     return Err(format!("{argument} may only be supplied once"));
                 }
                 _ => return Err(usage()),
@@ -222,6 +260,11 @@ impl Options {
         }
         if options.output_dir.as_os_str().is_empty() {
             return Err("output directory must not be empty".to_owned());
+        }
+        if options.capture_scenario != CaptureScenarioOption::Standard
+            && options.record_target.is_some()
+        {
+            return Err("--capture-scenario cannot be combined with --record-target".to_owned());
         }
         Ok(options)
     }
@@ -250,7 +293,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge> | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -279,6 +322,7 @@ fn interaction_command_channel() -> (
 struct InteractionPlan {
     drag_start: PhysicalPoint,
     drag_end: PhysicalPoint,
+    mark: PhysicalPoint,
     pin: PhysicalPoint,
     copy: PhysicalPoint,
     save: PhysicalPoint,
@@ -286,6 +330,13 @@ struct InteractionPlan {
     cancel: PhysicalPoint,
     record_area: PhysicalPoint,
     record_window: PhysicalPoint,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NarrowEdgeInteractionPlan {
+    base: InteractionPlan,
+    expanded_mark: PhysicalPoint,
+    evidence_rest: PhysicalPoint,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -326,8 +377,8 @@ fn recording_control_plan(
     })
 }
 
-/// Converts the overlay client area's logical geometry into physical screen points for SendInput.
-fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionPlan> {
+/// Validates an overlay client and returns its logical dimensions for deterministic input plans.
+fn overlay_logical_size(bounds: PhysicalRect, scale: f32) -> io::Result<(f32, f32)> {
     if !scale.is_finite() || !(1.0..=4.0).contains(&scale) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -342,9 +393,31 @@ fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionP
             "overlay must be at least 700 x 500 logical pixels for interaction acceptance",
         ));
     }
+    Ok((width, height))
+}
 
-    let start = (width * 0.22, height * 0.20);
-    let end = (width * 0.68, height * 0.50);
+/// Maps a committed logical selection and its production toolbar into physical screen points.
+fn interaction_plan_for_logical_selection(
+    bounds: PhysicalRect,
+    scale: f32,
+    width: f32,
+    height: f32,
+    start: (f32, f32),
+    end: (f32, f32),
+) -> io::Result<InteractionPlan> {
+    if start.0 < 0.0
+        || start.1 < 0.0
+        || end.0 <= start.0
+        || end.1 <= start.1
+        || end.0 > width
+        || end.1 > height
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "interaction selection must be increasing and inside the overlay client",
+        ));
+    }
+
     let toolbar_width = 342.0_f32.min(width - 36.0).min(620.0);
     let toolbar_height = 50.0;
     let left_min = 18.0;
@@ -367,6 +440,7 @@ fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionP
         drag_start: screen_point(start),
         drag_end: screen_point(end),
         // The primary row is fixed: Mark, Pin, Copy, Save, More, then Cancel.
+        mark: screen_point((toolbar_left + 33.0, toolbar_top + 25.0)),
         pin: screen_point((toolbar_left + 87.0, toolbar_top + 25.0)),
         copy: screen_point((toolbar_left + 139.0, toolbar_top + 25.0)),
         save: screen_point((toolbar_left + 193.0, toolbar_top + 25.0)),
@@ -376,6 +450,73 @@ fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionP
         // final item of row four and the sole item of row five above this toolbar.
         record_area: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 75.0)),
         record_window: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 33.0)),
+    })
+}
+
+/// Converts the standard proportional selection into physical screen points for SendInput.
+fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionPlan> {
+    let (width, height) = overlay_logical_size(bounds, scale)?;
+    interaction_plan_for_logical_selection(
+        bounds,
+        scale,
+        width,
+        height,
+        (width * 0.22, height * 0.20),
+        (width * 0.68, height * 0.50),
+    )
+}
+
+/// Places a 160x96 selection at the bottom-right edge and predicts the relocated Mark control.
+fn narrow_edge_interaction_plan(
+    bounds: PhysicalRect,
+    scale: f32,
+) -> io::Result<NarrowEdgeInteractionPlan> {
+    if (scale - 1.0).abs() > 0.001 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "narrow-edge acceptance requires a 100%-scaled overlay",
+        ));
+    }
+    let (width, height) = overlay_logical_size(bounds, scale)?;
+    if width < NARROW_EDGE_ANNOTATION_WIDTH + NARROW_EDGE_RIGHT_INSET * 2.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "narrow-edge acceptance requires the wide annotation dock layout",
+        ));
+    }
+    let end = (
+        width - NARROW_EDGE_RIGHT_INSET,
+        height - NARROW_EDGE_BOTTOM_INSET,
+    );
+    let start = (
+        end.0 - NARROW_EDGE_SELECTION_WIDTH,
+        end.1 - NARROW_EDGE_SELECTION_HEIGHT,
+    );
+    let base = interaction_plan_for_logical_selection(bounds, scale, width, height, start, end)?;
+
+    // The production wide dock is 900x186 with the 342px action row above its tools.
+    let annotation_left_min = NARROW_EDGE_RIGHT_INSET;
+    let annotation_left_limit =
+        (width - NARROW_EDGE_RIGHT_INSET - NARROW_EDGE_ANNOTATION_WIDTH).max(annotation_left_min);
+    let annotation_left =
+        (end.0 - NARROW_EDGE_ANNOTATION_WIDTH).clamp(annotation_left_min, annotation_left_limit);
+    let annotation_top = start.1 - 12.0 - NARROW_EDGE_ANNOTATION_HEIGHT;
+    if annotation_top < NARROW_EDGE_RIGHT_INSET {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "narrow-edge annotation dock does not fit above the selection",
+        ));
+    }
+    let screen_point = |point: (f32, f32)| PhysicalPoint {
+        x: bounds.left + (point.0 * scale).round() as i32,
+        y: bounds.top + (point.1 * scale).round() as i32,
+    };
+    let expanded_action_left = annotation_left + NARROW_EDGE_ANNOTATION_WIDTH - 342.0;
+    Ok(NarrowEdgeInteractionPlan {
+        base,
+        expanded_mark: screen_point((expanded_action_left + 33.0, annotation_top + 25.0)),
+        // Keep the always-visible magnifier away from the edge toolbars being reviewed.
+        evidence_rest: screen_point((24.0, 24.0)),
     })
 }
 
@@ -494,6 +635,7 @@ struct AcceptanceReport {
     recording_states: Vec<RecordingStateReport>,
     recording: Option<RecordingReport>,
     capture_actions: Option<CaptureActionReport>,
+    narrow_edge: Option<NarrowEdgeReport>,
     error: Option<String>,
 }
 
@@ -624,6 +766,31 @@ struct CaptureActionReport {
     pin: PinReport,
     copy: CopyReport,
     cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct NarrowEdgeReport {
+    controller_client_bounds: PhysicalRect,
+    controller_logical_width: u32,
+    controller_logical_height: u32,
+    requested_selection: PhysicalRect,
+    committed_selection: PhysicalRect,
+    selection_content: NarrowEdgeContentReport,
+    more_opened: bool,
+    more_closed: bool,
+    annotation_opened: bool,
+    annotation_closed: bool,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct NarrowEdgeContentReport {
+    bounds: PhysicalRect,
+    width: u32,
+    height: u32,
+    fingerprint: String,
+    luma_min: u8,
+    luma_max: u8,
 }
 
 #[derive(serde::Serialize)]
@@ -779,6 +946,7 @@ struct WorkerContext {
     copy_results: Receiver<CaptureFrame>,
     timeout: Duration,
     settle_delay: Duration,
+    capture_scenario: CaptureScenarioOption,
     record_target: Option<RecordTargetOption>,
 }
 
@@ -834,6 +1002,20 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .next()
         .expect("one display was checked");
+    if options.capture_scenario == CaptureScenarioOption::NarrowEdge
+        && (display.dpi_x != 96
+            || display.dpi_y != 96
+            || (display.scale_factor - 1.0).abs() > 0.001)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "narrow-edge acceptance requires one 100%-scaled display, found {}x{} DPI at scale {}",
+                display.dpi_x, display.dpi_y, display.scale_factor
+            ),
+        )
+        .into());
+    }
     let output_root = std::path::absolute(options.output_dir)?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -861,10 +1043,10 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let (shortcut_ready_tx, shortcut_ready_rx) = mpsc::sync_channel(1);
     let (interaction_tx, interaction_rx) = interaction_command_channel();
     let (copy_result_tx, copy_result_rx) = mpsc::channel();
-    let (window_width, window_height) = if options.record_target.is_some() {
-        (980.0, 760.0)
-    } else {
-        (520.0, 640.0)
+    let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
+        (Some(_), _) => (980.0, 760.0),
+        (None, CaptureScenarioOption::NarrowEdge) => (420.0, 420.0),
+        (None, CaptureScenarioOption::Standard) => (520.0, 640.0),
     };
 
     let worker_context = WorkerContext {
@@ -876,6 +1058,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         copy_results: copy_result_rx,
         timeout: options.timeout,
         settle_delay: options.settle_delay,
+        capture_scenario: options.capture_scenario,
         record_target: options.record_target,
     };
     let mut report = initial_report(&worker_context);
@@ -933,11 +1116,12 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        schema_version: 5,
+        schema_version: 6,
         test: "overlay_interaction_acceptance",
-        workflow: context
-            .record_target
-            .map_or("capture", RecordTargetOption::workflow),
+        workflow: context.record_target.map_or_else(
+            || context.capture_scenario.workflow(),
+            RecordTargetOption::workflow,
+        ),
         status: "running".to_owned(),
         process_id: unsafe { GetCurrentProcessId() },
         shortcut: CAPTURE_SHORTCUT,
@@ -955,6 +1139,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         recording_states: Vec::new(),
         recording: None,
         capture_actions: None,
+        narrow_edge: None,
         error: None,
     }
 }
@@ -1681,10 +1866,12 @@ fn run_interaction_sequence(
         }
     };
 
-    let outcome = if context.record_target.is_some() {
-        execute_recording_interactions(context, report)
-    } else {
-        execute_capture_interactions(context, report)
+    let outcome = match (context.record_target, context.capture_scenario) {
+        (Some(_), _) => execute_recording_interactions(context, report),
+        (None, CaptureScenarioOption::NarrowEdge) => {
+            execute_narrow_edge_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
     let cursor_result = cursor.restore();
     let final_result = match (outcome, cursor_result) {
@@ -1709,6 +1896,263 @@ fn run_interaction_sequence(
         (Ok(()), Err(error)) => Err(error),
         (Ok(()), Ok(())) => Ok(()),
     }
+}
+
+#[cfg(windows)]
+/// Exercises the real minimum Settings window and the edge-placement More/Mark toolbars.
+fn execute_narrow_edge_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    let controller_client = client_bounds_for_window(controller.handle)?;
+    let controller_scale = controller.dpi as f32 / WINDOWS_BASE_DPI;
+    let controller_logical_width =
+        (controller_client.width() as f32 / controller_scale).round() as u32;
+    let controller_logical_height =
+        (controller_client.height() as f32 / controller_scale).round() as u32;
+    if controller.dpi != 96 || controller_logical_width != 420 || controller_logical_height != 420 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "minimum Settings client is {controller_logical_width}x{controller_logical_height} at {} DPI, expected 420x420 at 96 DPI",
+                controller.dpi
+            ),
+        ));
+    }
+    report.controller_window = Some(controller.report());
+    let controller_rest = PhysicalPoint {
+        x: controller_client.left + controller_client.width() as i32 / 2,
+        y: controller_client.top + 20,
+    };
+    let foreground = inject_mouse_move(controller.handle, controller_rest)?;
+    thread::sleep(context.settle_delay);
+    let minimum_settings = capture_evidence(context, "00-min-settings.png", controller)?;
+    record_step(
+        report,
+        &context.report_path,
+        "minimum_settings_ready",
+        foreground,
+        Some(&minimum_settings),
+    )?;
+
+    let foreground = inject_capture_shortcut(controller.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "narrow_capture_shortcut",
+        foreground,
+        None,
+    )?;
+    let overlay = wait_for_overlay(
+        controller.handle,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let plan = narrow_edge_interaction_plan_for_window(overlay.handle)?;
+    let drag = inject_mouse_drag(
+        overlay.handle,
+        plan.base.drag_start,
+        plan.base.drag_end,
+        context.display.physical_bounds,
+    )?;
+    let selected_state = wait_for_capture_state(context, "narrow edge selection", |state| {
+        state.session_state == "selecting"
+            && state.selection.is_some()
+            && state.overlay_count == 1
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+    })?;
+    let committed_selection = selected_state
+        .selection
+        .ok_or_else(|| io::Error::other("narrow edge selection disappeared"))?;
+    validate_selection_geometry(
+        drag.selection,
+        committed_selection,
+        "narrow edge overlay selection",
+    )?;
+    if committed_selection.width() != NARROW_EDGE_SELECTION_WIDTH as u32
+        || committed_selection.height() != NARROW_EDGE_SELECTION_HEIGHT as u32
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "narrow edge selection is {}x{}, expected {}x{}",
+                committed_selection.width(),
+                committed_selection.height(),
+                NARROW_EDGE_SELECTION_WIDTH as u32,
+                NARROW_EDGE_SELECTION_HEIGHT as u32
+            ),
+        ));
+    }
+    let selection_frame =
+        query_capture_content(context, context.timeout.min(Duration::from_secs(1)))?
+            .selection
+            .ok_or_else(|| {
+                io::Error::other("narrow edge selection did not expose source pixels")
+            })?;
+    validate_frame_dimensions(
+        &selection_frame,
+        committed_selection,
+        "narrow edge selection frame",
+    )?;
+    if selection_frame.bounds != committed_selection {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "narrow edge frame bounds {:?} do not match selection {committed_selection:?}",
+                selection_frame.bounds
+            ),
+        ));
+    }
+    let selection_metrics = frame_content_metrics(&selection_frame)?;
+    let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let selected = capture_evidence(context, "01-edge-selected.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "narrow_selection_drag",
+        foreground,
+        Some(&selected),
+    )?;
+
+    inject_mouse_click(overlay.handle, plan.base.more)?;
+    let more_open = wait_for_capture_state(context, "narrow More open", |state| {
+        state.selection == Some(committed_selection)
+            && state.overlay_count == 1
+            && state.more_actions_visible
+            && !state.annotation_controls_visible
+    })?;
+    let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let more = capture_evidence(context, "02-edge-more.png", overlay)?;
+    ensure_evidence_changed(&selected, &more, "narrow More did not change the overlay")?;
+    record_step(
+        report,
+        &context.report_path,
+        "narrow_more_open",
+        foreground,
+        Some(&more),
+    )?;
+
+    inject_mouse_click(overlay.handle, plan.base.more)?;
+    let more_closed = wait_for_capture_state(context, "narrow More close", |state| {
+        state.selection == Some(committed_selection)
+            && state.overlay_count == 1
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+    })?;
+    let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let less = capture_evidence(context, "03-edge-less.png", overlay)?;
+    ensure_evidence_changed(&more, &less, "narrow Less did not close the menu")?;
+    record_step(
+        report,
+        &context.report_path,
+        "narrow_more_closed",
+        foreground,
+        Some(&less),
+    )?;
+
+    inject_mouse_click(overlay.handle, plan.base.mark)?;
+    let annotation_open = wait_for_capture_state(context, "narrow Mark open", |state| {
+        state.selection == Some(committed_selection)
+            && state.overlay_count == 1
+            && !state.more_actions_visible
+            && state.annotation_controls_visible
+    })?;
+    let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let marking = capture_evidence(context, "04-edge-mark.png", overlay)?;
+    ensure_evidence_changed(&less, &marking, "narrow Mark did not open its controls")?;
+    record_step(
+        report,
+        &context.report_path,
+        "narrow_mark_open",
+        foreground,
+        Some(&marking),
+    )?;
+
+    inject_mouse_click(overlay.handle, plan.expanded_mark)?;
+    let annotation_closed = wait_for_capture_state(context, "narrow Mark close", |state| {
+        state.selection == Some(committed_selection)
+            && state.overlay_count == 1
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+    })?;
+    let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let marking_closed = capture_evidence(context, "05-edge-mark-closed.png", overlay)?;
+    ensure_evidence_changed(
+        &marking,
+        &marking_closed,
+        "narrow Mark did not close its controls",
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "narrow_mark_closed",
+        foreground,
+        Some(&marking_closed),
+    )?;
+
+    let foreground = inject_mouse_click(overlay.handle, plan.base.cancel)?;
+    wait_for_window_gone(overlay.handle, context.timeout, "narrow Cancel")?;
+    record_step(
+        report,
+        &context.report_path,
+        "narrow_cancel",
+        foreground,
+        None,
+    )?;
+    let final_state = wait_for_capture_state(context, "narrow edge cleanup", |state| {
+        state.overlay_count == 0
+            && state.pinned_count == 0
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+            && state.capture_preflight_ready
+            && matches!(
+                state.session_state.as_str(),
+                "idle" | "completed" | "cancelled"
+            )
+    })?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "narrow edge cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.narrow_edge = Some(NarrowEdgeReport {
+        controller_client_bounds: controller_client,
+        controller_logical_width,
+        controller_logical_height,
+        requested_selection: drag.selection,
+        committed_selection,
+        selection_content: NarrowEdgeContentReport {
+            bounds: selection_frame.bounds,
+            width: selection_frame.width,
+            height: selection_frame.height,
+            fingerprint: format!("{:016x}", selection_metrics.fingerprint),
+            luma_min: selection_metrics.luma_min,
+            luma_max: selection_metrics.luma_max,
+        },
+        more_opened: more_open.more_actions_visible,
+        more_closed: !more_closed.more_actions_visible,
+        annotation_opened: annotation_open.annotation_controls_visible,
+        annotation_closed: !annotation_closed.annotation_controls_visible,
+        cleanup: CleanupReport {
+            session_state: final_state.session_state,
+            overlay_count: final_state.overlay_count,
+            pinned_count: final_state.pinned_count,
+            visible_process_windows,
+            capture_preflight_ready: final_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
 }
 
 #[cfg(windows)]
@@ -3549,7 +3993,7 @@ struct Evidence {
 }
 
 #[cfg(windows)]
-/// Captures only the verified foreground overlay and returns a lightweight change fingerprint.
+/// Captures only the verified foreground native window and returns a change fingerprint.
 fn capture_evidence(
     context: &WorkerContext,
     file_name: &str,
@@ -4040,6 +4484,18 @@ fn interaction_plan_for_window(handle: *mut c_void) -> io::Result<InteractionPla
 }
 
 #[cfg(windows)]
+/// Re-measures the overlay before placing the real bottom-right narrow-selection controls.
+fn narrow_edge_interaction_plan_for_window(
+    handle: *mut c_void,
+) -> io::Result<NarrowEdgeInteractionPlan> {
+    let window = owned_window(handle)?;
+    narrow_edge_interaction_plan(
+        client_bounds_for_window(handle)?,
+        window.dpi as f32 / WINDOWS_BASE_DPI,
+    )
+}
+
+#[cfg(windows)]
 /// Re-reads the client origin and DPI immediately before clicking Record-page controls.
 fn recording_control_plan_for_window(handle: *mut c_void) -> io::Result<RecordingControlPlan> {
     let window = owned_window(handle)?;
@@ -4162,6 +4618,19 @@ fn inject_unicode_text(expected: *mut c_void, text: &str) -> io::Result<NativeWi
         cleanup.push(unicode_keyboard_input(code_unit, true));
     }
     send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Moves away from a clicked control while preserving the same foreground and hit-test guards.
+fn inject_mouse_move(expected: *mut c_void, point: PhysicalPoint) -> io::Result<NativeWindow> {
+    let foreground = guard_foreground(expected)?;
+    let desktop = virtual_desktop()?;
+    send_input_batch(
+        expected,
+        &[absolute_mouse_input(point, MOUSEEVENTF_MOVE, desktop)],
+    )?;
+    guard_current_pointer_target(expected)?;
     Ok(foreground)
 }
 
@@ -4451,12 +4920,12 @@ impl Drop for CursorRestore {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_OUTPUT_DIR, Options, RecordTargetOption, ensure_input_authorized,
-        first_stable_recording_match, interaction_command_channel, interaction_plan,
-        map_screen_selection_to_capture, normalize_axis, recording_control_plan, recording_failed,
-        recording_saved, translated_rect, validate_distinct_recording_phase_fingerprints,
-        validate_paused_progress, validate_recorded_media, validate_recording_target_bounds,
-        validate_selection_geometry,
+        CaptureScenarioOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
+        ensure_input_authorized, first_stable_recording_match, interaction_command_channel,
+        interaction_plan, map_screen_selection_to_capture, narrow_edge_interaction_plan,
+        normalize_axis, recording_control_plan, recording_failed, recording_saved, translated_rect,
+        validate_distinct_recording_phase_fingerprints, validate_paused_progress,
+        validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
     };
     #[cfg(windows)]
     use super::{
@@ -4537,6 +5006,7 @@ mod tests {
         assert_eq!(options.output_dir, PathBuf::from("evidence"));
         assert_eq!(options.timeout, Duration::from_secs(12));
         assert_eq!(options.settle_delay, Duration::from_millis(350));
+        assert_eq!(options.capture_scenario, CaptureScenarioOption::Standard);
         assert_eq!(options.record_target, Some(RecordTargetOption::Window));
         assert!(Options::parse_from(arguments(&["--allow-input", "--allow-input"])).is_err());
         assert!(Options::parse_from(arguments(&["--timeout-ms", "2999"])).is_err());
@@ -4560,6 +5030,38 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_only_an_isolated_narrow_edge_capture_scenario() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "narrow-edge",
+        ]))
+        .unwrap();
+        assert_eq!(options.capture_scenario, CaptureScenarioOption::NarrowEdge);
+        assert_eq!(options.record_target, None);
+
+        assert!(
+            Options::parse_from(arguments(&[
+                "--capture-scenario",
+                "narrow-edge",
+                "--capture-scenario",
+                "narrow-edge",
+            ]))
+            .is_err()
+        );
+        assert!(Options::parse_from(arguments(&["--capture-scenario", "wide"])).is_err());
+        assert!(
+            Options::parse_from(arguments(&[
+                "--capture-scenario",
+                "narrow-edge",
+                "--record-target",
+                "area",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn interaction_plan_keeps_drag_and_toolbar_clicks_inside_scaled_overlay() {
         let bounds = PhysicalRect {
             left: 0,
@@ -4571,6 +5073,7 @@ mod tests {
         for point in [
             plan.drag_start,
             plan.drag_end,
+            plan.mark,
             plan.pin,
             plan.copy,
             plan.save,
@@ -4583,6 +5086,7 @@ mod tests {
         }
         assert!(plan.drag_start.x < plan.drag_end.x);
         assert!(plan.drag_start.y < plan.drag_end.y);
+        assert!(plan.mark.x < plan.pin.x);
         assert!(plan.pin.x < plan.copy.x);
         assert!(plan.copy.x < plan.save.x);
         assert!(plan.save.x < plan.more.x);
@@ -4591,6 +5095,46 @@ mod tests {
         assert_eq!(plan.record_area.x, plan.record_window.x);
         assert!(plan.record_area.y < plan.record_window.y);
         assert!(plan.record_window.y < plan.more.y);
+    }
+
+    #[test]
+    fn narrow_edge_plan_matches_real_borderless_client_and_relocated_mark() {
+        let client = PhysicalRect {
+            left: 0,
+            top: -4,
+            right: 2560,
+            bottom: 1436,
+        };
+        let display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1440,
+        };
+        let plan = narrow_edge_interaction_plan(client, 1.0).unwrap();
+
+        assert_eq!(plan.base.drag_start, PhysicalPoint { x: 2382, y: 1328 });
+        assert_eq!(plan.base.drag_end, PhysicalPoint { x: 2542, y: 1424 });
+        assert_eq!(plan.base.mark, PhysicalPoint { x: 2233, y: 1291 });
+        assert_eq!(plan.base.more, PhysicalPoint { x: 2447, y: 1291 });
+        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2512, y: 1291 });
+        assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2233, y: 1155 });
+        assert_eq!(plan.evidence_rest, PhysicalPoint { x: 24, y: 20 });
+        assert_eq!(
+            map_screen_selection_to_capture(
+                PhysicalRect::new(plan.base.drag_start, plan.base.drag_end),
+                client,
+                display,
+            )
+            .unwrap(),
+            PhysicalRect {
+                left: 2382,
+                top: 1332,
+                right: 2542,
+                bottom: 1428,
+            }
+        );
+        assert!(narrow_edge_interaction_plan(client, 1.5).is_err());
     }
 
     #[test]

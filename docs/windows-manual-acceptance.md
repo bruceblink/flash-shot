@@ -37,7 +37,7 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | 单显示器 100% | 待执行 | 触发区域截图，拖动选区并键盘微调；点击工具栏与 More，确认命令不会穿透为新的选区；再次触发 Capture 快捷键；依次复制、保存、Pin、取消。 | 覆盖层只有一组可操作工具栏；工具栏命令只执行一次；再次 Capture 会关闭旧覆盖层并打开新的截图；复制和保存的像素尺寸等于选区物理尺寸；取消不留下窗口。 | |
 | 负坐标双屏 | 暂缓 | 将副屏放在主屏左侧，跨屏拖动选区并在两屏边缘调整大小。 | 选区和放大镜不跳变；每个显示器只显示自己的覆盖层操作区；导出结果没有偏移或裁切错误。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 混合 DPI 双屏 | 暂缓 | 将两个显示器设置为不同缩放，例如 100% 与 150% 或 200%；跨屏截图、保存并核对像素尺寸。 | 光标、选区、窗口智能识别和导出均以物理像素对齐；无重复或缺失的工具栏。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
-| 窄选区与最小设置窗 | 待执行 | 将设置窗口缩小到最小可用尺寸；在屏幕边缘创建窄选区，展开次级操作与标注面板。 | 文本不截断，控件不重叠；主工具栏保持可点击，次级菜单在可用一侧展开。 | |
+| 窄选区与最小设置窗 | 通过 | 将设置窗口缩小到最小可用尺寸；在屏幕边缘创建窄选区，展开次级操作与标注面板。 | 文本不截断，控件不重叠；主工具栏保持可点击，次级菜单在可用一侧展开。 | `current-narrow-edge-single-100` 在真实 420x420 client 中启动截图，拖出右下 160x96 选区并真实点击 More/Less 与 Mark 开关。 |
 | 多 Pin 生命周期 | 待执行 | 连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | 隔离自动探针已覆盖程序化移动、缩放、透明度、内存复制、保存、Solo、Show all、关闭与截图 preflight；真实鼠标拖动、系统剪贴板和继续进入覆盖层仍待手工执行。 |
 | OCR、翻译与滚动 | 待执行 | 在含文字的选区运行 OCR；在翻译服务可用时运行翻译并模拟一次失败后重试；执行滚动后自动捕获。 | OCR/翻译结果可复制；失败时保留原选区并显示匹配的重试操作；自动滚动等待目标重绘后只追加一帧。 | |
 | FFmpeg 静态目标录屏生命周期 | 通过 | 使用支持 `ddagrab` 或 `gdigrab` 的 FFmpeg，在单屏 100% 环境分别启动显示器、静态窗口和静态区域录制，暂停、恢复并停止。 | 三种目标均产生可播放 H.264 MP4；目标类型、物理尺寸、状态、时长和隔离保存路径正确。 | 显示器入口见 `current-recording-ui-single-100`；静态区域和静态窗口入口见 `current-overlay-recording-ui-single-100`。 |
@@ -89,6 +89,8 @@ cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-accep
 cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection-bottom-right-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-bottom-right-more
 # 显式输入验收：会短暂取得焦点并移动全局鼠标，仅在可丢弃的单屏桌面会话中运行。
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
+# 可选窄边场景：要求单屏 100% 缩放，验证真实最小设置窗、右下选区和 More/Mark 命中。
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
 # 可选真实录屏闭环：通过 More 菜单点击入口，再点击 Record 页的 Pause、Resume 和 Stop；
 # 每次运行只接受一个隔离 MP4，并通过 FFprobe 校验编码、物理尺寸和时长。
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --record-target area --output-dir target/overlay-recording-interaction-acceptance
@@ -135,6 +137,10 @@ profile，注册 `Ctrl+Alt+F24`，并在每批输入前确认前台 HWND 属于�
 最终目标替换为进程内图像 sink，并以 Windows 剪贴板序号不变证明没有覆盖用户数据；报告同时
 把实测鼠标路径从原生 client 映射回显示器物理像素，校验已提交选区，并将 Save、Pin、Copy
 结果与各自点击前的源帧逐像素比较；同时检查窗口清理和 Capture preflight。提供
+`--capture-scenario narrow-edge` 时，探针要求一块 DPI 96、100% 缩放的显示器，将设置窗口
+固定为真实 420x420 client 并保留原生截图，再在右下边缘真实拖出 160x96 物理选区。它依次
+点击 More/Less 和 Mark 开关，以进程内状态断言菜单和标注面板只切换一次、选区保持不变，
+并记录选区帧指纹、亮度范围和最终窗口清理；该场景与录屏模式互斥。提供
 `--record-target area|window` 时，探针改为从同一真实覆盖层点击对应录屏入口，恢复生产 Record 页
 后继续点击 Pause、Resume 和 Stop；它轮询进程内机器可读状态，强制覆盖录制目录并清除继承的
 录制音频变量，只接受隔离目录中的一个 MP4，再用 FFprobe 校验 H.264、物理尺寸和时长。暂停后
@@ -256,6 +262,7 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 | 2026-08-11 | `current-compact-overlay-selection-single-100` | Release `settings-ui-acceptance` 新增固定选区与展开 More 菜单表面；398 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-selection-release.png` 与 `overlay-selection-more-release.png` 的同名 JSON 均记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核 420px 画面里的 Mark、Pin、Copy、Save、More/Less、Cancel 和全部 More 命令均完整可读、未越出安全边距或重叠主动作栏；展开菜单按设计覆盖选区视觉但不遮挡状态与主操作。它不替代真实拖动与点击矩阵。 |
 | 2026-08-11 | `current-bottom-right-overlay-selection-single-100` | Release `settings-ui-acceptance` 增加右下 160x96 固定选区，并以生产 More 状态切换展开菜单；边缘尺寸标签的布局回归验证会避开上翻主操作栏。399 项库测试、15 项探针测试、严格 Clippy、格式检查和全目标编译通过。 | 通过 | `overlay-selection-bottom-right-more-release.png` 的同名 JSON 记录 DPI 96、scale 1.0 和 `scale_match: true`。已目视复核全部 More 命令、Less、Cancel、Copy、Save、Pin、Mark 和状态栏均完整可读；主操作栏从右下选区上方显示，菜单保持在画面内。它不替代真实拖动、鼠标命中或多显示器验收。 |
 | 2026-08-11 | `current-overlay-interaction-single-100` | 413 项库测试、21 项交互探针测试、全目标测试、严格 Clippy 与隔离 Release `overlay-interaction-acceptance` 通过；在一块 2560x1440、DPI 96 显示器上完成真实拖选、1px 键盘微调、More/Less、活动覆盖层直接重触发 Capture、Cancel、系统 Save 对话框、Pin/Escape、Copy 及最终清理。 | 通过 | 当前源码报告与 11 张原生截图位于 `target/release-acceptance/overlay-content-verified/session-1786439563918-40008/`。实测请求和提交选区均为 1178x432；Save PNG、Pin 和进程内 Copy sink 分别与各自点击前源帧逐像素相等，Save 输出 63,454 bytes；Windows 剪贴板序号保持 `309 -> 309`；最终 overlay=0、Pin=0、无可见探针窗口且 Capture preflight 可用。首轮严格几何检查发现无标题 Win32 client 顶部位于屏幕外 4px；修复后屏内拖选使用 client-local preview transform，只有真实显示器覆盖层越界时才回退全局坐标，图片编辑器 letterbox 仍保持本地夹取。已目视复核 More/Less、Save 对话框完整路径与 Pin 工具栏。系统 PNG/DIB 剪贴板写入仍只在可丢弃 Windows 用户会话中手工验证；150%/200% 与已暂缓多屏范围未由本条覆盖。 |
+| 2026-08-11 | `current-narrow-edge-single-100` | 当前源码的隔离 Release `overlay-interaction-acceptance --capture-scenario narrow-edge` 在一块 2560x1440、DPI 96 显示器上通过；报告断言设置 client 为 420x420，请求、提交和源帧边界均为 `(2382,1332)-(2542,1428)`，More 与 Mark 均完成打开和关闭，最终 overlay=0、Pin=0、无可见探针窗口且 Capture preflight 可用。 | 通过 | 报告与 6 张原生截图位于 `target/release-acceptance/narrow-edge-current/session-1786447650669-18036/`；选区源帧为 160x96，指纹 `065b222836be9c6c`，亮度范围 `0..255`。已逐图复核最小设置窗、主工具栏、五行 More 菜单、900x186 Mark 面板和关闭态：文字完整，控件未重叠，边缘菜单向可用上侧展开。放大镜被停放在画面左上，不遮挡核心证据。该记录只覆盖单屏 100%；150%/200% 和已暂缓多屏范围仍未由本条覆盖。 |
 | 2026-08-11 | `current-pin-lifecycle-single-100` | 当前源码重建后的隔离 Release `pin-lifecycle-acceptance` 在 2560x1440、DPI 96 单屏环境打开三个真实 Pin，验证程序化移动、125% 缩放、75% 透明度、内存 Copy、隔离 Save、Solo、无抢焦点 Show all、关闭一个 Pin 和两 Pin 共存时的生产 Capture preflight。 | 通过 | 报告与两张原生截图位于 `target/release-acceptance/pin-native-verified/session-1786439622458-20864/`。目视复核放大 Pin 的 GPUI 内容与原生窗口同步填充，两张剩余 Pin 工具栏完整且无空白区、截断或重叠；Show all 前台 HWND 保持不变，Solo/Show all 后注册表均保留 3 个句柄，Close 后精确保留 2 个，Capture preflight 可用。探针未改系统剪贴板且未注入全局输入；真实拖动、系统 Copy、150%/200% 实机和共存 Pin 下的真实 Capture 仍待手工执行。 |
 | 2026-08-11 | `current-overlay-recording-ui-single-100` | 隔离 Release `overlay-interaction-acceptance` 在一块 2560x1440、DPI 96 显示器上分别完成 `More -> Record area` 与 `More -> Record window`，并在生产 Record 页点击 Pause、Resume、Stop；两次都独立校验目标边界、暂停冻结、恢复前进和 H.264 内容。 | 通过 | 区域报告位于 `target/release-acceptance/record-area-content-verified/session-1786439587427-30752/`：H.264 1178x432、5.70 秒、最高 69 帧，暂停采样保持 `37/1166667us -> 37/1166667us`，参考/解码帧网格 MAE `0.793`。窗口报告位于 `target/release-acceptance/record-window-content-verified/session-1786439605291-27088/`：独立解析与应用回报均为 2560x1400，H.264 6.13 秒、最高 55 帧，暂停保持 `25/733333us -> 25/733333us`，MAE `0.465`。两条路径的参考图、解码帧、选区、More、Recording、Paused、Resumed、Saved 均已目视复核，无空白帧、截断、重叠或状态错位。窗口移动、缩放、遮挡、最小化、150%/200% 与已暂缓多屏范围仍待执行。 |
 | 2026-08-11 | `current-overlay-recording-window-dynamics-single-100` | 最终源码的隔离 Release `overlay-interaction-acceptance` 通过真实 `More -> Record window` 入口选择独立进程的原生 fixture；录制期间依次移动、缩放、完全遮挡并最小化目标，再在生产 Record 页完成 Pause、Resume、Stop。 | 通过 | 报告位于 `target/release-acceptance/record-window-dynamic-complete/session-1786445042544-2256/`：初始录制源始终为 `(563,288)-(1741,720)`、H.264 1178x432、10.27 秒；5 fps 时间线的 51 个样本依次命中四组连续稳定帧，网格 MAE 为 `1.378/1.654/1.107/1.250`（上限 18），四个目标状态、固定源边界、不同像素指纹和 fixture 清理均由报告断言。区域回归报告位于 `target/release-acceptance/record-area-regression-complete/session-1786445068433-3736/`，H.264 1178x432、5.67 秒、MAE `0.168`。两条路径的覆盖层、More、Recording、Paused、Resumed、Saved 及全部参考/解码帧已目视复核，无空白、截断、重叠或状态错位；150%/200% 与已暂缓多屏范围仍待执行。 |

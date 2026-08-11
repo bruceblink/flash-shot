@@ -260,6 +260,15 @@ the Windows clipboard sequence did not change:
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
 ```
 
+Use the opt-in narrow-edge scenario to open the real 420x420 minimum Settings client, drag a
+160x96 selection against the bottom-right display edge, and click More/Less and Mark open/close.
+It requires one 100%-scaled display, records the exact selection pixels and UI states, and remains
+mutually exclusive with recording modes:
+
+```powershell
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
+```
+
 The recording modes click `Record area` or `Record window`, then the real Pause, Resume, and Stop
 buttons, and accept the run only after FFprobe validates the finalized H.264 MP4. These commands
 move the global pointer, so run them only in a disposable interactive desktop session. The runner
