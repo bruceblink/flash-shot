@@ -419,12 +419,17 @@ pub(super) fn open_ui_acceptance(
                     target.bounds.height()
                 );
             }
-            crate::OverlayUiAcceptanceScenario::SelectedRegion { show_more_actions } => {
-                let selection = overlay_ui_acceptance_selection(display.physical_bounds);
+            crate::OverlayUiAcceptanceScenario::SelectedRegion {
+                placement,
+                show_more_actions,
+            } => {
+                let selection = overlay_ui_acceptance_selection(display.physical_bounds, placement);
                 match app.session.select(selection) {
                     Ok(()) => {
                         app.selection_drag.select(selection);
-                        app.overlay_more_actions = show_more_actions;
+                        if show_more_actions {
+                            app.toggle_overlay_more_actions(cx);
+                        }
                         app.status = format!(
                             "Selection ready: {} x {} physical pixels",
                             selection.width(),
@@ -518,12 +523,33 @@ fn overlay_ui_acceptance_target(bounds: PhysicalRect, kind: InspectionKind) -> I
     }
 }
 
-/// Places a compact committed region where its toolbar and expanded menu both stay observable.
-fn overlay_ui_acceptance_selection(bounds: PhysicalRect) -> PhysicalRect {
-    let width = (bounds.width() / 2).clamp(160, 320) as i32;
-    let height = (bounds.height() / 4).clamp(96, 160) as i32;
-    let left = bounds.left + (bounds.width() as i32 - width) / 2;
-    let top = bounds.top + (bounds.height() as i32 - height) * 2 / 5;
+/// Seeds a compact region inside physical desktop bounds for deterministic overlay screenshots.
+///
+/// The bottom-right mode leaves the image near the raw display edge so production layout must
+/// lift the toolbar and menu above it; the centered mode keeps dense controls easy to inspect.
+fn overlay_ui_acceptance_selection(
+    bounds: PhysicalRect,
+    placement: crate::OverlayUiAcceptanceSelectionPlacement,
+) -> PhysicalRect {
+    let (width, height) = match placement {
+        crate::OverlayUiAcceptanceSelectionPlacement::Centered => (
+            (bounds.width() / 2).clamp(160, 320) as i32,
+            (bounds.height() / 4).clamp(96, 160) as i32,
+        ),
+        // A fixed small region exposes wrapping and edge-placement behavior at 420 px.
+        crate::OverlayUiAcceptanceSelectionPlacement::BottomRight => (160, 96),
+    };
+    let (left, top) = match placement {
+        crate::OverlayUiAcceptanceSelectionPlacement::Centered => (
+            bounds.left + (bounds.width() as i32 - width) / 2,
+            bounds.top + (bounds.height() as i32 - height) * 2 / 5,
+        ),
+        crate::OverlayUiAcceptanceSelectionPlacement::BottomRight => (
+            bounds.right - OVERLAY_EDGE_INSET.round() as i32 - width,
+            // Keep enough upper space for the full More menu while forcing the main bar above.
+            bounds.bottom - OVERLAY_ACTION_BAR_GAP.round() as i32 - height,
+        ),
+    };
     PhysicalRect {
         left,
         top,
@@ -3391,6 +3417,9 @@ fn annotation_layer_layout(
 }
 
 /// Positions the pixel-size readout near the selection without covering export controls.
+///
+/// When an edge selection lifts the toolbar above itself, the label moves into the gap above that
+/// toolbar instead of colliding with it or disappearing under the bottom taskbar-safe area.
 fn selection_dimension_label_layout(
     selection: Option<PhysicalRect>,
     transform: Option<PreviewTransform>,
@@ -3414,14 +3443,26 @@ fn selection_dimension_label_layout(
     let left = top_left.x.clamp(left_min, left_max);
     let above = top_left.y - OVERLAY_DIMENSION_LABEL_HEIGHT - OVERLAY_DIMENSION_LABEL_GAP;
     let below = bottom_right.y + OVERLAY_DIMENSION_LABEL_GAP;
-    let can_place_above = above >= viewport.top + OVERLAY_EDGE_INSET;
-    let overlaps_toolbar_below = action_toolbar.is_some_and(|toolbar| {
-        below < toolbar.top + toolbar.height && below + OVERLAY_DIMENSION_LABEL_HEIGHT > toolbar.top
+    let top_min = viewport.top + OVERLAY_EDGE_INSET;
+    let top_max = viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - OVERLAY_DIMENSION_LABEL_HEIGHT;
+    let overlaps_toolbar = |top: f32| {
+        action_toolbar.is_some_and(|toolbar| {
+            top < toolbar.top + toolbar.height && top + OVERLAY_DIMENSION_LABEL_HEIGHT > toolbar.top
+        })
+    };
+    let above_toolbar = action_toolbar.map(|toolbar| {
+        (toolbar.top - OVERLAY_DIMENSION_LABEL_HEIGHT - OVERLAY_DIMENSION_LABEL_GAP).max(top_min)
     });
-    let top = if can_place_above || overlaps_toolbar_below {
-        above.max(viewport.top + OVERLAY_EDGE_INSET)
+    let top = if above >= top_min && !overlaps_toolbar(above) {
+        above
+    } else if below <= top_max && !overlaps_toolbar(below) {
+        below
+    } else if let Some(above_toolbar) = above_toolbar.filter(|top| !overlaps_toolbar(*top)) {
+        above_toolbar
+    } else if above >= top_min {
+        above
     } else {
-        below.min(viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - OVERLAY_DIMENSION_LABEL_HEIGHT)
+        below.min(top_max)
     };
     Some(SelectionDimensionLayout { left, top })
 }
@@ -3746,7 +3787,8 @@ fn selection_cursor(
 mod tests {
     use super::{
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
-        OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
+        OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET,
+        OVERLAY_EDGE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
         SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, action_toolbar_height,
         action_toolbar_layout, action_toolbar_natural_width, annotation_controls_visible,
         annotation_layer_label, annotation_style_panel_height, annotation_toolbar_height,
@@ -4341,6 +4383,61 @@ mod tests {
     }
 
     #[test]
+    fn bottom_right_acceptance_selection_lifts_actions_and_keeps_dimensions_clear() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(420.0), px(420.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 420,
+            bottom: 420,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+        let selection = overlay_ui_acceptance_selection(
+            bounds,
+            crate::OverlayUiAcceptanceSelectionPlacement::BottomRight,
+        );
+        assert_eq!(
+            selection,
+            PhysicalRect {
+                left: 242,
+                top: 312,
+                right: 402,
+                bottom: 408,
+            }
+        );
+
+        let toolbar = action_toolbar_layout(Some(selection), transform, viewport).unwrap();
+        assert_eq!(
+            toolbar,
+            ActionToolbarLayout {
+                left: 60.0,
+                top: 250.0,
+                width: 342.0,
+                height: 50.0,
+            }
+        );
+        assert!(toolbar.top + toolbar.height + OVERLAY_ACTION_BAR_GAP <= selection.top as f32);
+
+        let menu_height = secondary_action_menu_height(toolbar.width, false, false, false);
+        assert_eq!(menu_height, 176.0);
+        assert!(secondary_menu_opens_above(toolbar, viewport, menu_height));
+        let menu_top = toolbar.top
+            - (OVERLAY_ACTION_ITEM_HEIGHT
+                + OVERLAY_ACTION_BAR_PADDING * 2.0
+                + OVERLAY_SECONDARY_MENU_GAP)
+            - menu_height;
+        assert!(menu_top >= OVERLAY_EDGE_INSET);
+
+        assert_eq!(
+            selection_dimension_label_layout(Some(selection), transform, viewport, Some(toolbar)),
+            Some(SelectionDimensionLayout {
+                left: 242.0,
+                top: 216.0,
+            })
+        );
+    }
+
+    #[test]
     fn smart_target_hud_belongs_to_the_display_under_the_pointer() {
         let left_display = PhysicalRect {
             left: 0,
@@ -4557,7 +4654,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_ui_acceptance_fixture_preserves_frame_and_target_geometry() {
+    fn overlay_ui_acceptance_fixture_preserves_frame_and_seeded_geometry() {
         let bounds = PhysicalRect {
             left: 0,
             top: 0,
@@ -4583,7 +4680,10 @@ mod tests {
             y: target.bounds.bottom - 1,
         }));
 
-        let selection = overlay_ui_acceptance_selection(bounds);
+        let selection = overlay_ui_acceptance_selection(
+            bounds,
+            crate::OverlayUiAcceptanceSelectionPlacement::Centered,
+        );
         assert!(selection.width() > 0 && selection.height() > 0);
         assert!(bounds.contains(PhysicalPoint {
             x: selection.left,
@@ -4593,6 +4693,21 @@ mod tests {
             x: selection.right - 1,
             y: selection.bottom - 1,
         }));
+
+        let bottom_right = overlay_ui_acceptance_selection(
+            bounds,
+            crate::OverlayUiAcceptanceSelectionPlacement::BottomRight,
+        );
+        assert_eq!(bottom_right.width(), 160);
+        assert_eq!(bottom_right.height(), 96);
+        assert_eq!(
+            bottom_right.right,
+            bounds.right - OVERLAY_EDGE_INSET.round() as i32
+        );
+        assert_eq!(
+            bottom_right.bottom,
+            bounds.bottom - OVERLAY_ACTION_BAR_GAP.round() as i32
+        );
     }
 
     #[test]

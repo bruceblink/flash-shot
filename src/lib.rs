@@ -153,7 +153,20 @@ pub enum OverlayUiAcceptanceScenario {
         kind: platform::window_inspector::InspectionKind,
     },
     /// Shows a committed region and optionally opens the progressive action menu.
-    SelectedRegion { show_more_actions: bool },
+    SelectedRegion {
+        placement: OverlayUiAcceptanceSelectionPlacement,
+        show_more_actions: bool,
+    },
+}
+
+/// Positions the fixed region used to exercise an overlay layout branch in a screenshot probe.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OverlayUiAcceptanceSelectionPlacement {
+    /// Keeps the compact region in the middle of the overlay for dense-toolbar review.
+    #[default]
+    Centered,
+    /// Forces the toolbar and More menu to use their bottom-right edge avoidance paths.
+    BottomRight,
 }
 
 /// Synthetic Record page states used only by the native screenshot acceptance probe.
