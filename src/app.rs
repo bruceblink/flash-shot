@@ -814,6 +814,18 @@ impl FlashShotApp {
                                 // Report the committed session rectangle used by Save, Pin, and
                                 // Copy, never an in-flight mouse-move preview awaiting mouse-up.
                                 selection: this.session.selection(),
+                                manual_scroll_state: manual_scroll_state_label(
+                                    this.manual_scroll.state(),
+                                )
+                                .to_owned(),
+                                manual_scroll_frame_count: this.manual_scroll.frame_count(),
+                                manual_scroll_can_finish: this.manual_scroll.can_finish(),
+                                manual_scroll_capture_in_flight: this
+                                    .manual_scroll_capture_in_flight,
+                                manual_scroll_auto_capture_pending: this
+                                    .manual_scroll_auto_capture_generation
+                                    .is_some(),
+                                manual_scroll_selection: this.manual_scroll_selection,
                                 overlay_count: this.overlay_windows.len(),
                                 more_actions_visible: this.overlay_more_actions,
                                 annotation_controls_visible: this.overlay_annotation_controls,
@@ -1133,6 +1145,17 @@ fn utf16_range_to_byte_range(text: &str, range: &std::ops::Range<usize>) -> std:
     byte_offset(range.start)..byte_offset(range.end)
 }
 
+/// Converts the internal manual-scroll lifecycle into a stable acceptance-facing label.
+fn manual_scroll_state_label(state: crate::scroll::ManualScrollState) -> &'static str {
+    match state {
+        crate::scroll::ManualScrollState::Idle => "idle",
+        crate::scroll::ManualScrollState::Collecting => "collecting",
+        crate::scroll::ManualScrollState::Completed => "completed",
+        crate::scroll::ManualScrollState::Cancelled => "cancelled",
+        crate::scroll::ManualScrollState::Failed => "failed",
+    }
+}
+
 impl Focusable for FlashShotApp {
     fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
         self.focus_handle.clone()
@@ -1142,10 +1165,11 @@ impl Focusable for FlashShotApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        HistoryFilter, byte_range_to_utf16_range, history_entry_matches, selected_history_paths,
-        utf16_range_to_byte_range,
+        HistoryFilter, byte_range_to_utf16_range, history_entry_matches, manual_scroll_state_label,
+        selected_history_paths, utf16_range_to_byte_range,
     };
     use crate::history::{HistoryEntry, HistorySource};
+    use crate::scroll::ManualScrollState;
     use std::{
         collections::{HashSet, VecDeque},
         path::PathBuf,
@@ -1205,5 +1229,26 @@ mod tests {
         assert!(history_entry_matches(&entry, HistoryFilter::Scrolling, ""));
         assert!(!history_entry_matches(&entry, HistoryFilter::Selection, ""));
         assert_eq!(HistorySource::Scrolling.label(), "Scrolling screenshot");
+    }
+
+    #[test]
+    fn manual_scroll_state_labels_are_stable_for_acceptance_reports() {
+        assert_eq!(manual_scroll_state_label(ManualScrollState::Idle), "idle");
+        assert_eq!(
+            manual_scroll_state_label(ManualScrollState::Collecting),
+            "collecting"
+        );
+        assert_eq!(
+            manual_scroll_state_label(ManualScrollState::Completed),
+            "completed"
+        );
+        assert_eq!(
+            manual_scroll_state_label(ManualScrollState::Cancelled),
+            "cancelled"
+        );
+        assert_eq!(
+            manual_scroll_state_label(ManualScrollState::Failed),
+            "failed"
+        );
     }
 }

@@ -154,6 +154,18 @@ pub struct OverlayInteractionRecordingState {
 pub struct OverlayInteractionCaptureState {
     pub session_state: String,
     pub selection: Option<domain::geometry::PhysicalRect>,
+    /// Current production manual-scroll lifecycle label (for example, `collecting`).
+    pub manual_scroll_state: String,
+    /// Number of viewport frames accepted by the active manual-scroll session.
+    pub manual_scroll_frame_count: usize,
+    /// Whether the current manual-scroll session has enough frames to stitch and finish.
+    pub manual_scroll_can_finish: bool,
+    /// Whether a native frame capture is currently being appended asynchronously.
+    pub manual_scroll_capture_in_flight: bool,
+    /// Whether an assisted scroll has been requested and is waiting for its delayed capture.
+    pub manual_scroll_auto_capture_pending: bool,
+    /// Selection used as the fixed viewport for the active manual-scroll session.
+    pub manual_scroll_selection: Option<domain::geometry::PhysicalRect>,
     pub overlay_count: usize,
     pub more_actions_visible: bool,
     pub annotation_controls_visible: bool,
