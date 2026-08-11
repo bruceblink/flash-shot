@@ -42,6 +42,18 @@ pub enum TrayRecordingState {
     Resuming,
 }
 
+/// Identifies which capture target owns the lifecycle controls currently exposed by the tray.
+///
+/// Idle always returns to display recording because the tray's start action begins a display
+/// recording. Region and window values only describe an already-starting or active recording.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TrayRecordingTarget {
+    #[default]
+    Display,
+    Region,
+    Window,
+}
+
 /// The ownership state for the current user's Windows sign-in launch entry.
 ///
 /// A different Flash Shot executable owns its entry, so the tray deliberately exposes it as
@@ -100,6 +112,34 @@ impl TrayRecordingState {
     }
 }
 
+impl TrayRecordingTarget {
+    /// Converts the target to the compact value shared with the Windows tray thread.
+    const fn as_u8(self) -> u8 {
+        match self {
+            Self::Display => 0,
+            Self::Region => 1,
+            Self::Window => 2,
+        }
+    }
+
+    /// Restores a shared tray target, falling back to the safe display start action.
+    const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Region,
+            2 => Self::Window,
+            _ => Self::Display,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Display => "display",
+            Self::Region => "selected area",
+            Self::Window => "window",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrayNotification {
     pub title: String,
@@ -138,6 +178,11 @@ impl TrayService {
         self.listener.set_recording_state(state);
     }
 
+    /// Updates the target named by pause, resume, and stop actions in the next tray menu.
+    pub fn set_recording_target(&self, target: TrayRecordingTarget) {
+        self.listener.set_recording_target(target);
+    }
+
     /// Updates the ownership-aware sign-in command shown the next time the tray menu opens.
     pub fn set_auto_start_state(&self, state: TrayAutoStartState) {
         self.listener.set_auto_start_state(state);
@@ -156,7 +201,9 @@ impl TrayService {
 
 #[cfg(windows)]
 mod platform {
-    use super::{TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState};
+    use super::{
+        TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState, TrayRecordingTarget,
+    };
     use async_channel::Receiver;
     use std::{
         io,
@@ -230,6 +277,7 @@ mod platform {
     #[derive(Clone)]
     struct TrayMenuState {
         recording_state: Arc<AtomicU8>,
+        recording_target: Arc<AtomicU8>,
         auto_start_state: Arc<AtomicU8>,
         capture_cursor_enabled: Arc<AtomicBool>,
         capture_shortcut_enabled: Arc<AtomicBool>,
@@ -248,6 +296,7 @@ mod platform {
             let thread_commands = commands.clone();
             let menu_state = TrayMenuState {
                 recording_state: Arc::new(AtomicU8::new(TrayRecordingState::Idle.as_u8())),
+                recording_target: Arc::new(AtomicU8::new(TrayRecordingTarget::Display.as_u8())),
                 auto_start_state: Arc::new(AtomicU8::new(TrayAutoStartState::Disabled.as_u8())),
                 capture_cursor_enabled: Arc::new(AtomicBool::new(false)),
                 capture_shortcut_enabled: Arc::new(AtomicBool::new(true)),
@@ -317,6 +366,13 @@ mod platform {
             self.menu_state
                 .recording_state
                 .store(state.as_u8(), Ordering::Release);
+        }
+
+        /// Shares the active capture target with the tray thread without blocking UI work.
+        pub fn set_recording_target(&self, target: TrayRecordingTarget) {
+            self.menu_state
+                .recording_target
+                .store(target.as_u8(), Ordering::Release);
         }
 
         /// Shares the latest sign-in entry ownership with the tray thread without blocking UI work.
@@ -519,6 +575,9 @@ mod platform {
                 TrayRecordingState::from_u8(
                     context.menu_state.recording_state.load(Ordering::Acquire),
                 ),
+                TrayRecordingTarget::from_u8(
+                    context.menu_state.recording_target.load(Ordering::Acquire),
+                ),
                 TrayAutoStartState::from_u8(
                     context.menu_state.auto_start_state.load(Ordering::Acquire),
                 ),
@@ -546,6 +605,7 @@ mod platform {
     fn show_menu(
         window: HWND,
         recording_state: TrayRecordingState,
+        recording_target: TrayRecordingTarget,
         auto_start_state: TrayAutoStartState,
         capture_cursor_enabled: bool,
         capture_shortcut_enabled: bool,
@@ -580,9 +640,12 @@ mod platform {
         let delayed_capture_3_seconds = wide("Capture in 3 seconds");
         let delayed_capture_5_seconds = wide("Capture in 5 seconds");
         let delayed_capture_10_seconds = wide("Capture in 10 seconds");
-        let (recording_label, recording_enabled) = recording_menu_presentation(recording_state);
-        let toggle_display_recording = wide(recording_label);
-        let toggle_recording_pause = recording_pause_menu_presentation(recording_state).map(wide);
+        let (recording_label, recording_enabled) =
+            recording_menu_presentation(recording_state, recording_target);
+        let toggle_display_recording = wide(&recording_label);
+        let toggle_recording_pause =
+            recording_pause_menu_presentation(recording_state, recording_target)
+                .map(|label| wide(&label));
         let (auto_start_label, auto_start_enabled) = auto_start_menu_presentation(auto_start_state);
         let toggle_auto_start = wide(auto_start_label);
         let capture_cursor = wide("Include cursor in captures");
@@ -786,25 +849,31 @@ mod platform {
     }
 
     /// Returns the recording menu text and whether it can be invoked for each lifecycle state.
-    pub(super) fn recording_menu_presentation(state: TrayRecordingState) -> (&'static str, bool) {
+    pub(super) fn recording_menu_presentation(
+        state: TrayRecordingState,
+        target: TrayRecordingTarget,
+    ) -> (String, bool) {
+        let target = target.label();
         match state {
-            TrayRecordingState::Idle => ("Start display recording", true),
-            TrayRecordingState::Starting => ("Starting display recording...", false),
-            TrayRecordingState::Recording => ("Stop display recording", true),
-            TrayRecordingState::Stopping => ("Stopping display recording...", false),
-            TrayRecordingState::Paused => ("Stop display recording", true),
-            TrayRecordingState::Pausing => ("Pausing display recording...", false),
-            TrayRecordingState::Resuming => ("Resuming display recording...", false),
+            TrayRecordingState::Idle => ("Start display recording".to_owned(), true),
+            TrayRecordingState::Starting => (format!("Starting {target} recording..."), false),
+            TrayRecordingState::Recording => (format!("Stop {target} recording"), true),
+            TrayRecordingState::Stopping => (format!("Stopping {target} recording..."), false),
+            TrayRecordingState::Paused => (format!("Stop {target} recording"), true),
+            TrayRecordingState::Pausing => (format!("Pausing {target} recording..."), false),
+            TrayRecordingState::Resuming => (format!("Resuming {target} recording..."), false),
         }
     }
 
     /// Exposes pause controls only while FFmpeg has an active recording process to control.
     pub(super) fn recording_pause_menu_presentation(
         state: TrayRecordingState,
-    ) -> Option<&'static str> {
+        target: TrayRecordingTarget,
+    ) -> Option<String> {
+        let target = target.label();
         match state {
-            TrayRecordingState::Recording => Some("Pause display recording"),
-            TrayRecordingState::Paused => Some("Resume display recording"),
+            TrayRecordingState::Recording => Some(format!("Pause {target} recording")),
+            TrayRecordingState::Paused => Some(format!("Resume {target} recording")),
             TrayRecordingState::Idle
             | TrayRecordingState::Starting
             | TrayRecordingState::Stopping
@@ -846,7 +915,9 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::{TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState};
+    use super::{
+        TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState, TrayRecordingTarget,
+    };
     use async_channel::Receiver;
     use std::io;
 
@@ -872,6 +943,8 @@ mod platform {
         }
 
         pub fn set_recording_state(&self, _state: TrayRecordingState) {}
+
+        pub fn set_recording_target(&self, _target: TrayRecordingTarget) {}
 
         pub fn set_auto_start_state(&self, _state: TrayAutoStartState) {}
 
@@ -1076,53 +1149,74 @@ mod tests {
     #[test]
     fn recording_menu_labels_prevent_conflicting_lifecycle_operations() {
         use super::{
-            TrayAutoStartState, TrayRecordingState,
+            TrayAutoStartState, TrayRecordingState, TrayRecordingTarget,
             platform::{
                 auto_start_menu_presentation, recording_menu_presentation,
                 recording_pause_menu_presentation,
             },
         };
 
-        assert_eq!(
-            recording_menu_presentation(TrayRecordingState::Idle),
-            ("Start display recording", true)
-        );
-        assert_eq!(
-            recording_menu_presentation(TrayRecordingState::Starting),
-            ("Starting display recording...", false)
-        );
-        assert_eq!(
-            recording_menu_presentation(TrayRecordingState::Recording),
-            ("Stop display recording", true)
-        );
-        assert_eq!(
-            recording_menu_presentation(TrayRecordingState::Stopping),
-            ("Stopping display recording...", false)
-        );
-        assert_eq!(
-            recording_menu_presentation(TrayRecordingState::Paused),
-            ("Stop display recording", true)
-        );
-        assert_eq!(
-            recording_menu_presentation(TrayRecordingState::Pausing),
-            ("Pausing display recording...", false)
-        );
-        assert_eq!(
-            recording_menu_presentation(TrayRecordingState::Resuming),
-            ("Resuming display recording...", false)
-        );
-        assert_eq!(
-            recording_pause_menu_presentation(TrayRecordingState::Recording),
-            Some("Pause display recording")
-        );
-        assert_eq!(
-            recording_pause_menu_presentation(TrayRecordingState::Paused),
-            Some("Resume display recording")
-        );
-        assert_eq!(
-            recording_pause_menu_presentation(TrayRecordingState::Pausing),
-            None
-        );
+        for (target, target_label) in [
+            (TrayRecordingTarget::Display, "display"),
+            (TrayRecordingTarget::Region, "selected area"),
+            (TrayRecordingTarget::Window, "window"),
+        ] {
+            let states = [
+                (
+                    TrayRecordingState::Idle,
+                    "Start display recording".to_owned(),
+                    true,
+                    None,
+                ),
+                (
+                    TrayRecordingState::Starting,
+                    format!("Starting {target_label} recording..."),
+                    false,
+                    None,
+                ),
+                (
+                    TrayRecordingState::Recording,
+                    format!("Stop {target_label} recording"),
+                    true,
+                    Some(format!("Pause {target_label} recording")),
+                ),
+                (
+                    TrayRecordingState::Stopping,
+                    format!("Stopping {target_label} recording..."),
+                    false,
+                    None,
+                ),
+                (
+                    TrayRecordingState::Paused,
+                    format!("Stop {target_label} recording"),
+                    true,
+                    Some(format!("Resume {target_label} recording")),
+                ),
+                (
+                    TrayRecordingState::Pausing,
+                    format!("Pausing {target_label} recording..."),
+                    false,
+                    None,
+                ),
+                (
+                    TrayRecordingState::Resuming,
+                    format!("Resuming {target_label} recording..."),
+                    false,
+                    None,
+                ),
+            ];
+
+            for (state, expected_label, expected_enabled, expected_pause) in states {
+                assert_eq!(
+                    recording_menu_presentation(state, target),
+                    (expected_label, expected_enabled)
+                );
+                assert_eq!(
+                    recording_pause_menu_presentation(state, target),
+                    expected_pause
+                );
+            }
+        }
         assert_eq!(
             auto_start_menu_presentation(TrayAutoStartState::Disabled),
             ("Start with Windows", true)

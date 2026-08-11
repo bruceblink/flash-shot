@@ -56,6 +56,7 @@ impl FlashShotApp {
             return;
         }
         self.recording_start_in_flight = true;
+        self.set_tray_recording_target(crate::platform::tray::TrayRecordingTarget::Display);
         self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
         self.status = "Discovering FFmpeg and preparing display recording...".to_owned();
         self.start_recording_request(
@@ -82,7 +83,7 @@ impl FlashShotApp {
         self.recording_stopping = false;
         self.recording_paused = false;
         self.recording_progress = Default::default();
-        self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
+        self.reset_tray_recording_to_idle();
         self.status = "Screen recording startup cancelled".to_owned();
         cx.notify();
     }
@@ -386,6 +387,7 @@ impl FlashShotApp {
             return;
         }
         self.recording_start_in_flight = true;
+        self.set_tray_recording_target(crate::platform::tray::TrayRecordingTarget::Region);
         self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
         self.status = "Preparing region recording...".to_owned();
         self.close_capture_overlays(cx);
@@ -445,6 +447,7 @@ impl FlashShotApp {
             y: selection.top + selection.height() as i32 / 2,
         };
         self.recording_start_in_flight = true;
+        self.set_tray_recording_target(crate::platform::tray::TrayRecordingTarget::Window);
         self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
         self.status = "Looking up selected window bounds for recording...".to_owned();
         self.close_capture_overlays(cx);
@@ -702,6 +705,7 @@ impl FlashShotApp {
             Ok(control) => {
                 let events = control.events();
                 let target = recording_target_label(control.target());
+                self.set_tray_recording_target(tray_recording_target(control.target()));
                 self.recording_control = Some(control);
                 self.recording_stopping = false;
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
@@ -725,7 +729,7 @@ impl FlashShotApp {
                 log::warn!(target: "flash_shot::recording", "recording_start_failed error={error}");
                 self.status = recording_start_failure_status(&error);
                 self.recording_stopping = false;
-                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
+                self.reset_tray_recording_to_idle();
             }
         }
         self.recording_start_in_flight = false;
@@ -765,7 +769,7 @@ impl FlashShotApp {
             RecordingEvent::Finished { output } => {
                 self.recording_control = None;
                 self.recording_stopping = false;
-                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
+                self.reset_tray_recording_to_idle();
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording saved to {}", output.display());
@@ -774,7 +778,7 @@ impl FlashShotApp {
             RecordingEvent::Failed { message } => {
                 self.recording_control = None;
                 self.recording_stopping = false;
-                self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
+                self.reset_tray_recording_to_idle();
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
                 self.status = format!("Screen recording failed: {message}");
@@ -977,6 +981,15 @@ pub(super) fn recording_target_label(target: &RecordingTarget) -> &'static str {
         RecordingTarget::Display { .. } => "display",
         RecordingTarget::Window { .. } => "window",
         RecordingTarget::Region { .. } => "selected area",
+    }
+}
+
+/// Converts a live recording request into the compact target vocabulary shown by the tray.
+fn tray_recording_target(target: &RecordingTarget) -> crate::platform::tray::TrayRecordingTarget {
+    match target {
+        RecordingTarget::Display { .. } => crate::platform::tray::TrayRecordingTarget::Display,
+        RecordingTarget::Window { .. } => crate::platform::tray::TrayRecordingTarget::Window,
+        RecordingTarget::Region { .. } => crate::platform::tray::TrayRecordingTarget::Region,
     }
 }
 

@@ -38,7 +38,10 @@ use crate::{
         shortcut::{
             CaptureShortcut, GlobalShortcutService, ShortcutAction, ShortcutBinding, ShortcutEvent,
         },
-        tray::{TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState, TrayService},
+        tray::{
+            TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState,
+            TrayRecordingTarget, TrayService,
+        },
         window_inspector::InspectionTarget,
     },
     settings::UserSettings,
@@ -338,6 +341,20 @@ impl FlashShotApp {
         if let Some(tray) = self._tray.as_ref() {
             tray.set_recording_state(state);
         }
+    }
+
+    /// Mirrors the active recording target into the tray's pause and stop labels.
+    pub(super) fn set_tray_recording_target(&self, target: TrayRecordingTarget) {
+        if let Some(tray) = self._tray.as_ref() {
+            tray.set_recording_target(target);
+        }
+    }
+
+    /// Returns tray controls to their display-recording idle state without relabeling an active
+    /// region or window recording during the state transition.
+    pub(super) fn reset_tray_recording_to_idle(&self) {
+        self.set_tray_recording_state(TrayRecordingState::Idle);
+        self.set_tray_recording_target(TrayRecordingTarget::Display);
     }
 
     /// Mirrors Windows sign-in ownership into the tray so unsafe entry replacement is impossible.

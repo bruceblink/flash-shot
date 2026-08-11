@@ -576,7 +576,7 @@ impl FlashShotApp {
             self.recording_support_check_generation.wrapping_add(1);
         if recording_start_cancelled && self.recording_control.is_none() && !self.recording_stopping
         {
-            self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Idle);
+            self.reset_tray_recording_to_idle();
         }
         self.update_check_in_flight = false;
         self.update_check_generation = self.update_check_generation.wrapping_add(1);
