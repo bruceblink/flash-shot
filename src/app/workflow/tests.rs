@@ -3,15 +3,16 @@ use super::{
     ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
     annotation_position, annotation_sidecar_path, capture::focused_window_selection,
-    capture_start_conflict_status, claim_idle_completion, compose_captured_displays,
-    copy_annotated_frame_selection, delayed_capture_status, drawing_status, export_path,
-    fill_alpha, fill_color, format_hsl, format_recording_progress, format_recording_stopping,
-    hovered_color, intersect_rect, is_current_operation, keyboard_command,
-    load_annotation_document, manual_scroll_control_bounds, manual_scroll_control_rect,
-    next_annotation_counters, next_annotation_selection, next_quick_save_path_with_prefix,
-    next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
-    ocr_support_status, open_annotation_project, open_image_project, pinned_size,
-    project_image_path, quick_save_annotated_frame_selection_in_with_prefix,
+    capture_session_can_restart, capture_start_conflict_status, claim_idle_completion,
+    compose_captured_displays, copy_annotated_frame_selection, delayed_capture_status,
+    drawing_status, export_path, fill_alpha, fill_color, format_hsl, format_recording_progress,
+    format_recording_stopping, hovered_color, intersect_rect, is_current_operation,
+    keyboard_command, load_annotation_document, manual_scroll_control_bounds,
+    manual_scroll_control_rect, next_annotation_counters, next_annotation_selection,
+    next_quick_save_path_with_prefix, next_recording_audio_selection,
+    next_recording_display_selection, ocr_language_label, ocr_support_status,
+    open_annotation_project, open_image_project, pinned_size, project_image_path,
+    quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
     recognition_start_conflict_status, recording_audio_selection_label,
@@ -1246,6 +1247,18 @@ fn capture_start_waits_for_recording_lifecycle_to_settle() {
         Some("Screen recording is already stopping...")
     );
     assert_eq!(capture_start_conflict_status(false, false, false), None);
+}
+
+#[test]
+fn fresh_capture_replaces_an_editable_or_terminal_session_but_not_in_flight_work() {
+    assert!(capture_session_can_restart(CaptureSessionState::Selecting));
+    assert!(capture_session_can_restart(CaptureSessionState::Completed));
+    assert!(capture_session_can_restart(CaptureSessionState::Cancelled));
+    assert!(capture_session_can_restart(CaptureSessionState::Failed));
+
+    assert!(!capture_session_can_restart(CaptureSessionState::Idle));
+    assert!(!capture_session_can_restart(CaptureSessionState::Capturing));
+    assert!(!capture_session_can_restart(CaptureSessionState::Exporting));
 }
 
 #[test]

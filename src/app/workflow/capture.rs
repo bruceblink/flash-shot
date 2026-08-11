@@ -21,9 +21,7 @@ impl FlashShotApp {
 
     /// Hides Flash Shot, captures the active external window, and opens it as an editable selection.
     pub(in crate::app) fn start_focused_window_capture(&mut self, cx: &mut Context<Self>) {
-        if self.delayed_capture_generation.is_some()
-            || self.session.state() != CaptureSessionState::Idle
-        {
+        if self.delayed_capture_generation.is_some() {
             return;
         }
         if let Some(status) = capture_start_conflict_status(
@@ -33,6 +31,9 @@ impl FlashShotApp {
         ) {
             self.status = status.to_owned();
             cx.notify();
+            return;
+        }
+        if !self.prepare_capture_restart(cx) {
             return;
         }
         self.start_capture_immediately(false, true, cx);
@@ -206,9 +207,6 @@ impl FlashShotApp {
             self.cancel_delayed_capture(cx);
             return;
         }
-        if self.session.state() != CaptureSessionState::Idle {
-            return;
-        }
         if let Some(status) = capture_start_conflict_status(
             self.recording_control.is_some() || self.recording_acceptance_active,
             self.recording_start_in_flight,
@@ -216,6 +214,9 @@ impl FlashShotApp {
         ) {
             self.status = status.to_owned();
             cx.notify();
+            return;
+        }
+        if !self.prepare_capture_restart(cx) {
             return;
         }
         if delay_seconds == 0 {
@@ -251,6 +252,23 @@ impl FlashShotApp {
             }
         })
         .detach();
+    }
+
+    /// Clears a replaceable finished selection before a fresh capture request starts.
+    ///
+    /// A second screenshot shortcut should discard an editable or terminal overlay and immediately
+    /// start over. It must not interrupt the short capture/upload phase or an export that already
+    /// owns the selected pixels.
+    fn prepare_capture_restart(&mut self, cx: &mut Context<Self>) -> bool {
+        let state = self.session.state();
+        if state == CaptureSessionState::Idle {
+            return true;
+        }
+        if !capture_session_can_restart(state) {
+            return false;
+        }
+        self.reset(cx);
+        true
     }
 
     pub(in crate::app) fn cancel_delayed_capture(&mut self, cx: &mut Context<Self>) {
@@ -844,6 +862,20 @@ pub(super) fn capture_start_conflict_status(
     } else {
         None
     }
+}
+
+/// Marks lifecycle states that a new screenshot command can safely replace.
+///
+/// Capturing and exporting keep asynchronous work in flight, so their requests remain ignored;
+/// a visible selection or terminal state can be reset before capturing the desktop again.
+pub(super) const fn capture_session_can_restart(state: CaptureSessionState) -> bool {
+    matches!(
+        state,
+        CaptureSessionState::Selecting
+            | CaptureSessionState::Completed
+            | CaptureSessionState::Cancelled
+            | CaptureSessionState::Failed
+    )
 }
 
 /// Clips the native foreground-window rectangle to the captured virtual desktop.
