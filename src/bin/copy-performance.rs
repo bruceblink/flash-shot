@@ -1,4 +1,4 @@
-//! Opt-in CLI for the ordinary selection path's real system-clipboard p95 gate.
+//! Opt-in CLI for the ordinary selection path's synthetic system-clipboard p95 gate.
 
 use std::{io, path::PathBuf};
 

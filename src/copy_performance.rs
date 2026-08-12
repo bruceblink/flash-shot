@@ -1,4 +1,4 @@
-//! Explicit system-clipboard latency measurements for the ordinary selection export path.
+//! Synthetic system-clipboard latency measurements for the ordinary selection export path.
 
 use std::{
     fs, io,
@@ -19,6 +19,7 @@ use crate::{
 pub const COPY_CLICK_TO_CLIPBOARD_READABLE: &str = "copy_click_to_clipboard_readable";
 const WARMUP_ITERATIONS: usize = 2;
 const DEFAULT_ITERATIONS: usize = 30;
+const MINIMUM_SAMPLES: usize = 30;
 const DEFAULT_MAX_P95_MS: u64 = 250;
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
@@ -55,6 +56,13 @@ pub struct CopyPerformanceReport {
     passed: bool,
 }
 
+#[derive(Clone, Debug)]
+struct CopySampleFailure {
+    index: usize,
+    elapsed_ms: f64,
+    error: String,
+}
+
 impl CopyPerformanceReport {
     pub const fn passed(&self) -> bool {
         self.passed
@@ -76,7 +84,7 @@ impl CopyPerformanceReport {
     }
 }
 
-/// Measures the selection composite/crop, system write, and confirmed system read as one action.
+/// Measures a generated selection's composite/crop, system write, and same-process read as one action.
 ///
 /// The command deliberately mutates the user's clipboard, so callers must opt in explicitly.
 pub fn run(config: &CopyPerformanceConfig) -> io::Result<CopyPerformanceReport> {
@@ -104,29 +112,43 @@ pub fn run(config: &CopyPerformanceConfig) -> io::Result<CopyPerformanceReport> 
     }
 
     let mut samples_ms = Vec::with_capacity(config.iterations);
-    for _ in 0..config.iterations {
+    let mut failures = Vec::new();
+    for index in 0..config.iterations {
         let started_at = Instant::now();
-        let read_back = copy_selection_and_read(&frame, &document, selection, &clipboard)?;
+        let result = copy_selection_and_read(&frame, &document, selection, &clipboard)
+            .and_then(|read_back| validate_read_back(&expected, &read_back).map(|()| read_back));
         let elapsed = started_at.elapsed();
-        validate_read_back(&expected, &read_back)?;
-        if let Some(recorder) = &recorder {
-            recorder.record_duration(COPY_CLICK_TO_CLIPBOARD_READABLE, elapsed);
+        let elapsed_ms = elapsed.as_secs_f64() * 1_000.0;
+        match result {
+            Ok(_) => {
+                if let Some(recorder) = &recorder {
+                    recorder.record_duration(COPY_CLICK_TO_CLIPBOARD_READABLE, elapsed);
+                }
+                samples_ms.push(elapsed_ms);
+            }
+            Err(error) => failures.push(CopySampleFailure {
+                index,
+                elapsed_ms,
+                error: error.to_string(),
+            }),
         }
-        samples_ms.push(elapsed.as_secs_f64() * 1_000.0);
     }
 
-    build_report(config, samples_ms)
+    build_report(config, samples_ms, failures)
 }
 
-/// Calculates deterministic percentile summaries and applies the requested p95 gate.
+/// Calculates deterministic percentile summaries, records every valid sample, and applies gates.
 fn build_report(
     config: &CopyPerformanceConfig,
     mut samples_ms: Vec<f64>,
+    failures: Vec<CopySampleFailure>,
 ) -> io::Result<CopyPerformanceReport> {
-    if samples_ms.is_empty()
-        || samples_ms
+    if samples_ms
+        .iter()
+        .any(|sample| !sample.is_finite() || *sample < 0.0)
+        || failures
             .iter()
-            .any(|sample| !sample.is_finite() || *sample < 0.0)
+            .any(|failure| !failure.elapsed_ms.is_finite() || failure.elapsed_ms < 0.0)
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -134,19 +156,46 @@ fn build_report(
         ));
     }
     samples_ms.sort_by(f64::total_cmp);
-    let p95_ms = percentile(&samples_ms, 95);
-    let passed = config.max_p95_ms.is_none_or(|limit| p95_ms <= limit as f64);
+    let failure_count = failures.len();
+    let p95_ms = (!samples_ms.is_empty()).then(|| percentile(&samples_ms, 95));
+    let p95_passed =
+        p95_ms.is_some_and(|p95| config.max_p95_ms.is_none_or(|limit| p95 <= limit as f64));
+    let sample_count_passed = samples_ms.len() >= MINIMUM_SAMPLES;
+    let passed = p95_passed && sample_count_passed && failure_count == 0;
     Ok(CopyPerformanceReport {
         value: serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "test": "selection_copy_system_clipboard_performance",
             "metric": COPY_CLICK_TO_CLIPBOARD_READABLE,
             "unit": "ms",
             "build_profile": build_profile(),
             "passed": passed,
+            "measurement_mode": "synthetic",
+            "real_ui": false,
+            "real_ui_qualified": false,
+            "evidence": {
+                "measurement_mode": "synthetic",
+                "real_ui": false,
+                "real_ui_qualified": false,
+                "qualification_note": "This benchmark generates an in-process frame and invokes the production clipboard service directly; it does not inject real UI input or use an external consumer process.",
+                "fixture": "generated_bgra_frame",
+                "input_boundary": "before internal composite_annotations and crop",
+                "output_boundary": "after same-process SystemClipboard::read_image returns matching pixels",
+                "external_consumer_process": false,
+                "formats_verified": ["system image consumer"],
+                "formats_not_independently_verified": ["PNG", "CF_DIB"],
+            },
             "system_clipboard_mutated": true,
-            "iterations": samples_ms.len(),
+            "iterations": config.iterations,
             "warmup_iterations": WARMUP_ITERATIONS,
+            "valid_sample_count": samples_ms.len(),
+            "failure_count": failure_count,
+            "failed_samples": failures.iter().map(|failure| serde_json::json!({
+                "index": failure.index,
+                "latency_ms": failure.elapsed_ms,
+                "error": failure.error,
+            })).collect::<Vec<_>>(),
+            "samples_ms": samples_ms.clone(),
             "metrics_directory": config.metrics_directory,
             "selection": {
                 "width": config.width,
@@ -154,23 +203,27 @@ fn build_report(
                 "pixel_bytes": u64::from(config.width) * u64::from(config.height) * 4,
             },
             "latency_ms": {
-                "min": samples_ms[0],
-                "p50": percentile(&samples_ms, 50),
+                "min": samples_ms.first().copied(),
+                "p50": (!samples_ms.is_empty()).then(|| percentile(&samples_ms, 50)),
                 "p95": p95_ms,
-                "max": samples_ms[samples_ms.len() - 1],
+                "max": samples_ms.last().copied(),
             },
             "thresholds": {
                 "max_p95_ms": config.max_p95_ms,
+                "minimum_samples": MINIMUM_SAMPLES,
             },
             "gates": {
-                "p95_passed": passed,
+                "p95_passed": p95_passed,
+                "sample_count_passed": sample_count_passed,
+                "failures_passed": failure_count == 0,
             },
         }),
         passed,
     })
 }
 
-/// Uses production ClipboardService writes and a production read to prove data is consumer-readable.
+/// Uses the production clipboard writer and this process's image read to check pixel integrity.
+/// This is intentionally not an external-process or real-input measurement.
 fn copy_selection_and_read(
     frame: &CaptureFrame,
     document: &AnnotationDocument,
@@ -332,7 +385,9 @@ fn percentile(sorted: &[f64], percentile: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CopyPerformanceConfig, build_report, percentile, validate_config};
+    use super::{
+        CopyPerformanceConfig, CopySampleFailure, build_report, percentile, validate_config,
+    };
 
     #[test]
     fn defaults_require_explicit_clipboard_permission_and_match_the_requirement() {
@@ -353,7 +408,7 @@ mod tests {
         };
         let samples: Vec<f64> = (1..=100).map(|value| value as f64).collect();
 
-        let report = build_report(&config, samples).unwrap();
+        let report = build_report(&config, samples, Vec::new()).unwrap();
         let value: serde_json::Value =
             serde_json::from_str(&report.to_pretty_json().unwrap()).unwrap();
 
@@ -372,12 +427,58 @@ mod tests {
         };
         let samples: Vec<f64> = (1..=100).map(|value| value as f64).collect();
 
-        let report = build_report(&config, samples).unwrap();
+        let report = build_report(&config, samples, Vec::new()).unwrap();
 
         assert_eq!(
             percentile(&(1..=100).map(|value| value as f64).collect::<Vec<_>>(), 95,),
             95.0
         );
+        assert!(!report.passed());
+    }
+
+    #[test]
+    fn report_marks_the_benchmark_as_synthetic_and_requires_thirty_valid_samples() {
+        let config = CopyPerformanceConfig {
+            max_p95_ms: None,
+            ..CopyPerformanceConfig::default()
+        };
+        let samples: Vec<f64> = (1..=29).map(|value| value as f64).collect();
+
+        let report = build_report(&config, samples, Vec::new()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&report.to_pretty_json().unwrap()).unwrap();
+
+        assert_eq!(value["evidence"]["measurement_mode"], "synthetic");
+        assert_eq!(value["evidence"]["real_ui"], false);
+        assert_eq!(value["evidence"]["real_ui_qualified"], false);
+        assert_eq!(value["valid_sample_count"], 29);
+        assert_eq!(value["failure_count"], 0);
+        assert_eq!(value["thresholds"]["minimum_samples"], 30);
+        assert_eq!(value["gates"]["sample_count_passed"], false);
+        assert!(!report.passed());
+    }
+
+    #[test]
+    fn report_records_failures_and_keeps_the_p95_gate_closed() {
+        let config = CopyPerformanceConfig {
+            max_p95_ms: None,
+            ..CopyPerformanceConfig::default()
+        };
+        let failures = vec![CopySampleFailure {
+            index: 4,
+            elapsed_ms: 12.5,
+            error: "clipboard unavailable".to_owned(),
+        }];
+        let samples: Vec<f64> = (1..=30).map(|value| value as f64).collect();
+
+        let report = build_report(&config, samples, failures).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&report.to_pretty_json().unwrap()).unwrap();
+
+        assert_eq!(value["valid_sample_count"], 30);
+        assert_eq!(value["failure_count"], 1);
+        assert_eq!(value["failed_samples"][0]["index"], 4);
+        assert_eq!(value["gates"]["failures_passed"], false);
         assert!(!report.passed());
     }
 
