@@ -107,6 +107,8 @@ fn secondary_action_tooltip(action_id: &str) -> &'static str {
 }
 
 /// Builds one fixed-size secondary action so its visible bounds match the menu layout model.
+/// These actions deliberately stay out of Tab order; the primary toolbar remains the keyboard
+/// command surface while the expanded panel is mouse-discoverable.
 fn secondary_action_button(
     id: impl Into<gpui::ElementId>,
     label: &'static str,
