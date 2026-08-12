@@ -183,7 +183,10 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { capture_virtual_desktop_frame(include_cursor) })
+                    .spawn(async move {
+                        capture_virtual_desktop_frame(include_cursor)
+                            .and_then(crate::app::workflow::pinning::prepare_pinned_frame)
+                    })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {

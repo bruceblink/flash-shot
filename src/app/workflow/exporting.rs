@@ -814,7 +814,7 @@ impl FlashShotApp {
     /// Opens the captured virtual desktop only when this remains the active pin request.
     pub(super) fn finish_full_screen_pin(
         &mut self,
-        result: std::io::Result<CaptureFrame>,
+        result: std::io::Result<super::pinning::PreparedPinnedFrame>,
         generation: u64,
         cx: &mut Context<Self>,
     ) {
@@ -827,8 +827,8 @@ impl FlashShotApp {
             return;
         }
         match result {
-            Ok(frame) => self.open_pinned_frame(
-                frame,
+            Ok(prepared) => self.open_prepared_pinned_frame(
+                prepared,
                 "Full screen pinned in an always-on-top window",
                 Some("Could not pin full screen"),
                 false,

@@ -3,7 +3,7 @@
 use super::*;
 
 /// Immutable pixels prepared before a Pin window is opened.
-pub(super) struct PreparedPinnedFrame {
+pub(in crate::app) struct PreparedPinnedFrame {
     pub(super) frame: CaptureFrame,
     pub(super) image: Arc<RenderImage>,
 }
@@ -162,7 +162,9 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { SystemClipboard.read_image() })
+                    .spawn(
+                        async move { SystemClipboard.read_image().and_then(prepare_pinned_frame) },
+                    )
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
@@ -176,7 +178,7 @@ impl FlashShotApp {
 
     fn finish_pin_clipboard_image(
         &mut self,
-        result: std::io::Result<CaptureFrame>,
+        result: std::io::Result<PreparedPinnedFrame>,
         generation: u64,
         cx: &mut Context<Self>,
     ) {
@@ -189,8 +191,8 @@ impl FlashShotApp {
             return;
         }
         match result {
-            Ok(frame) => self.open_pinned_frame(
-                frame,
+            Ok(prepared) => self.open_prepared_pinned_frame(
+                prepared,
                 "Clipboard image pinned in an always-on-top window",
                 Some("Could not pin clipboard image"),
                 false,
@@ -238,7 +240,7 @@ impl FlashShotApp {
     }
 
     /// Opens a Pin after pixel preparation has completed, keeping native window work on the UI thread.
-    fn open_prepared_pinned_frame(
+    pub(super) fn open_prepared_pinned_frame(
         &mut self,
         prepared: PreparedPinnedFrame,
         success_status: &'static str,

@@ -210,7 +210,9 @@ impl FlashShotApp {
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { CaptureFrame::open_png(&path) })
+                    .spawn(async move {
+                        CaptureFrame::open_png(&path).and_then(super::pinning::prepare_pinned_frame)
+                    })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
@@ -225,7 +227,7 @@ impl FlashShotApp {
     /// Opens only the most recently requested retained image and ignores stale decode results.
     fn finish_history_pin(
         &mut self,
-        result: std::io::Result<CaptureFrame>,
+        result: std::io::Result<super::pinning::PreparedPinnedFrame>,
         generation: u64,
         cx: &mut Context<Self>,
     ) {
@@ -238,8 +240,8 @@ impl FlashShotApp {
             return;
         }
         match result {
-            Ok(frame) => self.open_pinned_frame(
-                frame,
+            Ok(prepared) => self.open_prepared_pinned_frame(
+                prepared,
                 "History image pinned in an always-on-top window",
                 Some("Could not pin history image"),
                 false,
