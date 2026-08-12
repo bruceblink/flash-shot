@@ -107,8 +107,6 @@ fn secondary_action_tooltip(action_id: &str) -> &'static str {
 }
 
 /// Builds one fixed-size secondary action so its visible bounds match the menu layout model.
-/// These actions deliberately stay out of Tab order; the primary toolbar remains the keyboard
-/// command surface while the expanded panel is mouse-discoverable.
 fn secondary_action_button(
     id: impl Into<gpui::ElementId>,
     label: &'static str,
@@ -2351,24 +2349,22 @@ impl Render for CaptureOverlay {
                                         })
                                         .when_some(recognition_retry, |actions, retry| {
                                             let retry_label = recognition_retry_label(retry);
-                                            actions.child(
-                                                div()
-                                                    .id("overlay-retry-recognition")
-                                                    .px_3()
-                                                    .py_2()
-                                                    .bg(colors.accent)
-                                                    .text_color(colors.background)
-                                                    .cursor_pointer()
-                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                        let app = this.app.clone();
-                                                        cx.defer(move |cx| {
-                                                            app.update(cx, |app, cx| {
-                                                                app.retry_recognition(retry, cx)
-                                                            })
-                                                        });
-                                                    }))
-                                                    .child(retry_label),
-                                            )
+                                            actions.child(secondary_action_button(
+                                                "overlay-retry-recognition",
+                                                retry_label,
+                                                OVERLAY_RETRY_ACTION_WIDTHS[0],
+                                                colors,
+                                                true,
+                                                Some("Try recognition again"),
+                                                cx.listener(move |this, _, _, cx| {
+                                                    let app = this.app.clone();
+                                                    cx.defer(move |cx| {
+                                                        app.update(cx, |app, cx| {
+                                                            app.retry_recognition(retry, cx)
+                                                        })
+                                                    });
+                                                }),
+                                            ))
                                         })
                                         .when_some(recognition_result, |actions, result| {
                                             actions
@@ -2400,42 +2396,38 @@ impl Render for CaptureOverlay {
                                                                 )),
                                                         ),
                                                 )
-                                                .child(
-                                                    div()
-                                                        .id("overlay-copy-recognition")
-                                                        .px_3()
-                                                        .py_2()
-                                                        .bg(colors.panel)
-                                                        .text_color(colors.text)
-                                                        .cursor_pointer()
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            let app = this.app.clone();
-                                                            cx.defer(move |cx| {
-                                                                app.update(cx, |app, cx| {
-                                                                    app.copy_recognition_result(cx)
-                                                                })
-                                                            });
-                                                        }))
-                                                        .child("Copy text"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .id("overlay-clear-recognition")
-                                                        .px_3()
-                                                        .py_2()
-                                                        .bg(colors.panel)
-                                                        .text_color(colors.text)
-                                                        .cursor_pointer()
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            let app = this.app.clone();
-                                                            cx.defer(move |cx| {
-                                                                app.update(cx, |app, cx| {
-                                                                    app.clear_recognition_result(cx)
-                                                                })
-                                                            });
-                                                        }))
-                                                        .child("Clear result"),
-                                                )
+                                                .child(secondary_action_button(
+                                                    "overlay-copy-recognition",
+                                                    "Copy text",
+                                                    OVERLAY_RECOGNITION_ACTION_WIDTHS[0],
+                                                    colors,
+                                                    false,
+                                                    Some("Copy recognized text to the clipboard"),
+                                                    cx.listener(|this, _, _, cx| {
+                                                        let app = this.app.clone();
+                                                        cx.defer(move |cx| {
+                                                            app.update(cx, |app, cx| {
+                                                                app.copy_recognition_result(cx)
+                                                            })
+                                                        });
+                                                    }),
+                                                ))
+                                                .child(secondary_action_button(
+                                                    "overlay-clear-recognition",
+                                                    "Clear result",
+                                                    OVERLAY_RECOGNITION_ACTION_WIDTHS[1],
+                                                    colors,
+                                                    false,
+                                                    Some("Clear the recognized result"),
+                                                    cx.listener(|this, _, _, cx| {
+                                                        let app = this.app.clone();
+                                                        cx.defer(move |cx| {
+                                                            app.update(cx, |app, cx| {
+                                                                app.clear_recognition_result(cx)
+                                                            })
+                                                        });
+                                                    }),
+                                                ))
                                         }),
                                 )
                             })
