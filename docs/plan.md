@@ -111,7 +111,7 @@ Tauri/WebView/Excalidraw 架构。后续优先级只围绕快捷键到截图导�
 - [x] 实现手动滚动捕获、重叠检测、错位恢复、预览和导出。
 - [x] 在平台行为可靠时提供辅助滚动。
 - [x] 增加长页面内存与正确性测试。
-- [ ] 用 Release 真实输入完成滚动结果的系统剪贴板复制与保存 PNG 双出口验收。
+- [x] 用 Release 真实输入完成滚动结果的系统剪贴板复制与保存 PNG 双出口验收。
 
 ### 滚动截图 roundtrip 完成标准
 
@@ -128,8 +128,27 @@ Tauri/WebView/Excalidraw 架构。后续优先级只围绕快捷键到截图导�
 5. 保存 `More` 菜单、第二帧就绪、`Finish` 后编辑器和复制/保存结果等关键步骤截图，并将报告与截图
    作为同一次验收的关联产物；报告、像素比对和截图三者一致后，roundtrip 才可标记完成。
 
-当前 `scroll-roundtrip` 已覆盖真实入口、第二帧、拼接编辑器、逐像素控件污染检查和零残留清理；
-系统剪贴板与保存 PNG 双出口尚未纳入同一 Release 闭环，因此上面的完整标准保持未关闭。
+### 双出口验收实现思路
+
+1. Copy 和 Save 成功后都会关闭编辑器，因此 runner 用 `--scroll-export copy|save` 启动两个独立进程，
+   每个进程都重新执行完整的真实输入链路，不能复用第一次会话的拼接状态。
+2. 普通验收仍把 Copy 路由到进程内观察器；只有显式同时提供 `--scroll-export copy` 与
+   `--allow-system-clipboard` 时，应用才使用生产 `SystemClipboard`，避免普通测试意外覆盖用户剪贴板。
+3. 点击出口前先固定编辑器中的拼接源帧。Copy 同时读取注册 PNG、CF_DIB 和常规消费者图像，分别
+   解码并逐像素比对；Save 必须经过唯一归属的原生文件对话框，再从隔离路径重新打开 PNG 比对。
+4. 两次会话还要得到相同的初始帧、第二帧和拼接源指纹，并在结束时证明滚动帧、后台捕获、菜单、
+   标注面板、控制窗口、覆盖层和 Pin 全部归零。截图复核属于门禁的一部分，不能由 JSON 代替。
+5. 本轮截图复核发现控制条动作虽未溢出却被省略号截断，随后独立修正按钮宽度与短文案；最终
+   `Scroll down + capture`、`Capture view`、`Finish`、`Cancel` 在 520px 控制条内完整显示。
+
+当前 Release 双出口已通过。Copy 报告位于
+`target/overlay-interaction-acceptance/scroll-copy-release-ui-final/session-1786492775987-21556/report.json`，
+Save 报告位于
+`target/overlay-interaction-acceptance/scroll-save-release-ui-final/session-1786492902079-27312/report.json`。
+两次均从 1484x380 拼接到 1484x663，源指纹均为 `f21a929cfd054de1`；系统 PNG、CF_DIB、消费者
+读取和保存 PNG 均逐像素一致，结束后所有滚动状态与可见探针窗口为零。下一项性能工作单独测量
+Finish 到编辑器、出口完成延迟和峰值工作集，再评估空标注整帧导出的冗余合成、裁切与 RGBA 缓冲，
+不与本次正确性验收混入同一提交。
 
 ## 里程碑 6：录屏
 
