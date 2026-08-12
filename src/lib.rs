@@ -5,6 +5,7 @@ pub mod app;
 pub mod capture_stress;
 pub mod diagnostics;
 pub mod domain;
+pub mod export_stress;
 pub mod history;
 pub mod image;
 pub mod ocr;
