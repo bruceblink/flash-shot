@@ -158,15 +158,15 @@ if ($null -eq $iscc) {
     throw "Inno Setup 6 is required. Install it or make ISCC.exe available on PATH."
 }
 
-# Checks compiler language files before signing so a failed installer build leaves no signed partial artifact.
+# Checks every compiler message file before signing so a failed installer build leaves no signed partial artifact.
 $isccRoot = Split-Path -Parent $iscc
 $languageFiles = @(
-    [regex]::Matches((Get-Content -Raw $installer), 'MessagesFile:\s*"compiler:Languages\\([^" ]+)"') |
-        ForEach-Object { Join-Path $isccRoot (Join-Path "Languages" $_.Groups[1].Value) }
+    [regex]::Matches((Get-Content -Raw $installer), 'MessagesFile:\s*"compiler:([^" ]+)"') |
+        ForEach-Object { Join-Path $isccRoot $_.Groups[1].Value.Replace('\', [IO.Path]::DirectorySeparatorChar) }
 )
 $missingLanguageFiles = @($languageFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
 if ($missingLanguageFiles.Count -gt 0) {
-    throw "Inno Setup language files are missing: $($missingLanguageFiles -join ', '). Install the full Inno Setup language pack."
+    throw "Inno Setup compiler message files are missing: $($missingLanguageFiles -join ', '). Install the full Inno Setup language pack."
 }
 
 if ($RequireSignature) {
@@ -175,7 +175,7 @@ if ($RequireSignature) {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not sign $executable."
     }
-    & $signTool verify /pa $executable
+    & $signTool verify /pa /tw $executable
     if ($LASTEXITCODE -ne 0) {
         throw "Signature verification failed for $executable."
     }
@@ -217,7 +217,7 @@ if ($RequireSignature) {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not sign $setup."
     }
-    & $signTool verify /pa $setup
+    & $signTool verify /pa /tw $setup
     if ($LASTEXITCODE -ne 0) {
         throw "Signature verification failed for $setup."
     }
