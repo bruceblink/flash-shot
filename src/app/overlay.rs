@@ -8,10 +8,10 @@ use std::{
 
 use gpui::{
     App, Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable, FontWeight,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels,
-    Render, RenderImage, Subscription, TextAlign, TextRun, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowKind, WindowOptions, canvas, div, fill, img, point, prelude::*, px, rgba,
-    size,
+    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
+    Pixels, Render, RenderImage, Subscription, TextAlign, TextRun, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, canvas, div, fill, img,
+    point, prelude::*, px, rgba, size,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -112,6 +112,20 @@ fn primary_action_tooltip(action_id: &str) -> &'static str {
         "cancel" => "Cancel capture (Escape)",
         _ => "",
     }
+}
+
+/// Keeps a focused toolbar command from also invoking the overlay-wide Enter=Copy shortcut.
+/// Modified Enter remains available to the overlay so Shift+Enter can keep its quick-save path.
+fn stop_primary_action_key_propagation(event: &KeyDownEvent, _window: &mut Window, cx: &mut App) {
+    if should_stop_primary_action_key_propagation(&event.keystroke) {
+        cx.stop_propagation();
+    }
+}
+
+/// Identifies the unmodified Enter key that would otherwise trigger two commands when a toolbar
+/// button has focus: the button activation and the overlay's global Copy shortcut.
+fn should_stop_primary_action_key_propagation(keystroke: &Keystroke) -> bool {
+    keystroke.key == "enter" && !keystroke.modifiers.modified()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1849,6 +1863,11 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .justify_center()
                                     .rounded_md()
+                                    // Keep a stable hitbox while allowing mouse-focused controls
+                                    // to show a keyboard-only focus ring without joining annotation
+                                    // Tab navigation (no explicit tab index is assigned here).
+                                    .border_1()
+                                    .border_color(rgba(0xFFFFFF00))
                                     .bg(if show_annotation_controls {
                                         colors.accent
                                     } else {
@@ -1859,6 +1878,8 @@ impl Render for CaptureOverlay {
                                     } else {
                                         colors.text
                                     })
+                                    .focusable()
+                                    .focus_visible(|style| style.border_color(colors.accent))
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(move |style| {
@@ -1888,6 +1909,7 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
+                                    .on_key_down(stop_primary_action_key_propagation)
                                     .child("Mark"),
                             )
                             .child(
@@ -1899,8 +1921,12 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .justify_center()
                                     .rounded_md()
+                                    .border_1()
+                                    .border_color(rgba(0xFFFFFF00))
                                     .bg(colors.panel)
                                     .text_color(colors.text)
+                                    .focusable()
+                                    .focus_visible(|style| style.border_color(colors.accent))
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(colors.background))
@@ -1913,6 +1939,7 @@ impl Render for CaptureOverlay {
                                             app.update(cx, |app, cx| app.pin_selection(cx))
                                         });
                                     }))
+                                    .on_key_down(stop_primary_action_key_propagation)
                                     .child("Pin"),
                             )
                             .child(
@@ -1924,8 +1951,12 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .justify_center()
                                     .rounded_md()
+                                    .border_1()
+                                    .border_color(rgba(0xFFFFFF00))
                                     .bg(colors.accent)
                                     .text_color(colors.background)
+                                    .focusable()
+                                    .focus_visible(|style| style.border_color(colors.background))
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(colors.accent))
@@ -1941,6 +1972,7 @@ impl Render for CaptureOverlay {
                                             app.update(cx, |app, cx| app.copy_selection(cx))
                                         });
                                     }))
+                                    .on_key_down(stop_primary_action_key_propagation)
                                     .child("Copy"),
                             )
                             .child(
@@ -1952,8 +1984,12 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .justify_center()
                                     .rounded_md()
+                                    .border_1()
+                                    .border_color(rgba(0xFFFFFF00))
                                     .bg(colors.panel)
                                     .text_color(colors.text)
+                                    .focusable()
+                                    .focus_visible(|style| style.border_color(colors.accent))
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(colors.background))
@@ -1969,6 +2005,7 @@ impl Render for CaptureOverlay {
                                             app.update(cx, |app, cx| app.save_selection(cx))
                                         });
                                     }))
+                                    .on_key_down(stop_primary_action_key_propagation)
                                     .child("Save"),
                             )
                             .child(
@@ -1984,12 +2021,16 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .justify_center()
                                     .rounded_md()
+                                    .border_1()
+                                    .border_color(rgba(0xFFFFFF00))
                                     .bg(if show_more_actions {
                                         colors.background
                                     } else {
                                         colors.panel
                                     })
                                     .text_color(colors.text)
+                                    .focusable()
+                                    .focus_visible(|style| style.border_color(colors.accent))
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(colors.background))
@@ -2014,6 +2055,7 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
+                                    .on_key_down(stop_primary_action_key_propagation)
                                     .child(if show_more_actions { "Less" } else { "More" }),
                             )
                             .child(
@@ -2025,8 +2067,12 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .justify_center()
                                     .rounded_md()
+                                    .border_1()
+                                    .border_color(rgba(0xFFFFFF00))
                                     .bg(colors.danger)
                                     .text_color(colors.background)
+                                    .focusable()
+                                    .focus_visible(|style| style.border_color(colors.background))
                                     .text_sm()
                                     .cursor_pointer()
                                     .hover(|style| style.bg(colors.panel).text_color(colors.danger))
@@ -2040,6 +2086,7 @@ impl Render for CaptureOverlay {
                                         let app = this.app.clone();
                                         cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
                                     }))
+                                    .on_key_down(stop_primary_action_key_propagation)
                                     .child("Cancel"),
                             )
                             .when(show_more_actions, |actions| {
@@ -3882,8 +3929,8 @@ mod tests {
         primary_action_tooltip, recognition_result_preview, recognition_retry_label,
         resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
         secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
-        selection_point_from_view_or_screen, smart_target_hud_label, smart_target_hud_layout,
-        status_bottom_inset, visible_selection,
+        selection_point_from_view_or_screen, should_stop_primary_action_key_propagation,
+        smart_target_hud_label, smart_target_hud_layout, status_bottom_inset, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -3892,7 +3939,7 @@ mod tests {
     };
     use crate::platform::capture::PixelFormat;
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
-    use gpui::{Bounds, point, px, size};
+    use gpui::{Bounds, Keystroke, point, px, size};
 
     #[test]
     fn queued_input_only_applies_to_the_overlay_generation_that_created_it() {
@@ -4064,6 +4111,22 @@ mod tests {
         assert!(primary_action_tooltip("cancel").contains("Escape"));
         assert!(!primary_action_tooltip("draw").is_empty());
         assert_eq!(primary_action_tooltip("unknown"), "");
+    }
+
+    #[test]
+    fn focused_primary_action_only_stops_plain_enter_propagation() {
+        assert!(should_stop_primary_action_key_propagation(
+            &Keystroke::parse("enter").unwrap()
+        ));
+        assert!(!should_stop_primary_action_key_propagation(
+            &Keystroke::parse("shift-enter").unwrap()
+        ));
+        assert!(!should_stop_primary_action_key_propagation(
+            &Keystroke::parse("ctrl-enter").unwrap()
+        ));
+        assert!(!should_stop_primary_action_key_propagation(
+            &Keystroke::parse("escape").unwrap()
+        ));
     }
 
     #[test]
