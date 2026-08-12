@@ -2,6 +2,22 @@
 
 use super::*;
 
+/// Immutable pixels prepared before a Pin window is opened.
+pub(super) struct PreparedPinnedFrame {
+    pub(super) frame: CaptureFrame,
+    pub(super) image: Arc<RenderImage>,
+}
+
+/// Converts captured pixels into the render image used by the Pin window.
+/// This runs on the background executor before native window creation.
+pub(super) fn prepare_pinned_frame(frame: CaptureFrame) -> std::io::Result<PreparedPinnedFrame> {
+    let rendered = render_image_from_capture(&frame)?;
+    Ok(PreparedPinnedFrame {
+        frame,
+        image: rendered.image,
+    })
+}
+
 impl FlashShotApp {
     pub(in crate::app) fn copy_selection(&mut self, cx: &mut Context<Self>) {
         let selection = match self.session.start_export() {
@@ -72,8 +88,7 @@ impl FlashShotApp {
                         let pinned_frame = frame
                             .composite_annotations(&document)
                             .and_then(|frame| frame.crop(selection))?;
-                        let rendered = render_image_from_capture(&pinned_frame)?.image;
-                        Ok::<_, std::io::Error>((pinned_frame, rendered))
+                        prepare_pinned_frame(pinned_frame)
                     })
                     .await;
                 let mut prepared = Some(prepared);
@@ -99,9 +114,8 @@ impl FlashShotApp {
                             return true;
                         };
                         match prepared {
-                            Ok((pinned_frame, rendered)) => app.open_rendered_pinned_frame(
-                                pinned_frame,
-                                rendered,
+                            Ok(prepared) => app.open_prepared_pinned_frame(
+                                prepared,
                                 "Selection pinned in an always-on-top window",
                                 None,
                                 false,
@@ -211,9 +225,11 @@ impl FlashShotApp {
                 return;
             }
         };
-        self.open_rendered_pinned_frame(
-            pinned_frame,
-            pinned.image,
+        self.open_prepared_pinned_frame(
+            PreparedPinnedFrame {
+                frame: pinned_frame,
+                image: pinned.image,
+            },
             success_status,
             failure_notification,
             show_saved_feedback,
@@ -222,16 +238,16 @@ impl FlashShotApp {
     }
 
     /// Opens a Pin after pixel preparation has completed, keeping native window work on the UI thread.
-    fn open_rendered_pinned_frame(
+    fn open_prepared_pinned_frame(
         &mut self,
-        pinned_frame: CaptureFrame,
-        image: Arc<gpui::RenderImage>,
+        prepared: PreparedPinnedFrame,
         success_status: &'static str,
         failure_notification: Option<&'static str>,
         show_saved_feedback: bool,
         cx: &mut Context<Self>,
     ) {
-        let window_size = pinned_size(pinned_frame.width as f32, pinned_frame.height as f32);
+        let PreparedPinnedFrame { frame, image } = prepared;
+        let window_size = pinned_size(frame.width as f32, frame.height as f32);
         let window_bounds = WindowBounds::centered(window_size, cx);
         let pinned_app = cx.entity();
         let pinned_colors = self.colors;
@@ -250,8 +266,8 @@ impl FlashShotApp {
                 ..Default::default()
             },
             move |window, cx| {
-                let pinned = cx
-                    .new(|cx| PinnedImage::new(image, pinned_frame, pinned_app, pinned_colors, cx));
+                let pinned =
+                    cx.new(|cx| PinnedImage::new(image, frame, pinned_app, pinned_colors, cx));
                 if show_saved_feedback {
                     pinned.update(cx, |pinned, cx| pinned.finish_save_status(true, cx));
                 }
