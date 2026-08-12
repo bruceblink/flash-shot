@@ -9,8 +9,10 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use super::FlashShotApp;
 
 const MANUAL_SCROLL_BUTTON_HEIGHT: f32 = 32.0;
-const MANUAL_SCROLL_PRIMARY_BUTTON_MIN_WIDTH: f32 = 156.0;
-const MANUAL_SCROLL_SECONDARY_BUTTON_MIN_WIDTH: f32 = 96.0;
+const MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH: f32 = 176.0;
+const MANUAL_SCROLL_CAPTURE_BUTTON_MIN_WIDTH: f32 = 122.0;
+const MANUAL_SCROLL_FINISH_BUTTON_MIN_WIDTH: f32 = 84.0;
+const MANUAL_SCROLL_CANCEL_BUTTON_MIN_WIDTH: f32 = 80.0;
 const MANUAL_SCROLL_STATUS_MAX_WIDTH: f32 = 200.0;
 
 pub(super) struct ManualScrollControl {
@@ -83,11 +85,13 @@ impl ManualScrollShortcut {
         }
     }
 
-    /// Reserves enough room for the primary label while keeping secondary buttons compact.
+    /// Gives longer commands more room while keeping all four actions on one 520 px row.
     const fn min_width(self) -> f32 {
         match self {
-            Self::AutoCapture => MANUAL_SCROLL_PRIMARY_BUTTON_MIN_WIDTH,
-            Self::Capture | Self::Finish | Self::Cancel => MANUAL_SCROLL_SECONDARY_BUTTON_MIN_WIDTH,
+            Self::AutoCapture => MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH,
+            Self::Capture => MANUAL_SCROLL_CAPTURE_BUTTON_MIN_WIDTH,
+            Self::Finish => MANUAL_SCROLL_FINISH_BUTTON_MIN_WIDTH,
+            Self::Cancel => MANUAL_SCROLL_CANCEL_BUTTON_MIN_WIDTH,
         }
     }
 }
@@ -113,7 +117,7 @@ fn manual_scroll_button(
         .h(px(MANUAL_SCROLL_BUTTON_HEIGHT))
         .flex_1()
         .min_w(px(action.min_width()))
-        .px_3()
+        .px_2()
         .flex()
         .items_center()
         .justify_center()
@@ -340,9 +344,9 @@ fn manual_scroll_capture_label(capture_in_flight: bool, retry_available: bool) -
     if capture_in_flight {
         "Capturing..."
     } else if retry_available {
-        "Retry current"
+        "Retry view"
     } else {
-        "Capture current"
+        "Capture view"
     }
 }
 
@@ -357,11 +361,7 @@ fn auto_scroll_capture_label(auto_capture_pending: bool) -> &'static str {
 
 /// Names the next required action until a second viewport makes stitching possible.
 fn manual_scroll_finish_label(can_finish: bool) -> &'static str {
-    if can_finish {
-        "Finish"
-    } else {
-        "Capture another"
-    }
+    if can_finish { "Finish" } else { "Not ready" }
 }
 
 /// Summarizes the session stage next to the frame count so the next action is obvious.
@@ -381,7 +381,8 @@ fn manual_scroll_frame_count_label(frame_count: usize, can_finish: bool) -> Stri
 #[cfg(test)]
 mod tests {
     use super::{
-        MANUAL_SCROLL_PRIMARY_BUTTON_MIN_WIDTH, MANUAL_SCROLL_SECONDARY_BUTTON_MIN_WIDTH,
+        MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH, MANUAL_SCROLL_CANCEL_BUTTON_MIN_WIDTH,
+        MANUAL_SCROLL_CAPTURE_BUTTON_MIN_WIDTH, MANUAL_SCROLL_FINISH_BUTTON_MIN_WIDTH,
         ManualScrollShortcut, auto_scroll_capture_label, manual_scroll_capture_label,
         manual_scroll_finish_label, manual_scroll_frame_count_label, manual_scroll_shortcut,
     };
@@ -389,14 +390,14 @@ mod tests {
 
     #[test]
     fn capture_action_describes_its_busy_state() {
-        assert_eq!(manual_scroll_capture_label(false, false), "Capture current");
-        assert_eq!(manual_scroll_capture_label(false, true), "Retry current");
+        assert_eq!(manual_scroll_capture_label(false, false), "Capture view");
+        assert_eq!(manual_scroll_capture_label(false, true), "Retry view");
         assert_eq!(manual_scroll_capture_label(true, true), "Capturing...");
     }
 
     #[test]
     fn finish_action_requires_an_overlapping_viewport() {
-        assert_eq!(manual_scroll_finish_label(false), "Capture another");
+        assert_eq!(manual_scroll_finish_label(false), "Not ready");
         assert_eq!(manual_scroll_finish_label(true), "Finish");
     }
 
@@ -430,16 +431,31 @@ mod tests {
         assert_eq!(ManualScrollShortcut::Cancel.tab_index(), 3);
         assert_eq!(
             ManualScrollShortcut::AutoCapture.min_width(),
-            MANUAL_SCROLL_PRIMARY_BUTTON_MIN_WIDTH
+            MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH
         );
         assert_eq!(
             ManualScrollShortcut::Capture.min_width(),
-            MANUAL_SCROLL_SECONDARY_BUTTON_MIN_WIDTH
+            MANUAL_SCROLL_CAPTURE_BUTTON_MIN_WIDTH
         );
-        assert!(
-            ManualScrollShortcut::AutoCapture.min_width()
-                > ManualScrollShortcut::Capture.min_width()
+        assert_eq!(
+            ManualScrollShortcut::Finish.min_width(),
+            MANUAL_SCROLL_FINISH_BUTTON_MIN_WIDTH
         );
+        assert_eq!(
+            ManualScrollShortcut::Cancel.min_width(),
+            MANUAL_SCROLL_CANCEL_BUTTON_MIN_WIDTH
+        );
+        let minimum_buttons = [
+            ManualScrollShortcut::AutoCapture,
+            ManualScrollShortcut::Capture,
+            ManualScrollShortcut::Finish,
+            ManualScrollShortcut::Cancel,
+        ]
+        .into_iter()
+        .map(ManualScrollShortcut::min_width)
+        .sum::<f32>();
+        // A 520 px control has 472 px after root padding and the three 8 px gaps.
+        assert!(minimum_buttons <= 472.0);
     }
 
     #[test]
