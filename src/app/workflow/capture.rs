@@ -26,6 +26,9 @@ impl FlashShotApp {
         if self.delayed_capture_generation.is_some() {
             return;
         }
+        if !self.capture_export_operations_idle() {
+            return;
+        }
         if self.capture_teardown_pending {
             self.defer_capture_until_teardown(0, false, true, cx);
             return;
@@ -50,6 +53,7 @@ impl FlashShotApp {
             || self.full_screen_save_generation.is_some()
             || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
+            || self.history_copy_generation.is_some()
             || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
@@ -100,6 +104,7 @@ impl FlashShotApp {
             || self.full_screen_save_generation.is_some()
             || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
+            || self.history_copy_generation.is_some()
             || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
@@ -156,6 +161,7 @@ impl FlashShotApp {
             || self.full_screen_save_generation.is_some()
             || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
+            || self.history_copy_generation.is_some()
             || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
@@ -357,6 +363,7 @@ impl FlashShotApp {
             && self.full_screen_save_generation.is_none()
             && self.full_screen_pin_generation.is_none()
             && self.clipboard_pin_generation.is_none()
+            && self.history_copy_generation.is_none()
             && self.history_pin_generation.is_none()
     }
 

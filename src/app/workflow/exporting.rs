@@ -590,7 +590,8 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn clear_history(&mut self, cx: &mut Context<Self>) {
-        if self.history_clear_in_flight
+        if self.history_copy_generation.is_some()
+            || self.history_clear_in_flight
             || self.history_retention_target.is_some()
             || !self.history_deletions_in_flight.is_empty()
         {
@@ -666,7 +667,8 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn remove_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.history_clear_in_flight
+        if self.history_copy_generation.is_some()
+            || self.history_clear_in_flight
             || self.history_clear_confirmation
             || self.history_retention_target.is_some()
             || !self

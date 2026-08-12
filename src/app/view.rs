@@ -231,6 +231,9 @@ impl gpui::Render for FlashShotApp {
                                                     clear_scope: self.history_clear_scope,
                                                     clear_count: self.history_clear_count,
                                                     clear_in_flight: self.history_clear_in_flight,
+                                                    copy_in_flight: self
+                                                        .history_copy_generation
+                                                        .is_some(),
                                                     retention_in_flight: self
                                                         .history_retention_target
                                                         .is_some(),
@@ -476,6 +479,9 @@ fn capture_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
+    // A history Copy owns the clipboard until its worker finishes, so capture commands must not
+    // start another workflow that could invalidate or race that background operation.
+    let capture_actions_enabled = is_idle && app_state.history_copy_generation.is_none();
     let quick_actions = settings_section("Screenshot", colors).child(
         div()
             .w_full()
@@ -486,7 +492,7 @@ fn capture_settings(
                 "settings-capture-region",
                 "Region capture",
                 colors,
-                is_idle,
+                capture_actions_enabled,
                 true,
                 {
                     let app = app.clone();
@@ -497,7 +503,7 @@ fn capture_settings(
                 "settings-capture-full-screen",
                 "Full screen",
                 colors,
-                is_idle,
+                capture_actions_enabled,
                 false,
                 {
                     let app = app.clone();
@@ -508,7 +514,7 @@ fn capture_settings(
                 "settings-capture-focused-window",
                 "Focused window",
                 colors,
-                is_idle,
+                capture_actions_enabled,
                 false,
                 {
                     let app = app.clone();
@@ -519,7 +525,7 @@ fn capture_settings(
                 "settings-copy-full-screen",
                 "Copy full screen",
                 colors,
-                is_idle,
+                capture_actions_enabled,
                 false,
                 {
                     let app = app.clone();
@@ -530,7 +536,7 @@ fn capture_settings(
                 "settings-save-full-screen",
                 "Save full screen",
                 colors,
-                is_idle,
+                capture_actions_enabled,
                 false,
                 {
                     let app = app.clone();
@@ -541,7 +547,7 @@ fn capture_settings(
                 "settings-pin-full-screen",
                 "Pin full screen",
                 colors,
-                is_idle,
+                capture_actions_enabled,
                 false,
                 {
                     let app = app.clone();
@@ -552,7 +558,7 @@ fn capture_settings(
                 "settings-pin-clipboard",
                 "Pin clipboard",
                 colors,
-                is_idle,
+                capture_actions_enabled,
                 false,
                 {
                     let app = app.clone();
@@ -853,6 +859,7 @@ fn file_settings(
                         ),
                         colors,
                         is_idle
+                            && app_state.history_copy_generation.is_none()
                             && !app_state.history_clear_in_flight
                             && !app_state.history_clear_confirmation
                             && app_state.history_deletions_in_flight.is_empty()
@@ -1205,6 +1212,7 @@ struct HistoryViewState {
     clear_scope: HistoryClearScope,
     clear_count: usize,
     clear_in_flight: bool,
+    copy_in_flight: bool,
     retention_in_flight: bool,
     deletion_in_flight: bool,
     search_query: String,
@@ -1232,6 +1240,7 @@ fn history_settings(
         clear_scope,
         clear_count,
         clear_in_flight,
+        copy_in_flight,
         retention_in_flight,
         deletion_in_flight,
         search_query,
@@ -1282,11 +1291,12 @@ fn history_settings(
                 )),
         )
         .when(filtered_entries > 0 || selected_entries > 0, |section| {
-            let actions_enabled = is_idle
+            let selection_actions_enabled = is_idle
                 && !clear_in_flight
                 && !clear_confirmation
                 && !retention_in_flight
                 && !deletion_in_flight;
+            let destructive_actions_enabled = selection_actions_enabled && !copy_in_flight;
             let select_app = app.clone();
             let clear_selection_app = app.clone();
             let delete_selected_app = app.clone();
@@ -1309,7 +1319,7 @@ fn history_settings(
                             "settings-select-filtered-history",
                             "Select all filtered",
                             colors,
-                            actions_enabled,
+                            selection_actions_enabled,
                             move |_, _, cx| {
                                 select_app.update(cx, |this, cx| this.select_filtered_history(cx))
                             },
@@ -1320,7 +1330,7 @@ fn history_settings(
                             "settings-clear-history-selection",
                             "Clear selection",
                             colors,
-                            actions_enabled,
+                            selection_actions_enabled,
                             move |_, _, cx| {
                                 clear_selection_app
                                     .update(cx, |this, cx| this.clear_history_selection(cx))
@@ -1330,7 +1340,7 @@ fn history_settings(
                             "settings-delete-selected-history",
                             "Delete selected",
                             colors,
-                            actions_enabled,
+                            destructive_actions_enabled,
                             move |_, _, cx| {
                                 delete_selected_app
                                     .update(cx, |this, cx| this.request_selected_history_clear(cx))
@@ -1359,7 +1369,7 @@ fn history_settings(
                         "settings-confirm-clear-history",
                         "Delete captures",
                         colors,
-                        is_idle && !retention_in_flight,
+                        is_idle && !copy_in_flight && !retention_in_flight,
                         move |_, _, cx| confirm_app.update(cx, |this, cx| this.clear_history(cx)),
                     ))
                     .child(settings_button(
@@ -1416,6 +1426,7 @@ fn history_settings(
                     &filtered_label,
                     colors,
                     is_idle
+                        && !copy_in_flight
                         && !clear_in_flight
                         && !clear_confirmation
                         && !retention_in_flight
@@ -1440,6 +1451,12 @@ fn history_settings(
                     let selection_enabled = is_idle
                         && !deleting
                         && !clear_confirmation
+                        && !clear_in_flight
+                        && !retention_in_flight
+                        && !deletion_in_flight;
+                    let copy_enabled = is_idle
+                        && !copy_in_flight
+                        && !deleting
                         && !clear_in_flight
                         && !retention_in_flight
                         && !deletion_in_flight;
@@ -1469,7 +1486,7 @@ fn history_settings(
                                 format!("settings-open-history-{}", entry.created_at_ms),
                                 "Open",
                                 colors,
-                                is_idle && !deleting,
+                                is_idle && !deleting && !copy_in_flight,
                                 {
                                     let app = app.clone();
                                     let path = entry.path.clone();
@@ -1482,9 +1499,9 @@ fn history_settings(
                             ))
                             .child(settings_button(
                                 format!("settings-copy-history-{}", entry.created_at_ms),
-                                "Copy",
+                                if copy_in_flight { "Copying..." } else { "Copy" },
                                 colors,
-                                is_idle && !deleting,
+                                copy_enabled,
                                 {
                                     let app = app.clone();
                                     let path = entry.path.clone();
@@ -1499,7 +1516,7 @@ fn history_settings(
                                 format!("settings-pin-history-{}", entry.created_at_ms),
                                 "Pin",
                                 colors,
-                                is_idle && !deleting,
+                                is_idle && !deleting && !copy_in_flight,
                                 {
                                     let app = app.clone();
                                     let path = entry.path.clone();
@@ -1515,6 +1532,7 @@ fn history_settings(
                                 if deleting { "Removing..." } else { "Remove" },
                                 colors,
                                 is_idle
+                                    && !copy_in_flight
                                     && !deleting
                                     && !clear_confirmation
                                     && !clear_in_flight
@@ -1543,6 +1561,7 @@ fn history_settings(
                 },
                 colors,
                 is_idle
+                    && !copy_in_flight
                     && total_entries > 0
                     && !clear_in_flight
                     && !retention_in_flight

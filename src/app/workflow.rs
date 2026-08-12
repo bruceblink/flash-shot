@@ -143,7 +143,8 @@ impl FlashShotApp {
     }
 
     pub(super) fn cycle_history_limit(&mut self, cx: &mut Context<Self>) {
-        if self.history_retention_target.is_some()
+        if self.history_copy_generation.is_some()
+            || self.history_retention_target.is_some()
             || self.history_clear_in_flight
             || self.history_clear_confirmation
             || !self.history_deletions_in_flight.is_empty()

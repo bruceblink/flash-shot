@@ -644,6 +644,20 @@ fn stale_idle_completion_releases_its_slot_without_overriding_new_state() {
 }
 
 #[test]
+fn stale_history_copy_completion_releases_its_owned_slot_after_reset() {
+    // A reset advances the operation generation; the stale worker only releases its own slot
+    // when it actually completes, and it cannot overwrite the newer operation's state.
+    let mut history_copy = Some(12);
+    assert!(!claim_idle_completion(
+        &mut history_copy,
+        13,
+        12,
+        CaptureSessionState::Idle,
+    ));
+    assert_eq!(history_copy, None);
+}
+
+#[test]
 fn captured_display_composition_reuses_one_frame_without_an_extra_copy() {
     let bounds = PhysicalRect {
         left: 0,

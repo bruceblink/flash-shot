@@ -16,7 +16,9 @@ pub(in crate::app) fn retain_history_thumbnail_pending(
 
 impl FlashShotApp {
     pub(in crate::app) fn open_image(&mut self, cx: &mut Context<Self>) {
-        if self.session.state() != CaptureSessionState::Idle {
+        if self.history_copy_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
             return;
         }
         if let Err(error) = self.session.begin() {
@@ -84,7 +86,9 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn open_editable_project(&mut self, cx: &mut Context<Self>) {
-        if self.session.state() != CaptureSessionState::Idle {
+        if self.history_copy_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
             return;
         }
         if let Err(error) = self.session.begin() {
@@ -142,7 +146,9 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn open_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.session.state() != CaptureSessionState::Idle {
+        if self.history_copy_generation.is_some()
+            || self.session.state() != CaptureSessionState::Idle
+        {
             return;
         }
         if let Err(error) = self.session.begin() {
@@ -189,11 +195,24 @@ impl FlashShotApp {
 
     /// Decodes and copies a retained PNG without opening the annotation workflow.
     pub(in crate::app) fn copy_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.session.state() != CaptureSessionState::Idle {
+        if !history_copy_can_start(
+            self.history_copy_generation,
+            self.full_screen_copy_generation.is_some()
+                || self.full_screen_save_generation.is_some()
+                || self.full_screen_pin_generation.is_some()
+                || self.clipboard_pin_generation.is_some()
+                || self.history_pin_generation.is_some()
+                || self.delayed_capture_generation.is_some(),
+            self.history_clear_in_flight
+                || self.history_retention_target.is_some()
+                || !self.history_deletions_in_flight.is_empty(),
+            self.session.state(),
+        ) {
             return;
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let generation = self.operation_generation;
+        self.history_copy_generation = Some(generation);
         self.status = format!("Copying {}...", path.display());
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -218,7 +237,8 @@ impl FlashShotApp {
 
     /// Decodes a retained screenshot in the background before opening it as an always-on-top pin.
     pub(in crate::app) fn pin_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.history_pin_generation.is_some()
+        if self.history_copy_generation.is_some()
+            || self.history_pin_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
             return;
@@ -454,9 +474,12 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !is_current_operation(self.operation_generation, generation)
-            || self.session.state() != CaptureSessionState::Idle
-        {
+        if !claim_idle_completion(
+            &mut self.history_copy_generation,
+            self.operation_generation,
+            generation,
+            self.session.state(),
+        ) {
             return;
         }
         self.status = match result {
@@ -465,6 +488,20 @@ impl FlashShotApp {
         };
         cx.notify();
     }
+}
+
+/// Allows one history decode-and-copy task only when no async workflow can replace its source
+/// file or write the clipboard first.
+fn history_copy_can_start(
+    history_copy_generation: Option<u64>,
+    conflicting_operation_in_flight: bool,
+    history_file_operation_in_flight: bool,
+    session_state: CaptureSessionState,
+) -> bool {
+    history_copy_generation.is_none()
+        && !conflicting_operation_in_flight
+        && !history_file_operation_in_flight
+        && session_state == CaptureSessionState::Idle
 }
 
 /// Adds a thumbnail request once, preserving FIFO order across repeated UI renders.
@@ -497,13 +534,31 @@ fn take_next_history_thumbnail(
 #[cfg(test)]
 mod tests {
     use super::{
-        HISTORY_THUMBNAIL_MAX_IN_FLIGHT, enqueue_history_thumbnail_path,
+        HISTORY_THUMBNAIL_MAX_IN_FLIGHT, enqueue_history_thumbnail_path, history_copy_can_start,
         retain_history_thumbnail_pending, take_next_history_thumbnail,
     };
+    use crate::domain::session::CaptureSessionState;
     use std::{
         collections::{HashSet, VecDeque},
         path::PathBuf,
     };
+
+    #[test]
+    fn history_copy_start_rejects_clipboard_and_file_conflicts() {
+        let idle = CaptureSessionState::Idle;
+        assert!(history_copy_can_start(None, false, false, idle));
+
+        // A second history Copy must not be allowed to race the first system clipboard write.
+        assert!(!history_copy_can_start(Some(7), false, false, idle));
+        assert!(!history_copy_can_start(None, true, false, idle));
+        assert!(!history_copy_can_start(None, false, true, idle));
+        assert!(!history_copy_can_start(
+            None,
+            false,
+            false,
+            CaptureSessionState::Selecting,
+        ));
+    }
 
     #[test]
     fn thumbnail_queue_deduplicates_pending_and_loading_paths() {

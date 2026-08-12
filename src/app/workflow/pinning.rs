@@ -144,6 +144,7 @@ impl FlashShotApp {
             || self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()
             || self.full_screen_pin_generation.is_some()
+            || self.history_copy_generation.is_some()
             || self.history_pin_generation.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle

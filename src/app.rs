@@ -141,6 +141,8 @@ pub struct FlashShotApp {
     full_screen_save_generation: Option<u64>,
     full_screen_pin_generation: Option<u64>,
     clipboard_pin_generation: Option<u64>,
+    // A history Copy owns the system clipboard until its background encode completes.
+    history_copy_generation: Option<u64>,
     history_pin_generation: Option<u64>,
     pinned_save_in_flight: bool,
     include_cursor: bool,
@@ -686,6 +688,7 @@ impl FlashShotApp {
             full_screen_save_generation: None,
             full_screen_pin_generation: None,
             clipboard_pin_generation: None,
+            history_copy_generation: None,
             history_pin_generation: None,
             pinned_save_in_flight: false,
             include_cursor: settings.include_cursor,
