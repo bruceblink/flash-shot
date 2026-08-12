@@ -188,8 +188,24 @@ pub struct OverlayInteractionAcceptanceOptions {
     pub window_height: f32,
     pub shortcut_readiness: SyncSender<bool>,
     pub commands: async_channel::Receiver<OverlayInteractionAcceptanceCommand>,
-    /// Receives the exact frame produced by a real selection Copy without touching Windows state.
-    pub copy_results: Sender<platform::capture::CaptureFrame>,
+    /// `Some` redirects Copy into a process-local observer; `None` exercises `SystemClipboard`.
+    pub copy_results: Option<Sender<platform::capture::CaptureFrame>>,
+}
+
+impl OverlayInteractionAcceptanceOptions {
+    /// Converts public runner inputs into the private window setup while preserving clipboard mode.
+    fn into_settings_window_options(self) -> SettingsWindowOptions {
+        SettingsWindowOptions {
+            width: self.window_width.max(420.0),
+            height: self.window_height.max(420.0),
+            show: true,
+            section: "capture".to_owned(),
+            interaction_shortcut_readiness: Some(self.shortcut_readiness),
+            interaction_commands: Some(self.commands),
+            interaction_copy_results: self.copy_results,
+            ..SettingsWindowOptions::default()
+        }
+    }
 }
 
 /// Process-local clipboard used only by the real-input acceptance entry point.
@@ -215,12 +231,15 @@ impl platform::clipboard::ClipboardService for OverlayInteractionClipboard {
 
 #[cfg(test)]
 mod overlay_interaction_clipboard_tests {
-    use super::OverlayInteractionClipboard;
+    use super::{OverlayInteractionAcceptanceOptions, OverlayInteractionClipboard};
     use crate::platform::{
         capture::{CaptureFrame, PixelFormat},
         clipboard::ClipboardService,
     };
-    use std::{sync::Arc, sync::mpsc, time::Duration};
+    use std::{
+        sync::{Arc, mpsc, mpsc::sync_channel},
+        time::Duration,
+    };
 
     fn frame() -> CaptureFrame {
         CaptureFrame {
@@ -264,6 +283,41 @@ mod overlay_interaction_clipboard_tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
     }
+
+    #[test]
+    fn acceptance_options_preserve_injected_clipboard_mode() {
+        let (readiness, _readiness_results) = sync_channel(1);
+        let (_commands, command_results) = async_channel::unbounded();
+        let (copy_results, _copied_frames) = mpsc::channel();
+
+        let options = OverlayInteractionAcceptanceOptions {
+            window_width: 800.0,
+            window_height: 600.0,
+            shortcut_readiness: readiness,
+            commands: command_results,
+            copy_results: Some(copy_results),
+        }
+        .into_settings_window_options();
+
+        assert!(options.interaction_copy_results.is_some());
+    }
+
+    #[test]
+    fn acceptance_options_preserve_system_clipboard_mode() {
+        let (readiness, _readiness_results) = sync_channel(1);
+        let (_commands, command_results) = async_channel::unbounded();
+
+        let options = OverlayInteractionAcceptanceOptions {
+            window_width: 800.0,
+            window_height: 600.0,
+            shortcut_readiness: readiness,
+            commands: command_results,
+            copy_results: None,
+        }
+        .into_settings_window_options();
+
+        assert!(options.interaction_copy_results.is_none());
+    }
 }
 
 /// Starts the real capture service with a visible, disposable settings window for input-driven QA.
@@ -285,16 +339,7 @@ pub fn run_overlay_interaction_acceptance(
         history,
         settings,
         settings_path,
-        SettingsWindowOptions {
-            width: acceptance.window_width.max(420.0),
-            height: acceptance.window_height.max(420.0),
-            show: true,
-            section: "capture".to_owned(),
-            interaction_shortcut_readiness: Some(acceptance.shortcut_readiness),
-            interaction_commands: Some(acceptance.commands),
-            interaction_copy_results: Some(acceptance.copy_results),
-            ..SettingsWindowOptions::default()
-        },
+        acceptance.into_settings_window_options(),
     )
 }
 
@@ -448,7 +493,7 @@ struct SettingsWindowOptions {
     interaction_shortcut_readiness: Option<SyncSender<bool>>,
     /// Receives process-local recording observations and Record-page restore requests.
     interaction_commands: Option<async_channel::Receiver<OverlayInteractionAcceptanceCommand>>,
-    /// Replaces only selection Copy with a process-local sink for native input acceptance.
+    /// `Some` installs the acceptance sink; `None` leaves the production system clipboard active.
     interaction_copy_results: Option<Sender<platform::capture::CaptureFrame>>,
 }
 

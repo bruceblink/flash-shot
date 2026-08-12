@@ -23,6 +23,7 @@ use flash_shot::{
 #[cfg(windows)]
 use flash_shot::{
     platform::{
+        clipboard::SystemClipboard,
         process_group::ProcessGroup,
         window_inspector::{SystemWindowInspector, WindowInspector},
     },
@@ -59,7 +60,13 @@ use windows_sys::Win32::{
         InvalidateRect, PAINTSTRUCT, UpdateWindow,
     },
     System::{
-        DataExchange::GetClipboardSequenceNumber, LibraryLoader::GetModuleHandleW,
+        DataExchange::{
+            CloseClipboard, GetClipboardData, GetClipboardSequenceNumber,
+            IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
+        },
+        LibraryLoader::GetModuleHandleW,
+        Memory::{GlobalLock, GlobalSize, GlobalUnlock},
+        Ole::CF_DIB,
         Threading::GetCurrentProcessId,
     },
     UI::{
@@ -156,10 +163,12 @@ static SCROLL_FIXTURE_OFFSET: AtomicI32 = AtomicI32::new(0);
 #[derive(Debug, Eq, PartialEq)]
 struct Options {
     allow_input: bool,
+    allow_system_clipboard: bool,
     output_dir: PathBuf,
     timeout: Duration,
     settle_delay: Duration,
     capture_scenario: CaptureScenarioOption,
+    scroll_export: ScrollExportOption,
     record_target: Option<RecordTargetOption>,
 }
 
@@ -190,6 +199,14 @@ impl CaptureScenarioOption {
             Self::NarrowEdge | Self::PinsCoexist | Self::SelectionTransform | Self::ScrollRoundtrip
         )
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ScrollExportOption {
+    #[default]
+    Cancel,
+    Copy,
+    Save,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -223,10 +240,12 @@ impl Options {
     fn parse_from(arguments: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
         let mut options = Self {
             allow_input: false,
+            allow_system_clipboard: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             timeout: DEFAULT_TIMEOUT,
             settle_delay: DEFAULT_SETTLE_DELAY,
             capture_scenario: CaptureScenarioOption::Standard,
+            scroll_export: ScrollExportOption::Cancel,
             record_target: None,
         };
         let mut arguments = arguments.into_iter();
@@ -234,6 +253,7 @@ impl Options {
         let mut timeout_seen = false;
         let mut settle_seen = false;
         let mut capture_scenario_seen = false;
+        let mut scroll_export_seen = false;
         let mut record_target_seen = false;
         while let Some(argument) = arguments.next() {
             let argument = argument
@@ -242,6 +262,12 @@ impl Options {
             match argument.as_str() {
                 "--allow-input" if !options.allow_input => options.allow_input = true,
                 "--allow-input" => return Err("--allow-input may only be supplied once".to_owned()),
+                "--allow-system-clipboard" if !options.allow_system_clipboard => {
+                    options.allow_system_clipboard = true
+                }
+                "--allow-system-clipboard" => {
+                    return Err("--allow-system-clipboard may only be supplied once".to_owned());
+                }
                 "--output-dir" if !output_seen => {
                     options.output_dir = PathBuf::from(
                         arguments
@@ -286,6 +312,24 @@ impl Options {
                     };
                     capture_scenario_seen = true;
                 }
+                "--scroll-export" if !scroll_export_seen => {
+                    let export = arguments
+                        .next()
+                        .ok_or_else(usage)?
+                        .into_string()
+                        .map_err(|_| "scroll export must be valid Unicode".to_owned())?;
+                    options.scroll_export = match export.as_str() {
+                        "cancel" => ScrollExportOption::Cancel,
+                        "copy" => ScrollExportOption::Copy,
+                        "save" => ScrollExportOption::Save,
+                        _ => {
+                            return Err(
+                                "scroll export must be 'cancel', 'copy', or 'save'".to_owned()
+                            );
+                        }
+                    };
+                    scroll_export_seen = true;
+                }
                 "--record-target" if !record_target_seen => {
                     let target = arguments
                         .next()
@@ -300,7 +344,7 @@ impl Options {
                     record_target_seen = true;
                 }
                 "--output-dir" | "--timeout-ms" | "--settle-ms" | "--capture-scenario"
-                | "--record-target" => {
+                | "--scroll-export" | "--record-target" => {
                     return Err(format!("{argument} may only be supplied once"));
                 }
                 _ => return Err(usage()),
@@ -313,6 +357,27 @@ impl Options {
             && options.record_target.is_some()
         {
             return Err("--capture-scenario cannot be combined with --record-target".to_owned());
+        }
+        if scroll_export_seen && options.capture_scenario != CaptureScenarioOption::ScrollRoundtrip
+        {
+            return Err(
+                "--scroll-export may only be used with --capture-scenario scroll-roundtrip"
+                    .to_owned(),
+            );
+        }
+        if options.scroll_export == ScrollExportOption::Copy && !options.allow_system_clipboard {
+            return Err(
+                "scroll Copy changes the Windows clipboard; rerun with --allow-system-clipboard"
+                    .to_owned(),
+            );
+        }
+        if options.allow_system_clipboard
+            && (options.capture_scenario != CaptureScenarioOption::ScrollRoundtrip
+                || options.scroll_export != ScrollExportOption::Copy)
+        {
+            return Err(
+                "--allow-system-clipboard is only valid with scroll-roundtrip Copy".to_owned(),
+            );
         }
         Ok(options)
     }
@@ -341,7 +406,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge|pins-coexist|selection-transform|scroll-roundtrip> | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge|pins-coexist|selection-transform|scroll-roundtrip> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -664,6 +729,25 @@ const fn rects_overlap(first: PhysicalRect, second: PhysicalRect) -> bool {
         && first.right > second.left
         && first.top < second.bottom
         && first.bottom > second.top
+}
+
+/// Accepts cleanup only after every manual-scroll worker flag and overlay surface is idle.
+fn scroll_roundtrip_cleanup_complete(state: &OverlayInteractionCaptureState) -> bool {
+    state.overlay_count == 0
+        && state.pinned_count == 0
+        && !state.more_actions_visible
+        && !state.annotation_controls_visible
+        && state.manual_scroll_state == "idle"
+        && state.manual_scroll_frame_count == 0
+        && !state.manual_scroll_can_finish
+        && !state.manual_scroll_capture_in_flight
+        && !state.manual_scroll_auto_capture_pending
+        && state.manual_scroll_selection.is_none()
+        && state.capture_preflight_ready
+        && matches!(
+            state.session_state.as_str(),
+            "idle" | "completed" | "cancelled"
+        )
 }
 
 /// Places a 160x96 selection at the bottom-right edge and predicts the relocated Mark control.
@@ -1298,7 +1382,50 @@ struct ScrollRoundtripReport {
     finish_status: String,
     stitched_selection: PhysicalRect,
     stitched_height_increased: bool,
+    export: ScrollExportReport,
+    manual_scroll_cleanup: ManualScrollCleanupReport,
     cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct ManualScrollCleanupReport {
+    state: String,
+    frame_count: usize,
+    can_finish: bool,
+    capture_in_flight: bool,
+    auto_capture_pending: bool,
+    selection: Option<PhysicalRect>,
+    more_actions_visible: bool,
+    annotation_controls_visible: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum ScrollExportReport {
+    Cancel,
+    Copy {
+        clipboard_sequence_before: u32,
+        clipboard_sequence_after: u32,
+        clipboard_sequence_changed: bool,
+        png_format_available: bool,
+        dib_format_available: bool,
+        copied_bounds: PhysicalRect,
+        width: u32,
+        height: u32,
+        png_path: String,
+        png_bytes: usize,
+        dib_bytes: usize,
+        png_content: ExactPixelMatchReport,
+        dib_content: ExactPixelMatchReport,
+        consumer_image_content: ExactPixelMatchReport,
+    },
+    Save {
+        path: String,
+        width: u32,
+        height: u32,
+        bytes: u64,
+        content: ExactPixelMatchReport,
+    },
 }
 
 #[derive(serde::Serialize)]
@@ -1498,10 +1625,11 @@ struct WorkerContext {
     display: DisplayInfo,
     shortcut_readiness: Receiver<bool>,
     interaction_commands: async_channel::Sender<OverlayInteractionAcceptanceCommand>,
-    copy_results: Receiver<CaptureFrame>,
+    copy_results: Option<Receiver<CaptureFrame>>,
     timeout: Duration,
     settle_delay: Duration,
     capture_scenario: CaptureScenarioOption,
+    scroll_export: ScrollExportOption,
     record_target: Option<RecordTargetOption>,
 }
 
@@ -1610,6 +1738,10 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let (shortcut_ready_tx, shortcut_ready_rx) = mpsc::sync_channel(1);
     let (interaction_tx, interaction_rx) = interaction_command_channel();
     let (copy_result_tx, copy_result_rx) = mpsc::channel();
+    let uses_system_clipboard = options.capture_scenario == CaptureScenarioOption::ScrollRoundtrip
+        && options.scroll_export == ScrollExportOption::Copy;
+    let app_copy_results = (!uses_system_clipboard).then_some(copy_result_tx);
+    let worker_copy_results = (!uses_system_clipboard).then_some(copy_result_rx);
     let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
         (Some(_), _) => (980.0, 760.0),
         (None, CaptureScenarioOption::NarrowEdge) => (420.0, 420.0),
@@ -1628,10 +1760,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         display,
         shortcut_readiness: shortcut_ready_rx,
         interaction_commands: interaction_tx,
-        copy_results: copy_result_rx,
+        copy_results: worker_copy_results,
         timeout: options.timeout,
         settle_delay: options.settle_delay,
         capture_scenario: options.capture_scenario,
+        scroll_export: options.scroll_export,
         record_target: options.record_target,
     };
     let mut report = initial_report(&worker_context);
@@ -1679,7 +1812,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             window_height,
             shortcut_readiness: shortcut_ready_tx,
             commands: interaction_rx,
-            copy_results: copy_result_tx,
+            copy_results: app_copy_results,
         },
     )?;
     Err(io::Error::other("GPUI exited before the interaction worker completed").into())
@@ -1689,7 +1822,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        schema_version: 9,
+        schema_version: 10,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -3869,6 +4002,16 @@ fn execute_scroll_roundtrip_interactions(
     }
 
     focus_owned_window(scroll_control, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    scroll_control = owned_window(scroll_control.handle)?;
+    let control_ready = capture_evidence(context, "03-scroll-control-ready.png", scroll_control)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_control_ready",
+        scroll_control,
+        Some(&control_ready),
+    )?;
     let foreground = inject_key(scroll_control.handle, VK_RETURN)?;
     record_step(
         report,
@@ -3914,28 +4057,42 @@ fn execute_scroll_roundtrip_interactions(
         stitched_overlay,
         Some(&stitched_evidence),
     )?;
-    let foreground = inject_key(stitched_overlay.handle, VK_ESCAPE)?;
-    wait_for_window_gone(
+    let stitched_source = query_capture_content(context, context.timeout)?
+        .selection
+        .ok_or_else(|| io::Error::other("finished scroll editor did not expose stitched pixels"))?;
+    validate_frame_dimensions(
+        &stitched_source,
+        stitched_selection,
+        "stitched scroll editor source",
+    )?;
+    if stitched_source.bounds != stitched_selection {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "stitched source bounds {:?} do not match editor selection {stitched_selection:?}",
+                stitched_source.bounds
+            ),
+        ));
+    }
+    let export_plan = interaction_plan_for_capture_selection(
         stitched_overlay.handle,
-        context.timeout,
-        "scroll Finish Cancel",
+        stitched_source.bounds,
+        stitched_selection,
     )?;
-    record_step(
+    let export = execute_scroll_export(
+        context,
         report,
-        &context.report_path,
-        "scroll_roundtrip_cancel",
-        foreground,
-        None,
+        controller,
+        stitched_overlay,
+        export_plan,
+        stitched_selection,
+        &stitched_source,
     )?;
-    let final_state = wait_for_capture_state(context, "scroll roundtrip cleanup", |state| {
-        state.overlay_count == 0
-            && state.pinned_count == 0
-            && state.capture_preflight_ready
-            && matches!(
-                state.session_state.as_str(),
-                "idle" | "completed" | "cancelled"
-            )
-    })?;
+    let final_state = wait_for_capture_state(
+        context,
+        "scroll roundtrip cleanup",
+        scroll_roundtrip_cleanup_complete,
+    )?;
     ensure_input_keys_released(&[
         (VK_CONTROL, "Control"),
         (VK_MENU, "Alt"),
@@ -3973,6 +4130,17 @@ fn execute_scroll_roundtrip_interactions(
         finish_status: finished.status,
         stitched_selection,
         stitched_height_increased: stitched_selection.height() > initial_selection.height(),
+        export,
+        manual_scroll_cleanup: ManualScrollCleanupReport {
+            state: final_state.manual_scroll_state.clone(),
+            frame_count: final_state.manual_scroll_frame_count,
+            can_finish: final_state.manual_scroll_can_finish,
+            capture_in_flight: final_state.manual_scroll_capture_in_flight,
+            auto_capture_pending: final_state.manual_scroll_auto_capture_pending,
+            selection: final_state.manual_scroll_selection,
+            more_actions_visible: final_state.more_actions_visible,
+            annotation_controls_visible: final_state.annotation_controls_visible,
+        },
         cleanup: CleanupReport {
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
@@ -3982,6 +4150,424 @@ fn execute_scroll_roundtrip_interactions(
         },
     });
     write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Completes the already-open stitched editor through the requested production exit.
+fn execute_scroll_export(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    controller: NativeWindow,
+    overlay: NativeWindow,
+    plan: InteractionPlan,
+    selection: PhysicalRect,
+    source: &CaptureFrame,
+) -> io::Result<ScrollExportReport> {
+    match context.scroll_export {
+        ScrollExportOption::Cancel => {
+            let foreground = inject_key(overlay.handle, VK_ESCAPE)?;
+            wait_for_window_gone(overlay.handle, context.timeout, "scroll Finish Cancel")?;
+            record_step(
+                report,
+                &context.report_path,
+                "scroll_roundtrip_cancel",
+                foreground,
+                None,
+            )?;
+            Ok(ScrollExportReport::Cancel)
+        }
+        ScrollExportOption::Copy => {
+            execute_scroll_copy_export(context, report, overlay, plan, selection, source)
+        }
+        ScrollExportOption::Save => execute_scroll_save_export(
+            context, controller, report, overlay, plan, selection, source,
+        ),
+    }
+}
+
+#[cfg(windows)]
+/// Clicks Copy in the stitched editor and proves the real Windows clipboard has exact pixels.
+fn execute_scroll_copy_export(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    overlay: NativeWindow,
+    plan: InteractionPlan,
+    selection: PhysicalRect,
+    source: &CaptureFrame,
+) -> io::Result<ScrollExportReport> {
+    if context.copy_results.is_some() {
+        return Err(io::Error::other(
+            "scroll Copy must use the production system clipboard, not the injected sink",
+        ));
+    }
+    // SAFETY: this call only reads the monotonic user32 clipboard change counter.
+    let clipboard_sequence_before = unsafe { GetClipboardSequenceNumber() };
+    let foreground = inject_mouse_click(overlay.handle, plan.copy)?;
+    wait_for_window_gone(overlay.handle, context.timeout, "scroll Copy")?;
+    let state = wait_for_capture_state(context, "scroll Copy completion", |state| {
+        state.session_state == "completed"
+            && state.selection == Some(selection)
+            && state.overlay_count == 0
+            && state.capture_preflight_ready
+            && state.status == "Selection copied to clipboard"
+    })?;
+    let (clipboard_sequence_after, copied, clipboard_png, clipboard_dib) =
+        wait_for_system_clipboard_image_change(clipboard_sequence_before, context.timeout)?;
+    validate_frame_dimensions(&copied, selection, "system clipboard image")?;
+    let consumer_image_content =
+        validate_same_pixel_content(source, &copied, "system clipboard image")?;
+    let export_directory = context.session_root.join("exports");
+    fs::create_dir_all(&export_directory)?;
+    let png_path = export_directory.join("scroll-clipboard.png");
+    if png_path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "isolated clipboard PNG target already exists: {}",
+                png_path.display()
+            ),
+        ));
+    }
+    fs::write(&png_path, &clipboard_png)?;
+    let decoded_png = CaptureFrame::open_png(&png_path)?;
+    validate_frame_dimensions(&decoded_png, selection, "clipboard PNG format")?;
+    let png_content = validate_same_pixel_content(source, &decoded_png, "clipboard PNG format")?;
+    let decoded_dib = decode_clipboard_dib(&clipboard_dib)?;
+    validate_frame_dimensions(&decoded_dib, selection, "clipboard CF_DIB format")?;
+    let dib_content = validate_same_pixel_content(source, &decoded_dib, "clipboard CF_DIB format")?;
+    ensure_path_within(&png_path, &context.session_root)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_copy",
+        foreground,
+        None,
+    )?;
+    debug_assert_eq!(state.selection, Some(selection));
+    Ok(ScrollExportReport::Copy {
+        clipboard_sequence_before,
+        clipboard_sequence_after,
+        clipboard_sequence_changed: clipboard_sequence_after != clipboard_sequence_before,
+        png_format_available: true,
+        dib_format_available: true,
+        copied_bounds: copied.bounds,
+        width: copied.width,
+        height: copied.height,
+        png_path: png_path
+            .strip_prefix(&context.session_root)
+            .unwrap_or(&png_path)
+            .to_string_lossy()
+            .into_owned(),
+        png_bytes: clipboard_png.len(),
+        dib_bytes: clipboard_dib.len(),
+        png_content,
+        dib_content,
+        consumer_image_content,
+    })
+}
+
+#[cfg(windows)]
+/// Waits for Copy to replace the clipboard, then retries image decoding through transient locks.
+fn wait_for_system_clipboard_image_change(
+    previous_sequence: u32,
+    timeout: Duration,
+) -> io::Result<(u32, CaptureFrame, Vec<u8>, Vec<u8>)> {
+    let deadline = Instant::now() + timeout;
+    let mut last_error = "clipboard sequence has not changed".to_owned();
+    loop {
+        // SAFETY: this call only reads the monotonic user32 clipboard change counter.
+        let sequence = unsafe { GetClipboardSequenceNumber() };
+        if sequence != previous_sequence {
+            match read_system_clipboard_formats() {
+                Ok((png, dib)) => match SystemClipboard.read_image() {
+                    Ok(frame) => {
+                        // SAFETY: this call only reads the clipboard change counter.
+                        let after_read = unsafe { GetClipboardSequenceNumber() };
+                        if after_read == sequence {
+                            return Ok((sequence, frame, png, dib));
+                        }
+                        last_error = format!(
+                            "clipboard changed again from sequence {sequence} to {after_read} while reading"
+                        );
+                    }
+                    Err(error) => last_error = error.to_string(),
+                },
+                Err(error) => last_error = error.to_string(),
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "system clipboard did not expose the copied image after sequence {previous_sequence}: {last_error}"
+                ),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+/// Copies the registered PNG and CF_DIB bytes while one clipboard snapshot is locked.
+fn read_system_clipboard_formats() -> io::Result<(Vec<u8>, Vec<u8>)> {
+    let png_name = "PNG".encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    // SAFETY: the clipboard format name is NUL terminated and remains alive for this call.
+    let png_format = unsafe { RegisterClipboardFormatW(png_name.as_ptr()) };
+    if png_format == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut opened = false;
+    for attempt in 0..8 {
+        // SAFETY: a null owner is valid for this short synchronous clipboard read.
+        if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
+            opened = true;
+            break;
+        }
+        if attempt + 1 < 8 {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    if !opened {
+        return Err(io::Error::last_os_error());
+    }
+
+    let result = (|| {
+        // SAFETY: format availability is a read-only query while the clipboard remains open.
+        if unsafe { IsClipboardFormatAvailable(png_format) } == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "system clipboard does not expose the registered PNG format",
+            ));
+        }
+        // SAFETY: CF_DIB is the production compatibility format written alongside PNG.
+        if unsafe { IsClipboardFormatAvailable(CF_DIB as u32) } == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "system clipboard does not expose the CF_DIB compatibility format",
+            ));
+        }
+        let png = copy_open_clipboard_bytes(png_format, "registered PNG")?;
+        let dib = copy_open_clipboard_bytes(CF_DIB as u32, "CF_DIB")?;
+        Ok((png, dib))
+    })();
+    // SAFETY: balances the successful OpenClipboard call on this thread.
+    unsafe { CloseClipboard() };
+    result
+}
+
+#[cfg(windows)]
+/// Copies one global-memory clipboard payload without taking ownership of its Windows handle.
+fn copy_open_clipboard_bytes(format: u32, label: &str) -> io::Result<Vec<u8>> {
+    // SAFETY: the caller keeps the clipboard open and the returned handle remains clipboard-owned.
+    let handle = unsafe { GetClipboardData(format) };
+    if handle.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the clipboard format stores bytes in a global-memory handle.
+    let size = unsafe { GlobalSize(handle) };
+    if size == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("clipboard {label} payload is empty"),
+        ));
+    }
+    // SAFETY: locking the live clipboard-owned global handle yields at least `size` bytes.
+    let data = unsafe { GlobalLock(handle) };
+    if data.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: data points to the locked allocation whose size was returned by GlobalSize.
+    let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size) }.to_vec();
+    // SAFETY: balances the successful GlobalLock; clipboard ownership is unchanged.
+    unsafe { GlobalUnlock(handle) };
+    Ok(bytes)
+}
+
+#[cfg(windows)]
+/// Decodes the 32-bit BI_RGB DIB emitted by Flash Shot into its top-down BGRA frame model.
+fn decode_clipboard_dib(bytes: &[u8]) -> io::Result<CaptureFrame> {
+    const BITMAP_INFO_HEADER_SIZE: usize = 40;
+    if bytes.len() < BITMAP_INFO_HEADER_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard CF_DIB header is truncated",
+        ));
+    }
+    let header_size = usize::try_from(u32::from_le_bytes(bytes[0..4].try_into().unwrap()))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "CF_DIB header is too large"))?;
+    let width = i32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    let signed_height = i32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    let planes = u16::from_le_bytes(bytes[12..14].try_into().unwrap());
+    let bits_per_pixel = u16::from_le_bytes(bytes[14..16].try_into().unwrap());
+    let compression = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+    if header_size < BITMAP_INFO_HEADER_SIZE || header_size > bytes.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard CF_DIB has an invalid header size",
+        ));
+    }
+    let height = signed_height.checked_abs().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard CF_DIB height overflowed",
+        )
+    })?;
+    if width <= 0 || height == 0 || planes != 1 || bits_per_pixel != 32 || compression != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "unsupported clipboard CF_DIB geometry/format: {width}x{signed_height}, planes {planes}, {bits_per_pixel} bpp, compression {compression}"
+            ),
+        ));
+    }
+    let width_usize = usize::try_from(width)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "CF_DIB width is too large"))?;
+    let height_usize = usize::try_from(height)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "CF_DIB height is too large"))?;
+    let stride = width_usize.checked_mul(4).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard CF_DIB stride overflowed",
+        )
+    })?;
+    let pixel_bytes = stride.checked_mul(height_usize).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard CF_DIB pixels overflowed",
+        )
+    })?;
+    let pixel_end = header_size.checked_add(pixel_bytes).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard CF_DIB size overflowed",
+        )
+    })?;
+    if bytes.len() < pixel_end {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard CF_DIB pixels are truncated",
+        ));
+    }
+
+    let mut pixels = vec![0_u8; pixel_bytes];
+    for target_row in 0..height_usize {
+        let source_row = if signed_height > 0 {
+            height_usize - target_row - 1
+        } else {
+            target_row
+        };
+        let source_start = header_size + source_row * stride;
+        let target_start = target_row * stride;
+        pixels[target_start..target_start + stride]
+            .copy_from_slice(&bytes[source_start..source_start + stride]);
+    }
+    let frame = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        },
+        width: width as u32,
+        height: height as u32,
+        stride,
+        format: PixelFormat::Bgra8,
+        pixels: pixels.into(),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    frame.validate()?;
+    Ok(frame)
+}
+
+#[cfg(windows)]
+/// Drives the stitched editor's native Save dialog and compares the decoded PNG pixel for pixel.
+fn execute_scroll_save_export(
+    context: &WorkerContext,
+    controller: NativeWindow,
+    report: &mut AcceptanceReport,
+    overlay: NativeWindow,
+    plan: InteractionPlan,
+    selection: PhysicalRect,
+    source: &CaptureFrame,
+) -> io::Result<ScrollExportReport> {
+    let export_directory = context.session_root.join("exports");
+    fs::create_dir_all(&export_directory)?;
+    let target = export_directory.join("scroll-roundtrip.png");
+    if target.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "isolated scroll Save target already exists: {}",
+                target.display()
+            ),
+        ));
+    }
+
+    let foreground = inject_mouse_click(overlay.handle, plan.save)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_save_click",
+        foreground,
+        None,
+    )?;
+    let dialog = wait_for_save_dialog(overlay.handle, controller.handle, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let dialog_evidence = capture_evidence(context, "05-scroll-save-dialog.png", dialog)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_save_dialog",
+        dialog,
+        Some(&dialog_evidence),
+    )?;
+
+    let edit = save_file_name_edit(dialog.handle, "flash-shot.png")?;
+    let edit_center = PhysicalPoint {
+        x: edit.bounds.left + edit.bounds.width() as i32 / 2,
+        y: edit.bounds.top + edit.bounds.height() as i32 / 2,
+    };
+    inject_mouse_click(dialog.handle, edit_center)?;
+    wait_for_window_focus(dialog.handle, edit.handle, context.timeout)?;
+    inject_select_all(dialog.handle)?;
+    let target_text = target.to_string_lossy().into_owned();
+    inject_unicode_text(dialog.handle, &target_text)?;
+    wait_for_window_text(edit.handle, &target_text, context.timeout)?;
+    let path_evidence = capture_evidence(context, "06-scroll-save-path.png", dialog)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_save_path",
+        dialog,
+        Some(&path_evidence),
+    )?;
+    inject_key(dialog.handle, VK_RETURN)?;
+    wait_for_window_gone(dialog.handle, context.timeout, "scroll Save confirmation")?;
+    wait_for_window_gone(overlay.handle, context.timeout, "scroll Save completion")?;
+    wait_for_capture_state(context, "scroll Save completion", |state| {
+        state.session_state == "completed"
+            && state.selection == Some(selection)
+            && state.overlay_count == 0
+            && state.capture_preflight_ready
+            && state.status.starts_with("Scrolling screenshot saved to ")
+    })?;
+    let (saved, bytes) = wait_for_saved_png(&target, context.timeout)?;
+    validate_frame_dimensions(&saved, selection, "saved scroll PNG")?;
+    let content = validate_same_pixel_content(source, &saved, "saved scroll PNG")?;
+    ensure_path_within(&target, &context.session_root)?;
+    Ok(ScrollExportReport::Save {
+        path: target
+            .strip_prefix(&context.session_root)
+            .unwrap_or(&target)
+            .to_string_lossy()
+            .into_owned(),
+        width: saved.width,
+        height: saved.height,
+        bytes,
+        content,
+    })
 }
 
 #[cfg(windows)]
@@ -4423,7 +5009,10 @@ fn execute_copy_interaction(
     report: &mut AcceptanceReport,
     controller: NativeWindow,
 ) -> io::Result<CopyReport> {
-    match context.copy_results.try_recv() {
+    let copy_results = context.copy_results.as_ref().ok_or_else(|| {
+        io::Error::other("standard Copy acceptance requires the injected clipboard sink")
+    })?;
+    match copy_results.try_recv() {
         Err(mpsc::TryRecvError::Empty) => {}
         Err(mpsc::TryRecvError::Disconnected) => {
             return Err(io::Error::new(
@@ -4452,20 +5041,18 @@ fn execute_copy_interaction(
     // SAFETY: this call only reads the monotonic user32 clipboard change counter.
     let clipboard_sequence_before = unsafe { GetClipboardSequenceNumber() };
     let foreground = inject_mouse_click(overlay.handle, plan.copy)?;
-    let copied =
-        context
-            .copy_results
-            .recv_timeout(context.timeout)
-            .map_err(|error| match error {
-                RecvTimeoutError::Timeout => io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "selection Copy did not reach the injected sink",
-                ),
-                RecvTimeoutError::Disconnected => io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "selection Copy result channel disconnected",
-                ),
-            })?;
+    let copied = copy_results
+        .recv_timeout(context.timeout)
+        .map_err(|error| match error {
+            RecvTimeoutError::Timeout => io::Error::new(
+                io::ErrorKind::TimedOut,
+                "selection Copy did not reach the injected sink",
+            ),
+            RecvTimeoutError::Disconnected => io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "selection Copy result channel disconnected",
+            ),
+        })?;
     wait_for_window_gone(overlay.handle, context.timeout, "Copy")?;
     let state = wait_for_capture_state(context, "selection Copy completion", |state| {
         state.session_state == "completed"
@@ -4478,7 +5065,7 @@ fn execute_copy_interaction(
             "completed Copy no longer reports the exported selection",
         ));
     }
-    if context.copy_results.try_recv().is_ok() {
+    if copy_results.try_recv().is_ok() {
         return Err(io::Error::other(
             "one Copy click produced more than one selection frame",
         ));
@@ -7900,26 +8487,28 @@ impl Drop for CursorRestore {
 #[cfg(test)]
 mod tests {
     use super::{
-        CaptureScenarioOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
+        CaptureScenarioOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption, ScrollExportOption,
         SelectionTransformKind, ensure_input_authorized, expected_selection_transform,
         first_stable_recording_match, interaction_command_channel, interaction_plan,
         map_capture_point_to_screen, map_screen_point_to_capture, map_screen_selection_to_capture,
         narrow_edge_interaction_plan, normalize_axis, pin_coexist_interaction_plan,
         recording_control_plan, recording_failed, recording_saved, rect_contains_rect,
-        scroll_roundtrip_interaction_plan, scroll_shot_point_for_logical_selection,
-        selection_aspect_ratio_preserved, selection_center_preserved, selection_transform_gesture,
-        translated_rect, validate_distinct_recording_phase_fingerprints, validate_paused_progress,
+        scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
+        scroll_shot_point_for_logical_selection, selection_aspect_ratio_preserved,
+        selection_center_preserved, selection_transform_gesture, translated_rect,
+        validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
         window_drag_matches,
     };
     #[cfg(windows)]
     use super::{
-        FixturePhaseState, NativeWindow, horizontal_pin_layout, panic_payload_message,
-        parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
-        request_recording_state, validate_fixture_phase_state, validate_recording_frame_content,
-        validate_same_pixel_content, validate_scroll_fixture_frame,
+        FixturePhaseState, NativeWindow, decode_clipboard_dib, horizontal_pin_layout,
+        panic_payload_message, parse_recording_window_fixture_arguments,
+        recording_fixture_dynamic_bounds, request_recording_state, validate_fixture_phase_state,
+        validate_recording_frame_content, validate_same_pixel_content,
+        validate_scroll_fixture_frame,
     };
-    use super::{MediaMetadata, OverlayInteractionRecordingState};
+    use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
     #[cfg(windows)]
     use flash_shot::platform::capture::{CaptureFrame, PixelFormat};
@@ -8093,6 +8682,119 @@ mod tests {
             "capture_scroll_roundtrip"
         );
         assert!(options.capture_scenario.requires_100_percent_display());
+        assert_eq!(options.scroll_export, ScrollExportOption::Cancel);
+        assert!(!options.allow_system_clipboard);
+    }
+
+    #[test]
+    fn parser_gates_scroll_exports_and_system_clipboard_mutation() {
+        let copy = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "scroll-roundtrip",
+            "--scroll-export",
+            "copy",
+            "--allow-system-clipboard",
+        ]))
+        .unwrap();
+        assert_eq!(copy.scroll_export, ScrollExportOption::Copy);
+        assert!(copy.allow_system_clipboard);
+
+        let save = Options::parse_from(arguments(&[
+            "--capture-scenario",
+            "scroll-roundtrip",
+            "--scroll-export",
+            "save",
+        ]))
+        .unwrap();
+        assert_eq!(save.scroll_export, ScrollExportOption::Save);
+        assert!(!save.allow_system_clipboard);
+
+        assert!(
+            Options::parse_from(arguments(&[
+                "--capture-scenario",
+                "scroll-roundtrip",
+                "--scroll-export",
+                "copy",
+            ]))
+            .is_err()
+        );
+        assert!(Options::parse_from(arguments(&["--allow-system-clipboard"])).is_err());
+        assert!(Options::parse_from(arguments(&["--scroll-export", "cancel"])).is_err());
+        assert!(
+            Options::parse_from(arguments(&[
+                "--capture-scenario",
+                "scroll-roundtrip",
+                "--scroll-export",
+                "save",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
+        assert!(
+            Options::parse_from(arguments(&[
+                "--capture-scenario",
+                "scroll-roundtrip",
+                "--scroll-export",
+                "save",
+                "--scroll-export",
+                "cancel",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn scroll_cleanup_requires_every_background_and_overlay_flag_to_be_idle() {
+        let selection = PhysicalRect {
+            left: 10,
+            top: 20,
+            right: 110,
+            bottom: 220,
+        };
+        let clean = OverlayInteractionCaptureState {
+            session_state: "completed".to_owned(),
+            selection: Some(selection),
+            manual_scroll_state: "idle".to_owned(),
+            manual_scroll_frame_count: 0,
+            manual_scroll_can_finish: false,
+            manual_scroll_capture_in_flight: false,
+            manual_scroll_auto_capture_pending: false,
+            manual_scroll_selection: None,
+            overlay_count: 0,
+            more_actions_visible: false,
+            annotation_controls_visible: false,
+            pinned_count: 0,
+            pinned_source_bounds: None,
+            capture_preflight_ready: true,
+            status: "Selection copied to clipboard".to_owned(),
+        };
+        assert!(scroll_roundtrip_cleanup_complete(&clean));
+
+        let mut stale = clean.clone();
+        stale.manual_scroll_state = "collecting".to_owned();
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
+        stale = clean.clone();
+        stale.manual_scroll_frame_count = 2;
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
+        stale = clean.clone();
+        stale.manual_scroll_can_finish = true;
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
+        stale = clean.clone();
+        stale.manual_scroll_capture_in_flight = true;
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
+        stale = clean.clone();
+        stale.manual_scroll_auto_capture_pending = true;
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
+        stale = clean.clone();
+        stale.manual_scroll_selection = Some(selection);
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
+        stale = clean.clone();
+        stale.more_actions_visible = true;
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
+        stale = clean;
+        stale.annotation_controls_visible = true;
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
     }
 
     #[test]
@@ -8289,6 +8991,55 @@ mod tests {
         assert_eq!(
             map_screen_point_to_capture(screen_point, client, capture).unwrap(),
             capture_point
+        );
+    }
+
+    #[test]
+    fn stitched_editor_points_map_from_the_image_bounds_instead_of_the_display() {
+        let client = PhysicalRect {
+            left: 538,
+            top: 388,
+            right: 2022,
+            bottom: 1051,
+        };
+        let stitched = PhysicalRect {
+            left: 410,
+            top: 169,
+            right: 1894,
+            bottom: 832,
+        };
+        let display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1440,
+        };
+
+        assert_eq!(
+            map_capture_point_to_screen(
+                PhysicalPoint {
+                    x: stitched.right,
+                    y: stitched.bottom,
+                },
+                client,
+                stitched,
+            )
+            .unwrap(),
+            PhysicalPoint {
+                x: client.right,
+                y: client.bottom,
+            }
+        );
+        assert!(
+            map_capture_point_to_screen(
+                PhysicalPoint {
+                    x: stitched.right,
+                    y: stitched.bottom,
+                },
+                client,
+                display,
+            )
+            .is_err()
         );
     }
 
@@ -8589,6 +9340,32 @@ mod tests {
                 display
             )
             .is_err()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn clipboard_dib_decoder_restores_bottom_up_bgra_rows() {
+        let mut dib = vec![0_u8; 40 + 16];
+        dib[0..4].copy_from_slice(&40_u32.to_le_bytes());
+        dib[4..8].copy_from_slice(&2_i32.to_le_bytes());
+        dib[8..12].copy_from_slice(&2_i32.to_le_bytes());
+        dib[12..14].copy_from_slice(&1_u16.to_le_bytes());
+        dib[14..16].copy_from_slice(&32_u16.to_le_bytes());
+        dib[20..24].copy_from_slice(&16_u32.to_le_bytes());
+        dib[40..56].copy_from_slice(&[7, 8, 9, 255, 10, 11, 12, 255, 1, 2, 3, 255, 4, 5, 6, 255]);
+
+        let frame = decode_clipboard_dib(&dib).unwrap();
+
+        assert_eq!((frame.width, frame.height, frame.stride), (2, 2, 8));
+        assert_eq!(
+            frame.pixels.as_ref(),
+            &[1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]
+        );
+        dib[14..16].copy_from_slice(&24_u16.to_le_bytes());
+        assert_eq!(
+            decode_clipboard_dib(&dib).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
         );
     }
 
