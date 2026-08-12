@@ -127,8 +127,8 @@ impl ManualScrollCapture {
         self.state = ManualScrollState::Finishing;
         self.failure = None;
         Ok(ManualScrollFinish {
-            // CaptureFrame clones share immutable pixel storage, so the UI can retain its frame
-            // count while the executor stitches without copying the captured pixels.
+            // CaptureFrame clones share immutable pixel storage, so the executor can own a
+            // lightweight snapshot while the UI retains the frame count and lifecycle state.
             frames: self.frames.clone(),
         })
     }
@@ -513,7 +513,7 @@ mod tests {
         let work = capture.begin_finish().unwrap();
 
         assert_eq!(capture.state(), ManualScrollState::Finishing);
-        assert_eq!(capture.finishing_frame_count(), 0);
+        assert_eq!(capture.finishing_frame_count(), 2);
         assert!(capture.begin_finish().is_err());
         let stitched = work.stitch(options()).unwrap();
         assert_eq!(stitched.frame.height, 16);
