@@ -16,7 +16,7 @@ pub const DEFAULT_WIDTH: u32 = 1_440;
 pub const DEFAULT_HEIGHT: u32 = 6_000;
 const DEFAULT_ITERATIONS: usize = 30;
 const WARMUP_ITERATIONS: usize = 2;
-const DEFAULT_MAX_ADDITIONAL_COPIES: u32 = 2;
+const DEFAULT_MAX_ADDITIONAL_COPIES: u32 = 0;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportStressConfig {
@@ -38,7 +38,7 @@ impl Default for ExportStressConfig {
             output: None,
             max_p95_ms: None,
             max_additional_copies: DEFAULT_MAX_ADDITIONAL_COPIES,
-            require_pixel_reuse: false,
+            require_pixel_reuse: true,
         }
     }
 }
@@ -271,8 +271,8 @@ mod tests {
         assert_eq!(config.height, DEFAULT_HEIGHT);
         assert_eq!(config.iterations, 30);
         assert_eq!(config.max_p95_ms, None);
-        assert_eq!(config.max_additional_copies, 2);
-        assert!(!config.require_pixel_reuse);
+        assert_eq!(config.max_additional_copies, 0);
+        assert!(config.require_pixel_reuse);
     }
 
     #[test]
@@ -290,12 +290,12 @@ mod tests {
         assert_eq!(value["frame"]["width"], 8);
         assert_eq!(value["frame"]["height"], 6);
         assert_eq!(value["frame"]["source_pixel_bytes"], 8 * 6 * 4);
-        assert_eq!(value["export_preparation"]["additional_cpu_copies"], 2);
+        assert_eq!(value["export_preparation"]["additional_cpu_copies"], 0);
         assert_eq!(
             value["export_preparation"]["estimated_intermediate_pixel_bytes"],
-            8 * 6 * 4 * 2
+            0
         );
-        assert_eq!(value["export_preparation"]["arc_pixel_reused"], false);
+        assert_eq!(value["export_preparation"]["arc_pixel_reused"], true);
         assert_eq!(value["export_preparation"]["pixel_identity_passed"], true);
         assert!(value["pixel_fingerprint_fnv1a64"].as_u64().is_some());
         assert!(report.passed());

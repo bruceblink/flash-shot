@@ -105,6 +105,11 @@ impl CaptureFrame {
                 "unsupported pixel format",
             ));
         }
+        // Capture frames are immutable Arc-backed buffers, so an empty document can share the
+        // source pixels instead of copying an entire screenshot before export.
+        if document.annotations().is_empty() {
+            return Ok(self.clone());
+        }
         let mut pixels = self.pixels.to_vec();
         for annotation in document.annotations() {
             draw_annotation(&mut pixels, self, annotation);
@@ -646,6 +651,15 @@ impl CaptureFrame {
         let width = bounds.width();
         let height = bounds.height();
         let stride = width as usize * 4;
+        // Preserve crop's tightly packed output contract for padded or inconsistent frames. A
+        // valid full-frame crop can safely share the immutable source buffer.
+        if bounds == self.bounds
+            && width == self.width
+            && height == self.height
+            && self.stride == stride
+        {
+            return Ok(self.clone());
+        }
         let mut pixels = vec![0_u8; stride * height as usize];
         let source_x = (left - self.bounds.left) as usize * 4;
         let source_y = (top - self.bounds.top) as usize;
@@ -893,6 +907,58 @@ mod tests {
     }
 
     #[test]
+    fn full_frame_crop_reuses_tightly_packed_immutable_pixels() {
+        let frame = test_frame();
+        let cropped = frame
+            .crop(PhysicalRect {
+                left: frame.bounds.left - 20,
+                top: frame.bounds.top - 20,
+                right: frame.bounds.right + 20,
+                bottom: frame.bounds.bottom + 20,
+            })
+            .unwrap();
+
+        assert_eq!(cropped.bounds, frame.bounds);
+        assert_eq!(cropped.width, frame.width);
+        assert_eq!(cropped.height, frame.height);
+        assert_eq!(cropped.stride, frame.stride);
+        assert_eq!(cropped.cpu_copy_count, frame.cpu_copy_count);
+        assert!(Arc::ptr_eq(&cropped.pixels, &frame.pixels));
+    }
+
+    #[test]
+    fn full_frame_crop_still_normalizes_padded_rows() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 2,
+                bottom: 2,
+            },
+            width: 2,
+            height: 2,
+            stride: 12,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([
+                1, 2, 3, 255, 4, 5, 6, 255, 90, 91, 92, 93, 7, 8, 9, 255, 10, 11, 12, 255, 94, 95,
+                96, 97,
+            ]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        let cropped = frame.crop(frame.bounds).unwrap();
+
+        assert_eq!(cropped.stride, 8);
+        assert_eq!(
+            cropped.pixels.as_ref(),
+            &[1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]
+        );
+        assert_eq!(cropped.cpu_copy_count, frame.cpu_copy_count + 1);
+        assert!(!Arc::ptr_eq(&cropped.pixels, &frame.pixels));
+    }
+
+    #[test]
     fn png_converts_bgra_to_pixel_correct_rgba() {
         let frame = test_frame()
             .crop(PhysicalRect {
@@ -993,6 +1059,21 @@ mod tests {
             255
         );
         assert_eq!(composited.cpu_copy_count, frame.cpu_copy_count + 1);
+    }
+
+    #[test]
+    fn empty_annotation_document_reuses_immutable_frame_pixels() {
+        let frame = test_frame();
+        let document = AnnotationDocument::new(frame.bounds).unwrap();
+
+        let composited = frame.composite_annotations(&document).unwrap();
+
+        assert_eq!(composited.bounds, frame.bounds);
+        assert_eq!(composited.width, frame.width);
+        assert_eq!(composited.height, frame.height);
+        assert_eq!(composited.stride, frame.stride);
+        assert_eq!(composited.cpu_copy_count, frame.cpu_copy_count);
+        assert!(Arc::ptr_eq(&composited.pixels, &frame.pixels));
     }
 
     #[test]
