@@ -228,16 +228,30 @@ fn run() -> io::Result<serde_json::Value> {
         }
     })();
 
+    // Persist measurements before GPUI handles Quit and tears down its native event loop.
+    if let Ok(report) = &result {
+        fs::write(
+            output_dir.join("report.json"),
+            serde_json::to_vec_pretty(report).map_err(io::Error::other)?,
+        )?;
+    }
     let _ = request_quit(&command_tx, options.timeout);
+    // Let the app release decoded thumbnails before removing the isolated fixture tree.
+    thread::sleep(Duration::from_millis(250));
     let worker_result = worker
         .join()
         .map_err(|_| io::Error::other("history resource app thread panicked"))
         .and_then(|result| result.map_err(io::Error::other));
-    let cleanup_result = fs::remove_dir_all(&history_root);
+    let cleanup_result = remove_history_root(&history_root);
     match (result, worker_result) {
         (Ok(mut report), Ok(())) => {
             report["cleanup"]["fixture_files_removed"] =
                 serde_json::Value::Bool(cleanup_result.is_ok());
+            report["cleanup"]["fixture_cleanup_error"] = cleanup_result
+                .as_ref()
+                .err()
+                .map(|error| serde_json::Value::String(error.to_string()))
+                .unwrap_or(serde_json::Value::Null);
             report["passed"] = serde_json::Value::Bool(
                 report["passed"].as_bool().unwrap_or(false) && cleanup_result.is_ok(),
             );
@@ -248,11 +262,49 @@ fn run() -> io::Result<serde_json::Value> {
             )?;
             Ok(report)
         }
-        (Err(error), _) | (Ok(_), Err(error)) => {
-            let _ = cleanup_result;
+        (result, worker_result) => {
+            let error = match (result, worker_result) {
+                (Err(error), _) => error,
+                (Ok(_), Err(error)) => error,
+                (Ok(_), Ok(())) => unreachable!("successful result handled above"),
+            };
+            let failure_report = serde_json::json!({
+                "schema_version": 1,
+                "test": "history_thumbnail_resource_acceptance",
+                "passed": false,
+                "error": error.to_string(),
+                "cleanup": {
+                    "fixture_files_removed": cleanup_result.is_ok(),
+                    "fixture_cleanup_error": cleanup_result
+                        .as_ref()
+                        .err()
+                        .map(ToString::to_string),
+                    "history_root": history_root.to_string_lossy(),
+                },
+            });
+            fs::write(
+                output_dir.join("report.json"),
+                serde_json::to_vec_pretty(&failure_report).map_err(io::Error::other)?,
+            )?;
             Err(error)
         }
     }
+}
+
+/// Removes the isolated fixture tree, retrying transient Windows file locks.
+fn remove_history_root(root: &Path) -> io::Result<()> {
+    let mut last_error = None;
+    for attempt in 0..=10 {
+        match fs::remove_dir_all(root) {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < 10 => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.expect("cleanup retry loop always records an error"))
 }
 
 fn request_quit(
