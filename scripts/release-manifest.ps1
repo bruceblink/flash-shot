@@ -27,6 +27,9 @@ $assetRoot = [IO.Path]::GetFullPath((Join-Path $root $AssetDirectory))
 if (-not (Test-Path -LiteralPath $assetRoot -PathType Container)) {
     throw "Release asset directory does not exist: $assetRoot"
 }
+$version = [regex]::Escape($package.version)
+$portablePattern = "^FlashShot-$version-windows-[A-Za-z0-9_]+\.zip$"
+$installerPattern = "^FlashShot-$version-windows-setup\.exe$"
 $assets = Get-ChildItem -LiteralPath $assetRoot -File |
     Where-Object { $_.Extension -in ".zip", ".exe" } |
     Sort-Object Name
@@ -34,13 +37,21 @@ if ($assets.Count -eq 0) {
     throw "No .zip or .exe release assets found in $assetRoot."
 }
 
-$records = foreach ($asset in $assets) {
-    $version = [regex]::Escape($package.version)
-    $portablePattern = "^FlashShot-$version-windows-[A-Za-z0-9_]+\.zip$"
-    $installerPattern = "^FlashShot-$version-windows-setup\.exe$"
+$portableAssets = @($assets | Where-Object { $_.Name -match $portablePattern })
+$installerAssets = @($assets | Where-Object { $_.Name -match $installerPattern })
+foreach ($asset in $assets) {
     if ($asset.Name -notmatch $portablePattern -and $asset.Name -notmatch $installerPattern) {
         throw "Release asset does not use a supported Flash Shot artifact name: $($asset.Name)"
     }
+}
+if ($portableAssets.Count -ne 1) {
+    throw "Release asset directory must contain exactly one portable ZIP asset; found $($portableAssets.Count)."
+}
+if ($installerAssets.Count -ne 1) {
+    throw "Release asset directory must contain exactly one setup EXE asset; found $($installerAssets.Count)."
+}
+
+$records = foreach ($asset in $assets) {
     $checksumPath = "$($asset.FullName).sha256"
     if (-not (Test-Path -LiteralPath $checksumPath -PathType Leaf)) {
         throw "Missing SHA-256 file for $($asset.Name)."
