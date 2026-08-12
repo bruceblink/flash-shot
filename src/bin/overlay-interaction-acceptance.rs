@@ -69,7 +69,7 @@ use windows_sys::Win32::{
         Memory::{GlobalLock, GlobalSize, GlobalUnlock},
         Ole::CF_DIB,
         Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
-        Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId},
+        Threading::GetCurrentProcessId,
     },
     UI::{
         HiDpi::{
@@ -112,9 +112,6 @@ const MIN_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_TIMEOUT: Duration = Duration::from_secs(60);
 const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(5);
-#[cfg(windows)]
-const FOCUS_INPUT_QUEUE_FALLBACK_DELAY: Duration = Duration::from_millis(100);
-#[cfg(windows)]
 const FOCUS_TITLEBAR_FALLBACK_DELAY: Duration = Duration::from_millis(250);
 const WINDOWS_BASE_DPI: f32 = 96.0;
 const SELECTION_EDGE_TOLERANCE: i32 = 1;
@@ -8972,16 +8969,6 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
                 ),
             ));
         }
-        if focus_input_queue_fallback_ready(now.duration_since(started)) {
-            // A visible acceptance run starts beneath the Codex desktop window. Windows can
-            // reject SetForegroundWindow while that foreground queue owns recent user input.
-            // Temporarily share only that queue with our process-owned target, then detach
-            // before injecting anything. This never attaches to another desktop or leaves a
-            // persistent cross-process input link behind.
-            if activate_owned_window_via_foreground_queue(window)? {
-                continue;
-            }
-        }
         if titlebar_fallback_ready(now.duration_since(started), titlebar_fallback_attempted) {
             titlebar_fallback_attempted = true;
             // GPUI popups are intentionally borderless. Continue the process-owned API retry
@@ -9000,89 +8987,6 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
         }
         thread::sleep(Duration::from_millis(25));
     }
-}
-
-#[cfg(windows)]
-/// Allows the foreground-input queue fallback after ordinary activation gets one chance to settle.
-fn focus_input_queue_fallback_ready(elapsed: Duration) -> bool {
-    elapsed >= FOCUS_INPUT_QUEUE_FALLBACK_DELAY
-}
-
-#[cfg(windows)]
-/// Owns one temporary input-queue bridge and removes it when this scope exits.
-struct InputQueueBridge {
-    attaching_thread: u32,
-    attached_thread: u32,
-}
-
-#[cfg(windows)]
-impl InputQueueBridge {
-    /// Links two distinct GUI threads until the returned guard is dropped.
-    fn attach(attaching_thread: u32, attached_thread: u32) -> Option<Self> {
-        debug_assert_ne!(attaching_thread, attached_thread);
-        (unsafe { AttachThreadInput(attaching_thread, attached_thread, 1) } != 0).then_some(Self {
-            attaching_thread,
-            attached_thread,
-        })
-    }
-}
-
-#[cfg(windows)]
-impl Drop for InputQueueBridge {
-    fn drop(&mut self) {
-        // AttachThreadInput has no Rust-managed lifetime. The guard ensures every successful
-        // bridge is released on ordinary returns and early fallback failures alike.
-        unsafe {
-            AttachThreadInput(self.attaching_thread, self.attached_thread, 0);
-        }
-    }
-}
-
-#[cfg(windows)]
-/// Borrows the current foreground queue long enough to activate one verified process-owned HWND.
-fn activate_owned_window_via_foreground_queue(window: NativeWindow) -> io::Result<bool> {
-    owned_window(window.handle)?;
-    let foreground = unsafe { GetForegroundWindow() };
-    if foreground.is_null() || foreground == window.handle {
-        return Ok(false);
-    }
-    let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, std::ptr::null_mut()) };
-    let target_thread = unsafe { GetWindowThreadProcessId(window.handle, std::ptr::null_mut()) };
-    let current_thread = unsafe { GetCurrentThreadId() };
-    if foreground_thread == 0 || target_thread == 0 || foreground_thread == target_thread {
-        return Ok(false);
-    }
-
-    // AttachThreadInput rejects a thread attached to itself. Each successful bridge is held by a
-    // guard, so a later failed bridge or any future early return still detaches the first one.
-    let foreground_bridge = if current_thread != foreground_thread {
-        match InputQueueBridge::attach(current_thread, foreground_thread) {
-            Some(bridge) => Some(bridge),
-            None => return Ok(false),
-        }
-    } else {
-        None
-    };
-    let target_bridge = if current_thread != target_thread {
-        match InputQueueBridge::attach(current_thread, target_thread) {
-            Some(bridge) => Some(bridge),
-            None => return Ok(false),
-        }
-    } else {
-        None
-    };
-
-    // Both calls borrow a verified process-owned HWND while the temporary queue bridge is live.
-    unsafe {
-        BringWindowToTop(window.handle);
-        SetForegroundWindow(window.handle);
-        SwitchToThisWindow(window.handle, 1);
-    }
-    let became_foreground = unsafe { GetForegroundWindow() } == window.handle;
-    // Drop in reverse attachment order before returning. Early returns above use the same guards.
-    drop(target_bridge);
-    drop(foreground_bridge);
-    Ok(became_foreground)
 }
 
 #[cfg(windows)]
@@ -9834,12 +9738,11 @@ mod tests {
     };
     #[cfg(windows)]
     use super::{
-        FixturePhaseState, NativeWindow, decode_clipboard_dib, focus_input_queue_fallback_ready,
-        has_safe_titlebar_band, horizontal_pin_layout, panic_payload_message,
-        parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
-        request_recording_state, titlebar_fallback_ready, validate_fixture_phase_state,
-        validate_recording_frame_content, validate_same_pixel_content,
-        validate_scroll_fixture_frame,
+        FixturePhaseState, NativeWindow, decode_clipboard_dib, has_safe_titlebar_band,
+        horizontal_pin_layout, panic_payload_message, parse_recording_window_fixture_arguments,
+        recording_fixture_dynamic_bounds, request_recording_state, titlebar_fallback_ready,
+        validate_fixture_phase_state, validate_recording_frame_content,
+        validate_same_pixel_content, validate_scroll_fixture_frame,
     };
     use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -9914,15 +9817,6 @@ mod tests {
         assert!(!titlebar_fallback_ready(Duration::from_millis(249), false));
         assert!(titlebar_fallback_ready(Duration::from_millis(250), false));
         assert!(!titlebar_fallback_ready(Duration::from_secs(1), true));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn focus_queue_fallback_precedes_titlebar_pointer_fallback() {
-        assert!(!focus_input_queue_fallback_ready(Duration::from_millis(99)));
-        assert!(focus_input_queue_fallback_ready(Duration::from_millis(100)));
-        assert!(focus_input_queue_fallback_ready(Duration::from_millis(250)));
-        assert!(!titlebar_fallback_ready(Duration::from_millis(249), false));
     }
 
     #[test]
