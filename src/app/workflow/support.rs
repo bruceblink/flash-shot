@@ -369,6 +369,7 @@ pub(in crate::app) enum OpenImageOutcome {
     Opened {
         path: PathBuf,
         frame: CaptureFrame,
+        preview: Arc<RenderImage>,
         document: Option<AnnotationDocument>,
         document_warning: Option<String>,
     },

@@ -42,13 +42,25 @@ impl FlashShotApp {
                     Ok(Ok(Some(mut paths))) => match paths.pop() {
                         Some(path) => match cx
                             .background_executor()
-                            .spawn(async move { open_image_project(&path) })
+                            .spawn(async move {
+                                let (path, frame, document, document_warning) =
+                                    open_image_project(&path)?;
+                                let preview = render_image_from_capture(&frame)?.image;
+                                Ok::<_, std::io::Error>((
+                                    path,
+                                    frame,
+                                    preview,
+                                    document,
+                                    document_warning,
+                                ))
+                            })
                             .await
                         {
-                            Ok((path, frame, document, document_warning)) => {
+                            Ok((path, frame, preview, document, document_warning)) => {
                                 OpenImageOutcome::Opened {
                                     path,
                                     frame,
+                                    preview,
                                     document,
                                     document_warning,
                                 }
@@ -97,12 +109,17 @@ impl FlashShotApp {
                     Ok(Ok(Some(mut paths))) => match paths.pop() {
                         Some(path) => match cx
                             .background_executor()
-                            .spawn(async move { open_annotation_project(&path) })
+                            .spawn(async move {
+                                let (path, frame, document) = open_annotation_project(&path)?;
+                                let preview = render_image_from_capture(&frame)?.image;
+                                Ok::<_, std::io::Error>((path, frame, preview, document))
+                            })
                             .await
                         {
-                            Ok((path, frame, document)) => OpenImageOutcome::Opened {
+                            Ok((path, frame, preview, document)) => OpenImageOutcome::Opened {
                                 path,
                                 frame,
+                                preview,
                                 document: Some(document),
                                 document_warning: None,
                             },
@@ -142,15 +159,22 @@ impl FlashShotApp {
             async move {
                 let outcome = match cx
                     .background_executor()
-                    .spawn(async move { open_image_project(&path) })
+                    .spawn(async move {
+                        let (path, frame, document, document_warning) = open_image_project(&path)?;
+                        let preview = render_image_from_capture(&frame)?.image;
+                        Ok::<_, std::io::Error>((path, frame, preview, document, document_warning))
+                    })
                     .await
                 {
-                    Ok((path, frame, document, document_warning)) => OpenImageOutcome::Opened {
-                        path,
-                        frame,
-                        document,
-                        document_warning,
-                    },
+                    Ok((path, frame, preview, document, document_warning)) => {
+                        OpenImageOutcome::Opened {
+                            path,
+                            frame,
+                            preview,
+                            document,
+                            document_warning,
+                        }
+                    }
                     Err(error) => OpenImageOutcome::Failed(error.to_string()),
                 };
                 if let Some(this) = this.upgrade() {
@@ -354,20 +378,20 @@ impl FlashShotApp {
             OpenImageOutcome::Opened {
                 path,
                 frame,
+                preview,
                 document,
                 document_warning,
             } => {
                 let bounds = frame.bounds;
                 let result = (|| -> std::io::Result<()> {
                     self.session.frames_ready().map_err(std::io::Error::other)?;
-                    let preview = render_image_from_capture(&frame)?;
                     let document = document
                         .unwrap_or(AnnotationDocument::new(bounds).map_err(std::io::Error::other)?);
                     let (next_annotation_id, next_sequence_number) =
                         next_annotation_counters(&document);
                     self.session.select(bounds).map_err(std::io::Error::other)?;
                     self.history_source = crate::history::HistorySource::Selection;
-                    self.preview = Some(preview.image);
+                    self.preview = Some(preview);
                     self.frame = Some(frame);
                     self.annotation_document = Some(document);
                     self.annotation_history = Default::default();
