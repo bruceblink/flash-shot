@@ -141,9 +141,13 @@ pub struct FlashShotApp {
     full_screen_save_generation: Option<u64>,
     full_screen_pin_generation: Option<u64>,
     clipboard_pin_generation: Option<u64>,
-    // A history Copy owns the system clipboard until its background encode completes.
-    history_copy_generation: Option<u64>,
-    history_pin_generation: Option<u64>,
+    // One foreground history reader owns its file until the background task finishes.
+    history_reader: Option<HistoryReaderLease>,
+    // One managed save owns the history index while recording it may prune an older PNG.
+    history_write_generation: Option<u64>,
+    history_write_sequence: u64,
+    // A folder picker owns the history root until its result has either been applied or discarded.
+    history_root_change_in_flight: bool,
     pinned_save_in_flight: bool,
     include_cursor: bool,
     recognition_result: Option<RecognitionResult>,
@@ -194,6 +198,8 @@ pub struct FlashShotApp {
     // Keeps a large Library expansion from queuing one full PNG decode per saved capture.
     history_thumbnail_pending: VecDeque<PathBuf>,
     history_thumbnail_failed: HashSet<PathBuf>,
+    // Invalidates best-effort thumbnail reads when a file mutation starts or completes.
+    history_thumbnail_revision: u64,
     selection_clipboard: Arc<dyn ClipboardService + Send + Sync>,
     system_services: SystemServices,
     _shutdown: Subscription,
@@ -236,6 +242,25 @@ pub(super) enum HistoryClearScope {
     All,
     Filtered,
     Selected,
+}
+
+/// Identifies the user-visible history action that currently owns one saved PNG.
+///
+/// Open, Copy, and Pin all decode the same managed file asynchronously, so they share one lease
+/// instead of relying on unrelated session state or clipboard flags.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HistoryReaderKind {
+    Open,
+    Copy,
+    Pin,
+}
+
+/// Keeps the active history reader tied to the exact request that started it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct HistoryReaderLease {
+    pub(super) kind: HistoryReaderKind,
+    pub(super) generation: u64,
+    pub(super) path: PathBuf,
 }
 
 impl HistoryClearScope {
@@ -688,8 +713,10 @@ impl FlashShotApp {
             full_screen_save_generation: None,
             full_screen_pin_generation: None,
             clipboard_pin_generation: None,
-            history_copy_generation: None,
-            history_pin_generation: None,
+            history_reader: None,
+            history_write_generation: None,
+            history_write_sequence: 0,
+            history_root_change_in_flight: false,
             pinned_save_in_flight: false,
             include_cursor: settings.include_cursor,
             recognition_result: None,
@@ -736,6 +763,7 @@ impl FlashShotApp {
             history_thumbnail_loading: HashSet::new(),
             history_thumbnail_pending: VecDeque::new(),
             history_thumbnail_failed: HashSet::new(),
+            history_thumbnail_revision: 0,
             selection_clipboard,
             system_services,
             _shutdown: shutdown,

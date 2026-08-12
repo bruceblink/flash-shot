@@ -29,6 +29,9 @@ impl FlashShotApp {
 
         self.status = "Choose where to save the selection...".to_owned();
         let generation = self.operation_generation;
+        // The source label belongs to this export, not to whichever capture may be active when the
+        // native dialog and background writer eventually return.
+        let history_source = self.history_source;
         cx.notify();
         let suggested_name = format!(
             "flash-shot.{}",
@@ -70,7 +73,7 @@ impl FlashShotApp {
                 };
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_save(outcome, generation, cx)
+                        this.finish_save(outcome, generation, None, history_source, cx)
                     });
                 }
             }
@@ -79,21 +82,31 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn quick_save_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(history_write_generation) = self.begin_history_write() else {
+            self.status = "Waiting for active history work before saving...".to_owned();
+            cx.notify();
+            return;
+        };
         let selection = match self.session.start_export() {
             Ok(selection) => selection,
             Err(error) => {
+                self.finish_history_write(history_write_generation);
                 self.status = error.to_string();
                 cx.notify();
                 return;
             }
         };
         let Some((frame, document)) = self.export_source() else {
+            self.finish_history_write(history_write_generation);
             cx.notify();
             return;
         };
 
         self.status = "Quick saving selection...".to_owned();
         let generation = self.operation_generation;
+        // The worker can finish after Reset or a new capture changes the live app state. Keep the
+        // source that produced these pixels with the task so its managed-history entry is exact.
+        let history_source = self.history_source;
         let directory = self.history.root().to_owned();
         let prefix = self.settings.quick_save_prefix.clone();
         cx.notify();
@@ -123,7 +136,13 @@ impl FlashShotApp {
                 };
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_save(outcome, generation, cx)
+                        this.finish_save(
+                            outcome,
+                            generation,
+                            Some(history_write_generation),
+                            history_source,
+                            cx,
+                        )
                     });
                 }
             }
@@ -143,6 +162,12 @@ impl FlashShotApp {
             cx.notify();
             return false;
         }
+        let Some(history_write_generation) = self.begin_history_write() else {
+            self.pinned_save_in_flight = false;
+            self.status = "Waiting for active history work before saving...".to_owned();
+            cx.notify();
+            return false;
+        };
         self.status = "Saving pinned image...".to_owned();
         let directory = self.history.root().to_owned();
         let prefix = self.settings.quick_save_prefix.clone();
@@ -176,13 +201,16 @@ impl FlashShotApp {
                                 if let Some(history_note) = history_note {
                                     this.status.push_str(&history_note);
                                 }
-                                this.synchronize_history_preview_cache();
                                 this.notify_user("Flash Shot", "Pinned image saved");
                             }
                             Err(error) => {
                                 this.status = format!("Could not save pinned image: {error}");
                                 log::warn!(target: "flash_shot::pinned", "pinned_save_failed error={error}");
                             }
+                        }
+                        if this.finish_history_write(history_write_generation) && pin_saved {
+                            this.synchronize_history_preview_cache();
+                            this.resume_history_thumbnail_queue(cx);
                         }
                         let _ = pin.update(cx, |pin, cx| {
                             pin.finish_save_status(pin_saved, cx);
@@ -494,27 +522,49 @@ impl FlashShotApp {
         }
     }
 
-    fn finish_save(&mut self, outcome: SaveOutcome, generation: u64, cx: &mut Context<Self>) {
+    fn finish_save(
+        &mut self,
+        outcome: SaveOutcome,
+        generation: u64,
+        history_write_generation: Option<u64>,
+        history_source: crate::history::HistorySource,
+        cx: &mut Context<Self>,
+    ) {
         if !is_current_operation(self.operation_generation, generation) {
+            let refresh_history_preview =
+                matches!(&outcome, SaveOutcome::Saved { managed: true, .. });
+            if let SaveOutcome::Saved {
+                path,
+                managed: true,
+            } = &outcome
+            {
+                // The file was already written even though the capture UI was reset. Record it
+                // before releasing the lease so retention still sees the managed PNG.
+                let _ = self.record_managed_save_with_recovery(path, history_source);
+            }
+            if let Some(history_write_generation) = history_write_generation
+                && self.finish_history_write(history_write_generation)
+                && refresh_history_preview
+            {
+                self.synchronize_history_preview_cache();
+                self.resume_history_thumbnail_queue(cx);
+            }
+            cx.notify();
             return;
         }
+        let refresh_history_preview = matches!(&outcome, SaveOutcome::Saved { managed: true, .. });
         match outcome {
             SaveOutcome::Saved { path, managed } => {
                 if let Err(error) = self.session.export_completed() {
                     self.status = error.to_string();
                 } else {
                     let history_status = managed
-                        .then(|| self.record_managed_save_with_recovery(&path, self.history_source))
+                        .then(|| self.record_managed_save_with_recovery(&path, history_source))
                         .flatten();
-                    self.status = format!(
-                        "{} saved to {}",
-                        self.history_source.label(),
-                        path.display()
-                    );
+                    self.status = format!("{} saved to {}", history_source.label(), path.display());
                     if let Some(history_status) = history_status {
                         self.status.push_str(&history_status);
                     }
-                    self.synchronize_history_preview_cache();
                     self.notify_user("Flash Shot", "Screenshot saved");
                     self.close_capture_overlays(cx);
                     self.return_to_background();
@@ -534,6 +584,13 @@ impl FlashShotApp {
                 self.close_capture_overlays(cx);
                 self.return_to_background();
             }
+        }
+        if let Some(history_write_generation) = history_write_generation
+            && self.finish_history_write(history_write_generation)
+            && refresh_history_preview
+        {
+            self.synchronize_history_preview_cache();
+            self.resume_history_thumbnail_queue(cx);
         }
         cx.notify();
     }
@@ -590,21 +647,23 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn clear_history(&mut self, cx: &mut Context<Self>) {
-        if self.history_copy_generation.is_some()
-            || self.history_clear_in_flight
-            || self.history_retention_target.is_some()
-            || !self.history_deletions_in_flight.is_empty()
-        {
+        if !self.history_clear_confirmation && !self.history_mutation_can_start() {
             return;
         }
         if !self.history_clear_confirmation {
             self.request_history_clear(cx);
             return;
         }
+        if !self.history_clear_can_commit() {
+            self.status = "Waiting for active history reads before deleting...".to_owned();
+            cx.notify();
+            return;
+        }
         let scope = self.history_clear_scope;
         let paths = std::mem::take(&mut self.history_clear_paths);
         let snapshot = self.history.clone();
         self.history_clear_in_flight = true;
+        self.invalidate_history_thumbnails();
         self.history_clear_confirmation = false;
         self.history_clear_scope = HistoryClearScope::default();
         self.history_clear_count = 0;
@@ -667,10 +726,7 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn remove_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.history_copy_generation.is_some()
-            || self.history_clear_in_flight
-            || self.history_clear_confirmation
-            || self.history_retention_target.is_some()
+        if !self.history_mutation_can_start()
             || !self
                 .history
                 .entries()
@@ -680,6 +736,7 @@ impl FlashShotApp {
         {
             return;
         }
+        self.invalidate_history_thumbnails();
         self.status = format!("Removing {}...", path.display());
         cx.notify();
         let snapshot = self.history.clone();
@@ -850,6 +907,7 @@ impl FlashShotApp {
         &mut self,
         result: std::io::Result<PathBuf>,
         generation: u64,
+        history_write_generation: u64,
         cx: &mut Context<Self>,
     ) {
         if !claim_idle_completion(
@@ -858,8 +916,22 @@ impl FlashShotApp {
             generation,
             self.session.state(),
         ) {
+            if let Ok(path) = &result {
+                // A reset cannot cancel the file write. Preserve managed-history invariants even
+                // when the visible tray action has been superseded by a newer UI operation.
+                let _ = self.record_managed_save_with_recovery(
+                    path,
+                    crate::history::HistorySource::FullScreen,
+                );
+            }
+            if self.finish_history_write(history_write_generation) && result.is_ok() {
+                self.synchronize_history_preview_cache();
+                self.resume_history_thumbnail_queue(cx);
+            }
+            cx.notify();
             return;
         }
+        let refresh_history_preview = result.is_ok();
         match result {
             Ok(path) => {
                 let history_status = self.record_managed_save_with_recovery(
@@ -870,13 +942,16 @@ impl FlashShotApp {
                 if let Some(history_status) = history_status {
                     self.status.push_str(&history_status);
                 }
-                self.synchronize_history_preview_cache();
                 self.notify_user("Flash Shot", "Full screen saved");
             }
             Err(error) => {
                 self.status = format!("Could not save full screen: {error}");
                 log::warn!(target: "flash_shot::capture", "full_screen_save_failed error={error}");
             }
+        }
+        if self.finish_history_write(history_write_generation) && refresh_history_preview {
+            self.synchronize_history_preview_cache();
+            self.resume_history_thumbnail_queue(cx);
         }
         cx.notify();
     }

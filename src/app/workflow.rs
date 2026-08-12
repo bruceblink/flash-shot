@@ -55,8 +55,8 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::{
-    FlashShotApp, HistoryFilter, RecognitionResult, RecognitionRetry, RecordingAudioSelection,
-    RecordingDisplaySelection, SettingsSection,
+    FlashShotApp, HistoryFilter, HistoryReaderKind, HistoryReaderLease, RecognitionResult,
+    RecognitionRetry, RecordingAudioSelection, RecordingDisplaySelection, SettingsSection,
     overlay::CaptureOverlay,
     pinned::PinnedImage,
     render_image::{history_thumbnail_frame, render_image_from_capture},
@@ -143,16 +143,12 @@ impl FlashShotApp {
     }
 
     pub(super) fn cycle_history_limit(&mut self, cx: &mut Context<Self>) {
-        if self.history_copy_generation.is_some()
-            || self.history_retention_target.is_some()
-            || self.history_clear_in_flight
-            || self.history_clear_confirmation
-            || !self.history_deletions_in_flight.is_empty()
-        {
+        if !self.history_mutation_can_start() {
             return;
         }
         let next_limit = next_history_limit(self.settings.history_limit);
         self.history_retention_target = Some(next_limit);
+        self.invalidate_history_thumbnails();
         self.status = format!("Updating screenshot history retention to {next_limit}...");
         cx.notify();
         self.continue_history_retention(cx);

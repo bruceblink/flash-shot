@@ -90,6 +90,15 @@ impl FlashShotApp {
 
     /// Opens a native folder picker, then swaps history only after the new private root is ready.
     pub(in crate::app) fn choose_quick_save_directory(&mut self, cx: &mut Context<Self>) {
+        if self.history_root_change_in_flight
+            || self.history_file_read_in_flight()
+            || self.history_mutation_pending()
+        {
+            self.status = "Finish active history work before changing the save folder".to_owned();
+            cx.notify();
+            return;
+        }
+        self.history_root_change_in_flight = true;
         self.status = "Choose a folder for quick saves and screenshot history...".to_owned();
         cx.notify();
         let limit = usize::from(self.settings.history_limit);
@@ -109,14 +118,34 @@ impl FlashShotApp {
                                 .spawn(async move { open_verified_quick_save_history(path, limit) })
                                 .await
                         }
-                        None => return,
+                        None => {
+                            if let Some(this) = this.upgrade() {
+                                this.update(&mut cx, |this, cx| {
+                                    this.history_root_change_in_flight = false;
+                                    this.status =
+                                        "Quick-save folder selection cancelled".to_owned();
+                                    cx.notify();
+                                });
+                            }
+                            return;
+                        }
                     },
-                    Ok(Ok(None)) => return,
+                    Ok(Ok(None)) => {
+                        if let Some(this) = this.upgrade() {
+                            this.update(&mut cx, |this, cx| {
+                                this.history_root_change_in_flight = false;
+                                this.status = "Quick-save folder selection cancelled".to_owned();
+                                cx.notify();
+                            });
+                        }
+                        return;
+                    }
                     Ok(Err(error)) => Err(std::io::Error::other(error)),
                     Err(error) => Err(std::io::Error::other(error.to_string())),
                 };
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
+                        this.history_root_change_in_flight = false;
                         match result {
                             Ok(history) => {
                                 let previous = this.settings.quick_save_directory.clone();
@@ -154,7 +183,10 @@ impl FlashShotApp {
     /// Checks the active quick-save root asynchronously so a permission failure is visible before
     /// the next screenshot export. The probe only creates and removes its own temporary file.
     pub(in crate::app) fn check_quick_save_directory(&mut self, cx: &mut Context<Self>) {
-        if self.quick_save_directory_check_in_flight {
+        if self.quick_save_directory_check_in_flight
+            || self.history_root_change_in_flight
+            || self.history_write_generation.is_some()
+        {
             return;
         }
         self.quick_save_directory_check_in_flight = true;
@@ -174,6 +206,10 @@ impl FlashShotApp {
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.quick_save_directory_check_in_flight = false;
+                        if this.history.root() != directory {
+                            cx.notify();
+                            return;
+                        }
                         this.status = match result {
                             Ok(()) => {
                                 format!("Quick-save folder is ready: {}", directory.display())
@@ -331,12 +367,7 @@ impl FlashShotApp {
     /// Captures the exact deletion set before asking for confirmation so later list changes cannot
     /// silently widen a destructive filtered-history operation.
     fn request_history_clear_scope(&mut self, scope: HistoryClearScope, cx: &mut Context<Self>) {
-        if self.history_copy_generation.is_some()
-            || self.history_clear_in_flight
-            || self.history_clear_confirmation
-            || self.history_retention_target.is_some()
-            || !self.history_deletions_in_flight.is_empty()
-        {
+        if !self.history_mutation_can_start() {
             return;
         }
         let paths = match scope {

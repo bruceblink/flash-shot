@@ -53,8 +53,7 @@ impl FlashShotApp {
             || self.full_screen_save_generation.is_some()
             || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
-            || self.history_copy_generation.is_some()
-            || self.history_pin_generation.is_some()
+            || self.history_reader.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -104,8 +103,7 @@ impl FlashShotApp {
             || self.full_screen_save_generation.is_some()
             || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
-            || self.history_copy_generation.is_some()
-            || self.history_pin_generation.is_some()
+            || self.history_reader.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -120,6 +118,11 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        let Some(history_write_generation) = self.begin_history_write() else {
+            self.status = "Waiting for active history work before saving...".to_owned();
+            cx.notify();
+            return;
+        };
         let generation = self.operation_generation;
         self.full_screen_save_generation = Some(generation);
         self.status = "Capturing full screen to save...".to_owned();
@@ -147,7 +150,12 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_full_screen_save(result, generation, cx)
+                        this.finish_full_screen_save(
+                            result,
+                            generation,
+                            history_write_generation,
+                            cx,
+                        )
                     });
                 }
             }
@@ -161,8 +169,7 @@ impl FlashShotApp {
             || self.full_screen_save_generation.is_some()
             || self.full_screen_pin_generation.is_some()
             || self.clipboard_pin_generation.is_some()
-            || self.history_copy_generation.is_some()
-            || self.history_pin_generation.is_some()
+            || self.history_reader.is_some()
             || self.delayed_capture_generation.is_some()
             || self.session.state() != CaptureSessionState::Idle
         {
@@ -358,13 +365,14 @@ impl FlashShotApp {
     }
 
     /// Groups async export owners that must finish before a fresh capture can replace the session.
-    fn capture_export_operations_idle(&self) -> bool {
+    pub(super) fn capture_export_operations_idle(&self) -> bool {
         self.full_screen_copy_generation.is_none()
             && self.full_screen_save_generation.is_none()
             && self.full_screen_pin_generation.is_none()
             && self.clipboard_pin_generation.is_none()
-            && self.history_copy_generation.is_none()
-            && self.history_pin_generation.is_none()
+            && self.history_reader.is_none()
+            && self.history_write_generation.is_none()
+            && !self.history_root_change_in_flight
     }
 
     /// Clears a replaceable finished selection before a fresh capture request starts.
@@ -676,7 +684,6 @@ impl FlashShotApp {
         self.full_screen_save_generation = None;
         self.full_screen_pin_generation = None;
         self.clipboard_pin_generation = None;
-        self.history_pin_generation = None;
         self.history_source = crate::history::HistorySource::Selection;
         self.frame = None;
         self.annotation_document = None;

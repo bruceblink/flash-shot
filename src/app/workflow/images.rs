@@ -15,10 +15,128 @@ pub(in crate::app) fn retain_history_thumbnail_pending(
 }
 
 impl FlashShotApp {
-    pub(in crate::app) fn open_image(&mut self, cx: &mut Context<Self>) {
-        if self.history_copy_generation.is_some()
-            || self.session.state() != CaptureSessionState::Idle
+    /// Returns whether a destructive history request has reserved the file set.
+    ///
+    /// Confirmation counts as reserved: letting a reader begin after the user confirms a snapshot
+    /// would reintroduce the read/delete race when the second confirmation arrives.
+    pub(in crate::app) fn history_mutation_pending(&self) -> bool {
+        self.history_clear_confirmation
+            || self.history_clear_in_flight
+            || self.history_retention_target.is_some()
+            || !self.history_deletions_in_flight.is_empty()
+            || self.history_write_generation.is_some()
+            || self.history_root_change_in_flight
+    }
+
+    /// Returns whether any background reader still has a managed PNG open.
+    ///
+    /// Thumbnail work is intentionally low priority, but it is still a real file reader and a
+    /// delete must wait for its bounded decode to finish rather than racing Windows file sharing.
+    pub(in crate::app) fn history_file_read_in_flight(&self) -> bool {
+        self.history_reader.is_some() || !self.history_thumbnail_loading.is_empty()
+    }
+
+    /// Allows a destructive history mutation only after every retained-file reader has finished.
+    pub(in crate::app) fn history_mutation_can_start(&self) -> bool {
+        self.session.state() == CaptureSessionState::Idle
+            && history_mutation_can_start(
+                self.history_reader.is_some(),
+                !self.history_thumbnail_loading.is_empty(),
+                self.history_mutation_pending(),
+            )
+    }
+
+    /// Allows the confirmation click to turn its reserved snapshot into a deletion task.
+    pub(super) fn history_clear_can_commit(&self) -> bool {
+        self.history_clear_confirmation
+            && !self.history_file_read_in_flight()
+            && self.history_write_generation.is_none()
+            && !self.history_root_change_in_flight
+            && !self.history_clear_in_flight
+            && self.history_retention_target.is_none()
+            && self.history_deletions_in_flight.is_empty()
+    }
+
+    /// Starts one user-visible history read only when its file cannot be deleted or replaced.
+    fn can_start_history_reader(&self, path: &PathBuf) -> bool {
+        history_reader_can_start(
+            self.history_reader.is_some(),
+            !self.capture_export_operations_idle() || self.delayed_capture_generation.is_some(),
+            self.history_mutation_pending(),
+            self.history
+                .entries()
+                .iter()
+                .any(|entry| entry.path == *path),
+            self.session.state(),
+        )
+    }
+
+    /// Reserves the current history file until the matching background completion releases it.
+    fn begin_history_reader(&mut self, kind: HistoryReaderKind, path: PathBuf) -> u64 {
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let generation = self.operation_generation;
+        self.history_reader = Some(HistoryReaderLease {
+            kind,
+            generation,
+            path,
+        });
+        generation
+    }
+
+    /// Releases exactly the matching reader lease and accepts only a current completion.
+    fn finish_history_reader(&mut self, kind: HistoryReaderKind, generation: u64) -> bool {
+        let Some(lease) =
+            claim_history_reader_completion(&mut self.history_reader, kind, generation)
+        else {
+            return false;
+        };
+        log::debug!(
+            target: "flash_shot::history",
+            "history_reader_finished kind={kind:?} path={}",
+            lease.path.display()
+        );
+        is_current_operation(self.operation_generation, generation)
+    }
+
+    /// Invalidates queued or completed thumbnail work before a history file set changes.
+    pub(super) fn invalidate_history_thumbnails(&mut self) {
+        self.history_thumbnail_revision = self.history_thumbnail_revision.wrapping_add(1);
+        self.history_thumbnail_pending.clear();
+    }
+
+    /// Resumes bounded preview decoding after a write lease releases and the current view asks
+    /// for missing thumbnails again. Keeping the scheduler separate avoids starting new reads
+    /// while the managed save may still prune an older PNG.
+    pub(super) fn resume_history_thumbnail_queue(&mut self, cx: &mut Context<Self>) {
+        self.pump_history_thumbnail_queue(cx);
+    }
+
+    /// Reserves one managed history write so a possible retention prune cannot race a reader.
+    pub(super) fn begin_history_write(&mut self) -> Option<u64> {
+        if self.history_write_generation.is_some()
+            || self.history_root_change_in_flight
+            || self.history_file_read_in_flight()
+            || self.history_clear_confirmation
+            || self.history_clear_in_flight
+            || self.history_retention_target.is_some()
+            || !self.history_deletions_in_flight.is_empty()
         {
+            return None;
+        }
+        self.history_write_sequence = self.history_write_sequence.wrapping_add(1);
+        let generation = self.history_write_sequence;
+        self.history_write_generation = Some(generation);
+        self.invalidate_history_thumbnails();
+        Some(generation)
+    }
+
+    /// Releases only the matching managed-save reservation after its history update completes.
+    pub(super) fn finish_history_write(&mut self, generation: u64) -> bool {
+        claim_history_write_completion(&mut self.history_write_generation, generation)
+    }
+
+    pub(in crate::app) fn open_image(&mut self, cx: &mut Context<Self>) {
+        if self.history_reader.is_some() || self.session.state() != CaptureSessionState::Idle {
             return;
         }
         if let Err(error) = self.session.begin() {
@@ -86,9 +204,7 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn open_editable_project(&mut self, cx: &mut Context<Self>) {
-        if self.history_copy_generation.is_some()
-            || self.session.state() != CaptureSessionState::Idle
-        {
+        if self.history_reader.is_some() || self.session.state() != CaptureSessionState::Idle {
             return;
         }
         if let Err(error) = self.session.begin() {
@@ -146,9 +262,7 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn open_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.history_copy_generation.is_some()
-            || self.session.state() != CaptureSessionState::Idle
-        {
+        if !self.can_start_history_reader(&path) {
             return;
         }
         if let Err(error) = self.session.begin() {
@@ -156,8 +270,7 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
-        self.operation_generation = self.operation_generation.wrapping_add(1);
-        let generation = self.operation_generation;
+        let generation = self.begin_history_reader(HistoryReaderKind::Open, path.clone());
         self.status = format!("Opening {}...", path.display());
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -185,7 +298,7 @@ impl FlashShotApp {
                 };
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_open_image(outcome, generation, cx)
+                        this.finish_history_open_image(outcome, generation, cx)
                     });
                 }
             }
@@ -195,24 +308,10 @@ impl FlashShotApp {
 
     /// Decodes and copies a retained PNG without opening the annotation workflow.
     pub(in crate::app) fn copy_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if !history_copy_can_start(
-            self.history_copy_generation,
-            self.full_screen_copy_generation.is_some()
-                || self.full_screen_save_generation.is_some()
-                || self.full_screen_pin_generation.is_some()
-                || self.clipboard_pin_generation.is_some()
-                || self.history_pin_generation.is_some()
-                || self.delayed_capture_generation.is_some(),
-            self.history_clear_in_flight
-                || self.history_retention_target.is_some()
-                || !self.history_deletions_in_flight.is_empty(),
-            self.session.state(),
-        ) {
+        if !self.can_start_history_reader(&path) {
             return;
         }
-        self.operation_generation = self.operation_generation.wrapping_add(1);
-        let generation = self.operation_generation;
-        self.history_copy_generation = Some(generation);
+        let generation = self.begin_history_reader(HistoryReaderKind::Copy, path.clone());
         self.status = format!("Copying {}...", path.display());
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -237,15 +336,10 @@ impl FlashShotApp {
 
     /// Decodes a retained screenshot in the background before opening it as an always-on-top pin.
     pub(in crate::app) fn pin_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.history_copy_generation.is_some()
-            || self.history_pin_generation.is_some()
-            || self.session.state() != CaptureSessionState::Idle
-        {
+        if !self.can_start_history_reader(&path) {
             return;
         }
-        self.operation_generation = self.operation_generation.wrapping_add(1);
-        let generation = self.operation_generation;
-        self.history_pin_generation = Some(generation);
+        let generation = self.begin_history_reader(HistoryReaderKind::Pin, path.clone());
         self.status = format!("Pinning {}...", path.display());
         self.hide_settings_window();
         cx.notify();
@@ -275,12 +369,9 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !claim_idle_completion(
-            &mut self.history_pin_generation,
-            self.operation_generation,
-            generation,
-            self.session.state(),
-        ) {
+        let current = self.finish_history_reader(HistoryReaderKind::Pin, generation);
+        if !current || self.session.state() != CaptureSessionState::Idle {
+            cx.notify();
             return;
         }
         match result {
@@ -312,6 +403,9 @@ impl FlashShotApp {
         if self.history_thumbnail_failed.contains(path) {
             return None;
         }
+        if self.history_mutation_pending() {
+            return None;
+        }
         if !enqueue_history_thumbnail_path(
             path.clone(),
             &mut self.history_thumbnail_pending,
@@ -326,12 +420,16 @@ impl FlashShotApp {
     /// Starts at most two PNG decodes at once so expanding a long history cannot flood the
     /// background executor or compete with a user-initiated capture/export.
     fn pump_history_thumbnail_queue(&mut self, cx: &mut Context<Self>) {
+        if self.history_mutation_pending() {
+            return;
+        }
         while let Some(path) = take_next_history_thumbnail(
             &mut self.history_thumbnail_pending,
             &mut self.history_thumbnail_loading,
             HISTORY_THUMBNAIL_MAX_IN_FLIGHT,
         ) {
             let this_path = path.clone();
+            let revision = self.history_thumbnail_revision;
             cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let mut cx = cx.clone();
                 async move {
@@ -347,7 +445,7 @@ impl FlashShotApp {
                         .await;
                     if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |this, cx| {
-                            this.finish_history_thumbnail(this_path, result, cx)
+                            this.finish_history_thumbnail(this_path, revision, result, cx)
                         });
                     }
                 }
@@ -360,6 +458,7 @@ impl FlashShotApp {
     fn finish_history_thumbnail(
         &mut self,
         path: PathBuf,
+        revision: u64,
         result: std::io::Result<CaptureFrame>,
         cx: &mut Context<Self>,
     ) {
@@ -369,7 +468,12 @@ impl FlashShotApp {
             .entries()
             .iter()
             .any(|entry| entry.path == path);
-        if still_retained {
+        if thumbnail_completion_can_cache(
+            revision,
+            self.history_thumbnail_revision,
+            self.history_mutation_pending(),
+            still_retained,
+        ) {
             match result.and_then(|frame| render_image_from_capture(&frame)) {
                 Ok(thumbnail) => {
                     self.history_thumbnail_failed.remove(&path);
@@ -468,18 +572,29 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Completes a history Open only after releasing the exact reader lease that decoded it.
+    fn finish_history_open_image(
+        &mut self,
+        outcome: OpenImageOutcome,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.finish_history_reader(HistoryReaderKind::Open, generation) {
+            cx.notify();
+            return;
+        }
+        self.finish_open_image(outcome, generation, cx);
+    }
+
     fn finish_history_copy(
         &mut self,
         result: std::io::Result<()>,
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !claim_idle_completion(
-            &mut self.history_copy_generation,
-            self.operation_generation,
-            generation,
-            self.session.state(),
-        ) {
+        let current = self.finish_history_reader(HistoryReaderKind::Copy, generation);
+        if !current || self.session.state() != CaptureSessionState::Idle {
+            cx.notify();
             return;
         }
         self.status = match result {
@@ -490,18 +605,63 @@ impl FlashShotApp {
     }
 }
 
-/// Allows one history decode-and-copy task only when no async workflow can replace its source
-/// file or write the clipboard first.
-fn history_copy_can_start(
-    history_copy_generation: Option<u64>,
+/// Answers whether one interactive history reader can own its source file.
+fn history_reader_can_start(
+    reader_in_flight: bool,
     conflicting_operation_in_flight: bool,
-    history_file_operation_in_flight: bool,
+    history_mutation_pending: bool,
+    path_is_managed: bool,
     session_state: CaptureSessionState,
 ) -> bool {
-    history_copy_generation.is_none()
+    !reader_in_flight
         && !conflicting_operation_in_flight
-        && !history_file_operation_in_flight
+        && !history_mutation_pending
+        && path_is_managed
         && session_state == CaptureSessionState::Idle
+}
+
+/// Reports whether a mutation can safely take ownership of the retained file set.
+fn history_mutation_can_start(
+    reader_in_flight: bool,
+    thumbnail_read_in_flight: bool,
+    mutation_pending: bool,
+) -> bool {
+    !reader_in_flight && !thumbnail_read_in_flight && !mutation_pending
+}
+
+/// Claims a completion only when it belongs to the exact reader lease that is still active.
+fn claim_history_reader_completion(
+    active: &mut Option<HistoryReaderLease>,
+    kind: HistoryReaderKind,
+    generation: u64,
+) -> Option<HistoryReaderLease> {
+    let lease = active.as_ref()?;
+    if lease.kind != kind || lease.generation != generation {
+        return None;
+    }
+    active.take()
+}
+
+/// Clears a managed-save lease only when its completion belongs to the active write.
+///
+/// Saves use their own sequence because a capture reset may advance the UI operation generation
+/// while the file writer is still finishing. A late completion must never clear a newer save.
+fn claim_history_write_completion(active: &mut Option<u64>, generation: u64) -> bool {
+    if *active != Some(generation) {
+        return false;
+    }
+    *active = None;
+    true
+}
+
+/// Prevents an old thumbnail decode from repopulating a cache after its file set changed.
+fn thumbnail_completion_can_cache(
+    completion_revision: u64,
+    current_revision: u64,
+    mutation_pending: bool,
+    path_is_still_retained: bool,
+) -> bool {
+    completion_revision == current_revision && !mutation_pending && path_is_still_retained
 }
 
 /// Adds a thumbnail request once, preserving FIFO order across repeated UI renders.
@@ -534,9 +694,12 @@ fn take_next_history_thumbnail(
 #[cfg(test)]
 mod tests {
     use super::{
-        HISTORY_THUMBNAIL_MAX_IN_FLIGHT, enqueue_history_thumbnail_path, history_copy_can_start,
-        retain_history_thumbnail_pending, take_next_history_thumbnail,
+        HISTORY_THUMBNAIL_MAX_IN_FLIGHT, claim_history_reader_completion,
+        claim_history_write_completion, enqueue_history_thumbnail_path, history_mutation_can_start,
+        history_reader_can_start, retain_history_thumbnail_pending, take_next_history_thumbnail,
+        thumbnail_completion_can_cache,
     };
+    use crate::app::{HistoryReaderKind, HistoryReaderLease};
     use crate::domain::session::CaptureSessionState;
     use std::{
         collections::{HashSet, VecDeque},
@@ -544,20 +707,76 @@ mod tests {
     };
 
     #[test]
-    fn history_copy_start_rejects_clipboard_and_file_conflicts() {
+    fn history_reader_start_requires_an_idle_uncontended_managed_file() {
         let idle = CaptureSessionState::Idle;
-        assert!(history_copy_can_start(None, false, false, idle));
+        assert!(history_reader_can_start(false, false, false, true, idle));
 
-        // A second history Copy must not be allowed to race the first system clipboard write.
-        assert!(!history_copy_can_start(Some(7), false, false, idle));
-        assert!(!history_copy_can_start(None, true, false, idle));
-        assert!(!history_copy_can_start(None, false, true, idle));
-        assert!(!history_copy_can_start(
-            None,
+        // Open, Copy, and Pin share one lease so no completion can write stale data after a
+        // destructive history request or another clipboard-producing operation begins.
+        assert!(!history_reader_can_start(true, false, false, true, idle));
+        assert!(!history_reader_can_start(false, true, false, true, idle));
+        assert!(!history_reader_can_start(false, false, true, true, idle));
+        assert!(!history_reader_can_start(false, false, false, false, idle));
+        assert!(!history_reader_can_start(
             false,
             false,
+            false,
+            true,
             CaptureSessionState::Selecting,
         ));
+    }
+
+    #[test]
+    fn history_reader_completion_only_releases_its_matching_lease() {
+        let path = PathBuf::from("managed.png");
+        let lease = HistoryReaderLease {
+            kind: HistoryReaderKind::Copy,
+            generation: 42,
+            path: path.clone(),
+        };
+        let mut active = Some(lease.clone());
+
+        assert_eq!(
+            claim_history_reader_completion(&mut active, HistoryReaderKind::Pin, 42),
+            None
+        );
+        assert_eq!(active, Some(lease.clone()));
+        assert_eq!(
+            claim_history_reader_completion(&mut active, HistoryReaderKind::Copy, 41),
+            None
+        );
+        assert_eq!(active, Some(lease.clone()));
+        assert_eq!(
+            claim_history_reader_completion(&mut active, HistoryReaderKind::Copy, 42),
+            Some(lease)
+        );
+        assert_eq!(active, None);
+    }
+
+    #[test]
+    fn history_write_completion_cannot_release_a_newer_save() {
+        let mut active = Some(18);
+
+        assert!(!claim_history_write_completion(&mut active, 17));
+        assert_eq!(active, Some(18));
+        assert!(claim_history_write_completion(&mut active, 18));
+        assert_eq!(active, None);
+    }
+
+    #[test]
+    fn history_mutation_waits_for_every_retained_file_reader() {
+        assert!(history_mutation_can_start(false, false, false));
+        assert!(!history_mutation_can_start(true, false, false));
+        assert!(!history_mutation_can_start(false, true, false));
+        assert!(!history_mutation_can_start(false, false, true));
+    }
+
+    #[test]
+    fn stale_thumbnail_completion_cannot_repopulate_a_changed_history() {
+        assert!(thumbnail_completion_can_cache(8, 8, false, true));
+        assert!(!thumbnail_completion_can_cache(7, 8, false, true));
+        assert!(!thumbnail_completion_can_cache(8, 8, true, true));
+        assert!(!thumbnail_completion_can_cache(8, 8, false, false));
     }
 
     #[test]
