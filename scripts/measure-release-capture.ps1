@@ -46,7 +46,7 @@ foreach ($path in @($application, $reporter)) {
     }
 }
 $protocol = & $reporter --protocol-version
-if ($LASTEXITCODE -ne 0 -or $protocol -ne "performance-report-v3") {
+if ($LASTEXITCODE -ne 0 -or $protocol -ne "performance-report-v4") {
     throw "Release performance-report binary does not support capture sampling. Run without -SkipBuild after source changes."
 }
 

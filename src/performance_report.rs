@@ -1,4 +1,4 @@
-//! Summarizes locally recorded startup and capture-latency samples for release gates.
+//! Summarizes locally recorded startup, capture, and copy samples for release gates.
 
 use std::{collections::BTreeMap, fs, io, path::Path};
 
@@ -10,6 +10,7 @@ pub struct PerformanceThresholds {
     pub startup_p95_ms: Option<u64>,
     pub shortcut_to_frame_ready_p95_ms: Option<u64>,
     pub shortcut_to_overlay_frame_p95_ms: Option<u64>,
+    pub copy_click_to_clipboard_readable_p95_ms: Option<u64>,
 }
 
 impl Default for PerformanceThresholds {
@@ -21,6 +22,7 @@ impl Default for PerformanceThresholds {
             startup_p95_ms: Some(500),
             shortcut_to_frame_ready_p95_ms: Some(100),
             shortcut_to_overlay_frame_p95_ms: Some(100),
+            copy_click_to_clipboard_readable_p95_ms: Some(250),
         }
     }
 }
@@ -43,6 +45,8 @@ pub struct PerformanceReport {
     pub required_build_profile: Option<&'static str>,
     pub release_gate_applied: bool,
     pub release_qualified: bool,
+    pub reported_metrics: usize,
+    pub gated_metrics: usize,
 }
 
 impl PerformanceReport {
@@ -71,6 +75,8 @@ impl PerformanceReport {
             "required_build_profile": self.required_build_profile,
             "release_gate_applied": self.release_gate_applied,
             "release_qualified": self.release_qualified,
+            "reported_metrics": self.reported_metrics,
+            "gated_metrics": self.gated_metrics,
             "passed": self.passed,
             "metrics": metrics,
         }))
@@ -127,7 +133,10 @@ pub fn summarize_samples(
                 let Some(value) = finite_number(value.get("value")) else {
                     continue;
                 };
-                if metric == "startup_to_service_ready" {
+                if matches!(
+                    metric,
+                    "startup_to_service_ready" | "copy_click_to_clipboard_readable"
+                ) {
                     samples.entry(metric.to_owned()).or_default().push(value);
                 }
             }
@@ -154,6 +163,10 @@ pub fn summarize_samples(
         (
             "shortcut_to_overlay_frame",
             thresholds.shortcut_to_overlay_frame_p95_ms,
+        ),
+        (
+            "copy_click_to_clipboard_readable",
+            thresholds.copy_click_to_clipboard_readable_p95_ms,
         ),
     ];
     for (name, limit) in required_metrics {
@@ -192,16 +205,26 @@ pub fn summarize_samples(
     let passed = metrics
         .values()
         .all(|summary: &MetricSummary| summary.passed);
-    let release_gate_applied = thresholds.require_release_profile
-        && thresholds.startup_p95_ms.is_some()
-        && thresholds.shortcut_to_frame_ready_p95_ms.is_some()
-        && thresholds.shortcut_to_overlay_frame_p95_ms.is_some();
+    let available_metrics = metrics.len();
+    let gated_metrics = [
+        thresholds.startup_p95_ms,
+        thresholds.shortcut_to_frame_ready_p95_ms,
+        thresholds.shortcut_to_overlay_frame_p95_ms,
+        thresholds.copy_click_to_clipboard_readable_p95_ms,
+    ]
+    .into_iter()
+    .flatten()
+    .count();
+    let release_gate_applied = thresholds.require_release_profile && gated_metrics > 0;
+    let release_qualified = release_gate_applied && available_metrics == gated_metrics && passed;
     Ok(PerformanceReport {
         metrics,
         passed,
         required_build_profile: thresholds.require_release_profile.then_some("release"),
         release_gate_applied,
-        release_qualified: release_gate_applied && passed,
+        release_qualified,
+        reported_metrics: available_metrics,
+        gated_metrics,
     })
 }
 
@@ -230,6 +253,8 @@ mod tests {
             r#"{"build_profile":"release","type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":80.0,"shortcut_to_overlay_frame":90.0}}"#,
             "\n",
             r#"{"build_profile":"release","type":"capture_pipeline","latency_ms":{"shortcut_to_frame_ready":95.0,"shortcut_to_overlay_frame":120.0}}"#,
+            "\n",
+            r#"{"build_profile":"release","type":"duration","metric":"copy_click_to_clipboard_readable","value":240.0}"#,
         );
         let report = summarize_samples(
             input,
@@ -244,8 +269,33 @@ mod tests {
         assert_eq!(report.metrics["startup_to_service_ready"].p95_ms, 450.0);
         assert_eq!(report.metrics["shortcut_to_frame_ready"].p95_ms, 95.0);
         assert_eq!(report.metrics["shortcut_to_overlay_frame"].p95_ms, 120.0);
+        assert_eq!(
+            report.metrics["copy_click_to_clipboard_readable"].p95_ms,
+            240.0
+        );
         assert!(!report.passed);
         assert!(report.release_gate_applied);
+        assert!(!report.release_qualified);
+        assert_eq!(report.reported_metrics, 4);
+        assert_eq!(report.gated_metrics, 4);
+    }
+
+    #[test]
+    fn a_partial_default_report_cannot_claim_full_release_qualification() {
+        let input = r#"{"build_profile":"release","type":"duration","metric":"startup_to_service_ready","value":42.0}"#;
+        let report = summarize_samples(
+            input,
+            &PerformanceThresholds {
+                minimum_samples: 0,
+                ..PerformanceThresholds::default()
+            },
+        )
+        .unwrap();
+
+        assert!(report.passed);
+        assert!(report.release_gate_applied);
+        assert_eq!(report.reported_metrics, 1);
+        assert_eq!(report.gated_metrics, 4);
         assert!(!report.release_qualified);
     }
 
@@ -271,7 +321,7 @@ mod tests {
         assert_eq!(report.metrics["shortcut_to_frame_ready"].samples, 1);
         assert!(report.passed);
         assert!(report.release_gate_applied);
-        assert!(report.release_qualified);
+        assert!(!report.release_qualified);
     }
 
     #[test]
@@ -287,6 +337,10 @@ mod tests {
         for value in 1..=10 {
             input.push_str(&format!(
                 r#"{{"build_profile":"release","type":"duration","metric":"startup_to_service_ready","value":{value}}}"#
+            ));
+            input.push('\n');
+            input.push_str(&format!(
+                r#"{{"build_profile":"release","type":"duration","metric":"copy_click_to_clipboard_readable","value":{value}}}"#
             ));
             input.push('\n');
             input.push_str(&format!(
@@ -340,6 +394,7 @@ mod tests {
                 startup_p95_ms: None,
                 shortcut_to_frame_ready_p95_ms: None,
                 shortcut_to_overlay_frame_p95_ms: None,
+                copy_click_to_clipboard_readable_p95_ms: None,
                 ..PerformanceThresholds::default()
             },
         )

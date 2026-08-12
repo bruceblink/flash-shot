@@ -3,6 +3,7 @@
 pub mod annotation_stress;
 pub mod app;
 pub mod capture_stress;
+pub mod copy_performance;
 pub mod diagnostics;
 pub mod domain;
 pub mod export_stress;

@@ -173,6 +173,13 @@ The `Display` control cycles recordable monitors in primary-first order. Both di
 
 The capture shortcut defaults to `Ctrl+Shift+Print Screen`. Set `FLASH_SHOT_CAPTURE_HOTKEY` before launch to use a different safe global combination, for example `Ctrl+Alt+S`, `Shift+F12`, or `Ctrl+PrintScreen`. It must include `Ctrl`, `Alt`, or `Shift`, plus one letter, `F1` through `F24`, or `PrintScreen`; invalid values fall back to the default.
 
+To qualify the ordinary selection-to-clipboard path on Windows, run the opt-in Release gate below. It replaces the current system clipboard, measures 30 `1280x720` selections by default, verifies a normal image consumer can read identical pixels, and fails when p95 exceeds 250 ms:
+
+```powershell
+cargo run --release --bin copy-performance -- --allow-system-clipboard --output target/copy-performance/release.json --metrics-dir target/copy-performance/metrics
+target\release\performance-report.exe --input target\copy-performance\metrics\performance.jsonl --minimum-samples 30 --copy-only --output target\copy-performance\summary.json
+```
+
 The global capture shortcut can be disabled from the tray `System` menu or Capture settings without changing its configured key combination. The preference persists across restarts, while the tray capture commands remain available.
 
 Capture settings can configure separate global shortcuts for region capture, full-screen capture,

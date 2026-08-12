@@ -4,7 +4,7 @@ use std::{io, path::PathBuf};
 
 use flash_shot::performance_report::{PerformanceThresholds, summarize_file};
 
-const PERFORMANCE_REPORT_PROTOCOL_VERSION: &str = "performance-report-v3";
+const PERFORMANCE_REPORT_PROTOCOL_VERSION: &str = "performance-report-v4";
 
 fn main() {
     match execute() {
@@ -61,14 +61,27 @@ fn parse_args(
             "--max-overlay-p95-ms" => {
                 thresholds.shortcut_to_overlay_frame_p95_ms = Some(parse_u64(value()?, &argument)?)
             }
+            "--max-copy-p95-ms" => {
+                thresholds.copy_click_to_clipboard_readable_p95_ms =
+                    Some(parse_u64(value()?, &argument)?)
+            }
             "--minimum-samples" => thresholds.minimum_samples = parse_usize(value()?, &argument)?,
             "--since-ms" => thresholds.since_timestamp_ms = Some(parse_u128(value()?, &argument)?),
             "--include-nonrelease" => thresholds.require_release_profile = false,
             "--startup-only" => {
                 thresholds.shortcut_to_frame_ready_p95_ms = None;
                 thresholds.shortcut_to_overlay_frame_p95_ms = None;
+                thresholds.copy_click_to_clipboard_readable_p95_ms = None;
             }
-            "--capture-only" => thresholds.startup_p95_ms = None,
+            "--capture-only" => {
+                thresholds.startup_p95_ms = None;
+                thresholds.copy_click_to_clipboard_readable_p95_ms = None;
+            }
+            "--copy-only" => {
+                thresholds.startup_p95_ms = None;
+                thresholds.shortcut_to_frame_ready_p95_ms = None;
+                thresholds.shortcut_to_overlay_frame_p95_ms = None;
+            }
             "--no-gate" => {
                 thresholds = PerformanceThresholds {
                     minimum_samples: 0,
@@ -77,6 +90,7 @@ fn parse_args(
                     startup_p95_ms: None,
                     shortcut_to_frame_ready_p95_ms: None,
                     shortcut_to_overlay_frame_p95_ms: None,
+                    copy_click_to_clipboard_readable_p95_ms: None,
                 }
             }
             _ => {
@@ -169,6 +183,7 @@ mod tests {
         assert_eq!(thresholds.startup_p95_ms, Some(500));
         assert_eq!(thresholds.shortcut_to_frame_ready_p95_ms, None);
         assert_eq!(thresholds.shortcut_to_overlay_frame_p95_ms, None);
+        assert_eq!(thresholds.copy_click_to_clipboard_readable_p95_ms, None);
         assert!(thresholds.require_release_profile);
     }
 
@@ -183,14 +198,49 @@ mod tests {
         assert_eq!(thresholds.startup_p95_ms, None);
         assert_eq!(thresholds.shortcut_to_frame_ready_p95_ms, Some(100));
         assert_eq!(thresholds.shortcut_to_overlay_frame_p95_ms, Some(100));
+        assert_eq!(thresholds.copy_click_to_clipboard_readable_p95_ms, None);
         assert!(thresholds.require_release_profile);
+    }
+
+    #[test]
+    fn copy_only_keeps_the_release_clipboard_gate() {
+        let (_, thresholds, _) = parse_args([
+            "--input".to_owned(),
+            "metrics.jsonl".to_owned(),
+            "--copy-only".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(thresholds.startup_p95_ms, None);
+        assert_eq!(thresholds.shortcut_to_frame_ready_p95_ms, None);
+        assert_eq!(thresholds.shortcut_to_overlay_frame_p95_ms, None);
+        assert_eq!(
+            thresholds.copy_click_to_clipboard_readable_p95_ms,
+            Some(250)
+        );
+        assert!(thresholds.require_release_profile);
+    }
+
+    #[test]
+    fn parses_an_explicit_copy_threshold() {
+        let (_, thresholds, _) = parse_args([
+            "--input".to_owned(),
+            "metrics.jsonl".to_owned(),
+            "--max-copy-p95-ms".to_owned(),
+            "225".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            thresholds.copy_click_to_clipboard_readable_p95_ms,
+            Some(225)
+        );
     }
 
     #[test]
     fn protocol_version_is_stable_for_measurement_scripts() {
         assert_eq!(
             super::PERFORMANCE_REPORT_PROTOCOL_VERSION,
-            "performance-report-v3"
+            "performance-report-v4"
         );
     }
 }

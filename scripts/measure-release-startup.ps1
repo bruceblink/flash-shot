@@ -35,7 +35,7 @@ foreach ($path in @($application, $reporter)) {
 }
 if ($SkipBuild) {
     $protocol = & $reporter --protocol-version
-    if ($LASTEXITCODE -ne 0 -or $protocol -ne "performance-report-v3") {
+    if ($LASTEXITCODE -ne 0 -or $protocol -ne "performance-report-v4") {
         throw "-SkipBuild requires a current Release performance-report binary. Run without -SkipBuild after source changes."
     }
 }
