@@ -94,7 +94,7 @@ use windows_sys::Win32::{
             RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
             SM_YVIRTUALSCREEN, SPI_GETMOUSEWHEELROUTING, SW_HIDE, SW_MINIMIZE, SW_RESTORE,
             SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW, SetCursorPos,
-            SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, SwitchToThisWindow,
+            SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
             SystemParametersInfoW, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
             WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
             WS_POPUP, WS_VISIBLE, WindowFromPoint,
@@ -8947,11 +8947,6 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
         );
         SetForegroundWindow(window.handle);
     }
-    if unsafe { GetForegroundWindow() } != window.handle {
-        // Switch only to the process-owned HWND already validated above. Unlike an Alt tap, this
-        // cannot leak modifier state into whichever unrelated window currently owns input.
-        unsafe { SwitchToThisWindow(window.handle, 1) };
-    }
     loop {
         if guard_foreground(window.handle).is_ok() {
             return Ok(());
@@ -8983,7 +8978,6 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
         unsafe {
             BringWindowToTop(window.handle);
             SetForegroundWindow(window.handle);
-            SwitchToThisWindow(window.handle, 1);
         }
         thread::sleep(Duration::from_millis(25));
     }
