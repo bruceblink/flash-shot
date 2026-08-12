@@ -28,12 +28,14 @@ impl FlashShotApp {
             || self.history_root_change_in_flight
     }
 
-    /// Returns whether any background reader still has a managed PNG open.
+    /// Returns whether a managed PNG reader or a generic file-picker reservation is active.
     ///
     /// Thumbnail work is intentionally low priority, but it is still a real file reader and a
     /// delete must wait for its bounded decode to finish rather than racing Windows file sharing.
     pub(in crate::app) fn history_file_read_in_flight(&self) -> bool {
-        self.history_reader.is_some() || !self.history_thumbnail_loading.is_empty()
+        self.history_reader.is_some()
+            || self.generic_open_generation.is_some()
+            || !self.history_thumbnail_loading.is_empty()
     }
 
     /// Allows a destructive history mutation only after every retained-file reader has finished.
@@ -41,6 +43,7 @@ impl FlashShotApp {
         self.session.state() == CaptureSessionState::Idle
             && history_mutation_can_start(
                 self.history_reader.is_some(),
+                self.generic_open_generation.is_some(),
                 !self.history_thumbnail_loading.is_empty(),
                 self.history_mutation_pending(),
             )
@@ -135,17 +138,48 @@ impl FlashShotApp {
         claim_history_write_completion(&mut self.history_write_generation, generation)
     }
 
-    pub(in crate::app) fn open_image(&mut self, cx: &mut Context<Self>) {
-        if self.history_reader.is_some() || self.session.state() != CaptureSessionState::Idle {
-            return;
+    /// Reserves a generic PNG or project picker before it can select a managed history file.
+    ///
+    /// The selected path is unknown while the native picker is visible. Holding this lease keeps a
+    /// concurrent save, prune, or root change from deleting a history image between selection and
+    /// the async result returns to the UI, even when the picker ultimately chooses an external
+    /// file.
+    fn begin_generic_open_request(
+        &mut self,
+    ) -> Result<Option<u64>, crate::domain::session::TransitionError> {
+        if self.generic_open_generation.is_some()
+            || self.history_reader.is_some()
+            || self.history_mutation_pending()
+            || self.session.state() != CaptureSessionState::Idle
+        {
+            return Ok(None);
         }
-        if let Err(error) = self.session.begin() {
-            self.status = error.to_string();
-            cx.notify();
-            return;
-        }
+        self.session.begin()?;
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let generation = self.operation_generation;
+        self.generic_open_generation = Some(generation);
+        Ok(Some(generation))
+    }
+
+    /// Releases only the matching picker reservation and rejects a reset or newer flow.
+    fn finish_generic_open_request(&mut self, generation: u64) -> bool {
+        claim_generic_open_completion(
+            &mut self.generic_open_generation,
+            self.operation_generation,
+            generation,
+        )
+    }
+
+    pub(in crate::app) fn open_image(&mut self, cx: &mut Context<Self>) {
+        let generation = match self.begin_generic_open_request() {
+            Ok(Some(generation)) => generation,
+            Ok(None) => return,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
         self.status = "Choose a PNG image to annotate...".to_owned();
         cx.notify();
 
@@ -195,7 +229,11 @@ impl FlashShotApp {
                 };
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_open_image(outcome, generation, cx)
+                        if this.finish_generic_open_request(generation) {
+                            this.finish_open_image(outcome, generation, cx);
+                        } else {
+                            cx.notify();
+                        }
                     });
                 }
             }
@@ -204,16 +242,15 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn open_editable_project(&mut self, cx: &mut Context<Self>) {
-        if self.history_reader.is_some() || self.session.state() != CaptureSessionState::Idle {
-            return;
-        }
-        if let Err(error) = self.session.begin() {
-            self.status = error.to_string();
-            cx.notify();
-            return;
-        }
-        self.operation_generation = self.operation_generation.wrapping_add(1);
-        let generation = self.operation_generation;
+        let generation = match self.begin_generic_open_request() {
+            Ok(Some(generation)) => generation,
+            Ok(None) => return,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
         self.status = "Choose an editable annotation project...".to_owned();
         cx.notify();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
@@ -253,7 +290,11 @@ impl FlashShotApp {
                 };
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_open_image(outcome, generation, cx)
+                        if this.finish_generic_open_request(generation) {
+                            this.finish_open_image(outcome, generation, cx);
+                        } else {
+                            cx.notify();
+                        }
                     });
                 }
             }
@@ -622,11 +663,15 @@ fn history_reader_can_start(
 
 /// Reports whether a mutation can safely take ownership of the retained file set.
 fn history_mutation_can_start(
-    reader_in_flight: bool,
+    history_reader_in_flight: bool,
+    generic_open_in_flight: bool,
     thumbnail_read_in_flight: bool,
     mutation_pending: bool,
 ) -> bool {
-    !reader_in_flight && !thumbnail_read_in_flight && !mutation_pending
+    !history_reader_in_flight
+        && !generic_open_in_flight
+        && !thumbnail_read_in_flight
+        && !mutation_pending
 }
 
 /// Claims a completion only when it belongs to the exact reader lease that is still active.
@@ -652,6 +697,22 @@ fn claim_history_write_completion(active: &mut Option<u64>, generation: u64) -> 
     }
     *active = None;
     true
+}
+
+/// Releases a matching generic picker lease before deciding whether its result can affect the UI.
+///
+/// Resetting advances the operation generation but intentionally leaves this reservation active;
+/// the late completion releases its own lease without being able to change the newer UI state.
+fn claim_generic_open_completion(
+    active: &mut Option<u64>,
+    current_generation: u64,
+    completion_generation: u64,
+) -> bool {
+    if *active != Some(completion_generation) {
+        return false;
+    }
+    *active = None;
+    is_current_operation(current_generation, completion_generation)
 }
 
 /// Prevents an old thumbnail decode from repopulating a cache after its file set changed.
@@ -694,9 +755,10 @@ fn take_next_history_thumbnail(
 #[cfg(test)]
 mod tests {
     use super::{
-        HISTORY_THUMBNAIL_MAX_IN_FLIGHT, claim_history_reader_completion,
-        claim_history_write_completion, enqueue_history_thumbnail_path, history_mutation_can_start,
-        history_reader_can_start, retain_history_thumbnail_pending, take_next_history_thumbnail,
+        HISTORY_THUMBNAIL_MAX_IN_FLIGHT, claim_generic_open_completion,
+        claim_history_reader_completion, claim_history_write_completion,
+        enqueue_history_thumbnail_path, history_mutation_can_start, history_reader_can_start,
+        retain_history_thumbnail_pending, take_next_history_thumbnail,
         thumbnail_completion_can_cache,
     };
     use crate::app::{HistoryReaderKind, HistoryReaderLease};
@@ -764,11 +826,24 @@ mod tests {
     }
 
     #[test]
+    fn stale_generic_open_completion_releases_only_its_own_picker_lease() {
+        let mut active = Some(42);
+
+        assert!(!claim_generic_open_completion(&mut active, 43, 42));
+        assert_eq!(active, None);
+
+        let mut newer_open = Some(43);
+        assert!(!claim_generic_open_completion(&mut newer_open, 43, 42));
+        assert_eq!(newer_open, Some(43));
+    }
+
+    #[test]
     fn history_mutation_waits_for_every_retained_file_reader() {
-        assert!(history_mutation_can_start(false, false, false));
-        assert!(!history_mutation_can_start(true, false, false));
-        assert!(!history_mutation_can_start(false, true, false));
-        assert!(!history_mutation_can_start(false, false, true));
+        assert!(history_mutation_can_start(false, false, false, false));
+        assert!(!history_mutation_can_start(true, false, false, false));
+        assert!(!history_mutation_can_start(false, true, false, false));
+        assert!(!history_mutation_can_start(false, false, true, false));
+        assert!(!history_mutation_can_start(false, false, false, true));
     }
 
     #[test]

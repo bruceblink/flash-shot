@@ -371,6 +371,7 @@ impl FlashShotApp {
             && self.full_screen_pin_generation.is_none()
             && self.clipboard_pin_generation.is_none()
             && self.history_reader.is_none()
+            && self.generic_open_generation.is_none()
             && self.history_write_generation.is_none()
             && !self.history_root_change_in_flight
     }

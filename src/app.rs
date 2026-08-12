@@ -143,6 +143,9 @@ pub struct FlashShotApp {
     clipboard_pin_generation: Option<u64>,
     // One foreground history reader owns its file until the background task finishes.
     history_reader: Option<HistoryReaderLease>,
+    // A generic file picker may still select a managed history image, so it reserves the history
+    // file set until its async result returns to the UI for completion handling.
+    generic_open_generation: Option<u64>,
     // One managed save owns the history index while recording it may prune an older PNG.
     history_write_generation: Option<u64>,
     history_write_sequence: u64,
@@ -714,6 +717,7 @@ impl FlashShotApp {
             full_screen_pin_generation: None,
             clipboard_pin_generation: None,
             history_reader: None,
+            generic_open_generation: None,
             history_write_generation: None,
             history_write_sequence: 0,
             history_root_change_in_flight: false,
