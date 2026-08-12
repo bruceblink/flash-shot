@@ -8755,7 +8755,11 @@ fn activate_owned_window_via_titlebar(window: NativeWindow) -> io::Result<bool> 
     if !has_safe_titlebar_band(window.bounds, client) {
         return Ok(false);
     }
-    let point = find_visible_titlebar_point(window, client)?;
+    let Some(point) = find_visible_titlebar_point(window, client)? else {
+        // Borderless GPUI windows have no safe non-client point. Keep trying the
+        // verified API activation path instead of moving the user's cursor or failing.
+        return Ok(false);
+    };
     let cursor = CursorRestore::capture()?;
     let desktop = virtual_desktop()?;
     let activation = (|| -> io::Result<()> {
@@ -8793,7 +8797,7 @@ fn titlebar_fallback_ready(elapsed: Duration, attempted: bool) -> bool {
 fn find_visible_titlebar_point(
     window: NativeWindow,
     client: PhysicalRect,
-) -> io::Result<PhysicalPoint> {
+) -> io::Result<Option<PhysicalPoint>> {
     let width = window.bounds.width() as i32;
     let left = window.bounds.left.saturating_add(width / 4);
     let right = window.bounds.right.saturating_sub(width / 4);
@@ -8814,14 +8818,11 @@ fn find_visible_titlebar_point(
         }
         let point = PhysicalPoint { x, y };
         if is_caption_point(window.handle, point)? {
-            return Ok(PhysicalPoint { x, y });
+            return Ok(Some(PhysicalPoint { x, y }));
         }
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "no uncovered safe title-bar point belongs to the expected process window",
-    ))
+    Ok(None)
 }
 
 #[cfg(windows)]

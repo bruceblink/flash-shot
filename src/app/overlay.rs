@@ -75,6 +75,7 @@ const ANNOTATION_TOOLBAR_MIN_CONTENT_WIDTH: f32 = 320.0;
 // Keep the core screenshot actions compact while optional actions use wider,
 // self-explanatory labels when they are expanded.
 const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 48.0, 58.0];
+const OVERLAY_MORE_ACTIONS_ID: &str = "overlay-more-actions";
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
     150.0, 125.0, 150.0, 100.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
 ];
@@ -112,6 +113,12 @@ fn primary_action_tooltip(action_id: &str) -> &'static str {
         "cancel" => "Cancel capture (Escape)",
         _ => "",
     }
+}
+
+/// Keeps the More/Less control's element identity stable while its label follows menu state, so
+/// GPUI can retain keyboard focus when the secondary action menu is expanded or collapsed.
+fn more_actions_button_label(show_more_actions: bool) -> &'static str {
+    if show_more_actions { "Less" } else { "More" }
 }
 
 /// Keeps a focused toolbar command from also invoking the overlay-wide Enter=Copy shortcut.
@@ -2010,11 +2017,7 @@ impl Render for CaptureOverlay {
                             )
                             .child(
                                 div()
-                                    .id(if show_more_actions {
-                                        "overlay-less-actions"
-                                    } else {
-                                        "overlay-more-actions"
-                                    })
+                                    .id(OVERLAY_MORE_ACTIONS_ID)
                                     .w(px(48.0))
                                     .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
                                     .flex()
@@ -2056,7 +2059,7 @@ impl Render for CaptureOverlay {
                                         });
                                     }))
                                     .on_key_down(stop_primary_action_key_propagation)
-                                    .child(if show_more_actions { "Less" } else { "More" }),
+                                    .child(more_actions_button_label(show_more_actions)),
                             )
                             .child(
                                 div()
@@ -3918,13 +3921,14 @@ mod tests {
     use super::{
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
         OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET,
-        OVERLAY_EDGE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
-        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, accepts_overlay_input,
-        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
-        annotation_controls_visible, annotation_layer_label, annotation_style_panel_height,
-        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
-        arrange_context_for_selection, arrow_head_points, capture_double_click, intersect,
-        is_text_annotation, magnifier_origin, outline_shape_bounds, overlay_ui_acceptance_frame,
+        OVERLAY_EDGE_INSET, OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
+        OVERLAY_SECONDARY_MENU_GAP, SelectionCursor, SelectionDimensionLayout,
+        SmartTargetHudLayout, accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
+        action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
+        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_items,
+        annotation_toolbar_layout, arrange_context_for_selection, arrow_head_points,
+        capture_double_click, intersect, is_text_annotation, magnifier_origin,
+        more_actions_button_label, outline_shape_bounds, overlay_ui_acceptance_frame,
         overlay_ui_acceptance_selection, overlay_ui_acceptance_target, owns_selection_toolbar,
         primary_action_tooltip, recognition_result_preview, recognition_retry_label,
         resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
@@ -4111,6 +4115,13 @@ mod tests {
         assert!(primary_action_tooltip("cancel").contains("Escape"));
         assert!(!primary_action_tooltip("draw").is_empty());
         assert_eq!(primary_action_tooltip("unknown"), "");
+    }
+
+    #[test]
+    fn more_actions_control_keeps_focus_identity_when_label_changes() {
+        assert_eq!(OVERLAY_MORE_ACTIONS_ID, "overlay-more-actions");
+        assert_eq!(more_actions_button_label(false), "More");
+        assert_eq!(more_actions_button_label(true), "Less");
     }
 
     #[test]
