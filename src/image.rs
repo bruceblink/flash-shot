@@ -684,6 +684,8 @@ impl CaptureFrame {
         })
     }
 
+    /// Encodes the BGRA capture as PNG without materializing a second full-size image.
+    /// The returned bytes stay in memory so Copy and Save share identical pixel output.
     pub fn encode_png(&self) -> io::Result<Vec<u8>> {
         self.validate()?;
         if self.format != PixelFormat::Bgra8 {
@@ -692,16 +694,31 @@ impl CaptureFrame {
                 "unsupported pixel format",
             ));
         }
-
-        let rgba = self.rgba_pixels()?;
-
+        let row_bytes = usize::try_from(self.width)
+            .ok()
+            .and_then(|width| width.checked_mul(4))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "PNG row overflow"))?;
         let mut encoded = Vec::new();
         {
             let mut encoder = png::Encoder::new(&mut encoded, self.width, self.height);
             encoder.set_color(png::ColorType::Rgba);
             encoder.set_depth(png::BitDepth::Eight);
             let mut writer = encoder.write_header().map_err(png_error)?;
-            writer.write_image_data(&rgba).map_err(png_error)?;
+            let mut stream = writer.stream_writer().map_err(png_error)?;
+            // Reuse one scanline while converting BGRA to RGBA. The stream writer compresses
+            // rows incrementally, avoiding full-image color and compressed staging buffers.
+            let mut rgba_row = vec![0_u8; row_bytes];
+            for source_row in self.pixels.chunks_exact(self.stride) {
+                for (source, target) in source_row[..row_bytes]
+                    .chunks_exact(4)
+                    .zip(rgba_row.chunks_exact_mut(4))
+                {
+                    target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
+                }
+                stream.write_all(&rgba_row)?;
+            }
+            stream.finish().map_err(png_error)?;
+            writer.finish().map_err(png_error)?;
         }
         Ok(encoded)
     }
@@ -977,6 +994,68 @@ mod tests {
         assert_eq!(info.width, 1);
         assert_eq!(info.height, 1);
         assert_eq!(&output[..info.buffer_size()], &[3, 2, 1, 255]);
+    }
+
+    #[test]
+    fn png_streams_multiple_padded_rows_without_encoding_stride_bytes() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: -5,
+                top: 7,
+                right: -3,
+                bottom: 9,
+            },
+            width: 2,
+            height: 2,
+            stride: 12,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from([
+                1, 2, 3, 255, 4, 5, 6, 254, 90, 91, 92, 93, 7, 8, 9, 253, 10, 11, 12, 252, 94, 95,
+                96, 97,
+            ]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        let decoder = png::Decoder::new(Cursor::new(frame.encode_png().unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut output = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut output).unwrap();
+
+        assert_eq!(info.width, 2);
+        assert_eq!(info.height, 2);
+        assert_eq!(
+            &output[..info.buffer_size()],
+            &[3, 2, 1, 255, 6, 5, 4, 254, 9, 8, 7, 253, 12, 11, 10, 252]
+        );
+    }
+
+    #[test]
+    fn streaming_png_matches_the_previous_encoder_pixels() {
+        let frame = test_frame();
+        let legacy_rgba = frame.rgba_pixels().unwrap();
+        let mut legacy_png = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut legacy_png, frame.width, frame.height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&legacy_rgba)
+                .unwrap();
+        }
+
+        let decode = |encoded: Vec<u8>| {
+            let decoder = png::Decoder::new(Cursor::new(encoded));
+            let mut reader = decoder.read_info().unwrap();
+            let mut output = vec![0; reader.output_buffer_size().unwrap()];
+            let info = reader.next_frame(&mut output).unwrap();
+            output.truncate(info.buffer_size());
+            output
+        };
+
+        assert_eq!(decode(frame.encode_png().unwrap()), decode(legacy_png));
     }
 
     #[test]

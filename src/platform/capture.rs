@@ -43,12 +43,17 @@ pub struct CaptureFrame {
 }
 
 impl CaptureFrame {
+    /// Checks frame geometry before callers use stride-based row indexing or export pixels.
     pub fn validate(&self) -> io::Result<()> {
+        let row_bytes = usize::try_from(self.width)
+            .ok()
+            .and_then(|width| width.checked_mul(4))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "frame row overflow"))?;
         let required = self
             .stride
             .checked_mul(self.height as usize)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "frame size overflow"))?;
-        if self.width == 0 || self.height == 0 || self.stride < self.width as usize * 4 {
+        if self.width == 0 || self.height == 0 || self.stride < row_bytes {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid frame dimensions",
