@@ -174,7 +174,11 @@ The `Display` control cycles recordable monitors in primary-first order. Both di
 
 The capture shortcut defaults to `Ctrl+Shift+Print Screen`. Set `FLASH_SHOT_CAPTURE_HOTKEY` before launch to use a different safe global combination, for example `Ctrl+Alt+S`, `Shift+F12`, or `Ctrl+PrintScreen`. It must include `Ctrl`, `Alt`, or `Shift`, plus one letter, `F1` through `F24`, or `PrintScreen`; invalid values fall back to the default.
 
-To qualify the ordinary selection-to-clipboard path on Windows, run the opt-in Release gate below. It replaces the current system clipboard, measures 30 `1280x720` selections by default, verifies a normal image consumer can read identical pixels, and fails when p95 exceeds 250 ms:
+For a deterministic Release regression check of the clipboard path, run the opt-in synthetic gate below. It replaces
+the current system clipboard, measures 30 generated `1280x720` frames by default, records every valid and failed
+sample, and requires at least 30 valid samples with no failures and p95 at or below 250 ms. This command does not
+inject real UI input or qualify the required external-consumer benchmark; use the Windows acceptance runner for that
+separate evidence:
 
 ```powershell
 cargo run --release --bin copy-performance -- --allow-system-clipboard --output target/copy-performance/release.json --metrics-dir target/copy-performance/metrics
@@ -278,7 +282,8 @@ cargo run --release --bin overlay-interaction-acceptance -- --allow-input --allo
 消费者通过 PNG、CF_DIB 和常规图像读取三条路径取得结果，父进程再与选区源帧逐像素比较，并在
 `report.json` 中记录序号、单调计时、格式产物、像素指纹、消费者 observing 状态和子进程清理状态。默认命令仍使用进程内
 观察器，不会改写用户剪贴板。工具栏 Copy 与一次真实 `Enter` 快捷键输入均已有单屏 Release 报告；
-至少 30 次真实 UI 样本的 p50/p95 和失败数仍按 [交付计划](docs/plan.md) 的后续验收项执行。
+`copy-performance` 只覆盖合成回归基准（报告 schema 2，`real_ui=false`）；至少 30 次真实 UI 样本的
+p50/p95 和失败数仍按 [交付计划](docs/plan.md) 的后续验收项执行。
 
 在同一标准场景中验证键盘出口时，将触发器切换为 `Enter`：
 

@@ -123,11 +123,14 @@ Windows 应用，而不是只看到应用自身的成功提示。
 4. 保存选区完成、Copy 触发和结束清理的关键截图，以及关联的结构化报告、消费者读取结果和像素比对结果。
    证据还必须证明覆盖层、菜单、临时窗口和后台任务在结束后没有残留，且控件没有遮挡选区或发生截断。
 
-当前性能基础设施状态：`copy-performance` 已提供显式授权的 Release 系统剪贴板门禁，默认执行 30 次
-`1280x720` 普通选区，计时覆盖合成、真实裁切、PNG/CF_DIB 写入及常规消费者读回。2026-08-12
-本机 Release 结果为 p50 `19.53 ms`、p95 `21.98 ms`、最大 `25.82 ms`，像素读回一致，低于
-`250 ms` 预算；机器可读报告位于 `target/copy-performance/release-1280x720.json` 和
-`target/copy-performance/release-summary.json`。
+当前性能基础设施状态：`copy-performance` 提供显式授权的 Release **合成**系统剪贴板基准，默认执行
+30 次 `1280x720` 生成帧的合成、裁切、生产剪贴板写入和同进程读回。报告 schema 2 会保存完整样本、失败
+样本和 p50/p95，并明确标记 `measurement_mode=synthetic`、`real_ui=false`、未独立验证 PNG/CF_DIB
+或外部消费者；有效样本少于 30、存在失败或 p95 超过 `250 ms` 均不会通过。该基准用于稳定的 CPU/剪贴板
+回归门禁，不是本节要求的真实 UI 证据。
+
+真实 UI 的 30 次普通 Copy 仍需由 Release `overlay-interaction-acceptance` 批量采样完成；在此之前，任何
+`copy-performance` 结果都不能被描述为真实键鼠端到端 p50/p95。
 
 2026-08-12 的 Release UI 验收又通过真实输入执行了 `Ctrl+S -> Save 对话框 -> Escape -> 原选区恢复 ->
 Ctrl+S -> 保存`。报告位于
