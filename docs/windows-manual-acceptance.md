@@ -12,6 +12,7 @@
 | 失败 | 实际结果不符合预期；必须记录复现条件和问题链接。 |
 | 阻塞 | 设备、显示器、FFmpeg 或权限条件缺失，不能据此声称功能通过。 |
 | 暂缓 | 当前开发范围明确不执行；保留步骤和通过条件，恢复范围后必须重新验收。 |
+| 部分通过 | 已完成明确环境子集，剩余步骤或环境必须继续保持显式未完成。 |
 
 ## 执行前记录
 
@@ -38,9 +39,10 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | 负坐标双屏 | 暂缓 | 将副屏放在主屏左侧，跨屏拖动选区并在两屏边缘调整大小。 | 选区和放大镜不跳变；每个显示器只显示自己的覆盖层操作区；导出结果没有偏移或裁切错误。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 混合 DPI 双屏 | 暂缓 | 将两个显示器设置为不同缩放，例如 100% 与 150% 或 200%；跨屏截图、保存并核对像素尺寸。 | 光标、选区、窗口智能识别和导出均以物理像素对齐；无重复或缺失的工具栏。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 窄选区与最小设置窗 | 通过 | 将设置窗口缩小到最小可用尺寸；在屏幕边缘创建窄选区，展开次级操作与标注面板。 | 文本不截断，控件不重叠；主工具栏保持可点击，次级菜单在可用一侧展开。 | `current-narrow-edge-single-100` 在真实 420x420 client 中启动截图，拖出右下 160x96 选区并真实点击 More/Less 与 Mark 开关。 |
-| 多 Pin 生命周期 | 待执行 | 连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | `current-pin-lifecycle-single-100` 覆盖缩放、透明度、内存复制、保存与可见性生命周期；`current-pins-coexist-capture-single-100` 通过三次真实 Pin 点击、真实鼠标拖动和 Pin 共存下的 Capture/Cancel 补齐单屏主链。系统剪贴板和 150%/200% 实机仍待执行。 |
+| 多 Pin 生命周期 | 部分通过 | 在单屏 100% 环境连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 单屏 100% 子集中的各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | `current-pin-lifecycle-single-100` 覆盖缩放、透明度、内存复制、保存与可见性生命周期；`current-pins-coexist-capture-single-100` 通过三次真实 Pin 点击、真实鼠标拖动和 Pin 共存下的 Capture/Cancel 补齐单屏主链。系统剪贴板、150%/200% 实机和长时间多窗口观察仍待执行，不由本行通过结论覆盖。 |
 | 滚动截图 | 通过 | 真实打开 More 与 Scroll shot，自动捕获第二帧并 Finish；分别重新运行完整流程，从编辑器执行系统 Copy 和原生 Save。 | 自动滚动等待目标重绘后只追加一帧；拼接源、剪贴板 PNG/CF_DIB/消费者图像与保存 PNG 的尺寸和像素一致；控制条不遮挡选区，文字与按钮完整；结束后无残留状态或窗口。 | `current-scroll-export-roundtrip-single-100` 使用两个独立 Release 会话完成双出口，详见本表 2026-08-12 记录。 |
-| OCR 与翻译 | 暂缓 | 恢复未来扩展范围后，在含文字的选区运行 OCR；在翻译服务可用时运行翻译并模拟一次失败后重试。 | OCR/翻译结果可复制；失败时保留原选区并显示匹配的重试操作；可选依赖不会影响截图主流程启动和空闲性能。 | 当前阶段按产品策略让位于核心截图可靠性、性能和人体工学，不作为滚动截图或当前版本的交付阻塞项。 |
+| 本地 OCR | 通过 | 在单屏 100% 含文字选区运行本地 Tesseract OCR；覆盖依赖缺失时保留原选区、显示重试并在依赖恢复后重试成功。 | OCR 结果可复制；失败时保留原选区并显示匹配的重试操作；可选依赖不阻塞截图主流程启动和空闲性能。 | `current-ocr-ui-single-100` 已完成真实 `More -> OCR`、失败保留选区、重试和 Copy text；`current-ocr-auto-discovery` 报告 `target/ui-acceptance/recognition-acceptance-ocr-current-7fd10cb.json` 由当前提交 `7fd10cb` 重建的 Release 探针生成，Tesseract 5.5.3、OCR exercise 和 `--require-ocr` 均通过。该证据覆盖单屏 100%，不覆盖翻译服务或多屏/高 DPI。 |
+| 翻译服务 | 待执行 | 在配置 HTTPS 翻译端点的可丢弃环境运行翻译，模拟一次失败后重试，并确认设置页忙态、成功态和取消路径。 | 翻译结果可复制；失败保留原选区并显示匹配的重试操作；请求只发送固定探测短语，不发送截图原文。 | `current-translation-service-test`、`current-translation-test-busy-single-100` 和 `current-translation-test-ready-single-100` 已覆盖未联网的边界与布局状态；当前机器 `translation.configured: false`，真实 HTTPS 成功/失败重试仍待配置端点后执行。 |
 | FFmpeg 静态目标录屏生命周期 | 通过 | 使用支持 `ddagrab` 或 `gdigrab` 的 FFmpeg，在单屏 100% 环境分别启动显示器、静态窗口和静态区域录制，暂停、恢复并停止。 | 三种目标均产生可播放 H.264 MP4；目标类型、物理尺寸、状态、时长和隔离保存路径正确。 | 显示器入口见 `current-recording-ui-single-100`；静态区域和静态窗口入口见 `current-overlay-recording-ui-single-100`。 |
 | 窗口录制动态桌面语义 | 通过 | 窗口录制开始后移动、缩放、遮挡并最小化目标窗口。 | 录制边界固定为开始时选中窗口的可见桌面物理矩形，不跟随移动或缩放；遮挡或最小化时记录该矩形中的桌面合成像素。 | `current-overlay-recording-window-dynamics-single-100` 以独立原生 fixture 执行全部状态，并逐阶段比对 MP4 时间线像素。 |
 
@@ -285,6 +287,8 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 | 2026-08-12 | `overlay-copy-batch` | 新增真实 UI Copy 批量 wrapper；默认 2 次预热 + 30 次样本，每个样本运行独立 Release `overlay-interaction-acceptance`，显式授权系统剪贴板和全局输入。 | 部分通过 | 已保存的 Release toolbar 证据 `target/overlay-copy-batch/release-toolbar-20260812/batch-report.json` 完成 1 次预热 + 30/30 有效样本，失败数 `0`，p50 `79.0749 ms`、p95 `106.1236 ms`，单屏 DPI 96/scale 1.0，QPC 边界为 `button_down_batch_to_consumer_decoded_image`。所有子报告均通过 PNG/CF_DIB/常规消费者逐像素和 cleanup 断言；该报告对应历史 Release 二进制，源码或二进制变化后需重跑当前证据。当前源码的 Ctrl+Alt+F24 预热注册和 Enter 批量运行尚未形成通过报告。wrapper 对超时、报告缺失、像素不一致或 cleanup 不确定会停止后续输入。 |
 | 2026-08-12 | `current-enter-streaming-single-100` | 当前源码 Release 的真实 Enter Copy 单次闭环；系统剪贴板独立消费者完成 PNG、CF_DIB、常规图像三路逐像素校验，保存/Pin/teardown 后无残留。 | 通过 | `target/overlay-interaction-acceptance/current-enter-streaming-retry2/session-1786536827730-20476/report.json`（schema 13），QPC `82.7588 ms`，指纹 `c97b8733199d4db9`，observing/cleanup/exact_match 均通过。单次证据不替代 30 次批量统计。 |
 | 2026-08-12 | `current-save-pin-quiescence-single-100` | 当前 HEAD 的 Release `overlay-interaction-acceptance` 在单屏 2560x1440、DPI 96 完成真实拖选、Ctrl+S 取消恢复、再次 Ctrl+S 保存、保存后桌面稳定屏障、Pin 和 Copy。应用报告 deferred native teardown，runner 等待该状态清零与连续稳定桌面采样后才重新 Capture/Pin。 | 通过 | 报告位于 `target/overlay-interaction-acceptance/save-pin-quiescence-release-9/session-1786529894490-5828/report.json`（schema 13）：22 步，`save_complete_clean` 截图为 `screenshots/save-complete-clean.png`；Save、Pin、Copy 内容均 `exact_match=true`。同一 session 的 `09-save-path.png` 指向本次 exports 路径，`10-pin-selection.png`、`11-pin.png` 未见 Save 对话框残影；最终 `capture_teardown_pending=false`、overlay=0、Pin=0、可见进程窗口=0、Capture preflight 可用。该条只覆盖单屏 100%/DPI 96，150%/200%、多屏及 OCR/翻译仍待执行。 |
+
+| 2026-08-12 | `7fd10cb` | 当前提交重建 Release `recognition-acceptance`，使用含文字设置页 PNG 执行真实 PNG -> Tesseract OCR，并通过 `--require-ocr` 门禁。 | 通过 | `target/ui-acceptance/recognition-acceptance-ocr-current-7fd10cb.json`：schema 4，Tesseract `v5.5.3.20260724`，`ocr.available=true`，`ocr_exercise.passed=true`，文本长度 391，报告 `passed=true`；同一报告明确记录 `translation.configured=false`，因此翻译服务仍按独立矩阵行保持待执行。 |
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
