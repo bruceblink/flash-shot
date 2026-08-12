@@ -1388,8 +1388,9 @@ fn history_settings(
                         colors,
                         is_idle
                             && !file_read_in_flight
+                            && !clear_in_flight
                             && !retention_in_flight
-                            && !mutation_pending,
+                            && !deletion_in_flight,
                         move |_, _, cx| confirm_app.update(cx, |this, cx| this.clear_history(cx)),
                     ))
                     .child(settings_button(
@@ -1482,7 +1483,8 @@ fn history_settings(
                         && !clear_confirmation
                         && !clear_in_flight
                         && !retention_in_flight
-                        && !deletion_in_flight;
+                        && !deletion_in_flight
+                        && !mutation_pending;
                     history_row(&label, thumbnail, selected, focused, colors).child(
                         div()
                             .w_full()
