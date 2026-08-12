@@ -185,6 +185,28 @@ cargo run --release --bin copy-performance -- --allow-system-clipboard --output 
 target\release\performance-report.exe --input target\copy-performance\metrics\performance.jsonl --minimum-samples 30 --copy-only --output target\copy-performance\summary.json
 ```
 
+For the required real Windows UI batch, build the Release binaries first and run the isolated
+batch wrapper in a disposable desktop session. It starts one `overlay-interaction-acceptance`
+process per warmup/sample, authorizes the production system clipboard explicitly, and stops the
+batch after any session whose cleanup cannot be proven. The default is two warmups plus 30 real
+toolbar Copy samples; `batch-report.json` contains every child report path, sample list, p50/p95,
+failures, display DPI, build path/profile, and QPC timing boundary. This command changes the
+current Windows clipboard and injects global input:
+
+```powershell
+cargo build --release --bin overlay-interaction-acceptance --bin overlay-copy-batch
+target\release\overlay-copy-batch.exe --allow-input --allow-system-clipboard --output-dir target\overlay-copy-batch
+```
+
+The batch report is `measurement_mode=real_ui` and `real_ui=true`; a recorded Release toolbar run
+with 1 warmup + 30 samples is preserved at
+`target/overlay-copy-batch/release-toolbar-20260812/batch-report.json`
+(p50 `79.0749 ms`, p95 `106.1236 ms`, 0 failures on a 96-DPI display). Re-run the batch after
+source or binary changes; this historical artifact is not a substitute for current-source evidence. The synthetic
+`copy-performance` report must not be used as a substitute for this evidence. Use
+`--copy-trigger enter` to measure the keyboard route, or `--copy-iterations 30` to make the
+minimum sample count explicit.
+
 The global capture shortcut can be disabled from the tray `System` menu or Capture settings without changing its configured key combination. The preference persists across restarts, while the tray capture commands remain available.
 
 Capture settings can configure separate global shortcuts for region capture, full-screen capture,

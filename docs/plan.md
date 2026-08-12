@@ -129,8 +129,17 @@ Windows 应用，而不是只看到应用自身的成功提示。
 或外部消费者；有效样本少于 30、存在失败或 p95 超过 `250 ms` 均不会通过。该基准用于稳定的 CPU/剪贴板
 回归门禁，不是本节要求的真实 UI 证据。
 
-真实 UI 的 30 次普通 Copy 仍需由 Release `overlay-interaction-acceptance` 批量采样完成；在此之前，任何
-`copy-performance` 结果都不能被描述为真实键鼠端到端 p50/p95。
+真实 UI 的 30 次普通 Copy 由 Release `overlay-copy-batch` 批量采样完成。该 wrapper 为每个预热或
+样本启动一个隔离的 `overlay-interaction-acceptance --allow-system-clipboard` 子进程，读取其独立
+PNG/CF_DIB/常规消费者逐像素结果、cleanup 状态和 QPC 时间边界，再聚合样本列表、p50、p95 和失败数。
+遇到超时、报告缺失、像素不等或 cleanup 无法证明时会停止后续全局输入；报告标记
+`measurement_mode=real_ui`、`real_ui=true`，并记录显示器 DPI、构建路径/配置和 UTC Unix 时间边界。
+已保存的一次 Release toolbar batch 证据位于：`target/overlay-copy-batch/release-toolbar-20260812/batch-report.json`
+记录 1 次预热 + 30/30 有效样本，失败数为 0，p50 `79.0749 ms`、p95 `106.1236 ms`，显示器为
+单屏 DPI 96/scale 1.0，`windows_qpc` 的 `button_down_batch_to_consumer_decoded_image` 边界，PNG、CF_DIB
+和常规消费者逐像素校验均通过，所有子报告 cleanup 安全。该报告对应当时的 Release 二进制；源码或二进制
+变更后必须重新生成当前证据。Enter 路径仍需单独完成同样的批量证据；任何
+`copy-performance` 结果都不能替代真实键鼠端到端 p50/p95。
 
 2026-08-12 的 Release UI 验收又通过真实输入执行了 `Ctrl+S -> Save 对话框 -> Escape -> 原选区恢复 ->
 Ctrl+S -> 保存`。报告位于
