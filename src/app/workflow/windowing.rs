@@ -76,7 +76,10 @@ pub(super) fn open_capture_overlays(
         }
     }
     app.update(cx, |app, _| app.overlay_windows = windows);
-    cx.activate(true);
+    // Each popup requests focus and the primary overlay explicitly focuses its root handle above.
+    // Avoid application-wide activation here: GPUI's Windows activation is asynchronous and can
+    // restore the settings HWND after it was hidden for capture.
+    app.update(cx, |app, _| app.hide_settings_window());
 }
 
 pub(super) fn open_image_overlay(
@@ -139,7 +142,9 @@ pub(super) fn open_image_overlay(
     ) {
         Ok(window) => {
             app.update(cx, |app, _| app.overlay_windows = vec![window]);
-            cx.activate(true);
+            // The editor requests focus through WindowOptions and its root focus handle. Avoid a
+            // second application-wide activation that could restore the settings HWND.
+            app.update(cx, |app, _| app.hide_settings_window());
         }
         Err(error) => {
             let message = format!("Image editor window failed: {error}");

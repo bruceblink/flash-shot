@@ -348,6 +348,10 @@ impl FlashShotApp {
             && let Err(error) = window_visibility::hide(handle)
         {
             log::warn!(target: "flash_shot::settings", "settings_window_hide_failed error={error}");
+        } else if self.settings_window_handle.is_some()
+            && let Err(error) = window_visibility::flush_after_visibility_change()
+        {
+            log::warn!(target: "flash_shot::settings", "settings_window_compositor_flush_failed error={error}");
         }
     }
 

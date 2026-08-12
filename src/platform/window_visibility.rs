@@ -28,6 +28,11 @@ pub fn hide(handle: isize) -> io::Result<()> {
     platform::hide(handle)
 }
 
+/// Waits for a native visibility change to reach the compositor before a desktop capture samples it.
+pub fn flush_after_visibility_change() -> io::Result<()> {
+    platform::flush_after_visibility_change()
+}
+
 pub fn restore(handle: isize) -> io::Result<()> {
     platform::restore(handle)
 }
@@ -90,6 +95,7 @@ mod platform {
     use std::{ffi::c_void, io};
     use windows_sys::Win32::{
         Foundation::RECT,
+        Graphics::Dwm::DwmFlush,
         UI::WindowsAndMessaging::{
             GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST, IsWindow,
             LWA_ALPHA, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
@@ -115,6 +121,15 @@ mod platform {
         let window = window(handle)?;
         // SAFETY: window is a live HWND borrowed from GPUI.
         unsafe { ShowWindow(window, SW_HIDE) };
+        Ok(())
+    }
+
+    pub fn flush_after_visibility_change() -> io::Result<()> {
+        // SAFETY: DwmFlush has no borrowed handles and waits for the current process's queued
+        // compositor work, ensuring a just-hidden settings surface is absent from the next BitBlt.
+        if unsafe { DwmFlush() } != 0 {
+            return Err(io::Error::last_os_error());
+        }
         Ok(())
     }
 
@@ -259,6 +274,10 @@ mod platform {
     use std::io;
 
     pub fn hide(_handle: isize) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn flush_after_visibility_change() -> io::Result<()> {
         Ok(())
     }
 
