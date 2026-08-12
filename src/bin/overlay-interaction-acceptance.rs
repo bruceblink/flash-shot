@@ -78,7 +78,7 @@ use windows_sys::Win32::{
             GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
             KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
             MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
-            VK_A, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_RETURN, VK_RIGHT,
+            VK_A, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_RETURN, VK_RIGHT, VK_S,
             VK_SHIFT, VK_SPACE,
         },
         WindowsAndMessaging::{
@@ -110,6 +110,8 @@ const MIN_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_TIMEOUT: Duration = Duration::from_secs(60);
 const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(5);
+#[cfg(windows)]
+const FOCUS_TITLEBAR_FALLBACK_DELAY: Duration = Duration::from_millis(250);
 const WINDOWS_BASE_DPI: f32 = 96.0;
 const SELECTION_EDGE_TOLERANCE: i32 = 1;
 const PAUSE_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
@@ -1462,6 +1464,8 @@ struct NudgeReport {
 struct SaveReport {
     requested_selection: PhysicalRect,
     selection: PhysicalRect,
+    cancelled_dialog_verified: bool,
+    selection_restored_after_cancel: bool,
     path: String,
     width: u32,
     height: u32,
@@ -1822,7 +1826,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        schema_version: 10,
+        schema_version: 11,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -4842,7 +4846,7 @@ fn begin_selected_overlay_with_plan(
 }
 
 #[cfg(windows)]
-/// Clicks the production Save action and drives only the uniquely owned common-file dialog.
+/// Opens the production Save dialog with Ctrl+S and verifies cancellation preserves the selection.
 fn execute_save_interaction(
     context: &WorkerContext,
     report: &mut AcceptanceReport,
@@ -4858,7 +4862,7 @@ fn execute_save_interaction(
         ));
     }
 
-    let (overlay, plan, selection, requested_selection, source) =
+    let (overlay, _plan, selection, requested_selection, source) =
         begin_selected_overlay(context, controller)?;
     thread::sleep(context.settle_delay);
     let selected = capture_evidence(context, "06-save-selection.png", overlay)?;
@@ -4870,19 +4874,72 @@ fn execute_save_interaction(
         Some(&selected),
     )?;
 
-    let foreground = inject_mouse_click(overlay.handle, plan.save)?;
-    record_step(report, &context.report_path, "save_click", foreground, None)?;
-    let dialog = wait_for_save_dialog(overlay.handle, controller.handle, context.timeout)?;
+    let foreground = inject_ctrl_s(overlay.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_shortcut",
+        foreground,
+        None,
+    )?;
+    let cancelled_dialog =
+        wait_for_save_dialog(overlay.handle, controller.handle, context.timeout)?;
     // The shell dialog becomes visible before its first paint and focus transition complete.
     thread::sleep(context.settle_delay);
-    let dialog_evidence = capture_evidence(context, "07-save-dialog.png", dialog)?;
+    save_file_name_edit(cancelled_dialog.handle, "flash-shot.png")?;
+    let dialog_evidence = capture_evidence(context, "07-save-dialog.png", cancelled_dialog)?;
     record_step(
         report,
         &context.report_path,
         "save_dialog_ready",
-        dialog,
+        cancelled_dialog,
         Some(&dialog_evidence),
     )?;
+
+    inject_key(cancelled_dialog.handle, VK_ESCAPE)?;
+    wait_for_window_gone(
+        cancelled_dialog.handle,
+        context.timeout,
+        "Save dialog cancellation",
+    )?;
+    let cancelled = wait_for_capture_state(context, "cancelled Save dialog", |state| {
+        state.session_state == "selecting"
+            && state.selection == Some(selection)
+            && state.overlay_count == 1
+            && state.capture_preflight_ready
+            && state.status
+                == format!(
+                    "Selection: {} x {} physical pixels",
+                    selection.width(),
+                    selection.height()
+                )
+    })?;
+    if cancelled.selection != Some(selection) {
+        return Err(io::Error::other(
+            "cancelled Ctrl+S dialog did not preserve the committed selection",
+        ));
+    }
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let restored = capture_evidence(context, "08-save-cancel-restored.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_cancelled_selection_restored",
+        guard_foreground(overlay.handle)?,
+        Some(&restored),
+    )?;
+
+    let foreground = inject_ctrl_s(overlay.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_shortcut_retry",
+        foreground,
+        None,
+    )?;
+    let dialog = wait_for_save_dialog(overlay.handle, controller.handle, context.timeout)?;
+    thread::sleep(context.settle_delay);
 
     let edit = save_file_name_edit(dialog.handle, "flash-shot.png")?;
     let edit_center = PhysicalPoint {
@@ -4895,7 +4952,7 @@ fn execute_save_interaction(
     let target_text = target.to_string_lossy().into_owned();
     inject_unicode_text(dialog.handle, &target_text)?;
     wait_for_window_text(edit.handle, &target_text, context.timeout)?;
-    let path_evidence = capture_evidence(context, "08-save-path.png", dialog)?;
+    let path_evidence = capture_evidence(context, "09-save-path.png", dialog)?;
     record_step(
         report,
         &context.report_path,
@@ -4924,6 +4981,8 @@ fn execute_save_interaction(
     Ok(SaveReport {
         requested_selection,
         selection,
+        cancelled_dialog_verified: true,
+        selection_restored_after_cancel: true,
         path: target
             .strip_prefix(&context.session_root)
             .unwrap_or(&target)
@@ -4946,7 +5005,7 @@ fn execute_pin_interaction(
     let (overlay, plan, selection, requested_selection, source) =
         begin_selected_overlay(context, controller)?;
     thread::sleep(context.settle_delay);
-    let selected = capture_evidence(context, "09-pin-selection.png", overlay)?;
+    let selected = capture_evidence(context, "10-pin-selection.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -4977,7 +5036,7 @@ fn execute_pin_interaction(
     let pin = wait_for_single_visible_pin(controller.handle, context.timeout)?;
     focus_owned_window(pin, context.timeout)?;
     thread::sleep(context.settle_delay);
-    let pin_evidence = capture_evidence(context, "10-pin.png", pin)?;
+    let pin_evidence = capture_evidence(context, "11-pin.png", pin)?;
     record_step(
         report,
         &context.report_path,
@@ -5029,7 +5088,7 @@ fn execute_copy_interaction(
     let (overlay, plan, selection, requested_selection, source) =
         begin_selected_overlay(context, controller)?;
     thread::sleep(context.settle_delay);
-    let selected = capture_evidence(context, "11-copy-selection.png", overlay)?;
+    let selected = capture_evidence(context, "12-copy-selection.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -7630,8 +7689,21 @@ fn ensure_input_keys_released(keys: &[(u16, &str)]) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-/// Activates a verified window through its non-client title bar without touching global modifiers.
-fn activate_owned_window_via_titlebar(window: NativeWindow) -> io::Result<()> {
+/// Polls briefly because Windows may expose the final key-up one scheduler turn after SendInput.
+fn wait_for_input_keys_released(keys: &[(u16, &str)], timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match ensure_input_keys_released(keys) {
+            Ok(()) => return Ok(()),
+            Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(windows)]
+/// Tries a verified window's non-client title bar and reports when borderless geometry has none.
+fn activate_owned_window_via_titlebar(window: NativeWindow) -> io::Result<bool> {
     if left_button_held() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -7639,11 +7711,8 @@ fn activate_owned_window_via_titlebar(window: NativeWindow) -> io::Result<()> {
         ));
     }
     let client = client_bounds_for_window(window.handle)?;
-    if client.top <= window.bounds.top.saturating_add(4) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "process-owned window has no safe non-client title-bar activation point",
-        ));
+    if !has_safe_titlebar_band(window.bounds, client) {
+        return Ok(false);
     }
     let point = find_visible_titlebar_point(window, client)?;
     let cursor = CursorRestore::capture()?;
@@ -7654,7 +7723,7 @@ fn activate_owned_window_via_titlebar(window: NativeWindow) -> io::Result<()> {
     })();
     let cursor_restore = cursor.restore();
     match (activation, cursor_restore) {
-        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Ok(())) => Ok(true),
         (Err(error), Ok(())) => Err(error),
         (Ok(()), Err(error)) => Err(io::Error::other(format!(
             "window activation succeeded, but restoring the cursor failed: {error}"
@@ -7664,6 +7733,18 @@ fn activate_owned_window_via_titlebar(window: NativeWindow) -> io::Result<()> {
             format!("{error}; restoring the cursor also failed: {restore_error}"),
         )),
     }
+}
+
+#[cfg(windows)]
+/// Keeps borderless overlays on the API-only retry path instead of treating no title bar as fatal.
+fn has_safe_titlebar_band(window: PhysicalRect, client: PhysicalRect) -> bool {
+    client.top > window.top.saturating_add(4)
+}
+
+#[cfg(windows)]
+/// Defers cursor-moving activation so GPUI's own asynchronous focus request can settle first.
+fn titlebar_fallback_ready(elapsed: Duration, attempted: bool) -> bool {
+    !attempted && elapsed >= FOCUS_TITLEBAR_FALLBACK_DELAY
 }
 
 #[cfg(windows)]
@@ -7805,6 +7886,9 @@ fn send_titlebar_click(expected: HWND) -> io::Result<()> {
 /// Raises a verified window, then waits until Windows confirms foreground ownership.
 fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()> {
     owned_window(window.handle)?;
+    let started = Instant::now();
+    let deadline = started + timeout.min(Duration::from_secs(3));
+    let mut titlebar_fallback_attempted = false;
     // SAFETY: both calls borrow a verified process-owned HWND without transferring ownership.
     unsafe {
         ShowWindow(window.handle, SW_RESTORE);
@@ -7827,15 +7911,12 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
         // cannot leak modifier state into whichever unrelated window currently owns input.
         unsafe { SwitchToThisWindow(window.handle, 1) };
     }
-    if unsafe { GetForegroundWindow() } != window.handle {
-        activate_owned_window_via_titlebar(window)?;
-    }
-    let deadline = Instant::now() + timeout.min(Duration::from_secs(3));
     loop {
         if guard_foreground(window.handle).is_ok() {
             return Ok(());
         }
-        if Instant::now() >= deadline {
+        let now = Instant::now();
+        if now >= deadline {
             let foreground = unsafe { GetForegroundWindow() };
             let mut foreground_process = 0;
             unsafe { GetWindowThreadProcessId(foreground, &mut foreground_process) };
@@ -7846,6 +7927,14 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
                     window.handle, foreground
                 ),
             ));
+        }
+        if titlebar_fallback_ready(now.duration_since(started), titlebar_fallback_attempted) {
+            titlebar_fallback_attempted = true;
+            // GPUI popups are intentionally borderless. Continue the process-owned API retry
+            // loop when there is no non-client band instead of failing before GPUI settles.
+            if activate_owned_window_via_titlebar(window)? {
+                continue;
+            }
         }
         // Foreground policy may briefly defer activation while a popup is being created. Retry
         // only the verified process-owned HWND; never send a modifier to the unrelated window
@@ -7884,6 +7973,26 @@ fn inject_key(expected: *mut c_void, virtual_key: u16) -> io::Result<NativeWindo
     ];
     let cleanup = [keyboard_input(virtual_key, true)];
     send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Sends Ctrl+S only from a neutral key state and waits until both injected keys are released.
+fn inject_ctrl_s(expected: *mut c_void) -> io::Result<NativeWindow> {
+    let foreground = guard_foreground(expected)?;
+    ensure_input_keys_released(&[(VK_S, "S"), (VK_CONTROL, "Control")])?;
+    let inputs = [
+        keyboard_input(VK_CONTROL, false),
+        keyboard_input(VK_S, false),
+        keyboard_input(VK_S, true),
+        keyboard_input(VK_CONTROL, true),
+    ];
+    let cleanup = [keyboard_input(VK_S, true), keyboard_input(VK_CONTROL, true)];
+    send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    wait_for_input_keys_released(
+        &[(VK_S, "S"), (VK_CONTROL, "Control")],
+        Duration::from_millis(250),
+    )?;
     Ok(foreground)
 }
 
@@ -8375,7 +8484,7 @@ fn send_input_batch(expected: *mut c_void, inputs: &[INPUT]) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-/// Submits one guarded batch and releases action-specific keys if Windows accepts it partially.
+/// Submits one guarded batch and reports any failure to release action-specific inputs.
 fn send_input_batch_with_cleanup(
     expected: *mut c_void,
     inputs: &[INPUT],
@@ -8396,8 +8505,15 @@ fn send_input_batch_with_cleanup(
     ]);
     // Key-up and button-up cleanup must not depend on focus: leaving an accepted modifier or
     // mouse press held would be a larger global side effect than releasing it after focus moved.
-    let _ = send_input_unchecked(&cleanup);
-    result
+    let cleanup_result = send_input_unchecked(&cleanup);
+    match (result, cleanup_result) {
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(cleanup_error)) => Err(io::Error::new(
+            error.kind(),
+            format!("{error}; defensive input cleanup also failed: {cleanup_error}"),
+        )),
+        (Ok(()), _) => unreachable!("successful batches return before defensive cleanup"),
+    }
 }
 
 #[cfg(windows)]
@@ -8502,11 +8618,11 @@ mod tests {
     };
     #[cfg(windows)]
     use super::{
-        FixturePhaseState, NativeWindow, decode_clipboard_dib, horizontal_pin_layout,
-        panic_payload_message, parse_recording_window_fixture_arguments,
-        recording_fixture_dynamic_bounds, request_recording_state, validate_fixture_phase_state,
-        validate_recording_frame_content, validate_same_pixel_content,
-        validate_scroll_fixture_frame,
+        FixturePhaseState, NativeWindow, decode_clipboard_dib, has_safe_titlebar_band,
+        horizontal_pin_layout, panic_payload_message, parse_recording_window_fixture_arguments,
+        recording_fixture_dynamic_bounds, request_recording_state, titlebar_fallback_ready,
+        validate_fixture_phase_state, validate_recording_frame_content,
+        validate_same_pixel_content, validate_scroll_fixture_frame,
     };
     use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -8562,6 +8678,25 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn borderless_focus_uses_api_retries_without_requiring_a_titlebar() {
+        let window = PhysicalRect {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        let borderless_client = window;
+        let framed_client = PhysicalRect { top: 31, ..window };
+
+        assert!(!has_safe_titlebar_band(window, borderless_client));
+        assert!(has_safe_titlebar_band(window, framed_client));
+        assert!(!titlebar_fallback_ready(Duration::from_millis(249), false));
+        assert!(titlebar_fallback_ready(Duration::from_millis(250), false));
+        assert!(!titlebar_fallback_ready(Duration::from_secs(1), true));
     }
 
     #[test]
