@@ -33,6 +33,12 @@ const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_P95_MS: f64 = 250.0;
 const REPORT_SCHEMA_VERSION: u32 = 1;
+// The runner owns its own workflow deadline and report write. Give it a small tail after the
+// requested limit so the batch can preserve that report instead of killing it at the same tick.
+const RUNNER_REPORT_GRACE: Duration = Duration::from_secs(2);
+// Windows releases a process-scoped RegisterHotKey registration during process teardown. Keep
+// consecutive isolated samples apart long enough that the next child does not race that release.
+const HOTKEY_RELEASE_SETTLE: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CopyTrigger {
@@ -712,8 +718,9 @@ fn run_iteration(
         .stderr(Stdio::null());
     command.creation_flags(CREATE_NO_WINDOW);
     // The child runner has its own workflow deadline, but the batch process also needs a hard
-    // outer bound so one wedged desktop session cannot consume the entire sample run.
-    let output = spawn_and_wait(&mut command, options.timeout);
+    // outer bound so one wedged desktop session cannot consume the entire sample run. The small
+    // grace interval belongs to report persistence, not the measured Copy latency.
+    let output = spawn_and_wait(&mut command, runner_timeout(options.timeout));
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
     let report_path = find_report(&iteration_dir).ok();
     let relative_report_path = report_path.as_deref().and_then(|path| {
@@ -768,8 +775,9 @@ fn run_iteration(
     let child_failed = exit_code != Some(0);
     let reason = if timed_out {
         Some(format!(
-            "acceptance runner exceeded {}ms and was terminated",
-            options.timeout.as_millis()
+            "acceptance runner exceeded {}ms plus {}ms report grace and was terminated",
+            options.timeout.as_millis(),
+            RUNNER_REPORT_GRACE.as_millis()
         ))
     } else if child_failed {
         Some(format!("acceptance runner exited with {:?}", exit_code))
@@ -799,12 +807,20 @@ fn run_iteration(
     };
     let failure =
         reason.map(|reason| failure(phase, iteration, reason, relative_report_path, exit_code));
+    // A fresh runner must register the same process-wide hotkey. Wait after reaping this runner,
+    // rather than allowing the next isolated child to race Windows' hotkey teardown.
+    std::thread::sleep(HOTKEY_RELEASE_SETTLE);
     Ok(IterationOutcome {
         report,
         failure,
         parsed,
         safe_to_continue: cleanup_safe,
     })
+}
+
+/// Extends only the wrapper's kill deadline so a child can write its own final report.
+fn runner_timeout(timeout: Duration) -> Duration {
+    timeout.saturating_add(RUNNER_REPORT_GRACE)
 }
 
 #[cfg(windows)]
@@ -1116,6 +1132,19 @@ mod tests {
         let values = [10.0, 20.0, 30.0, 40.0];
         assert_eq!(percentile(&values, 50), 20.0);
         assert_eq!(percentile(&values, 95), 40.0);
+    }
+
+    #[test]
+    fn runner_timeout_reserves_only_the_bounded_report_grace() {
+        assert_eq!(
+            super::runner_timeout(Duration::from_secs(30)),
+            Duration::from_secs(32)
+        );
+        assert_eq!(
+            super::runner_timeout(Duration::MAX),
+            Duration::MAX,
+            "the outer watchdog must remain finite even for a synthetic maximum input"
+        );
     }
 
     #[test]
