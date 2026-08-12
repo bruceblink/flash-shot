@@ -875,6 +875,66 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Bridges no-input Library resource probes to the real thumbnail queue without exposing
+    /// mutable production state. Every reply is a bounded snapshot taken on the GPUI thread.
+    pub(crate) fn listen_for_history_resource_commands(
+        commands: async_channel::Receiver<crate::HistoryResourceAcceptanceCommand>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                while let Ok(command) = commands.recv().await {
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    this.update(&mut cx, |this, cx| match command {
+                        crate::HistoryResourceAcceptanceCommand::Snapshot(reply) => {
+                            let _ = reply.send(this.history_resource_acceptance_state());
+                        }
+                        crate::HistoryResourceAcceptanceCommand::SetExpanded {
+                            expanded,
+                            reply,
+                        } => {
+                            this.history_expanded = expanded;
+                            cx.notify();
+                            let _ = reply.send(this.history_resource_acceptance_state());
+                        }
+                        crate::HistoryResourceAcceptanceCommand::Quit(reply) => {
+                            let _ = reply.send(());
+                            cx.quit();
+                        }
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Reports the visible history count and thumbnail queue ownership for resource evidence.
+    fn history_resource_acceptance_state(&self) -> crate::HistoryResourceAcceptanceState {
+        let filtered_entries = self
+            .history
+            .entries()
+            .iter()
+            .filter(|entry| {
+                history_entry_matches(entry, self.history_filter, self.history_search_query())
+            })
+            .count();
+        crate::HistoryResourceAcceptanceState {
+            total_entries: self.history.entries().len(),
+            visible_entries: if self.history_expanded {
+                filtered_entries
+            } else {
+                filtered_entries.min(5)
+            },
+            expanded: self.history_expanded,
+            thumbnails_cached: self.history_thumbnails.len(),
+            thumbnails_loading: self.history_thumbnail_loading.len(),
+            thumbnails_pending: self.history_thumbnail_pending.len(),
+        }
+    }
+
     fn listen_for_shortcut(events: async_channel::Receiver<ShortcutEvent>, cx: &mut Context<Self>) {
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();

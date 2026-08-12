@@ -98,6 +98,33 @@ pub fn run_settings_ui_acceptance(
             interaction_shortcut_readiness: None,
             interaction_commands: None,
             interaction_copy_results: None,
+            history_resource_commands: None,
+        },
+    )
+}
+
+/// Runs an isolated Library window for thumbnail resource sampling without global services.
+pub fn run_history_resource_acceptance(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    acceptance: HistoryResourceAcceptanceOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_with_settings_window(
+        started_at,
+        performance,
+        history,
+        settings,
+        settings_path,
+        SettingsWindowOptions {
+            width: acceptance.window_width.max(420.0),
+            height: acceptance.window_height.max(420.0),
+            show: true,
+            section: "library".to_owned(),
+            history_resource_commands: Some(acceptance.commands),
+            ..SettingsWindowOptions::default()
         },
     )
 }
@@ -195,6 +222,35 @@ pub struct OverlayInteractionAcceptanceOptions {
     pub commands: async_channel::Receiver<OverlayInteractionAcceptanceCommand>,
     /// `Some` redirects Copy into a process-local observer; `None` exercises `SystemClipboard`.
     pub copy_results: Option<Sender<platform::capture::CaptureFrame>>,
+}
+
+/// Process-local controls for the no-input history thumbnail resource acceptance session.
+pub struct HistoryResourceAcceptanceOptions {
+    pub window_width: f32,
+    pub window_height: f32,
+    pub commands: async_channel::Receiver<HistoryResourceAcceptanceCommand>,
+}
+
+/// Commands used by the history resource runner to observe and expand the real Library surface.
+#[derive(Debug)]
+pub enum HistoryResourceAcceptanceCommand {
+    Snapshot(SyncSender<HistoryResourceAcceptanceState>),
+    SetExpanded {
+        expanded: bool,
+        reply: SyncSender<HistoryResourceAcceptanceState>,
+    },
+    Quit(SyncSender<()>),
+}
+
+/// Bounded history state exposed only to the resource acceptance runner.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct HistoryResourceAcceptanceState {
+    pub total_entries: usize,
+    pub visible_entries: usize,
+    pub expanded: bool,
+    pub thumbnails_cached: usize,
+    pub thumbnails_loading: usize,
+    pub thumbnails_pending: usize,
 }
 
 impl OverlayInteractionAcceptanceOptions {
@@ -500,6 +556,8 @@ struct SettingsWindowOptions {
     interaction_commands: Option<async_channel::Receiver<OverlayInteractionAcceptanceCommand>>,
     /// `Some` installs the acceptance sink; `None` leaves the production system clipboard active.
     interaction_copy_results: Option<Sender<platform::capture::CaptureFrame>>,
+    /// Receives no-input history expansion and snapshot commands from the resource runner.
+    history_resource_commands: Option<async_channel::Receiver<HistoryResourceAcceptanceCommand>>,
 }
 
 impl Default for SettingsWindowOptions {
@@ -519,6 +577,7 @@ impl Default for SettingsWindowOptions {
             interaction_shortcut_readiness: None,
             interaction_commands: None,
             interaction_copy_results: None,
+            history_resource_commands: None,
         }
     }
 }
@@ -581,10 +640,25 @@ fn run_with_settings_window(
         let interaction_shortcut_readiness = window_options.interaction_shortcut_readiness;
         let interaction_commands = window_options.interaction_commands;
         let interaction_copy_results = window_options.interaction_copy_results;
+        let history_resource_commands = window_options.history_resource_commands;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
-            let app = if let Some(copy_results) = interaction_copy_results {
+            let app = if let Some(commands) = history_resource_commands {
+                let app = cx.new(|cx| {
+                    FlashShotApp::new_for_acceptance(
+                        performance,
+                        history,
+                        settings,
+                        settings_path,
+                        cx,
+                    )
+                });
+                app.update(cx, |_, cx| {
+                    FlashShotApp::listen_for_history_resource_commands(commands, cx)
+                });
+                app
+            } else if let Some(copy_results) = interaction_copy_results {
                 cx.new(|cx| {
                     FlashShotApp::new_for_overlay_interaction(
                         performance,
