@@ -17,10 +17,13 @@ use flash_shot::{
     HistoryResourceAcceptanceState,
     domain::geometry::PhysicalRect,
     history::{HistorySource, ScreenshotHistory},
-    performance::{PerformanceRecorder, build_profile},
+    performance::PerformanceRecorder,
     platform::capture::{CaptureFrame, PixelFormat},
     settings::UserSettings,
 };
+
+#[cfg(windows)]
+use flash_shot::performance::build_profile;
 
 #[cfg(windows)]
 use flash_shot::platform::capture::{CaptureBackend, SystemCaptureBackend};
@@ -255,19 +258,13 @@ fn run() -> io::Result<serde_json::Value> {
             report["passed"] = serde_json::Value::Bool(
                 report["passed"].as_bool().unwrap_or(false) && cleanup_result.is_ok(),
             );
-            let report_path = output_dir.join("report.json");
             fs::write(
-                &report_path,
+                output_dir.join("report.json"),
                 serde_json::to_vec_pretty(&report).map_err(io::Error::other)?,
             )?;
             Ok(report)
         }
-        (result, worker_result) => {
-            let error = match (result, worker_result) {
-                (Err(error), _) => error,
-                (Ok(_), Err(error)) => error,
-                (Ok(_), Ok(())) => unreachable!("successful result handled above"),
-            };
+        (Err(error), _) | (Ok(_), Err(error)) => {
             let failure_report = serde_json::json!({
                 "schema_version": 1,
                 "test": "history_thumbnail_resource_acceptance",

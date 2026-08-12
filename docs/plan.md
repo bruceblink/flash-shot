@@ -277,12 +277,17 @@ FIFO 队列收集可见记录，最多同时解码两个 PNG；同一路径在�
       后的待处理路径不会再启动。
 - [x] 回归门禁：`cargo test --locked --lib app::workflow::images::tests` 覆盖去重、上限、FIFO、删除清理；
       `cargo test --locked --lib --no-fail-fast` 覆盖全库。
-- [ ] Release 资源样本：在同一单屏 Release 会话记录默认 5 条预览和显式展开 300 条的首批缩略图时间、
-      峰值私有字节和截图。现有 `target/ui-acceptance/history-p1-300-*.png` 是旧调试证据，不能标记本项完成。
+- [x] Release 资源样本：同一单屏 Release 会话已记录默认 5 条预览和显式展开 300 条的首批缩略图时间、
+      峰值私有字节、DPI、截图和结构化报告。Release 报告位于
+      `target/history-resource-acceptance/release-gate-clean-20260813/report.json`：默认阶段为
+      `5/0/0`（cached/loading/pending），展开阶段为 `300/0/0`，峰值 loading 为 `2`、pending 为 `293`，
+      首批缩略图耗时 `258.2723 ms`，私有提交增长 `88,408,064` bytes，DPI 为 `96`。报告的
+      `cleanup.fixture_files_removed=true` 且 `history_root_exists=false`；对应截图为
+      `default-5-preview.png` 和 `expanded-300-preview.png`。
 
 风险是磁盘较慢或 PNG 损坏会让队列长时间处于等待；失败项会记入失败集合而不阻塞后续任务。非目标是
-改变默认预览条数、缩略图尺寸/排序、历史保留上限，以及 OCR、翻译或云同步。当前代码与静态回归已完成，
-Release 资源样本仍待在本机桌面补录。
+改变默认预览条数、缩略图尺寸/排序、历史保留上限，以及 OCR、翻译或云同步。当前代码、静态回归和
+Release 资源样本已完成；单屏以外的 DPI/多屏矩阵仍按本计划后续执行。
 
 ### PNG 流式编码设计与验收
 
