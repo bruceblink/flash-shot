@@ -78,6 +78,7 @@ const ANNOTATION_TOOLBAR_MIN_CONTENT_WIDTH: f32 = 320.0;
 // rendered menu always wrap at the same places.
 const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 48.0, 58.0];
 const OVERLAY_MORE_ACTIONS_ID: &str = "overlay-more-actions";
+const SECONDARY_ACTION_COUNT: usize = 14;
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
     138.0, 111.0, 143.0, 92.0, 91.0, 38.0, 47.0, 92.0, 81.0, 101.0, 126.0,
 ];
@@ -106,10 +107,11 @@ fn secondary_action_tooltip(action_id: &str) -> &'static str {
     }
 }
 
-/// Describes the stable Tab order for commands revealed by the More panel.
+/// Describes the stable focus order for commands revealed by the More panel.
 ///
 /// The menu wraps by available width and conditionally renders recognition actions, so a semantic
-/// order keeps keyboard navigation predictable without depending on the current row layout.
+/// order keeps arrow-key navigation predictable without depending on the current row layout. Tab
+/// and Shift+Tab remain the overlay's annotation-navigation shortcuts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SecondaryAction {
     SaveAnnotations,
@@ -129,8 +131,8 @@ enum SecondaryAction {
 }
 
 impl SecondaryAction {
-    /// Returns this action's menu-local tab position, leaving optional actions in a stable place.
-    const fn tab_index(self) -> isize {
+    /// Returns this action's menu-local focus position, leaving optional actions in a stable place.
+    const fn index(self) -> usize {
         match self {
             Self::SaveAnnotations => 0,
             Self::SaveEditable => 1,
@@ -150,11 +152,81 @@ impl SecondaryAction {
     }
 }
 
+/// Lists the commands that are always rendered in the expanded More panel.
+const ALWAYS_VISIBLE_SECONDARY_ACTIONS: [SecondaryAction; 11] = [
+    SecondaryAction::SaveAnnotations,
+    SecondaryAction::SaveEditable,
+    SecondaryAction::OpenAnnotations,
+    SecondaryAction::QuickSave,
+    SecondaryAction::ScrollShot,
+    SecondaryAction::Qr,
+    SecondaryAction::Ocr,
+    SecondaryAction::CopyColor,
+    SecondaryAction::Translate,
+    SecondaryAction::RecordArea,
+    SecondaryAction::RecordWindow,
+];
+
+/// Owns one rendered More menu's focus order, including optional recognition commands.
+#[derive(Clone)]
+struct SecondaryActionNavigation {
+    current: SecondaryAction,
+    visible_actions: Vec<SecondaryAction>,
+    focus_handles: [FocusHandle; SECONDARY_ACTION_COUNT],
+}
+
+impl SecondaryActionNavigation {
+    /// Rebinds this navigation model to the action that receives a key event.
+    fn for_action(&self, current: SecondaryAction) -> Self {
+        Self {
+            current,
+            visible_actions: self.visible_actions.clone(),
+            focus_handles: self.focus_handles.clone(),
+        }
+    }
+
+    /// Returns the persistent handle for the currently rendered action.
+    fn focus_handle(&self) -> FocusHandle {
+        self.focus_handles[self.current.index()].clone()
+    }
+
+    /// Focuses the first or last visible item when the More trigger receives an arrow key.
+    fn focus_edge(
+        &self,
+        direction: SecondaryActionFocusDirection,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let target = match direction {
+            SecondaryActionFocusDirection::Next => self.visible_actions.first(),
+            SecondaryActionFocusDirection::Previous => self.visible_actions.last(),
+        };
+        if let Some(target) = target {
+            self.focus_handles[target.index()].focus(window, cx);
+        }
+    }
+
+    /// Keeps arrow navigation inside the visible menu instead of moving to another toolbar control.
+    fn handle_key_down(&self, event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
+        match secondary_action_focus_direction(&event.keystroke) {
+            Some(direction) => {
+                if let Some(target) =
+                    secondary_action_focus_target(self.current, &self.visible_actions, direction)
+                {
+                    self.focus_handles[target.index()].focus(window, cx);
+                }
+                cx.stop_propagation();
+            }
+            None => stop_overlay_action_key_propagation(event, window, cx),
+        }
+    }
+}
+
 /// Builds one fixed-size More action with a stable keyboard position and focus ring.
 #[allow(clippy::too_many_arguments)]
 fn secondary_action_button(
     id: impl Into<gpui::ElementId>,
-    action: SecondaryAction,
+    navigation: SecondaryActionNavigation,
     label: &'static str,
     width: f32,
     colors: ThemeColors,
@@ -162,9 +234,10 @@ fn secondary_action_button(
     tooltip: Option<&'static str>,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    let focus_handle = navigation.focus_handle();
     div()
         .id(id)
-        .tab_index(action.tab_index())
+        .track_focus(&focus_handle)
         .w(px(width))
         .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
         .flex_none()
@@ -194,7 +267,7 @@ fn secondary_action_button(
             button.tooltip(move |_, cx| cx.new(|_| OverlayTooltip(tooltip, colors)).into())
         })
         .on_click(on_click)
-        .on_key_down(handle_secondary_action_key_down)
+        .on_key_down(move |event, window, cx| navigation.handle_key_down(event, window, cx))
         .child(label)
 }
 
@@ -215,57 +288,95 @@ fn more_actions_button_label(show_more_actions: bool) -> &'static str {
     if show_more_actions { "Less" } else { "More" }
 }
 
-/// Keeps a focused action from also invoking the overlay-wide Enter=Copy shortcut.
-/// Modified Enter remains available to the overlay so Shift+Enter can keep its quick-save path.
+/// Keeps a focused action from also invoking an overlay-wide command.
+///
+/// GPUI converts unmodified Enter and Space key releases into keyboard click events for focused
+/// buttons. Stopping their key-down propagation lets that click stay local while preserving
+/// Shift+Enter for the overlay's quick-save shortcut.
 fn stop_overlay_action_key_propagation(event: &KeyDownEvent, _window: &mut Window, cx: &mut App) {
     if should_stop_overlay_action_key_propagation(&event.keystroke) {
         cx.stop_propagation();
     }
 }
 
-/// Identifies the unmodified Enter key that would otherwise trigger both an action and Copy.
+/// Identifies standard focused-button activation keys that must not reach overlay shortcuts.
 fn should_stop_overlay_action_key_propagation(keystroke: &Keystroke) -> bool {
-    keystroke.key == "enter" && !keystroke.modifiers.modified()
+    !keystroke.modifiers.modified() && matches!(keystroke.key.as_str(), "enter" | "space")
 }
 
-/// Selects the local focus movement allowed while the expanded More menu owns Tab.
+/// Recognizes the explicit More-menu shortcut without shadowing annotation tool shortcuts.
+fn more_actions_shortcut(keystroke: &Keystroke) -> bool {
+    keystroke.key == "m"
+        && keystroke.modifiers.alt
+        && !keystroke.modifiers.shift
+        && !keystroke.modifiers.control
+        && !keystroke.modifiers.platform
+        && !keystroke.modifiers.function
+}
+
+/// Recognizes Escape while More is open so it closes the menu before cancelling the capture.
+fn close_more_actions_shortcut(keystroke: &Keystroke) -> bool {
+    keystroke.key == "escape" && !keystroke.modifiers.modified()
+}
+
+/// Selects the local arrow-key movement allowed while a More action has focus.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SecondaryActionTabDirection {
+enum SecondaryActionFocusDirection {
     Next,
     Previous,
 }
 
-/// Limits menu Tab handling to unmodified Tab and Shift+Tab so app-level shortcuts stay intact.
-fn secondary_action_tab_direction(keystroke: &Keystroke) -> Option<SecondaryActionTabDirection> {
-    if keystroke.key != "tab"
-        || keystroke.modifiers.control
-        || keystroke.modifiers.alt
-        || keystroke.modifiers.platform
-        || keystroke.modifiers.function
-    {
+/// Maps plain arrow keys to menu-local focus traversal without taking annotation shortcuts.
+fn secondary_action_focus_direction(
+    keystroke: &Keystroke,
+) -> Option<SecondaryActionFocusDirection> {
+    if keystroke.modifiers.modified() {
         return None;
     }
 
-    Some(if keystroke.modifiers.shift {
-        SecondaryActionTabDirection::Previous
-    } else {
-        SecondaryActionTabDirection::Next
-    })
+    match keystroke.key.as_str() {
+        "down" | "right" => Some(SecondaryActionFocusDirection::Next),
+        "up" | "left" => Some(SecondaryActionFocusDirection::Previous),
+        _ => None,
+    }
 }
 
-/// Moves focus within More before the overlay can treat Tab as an annotation shortcut.
-fn handle_secondary_action_key_down(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
-    match secondary_action_tab_direction(&event.keystroke) {
-        Some(SecondaryActionTabDirection::Next) => {
-            window.focus_next(cx);
-            cx.stop_propagation();
-        }
-        Some(SecondaryActionTabDirection::Previous) => {
-            window.focus_prev(cx);
-            cx.stop_propagation();
-        }
-        None => stop_overlay_action_key_propagation(event, window, cx),
+/// Chooses the next visible command and wraps inside the More menu instead of the whole window.
+fn secondary_action_focus_target(
+    current: SecondaryAction,
+    visible_actions: &[SecondaryAction],
+    direction: SecondaryActionFocusDirection,
+) -> Option<SecondaryAction> {
+    if visible_actions.is_empty() {
+        return None;
     }
+    let current_index = visible_actions
+        .iter()
+        .position(|action| *action == current)?;
+    let target_index = match direction {
+        SecondaryActionFocusDirection::Next => (current_index + 1) % visible_actions.len(),
+        SecondaryActionFocusDirection::Previous => current_index
+            .checked_sub(1)
+            .unwrap_or(visible_actions.len() - 1),
+    };
+    visible_actions.get(target_index).copied()
+}
+
+/// Enters the expanded More menu from its trigger without using global tab traversal.
+fn handle_more_actions_key_down(
+    show_more_actions: bool,
+    navigation: &SecondaryActionNavigation,
+    event: &KeyDownEvent,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if show_more_actions && let Some(direction) = secondary_action_focus_direction(&event.keystroke)
+    {
+        navigation.focus_edge(direction, window, cx);
+        cx.stop_propagation();
+        return;
+    }
+    stop_overlay_action_key_propagation(event, window, cx);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -364,6 +475,8 @@ pub(super) struct CaptureOverlay {
     // capture session after the user presses Capture again.
     operation_generation: u64,
     focus_handle: FocusHandle,
+    more_actions_focus_handle: FocusHandle,
+    secondary_action_focus_handles: [FocusHandle; SECONDARY_ACTION_COUNT],
     topmost_requested: bool,
     annotation_arrange_actions_for: Option<AnnotationId>,
     _app_observation: Subscription,
@@ -386,6 +499,10 @@ impl CaptureOverlay {
             allow_cross_display_drag,
             operation_generation,
             focus_handle: cx.focus_handle(),
+            more_actions_focus_handle: cx.focus_handle().tab_stop(false),
+            secondary_action_focus_handles: std::array::from_fn(|index| {
+                cx.focus_handle().tab_stop(true).tab_index(index as isize)
+            }),
             topmost_requested: false,
             annotation_arrange_actions_for: None,
             _app_observation: observation,
@@ -539,11 +656,23 @@ impl CaptureOverlay {
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let operation_generation = self.operation_generation;
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
+            return;
+        }
+        if close_more_actions_shortcut(&event.keystroke)
+            && self.close_more_actions_from_keyboard(window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
+        if more_actions_shortcut(&event.keystroke)
+            && self.open_more_actions_from_keyboard(window, cx)
+        {
+            cx.stop_propagation();
             return;
         }
         let app = self.app.clone();
@@ -558,6 +687,70 @@ impl CaptureOverlay {
                 }
             })
         });
+    }
+
+    /// Opens More from the keyboard and waits one frame before focusing its first rendered action.
+    fn open_more_actions_from_keyboard(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let owns_toolbar = {
+            let app = self.app.read(cx);
+            app.text_edit().is_none()
+                && app.session.selection().is_some_and(|selection| {
+                    owns_selection_toolbar(selection, self.display.physical_bounds)
+                })
+        };
+        if !owns_toolbar {
+            return false;
+        }
+
+        self.app.update(cx, |app, cx| {
+            if !app.overlay_more_actions {
+                app.toggle_overlay_more_actions(cx);
+            }
+        });
+        let first_action = self.secondary_action_focus_handle(SecondaryAction::SaveAnnotations);
+        cx.on_next_frame(window, move |_, window, cx| first_action.focus(window, cx));
+        true
+    }
+
+    /// Closes More before Escape reaches the capture-wide cancellation shortcut.
+    fn close_more_actions_from_keyboard(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let can_close = {
+            let app = self.app.read(cx);
+            app.text_edit().is_none() && app.overlay_more_actions
+        };
+        if !can_close {
+            return false;
+        }
+
+        self.app
+            .update(cx, |app, cx| app.toggle_overlay_more_actions(cx));
+        let more_actions = self.more_actions_focus_handle.clone();
+        cx.on_next_frame(window, move |_, window, cx| more_actions.focus(window, cx));
+        true
+    }
+
+    /// Returns the persistent focus handle for a menu action across conditional re-renders.
+    fn secondary_action_focus_handle(&self, action: SecondaryAction) -> FocusHandle {
+        self.secondary_action_focus_handles[action.index()].clone()
+    }
+
+    /// Restores focus to a persistent More action after a transient action removes itself.
+    fn focus_secondary_action_after_render(
+        &self,
+        action: SecondaryAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action_focus = self.secondary_action_focus_handle(action);
+        cx.on_next_frame(window, move |_, window, cx| action_focus.focus(window, cx));
     }
 }
 
@@ -860,6 +1053,22 @@ impl Render for CaptureOverlay {
         let recognition_result = app.recognition_result.clone();
         let recognition_retry = app.recognition_retry;
         let recognition_in_flight = app.recognition_in_flight;
+        let mut visible_secondary_actions = ALWAYS_VISIBLE_SECONDARY_ACTIONS.to_vec();
+        if recognition_retry.is_some() {
+            visible_secondary_actions.push(SecondaryAction::RetryRecognition);
+        }
+        if recognition_result.is_some() {
+            visible_secondary_actions.extend([
+                SecondaryAction::CopyRecognition,
+                SecondaryAction::ClearRecognition,
+            ]);
+        }
+        let secondary_navigation = SecondaryActionNavigation {
+            current: SecondaryAction::SaveAnnotations,
+            visible_actions: visible_secondary_actions,
+            focus_handles: self.secondary_action_focus_handles.clone(),
+        };
+        let more_actions_navigation = secondary_navigation.clone();
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
@@ -2049,13 +2258,7 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
-                                    .on_key_down(move |event, window, cx| {
-                                        if show_more_actions {
-                                            handle_secondary_action_key_down(event, window, cx);
-                                        } else {
-                                            stop_overlay_action_key_propagation(event, window, cx);
-                                        }
-                                    })
+                                    .on_key_down(stop_overlay_action_key_propagation)
                                     .child("Mark"),
                             )
                             .child(
@@ -2171,7 +2374,9 @@ impl Render for CaptureOverlay {
                                         colors.panel
                                     })
                                     .text_color(colors.text)
-                                    .focusable()
+                                    .track_focus(&self.more_actions_focus_handle)
+                                    .aria_keyshortcuts("Alt+M")
+                                    .aria_expanded(show_more_actions)
                                     .focus_visible(|style| style.border_color(colors.accent))
                                     .text_sm()
                                     .cursor_pointer()
@@ -2182,7 +2387,7 @@ impl Render for CaptureOverlay {
                                                 if show_more_actions {
                                                     "Hide more actions"
                                                 } else {
-                                                    "Show more actions"
+                                                    "Show more actions (Alt+M)"
                                                 },
                                                 colors,
                                             )
@@ -2197,7 +2402,15 @@ impl Render for CaptureOverlay {
                                             })
                                         });
                                     }))
-                                    .on_key_down(stop_overlay_action_key_propagation)
+                                    .on_key_down(move |event, window, cx| {
+                                        handle_more_actions_key_down(
+                                            show_more_actions,
+                                            &more_actions_navigation,
+                                            event,
+                                            window,
+                                            cx,
+                                        );
+                                    })
                                     .child(more_actions_button_label(show_more_actions)),
                             )
                             .child(
@@ -2262,7 +2475,8 @@ impl Render for CaptureOverlay {
                                         .shadow_lg()
                                         .child(secondary_action_button(
                                             "overlay-save-annotations",
-                                            SecondaryAction::SaveAnnotations,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::SaveAnnotations),
                                             "Save annotations",
                                             OVERLAY_MORE_ACTION_WIDTHS[0],
                                             colors,
@@ -2279,7 +2493,8 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-save-editable-project",
-                                            SecondaryAction::SaveEditable,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::SaveEditable),
                                             "Save editable",
                                             OVERLAY_MORE_ACTION_WIDTHS[1],
                                             colors,
@@ -2296,7 +2511,8 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-open-annotations",
-                                            SecondaryAction::OpenAnnotations,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::OpenAnnotations),
                                             "Open annotations",
                                             OVERLAY_MORE_ACTION_WIDTHS[2],
                                             colors,
@@ -2313,7 +2529,8 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-quick-save",
-                                            SecondaryAction::QuickSave,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::QuickSave),
                                             "Quick save",
                                             OVERLAY_MORE_ACTION_WIDTHS[3],
                                             colors,
@@ -2330,7 +2547,8 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-manual-scroll",
-                                            SecondaryAction::ScrollShot,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::ScrollShot),
                                             "Scroll shot",
                                             OVERLAY_MORE_ACTION_WIDTHS[4],
                                             colors,
@@ -2347,7 +2565,7 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-qr",
-                                            SecondaryAction::Qr,
+                                            secondary_navigation.for_action(SecondaryAction::Qr),
                                             "QR",
                                             OVERLAY_MORE_ACTION_WIDTHS[5],
                                             colors,
@@ -2364,7 +2582,7 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-ocr",
-                                            SecondaryAction::Ocr,
+                                            secondary_navigation.for_action(SecondaryAction::Ocr),
                                             "OCR",
                                             OVERLAY_MORE_ACTION_WIDTHS[6],
                                             colors,
@@ -2381,7 +2599,8 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-copy-color",
-                                            SecondaryAction::CopyColor,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::CopyColor),
                                             "Copy color",
                                             OVERLAY_MORE_ACTION_WIDTHS[7],
                                             colors,
@@ -2398,7 +2617,8 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-translate",
-                                            SecondaryAction::Translate,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::Translate),
                                             "Translate",
                                             OVERLAY_MORE_ACTION_WIDTHS[8],
                                             colors,
@@ -2415,7 +2635,8 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-record-area",
-                                            SecondaryAction::RecordArea,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::RecordArea),
                                             "Record area",
                                             OVERLAY_MORE_ACTION_WIDTHS[9],
                                             colors,
@@ -2432,7 +2653,8 @@ impl Render for CaptureOverlay {
                                         ))
                                         .child(secondary_action_button(
                                             "overlay-record-window",
-                                            SecondaryAction::RecordWindow,
+                                            secondary_navigation
+                                                .for_action(SecondaryAction::RecordWindow),
                                             "Record window",
                                             OVERLAY_MORE_ACTION_WIDTHS[10],
                                             colors,
@@ -2467,19 +2689,25 @@ impl Render for CaptureOverlay {
                                             let retry_label = recognition_retry_label(retry);
                                             actions.child(secondary_action_button(
                                                 "overlay-retry-recognition",
-                                                SecondaryAction::RetryRecognition,
+                                                secondary_navigation
+                                                    .for_action(SecondaryAction::RetryRecognition),
                                                 retry_label,
                                                 OVERLAY_RETRY_ACTION_WIDTHS[0],
                                                 colors,
                                                 true,
                                                 Some("Try recognition again"),
-                                                cx.listener(move |this, _, _, cx| {
+                                                cx.listener(move |this, _, window, cx| {
                                                     let app = this.app.clone();
                                                     cx.defer(move |cx| {
                                                         app.update(cx, |app, cx| {
                                                             app.retry_recognition(retry, cx)
                                                         })
                                                     });
+                                                    this.focus_secondary_action_after_render(
+                                                        SecondaryAction::SaveAnnotations,
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }),
                                             ))
                                         })
@@ -2515,7 +2743,9 @@ impl Render for CaptureOverlay {
                                                 )
                                                 .child(secondary_action_button(
                                                     "overlay-copy-recognition",
-                                                    SecondaryAction::CopyRecognition,
+                                                    secondary_navigation.for_action(
+                                                        SecondaryAction::CopyRecognition,
+                                                    ),
                                                     "Copy text",
                                                     OVERLAY_RECOGNITION_ACTION_WIDTHS[0],
                                                     colors,
@@ -2532,19 +2762,26 @@ impl Render for CaptureOverlay {
                                                 ))
                                                 .child(secondary_action_button(
                                                     "overlay-clear-recognition",
-                                                    SecondaryAction::ClearRecognition,
+                                                    secondary_navigation.for_action(
+                                                        SecondaryAction::ClearRecognition,
+                                                    ),
                                                     "Clear result",
                                                     OVERLAY_RECOGNITION_ACTION_WIDTHS[1],
                                                     colors,
                                                     false,
                                                     Some("Clear the recognized result"),
-                                                    cx.listener(|this, _, _, cx| {
+                                                    cx.listener(|this, _, window, cx| {
                                                         let app = this.app.clone();
                                                         cx.defer(move |cx| {
                                                             app.update(cx, |app, cx| {
                                                                 app.clear_recognition_result(cx)
                                                             })
                                                         });
+                                                        this.focus_secondary_action_after_render(
+                                                            SecondaryAction::SaveAnnotations,
+                                                            window,
+                                                            cx,
+                                                        );
                                                     }),
                                                 ))
                                         }),
@@ -3992,16 +4229,18 @@ mod tests {
         ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
         OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET,
         OVERLAY_EDGE_INSET, OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
-        OVERLAY_SECONDARY_MENU_GAP, SelectionCursor, SelectionDimensionLayout,
-        SmartTargetHudLayout, accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
-        action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
-        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_items,
-        annotation_toolbar_layout, arrange_context_for_selection, arrow_head_points,
-        capture_double_click, intersect, is_text_annotation, magnifier_origin,
-        more_actions_button_label, outline_shape_bounds, overlay_ui_acceptance_frame,
-        overlay_ui_acceptance_selection, overlay_ui_acceptance_target, owns_selection_toolbar,
-        primary_action_tooltip, recognition_result_preview, recognition_retry_label,
-        resize_handle_points, secondary_action_menu_height, secondary_action_tooltip,
+        OVERLAY_SECONDARY_MENU_GAP, SecondaryAction, SecondaryActionFocusDirection,
+        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, accepts_overlay_input,
+        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
+        annotation_controls_visible, annotation_layer_label, annotation_style_panel_height,
+        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
+        arrange_context_for_selection, arrow_head_points, capture_double_click,
+        close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
+        more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
+        overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
+        owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
+        recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
+        secondary_action_focus_target, secondary_action_menu_height, secondary_action_tooltip,
         secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
         selection_point_from_view_or_screen, should_stop_overlay_action_key_propagation,
         smart_target_hud_label, smart_target_hud_layout, status_bottom_inset, visible_selection,
@@ -4195,19 +4434,106 @@ mod tests {
     }
 
     #[test]
-    fn focused_primary_action_only_stops_plain_enter_propagation() {
-        assert!(should_stop_overlay_action_key_propagation(
-            &Keystroke::parse("enter").unwrap()
-        ));
-        assert!(!should_stop_overlay_action_key_propagation(
-            &Keystroke::parse("shift-enter").unwrap()
-        ));
-        assert!(!should_stop_overlay_action_key_propagation(
-            &Keystroke::parse("ctrl-enter").unwrap()
-        ));
-        assert!(!should_stop_overlay_action_key_propagation(
+    fn more_actions_shortcuts_are_explicit_and_do_not_shadow_other_commands() {
+        assert!(more_actions_shortcut(&Keystroke::parse("alt-m").unwrap()));
+        for key in ["m", "shift-alt-m", "ctrl-alt-m", "alt-r"] {
+            assert!(
+                !more_actions_shortcut(&Keystroke::parse(key).unwrap()),
+                "{key} must not open More"
+            );
+        }
+
+        assert!(close_more_actions_shortcut(
             &Keystroke::parse("escape").unwrap()
         ));
+        for key in ["shift-escape", "ctrl-escape", "enter"] {
+            assert!(
+                !close_more_actions_shortcut(&Keystroke::parse(key).unwrap()),
+                "{key} must not close More"
+            );
+        }
+    }
+
+    #[test]
+    fn focused_more_actions_keep_activation_local_and_directional_navigation_explicit() {
+        for key in ["enter", "space"] {
+            assert!(should_stop_overlay_action_key_propagation(
+                &Keystroke::parse(key).unwrap()
+            ));
+        }
+        for key in ["shift-enter", "ctrl-enter", "shift-space", "escape"] {
+            assert!(!should_stop_overlay_action_key_propagation(
+                &Keystroke::parse(key).unwrap()
+            ));
+        }
+
+        assert_eq!(
+            secondary_action_focus_direction(&Keystroke::parse("down").unwrap()),
+            Some(SecondaryActionFocusDirection::Next)
+        );
+        assert_eq!(
+            secondary_action_focus_direction(&Keystroke::parse("left").unwrap()),
+            Some(SecondaryActionFocusDirection::Previous)
+        );
+        for key in ["tab", "shift-tab", "shift-down", "ctrl-right", "enter"] {
+            assert_eq!(
+                secondary_action_focus_direction(&Keystroke::parse(key).unwrap()),
+                None,
+                "{key} must not be captured by More navigation"
+            );
+        }
+    }
+
+    #[test]
+    fn secondary_actions_have_a_stable_focus_order_when_optional_items_appear() {
+        assert_eq!(SecondaryAction::SaveAnnotations.index(), 0);
+        assert_eq!(SecondaryAction::ScrollShot.index(), 4);
+        assert_eq!(SecondaryAction::RecordWindow.index(), 10);
+        assert_eq!(SecondaryAction::RetryRecognition.index(), 11);
+        assert_eq!(SecondaryAction::CopyRecognition.index(), 12);
+        assert_eq!(SecondaryAction::ClearRecognition.index(), 13);
+    }
+
+    #[test]
+    fn more_action_arrow_navigation_wraps_only_visible_actions() {
+        let visible = [
+            SecondaryAction::SaveAnnotations,
+            SecondaryAction::ScrollShot,
+            SecondaryAction::CopyRecognition,
+        ];
+
+        assert_eq!(
+            secondary_action_focus_target(
+                SecondaryAction::SaveAnnotations,
+                &visible,
+                SecondaryActionFocusDirection::Previous,
+            ),
+            Some(SecondaryAction::CopyRecognition)
+        );
+        assert_eq!(
+            secondary_action_focus_target(
+                SecondaryAction::ScrollShot,
+                &visible,
+                SecondaryActionFocusDirection::Next,
+            ),
+            Some(SecondaryAction::CopyRecognition)
+        );
+        assert_eq!(
+            secondary_action_focus_target(
+                SecondaryAction::CopyRecognition,
+                &visible,
+                SecondaryActionFocusDirection::Next,
+            ),
+            Some(SecondaryAction::SaveAnnotations)
+        );
+        assert_eq!(
+            secondary_action_focus_target(
+                SecondaryAction::Ocr,
+                &visible,
+                SecondaryActionFocusDirection::Next,
+            ),
+            None
+        );
     }
 
     #[test]
