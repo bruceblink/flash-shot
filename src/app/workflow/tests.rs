@@ -254,6 +254,14 @@ fn keyboard_commands_cover_confirm_cancel_and_physical_nudging() {
     );
     assert_eq!(keyboard_command(&Keystroke::parse("ctrl-c").unwrap()), None);
     assert_eq!(
+        keyboard_command(&Keystroke::parse("ctrl-s").unwrap()),
+        Some(KeyboardCommand::Save)
+    );
+    assert_eq!(
+        keyboard_command(&Keystroke::parse("ctrl-shift-s").unwrap()),
+        None
+    );
+    assert_eq!(
         keyboard_command(&Keystroke::parse("escape").unwrap()),
         Some(KeyboardCommand::Cancel)
     );

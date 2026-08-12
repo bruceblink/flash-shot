@@ -536,6 +536,16 @@ impl FlashShotApp {
                     false
                 }
             }
+            KeyboardCommand::Save => {
+                if self.session.state() == CaptureSessionState::Selecting
+                    && self.session.selection().is_some()
+                {
+                    self.save_selection(cx);
+                    true
+                } else {
+                    false
+                }
+            }
             KeyboardCommand::QuickSave => {
                 if self.session.state() == CaptureSessionState::Selecting
                     && self.session.selection().is_some()

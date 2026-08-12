@@ -108,7 +108,7 @@ fn primary_action_tooltip(action_id: &str) -> &'static str {
     match action_id {
         "draw" => "Show marking tools for this selection",
         "copy" => "Copy selection to clipboard (Enter)",
-        "save" => "Save selection as a PNG",
+        "save" => "Save selection as a PNG (Ctrl+S)",
         "cancel" => "Cancel capture (Escape)",
         _ => "",
     }
@@ -4060,6 +4060,7 @@ mod tests {
     #[test]
     fn primary_action_tooltips_expose_capture_shortcuts_and_intent() {
         assert!(primary_action_tooltip("copy").contains("Enter"));
+        assert!(primary_action_tooltip("save").contains("Ctrl+S"));
         assert!(primary_action_tooltip("cancel").contains("Escape"));
         assert!(!primary_action_tooltip("draw").is_empty());
         assert_eq!(primary_action_tooltip("unknown"), "");

@@ -351,6 +351,7 @@ pub(in crate::app) enum KeyboardCommand {
     Delete,
     Cancel,
     Copy,
+    Save,
     QuickSave,
     CopyColor,
     MoveColorCursor(i32, i32),
@@ -545,6 +546,17 @@ pub(in crate::app) fn keyboard_command(keystroke: &Keystroke) -> Option<Keyboard
         && keystroke.key == "r"
     {
         return Some(KeyboardCommand::RotateClockwise);
+    }
+    // Keep the familiar standard-save shortcut separate from Shift+Enter's
+    // quick-save path, which intentionally skips the native destination dialog.
+    if modifiers.control
+        && !modifiers.shift
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+        && keystroke.key == "s"
+    {
+        return Some(KeyboardCommand::Save);
     }
     if modifiers.control && !modifiers.alt && !modifiers.platform && !modifiers.function {
         return match keystroke.key.as_str() {
