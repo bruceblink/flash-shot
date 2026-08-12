@@ -687,6 +687,14 @@ impl CaptureFrame {
     /// Encodes the BGRA capture as PNG without materializing a second full-size image.
     /// The returned bytes stay in memory so Copy and Save share identical pixel output.
     pub fn encode_png(&self) -> io::Result<Vec<u8>> {
+        let mut encoded = Vec::new();
+        self.write_png(&mut encoded)?;
+        Ok(encoded)
+    }
+
+    /// Writes the BGRA capture as PNG to a caller-owned stream using one reusable scanline.
+    /// Keeping the sink generic lets file exports avoid retaining the complete encoded image.
+    fn write_png<W: Write>(&self, output: W) -> io::Result<()> {
         self.validate()?;
         if self.format != PixelFormat::Bgra8 {
             return Err(io::Error::new(
@@ -698,34 +706,64 @@ impl CaptureFrame {
             .ok()
             .and_then(|width| width.checked_mul(4))
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "PNG row overflow"))?;
-        let mut encoded = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut encoded, self.width, self.height);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            let mut writer = encoder.write_header().map_err(png_error)?;
-            let mut stream = writer.stream_writer().map_err(png_error)?;
-            // Reuse one scanline while converting BGRA to RGBA. The stream writer compresses
-            // rows incrementally, avoiding full-image color and compressed staging buffers.
-            let mut rgba_row = vec![0_u8; row_bytes];
-            for source_row in self.pixels.chunks_exact(self.stride) {
-                for (source, target) in source_row[..row_bytes]
-                    .chunks_exact(4)
-                    .zip(rgba_row.chunks_exact_mut(4))
-                {
-                    target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
-                }
-                stream.write_all(&rgba_row)?;
+        let mut encoder = png::Encoder::new(output, self.width, self.height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(png_error)?;
+        let mut stream = writer.stream_writer().map_err(png_error)?;
+        // Reuse one scanline while converting BGRA to RGBA. The stream writer compresses
+        // rows incrementally, avoiding full-image color and compressed staging buffers.
+        let mut rgba_row = vec![0_u8; row_bytes];
+        for source_row in self.pixels.chunks_exact(self.stride) {
+            for (source, target) in source_row[..row_bytes]
+                .chunks_exact(4)
+                .zip(rgba_row.chunks_exact_mut(4))
+            {
+                target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
             }
-            stream.finish().map_err(png_error)?;
-            writer.finish().map_err(png_error)?;
+            stream.write_all(&rgba_row)?;
         }
-        Ok(encoded)
+        stream.finish().map_err(png_error)?;
+        writer.finish().map_err(png_error)
     }
 
     pub fn save_png(&self, path: impl AsRef<Path>) -> io::Result<()> {
         let path = path.as_ref();
-        self.save_encoded(path, self.encode_png()?)
+        self.save_png_streaming(path)
+    }
+
+    /// Streams PNG bytes into the atomic temporary destination before replacing the final path.
+    /// This keeps the source frame and only small encoder buffers live during a file save.
+    fn save_png_streaming(&self, path: &Path) -> io::Result<()> {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        if let Some(parent) = parent {
+            fs::create_dir_all(parent)?;
+        }
+        let temporary = path.with_extension(
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .map_or_else(
+                    || "png.tmp".to_owned(),
+                    |extension| format!("{extension}.tmp"),
+                ),
+        );
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temporary)?;
+        if let Err(error) = self.write_png(&mut file) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+        if let Err(error) = file.sync_all() {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+        drop(file);
+        replace_file(&temporary, path)
     }
 
     /// Saves PNG, JPEG, or WebP according to the path extension.
@@ -738,7 +776,7 @@ impl CaptureFrame {
             .map(str::to_ascii_lowercase)
             .unwrap_or_else(|| "png".to_owned());
         let encoded = match extension.as_str() {
-            "png" => self.encode_png()?,
+            "png" => return self.save_png(path),
             "jpg" | "jpeg" => self.encode_raster(::image::ImageFormat::Jpeg, false)?,
             "webp" => self.encode_raster(::image::ImageFormat::WebP, true)?,
             _ => {
@@ -1073,6 +1111,43 @@ mod tests {
 
         assert!(fs::metadata(&path).unwrap().len() > 0);
         assert_ne!(fs::read(&path).unwrap(), b"old capture");
+        assert!(!path.with_extension("png.tmp").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn streaming_save_png_matches_in_memory_encoding() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-image-streaming-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path = directory.join("capture.png");
+        fs::create_dir_all(&directory).unwrap();
+
+        let frame = test_frame();
+        frame.save_png(&path).unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), frame.encode_png().unwrap());
+        assert!(!path.with_extension("png.tmp").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn streaming_save_png_removes_the_temporary_file_when_frame_validation_fails() {
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-image-streaming-error-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path = directory.join("capture.png");
+        fs::create_dir_all(&directory).unwrap();
+
+        let mut frame = test_frame();
+        frame.stride = 8;
+        assert!(frame.save_png(&path).is_err());
+
+        assert!(!path.exists());
         assert!(!path.with_extension("png.tmp").exists());
         fs::remove_dir_all(directory).unwrap();
     }
