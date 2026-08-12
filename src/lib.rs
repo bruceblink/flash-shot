@@ -672,6 +672,15 @@ fn run_with_settings_window(
             } else {
                 cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx))
             };
+            if let Ok(handle) = window.window_handle()
+                && let RawWindowHandle::Win32(handle) = handle.as_raw()
+            {
+                // Bind the native handle before signaling acceptance readiness. A capture shortcut
+                // may arrive immediately after that signal and must be able to hide this window.
+                app.update(cx, |app, _| {
+                    app.set_settings_window_handle(handle.hwnd.get())
+                });
+            }
             if let Some(readiness) = interaction_shortcut_readiness {
                 let _ = readiness.send(app.read(cx).capture_shortcut_active_for_acceptance());
             }
@@ -692,13 +701,6 @@ fn run_with_settings_window(
                 let preview_app = app.clone();
                 cx.defer(move |cx| {
                     preview_app.update(cx, |app, cx| app.open_pinned_saved_feedback_preview(cx));
-                });
-            }
-            if let Ok(handle) = window.window_handle()
-                && let RawWindowHandle::Win32(handle) = handle.as_raw()
-            {
-                app.update(cx, |app, _| {
-                    app.set_settings_window_handle(handle.hwnd.get())
                 });
             }
             // Flash Shot starts as a tray service with its settings window hidden.
