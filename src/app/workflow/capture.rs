@@ -465,6 +465,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.manual_scroll_finish_in_flight = false;
         self.manual_scroll_auto_capture_generation = None;
         self.recognition_result = None;
         self.recognition_retry = None;
@@ -687,6 +688,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.manual_scroll_finish_in_flight = false;
         self.manual_scroll_auto_capture_generation = None;
         self.recognition_result = None;
         self.recognition_retry = None;
@@ -744,6 +746,7 @@ impl FlashShotApp {
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.manual_scroll_finish_in_flight = false;
         self.manual_scroll_auto_capture_generation = None;
         self.recognition_result = None;
         self.recognition_retry = None;

@@ -790,6 +790,7 @@ fn scroll_roundtrip_cleanup_complete(state: &OverlayInteractionCaptureState) -> 
         && state.manual_scroll_frame_count == 0
         && !state.manual_scroll_can_finish
         && !state.manual_scroll_capture_in_flight
+        && !state.manual_scroll_finish_in_flight
         && !state.manual_scroll_auto_capture_pending
         && state.manual_scroll_selection.is_none()
         && !state.capture_teardown_pending
@@ -1443,6 +1444,7 @@ struct ManualScrollCleanupReport {
     frame_count: usize,
     can_finish: bool,
     capture_in_flight: bool,
+    finish_in_flight: bool,
     auto_capture_pending: bool,
     selection: Option<PhysicalRect>,
     more_actions_visible: bool,
@@ -4645,6 +4647,7 @@ fn execute_scroll_roundtrip_interactions(
             frame_count: final_state.manual_scroll_frame_count,
             can_finish: final_state.manual_scroll_can_finish,
             capture_in_flight: final_state.manual_scroll_capture_in_flight,
+            finish_in_flight: final_state.manual_scroll_finish_in_flight,
             auto_capture_pending: final_state.manual_scroll_auto_capture_pending,
             selection: final_state.manual_scroll_selection,
             more_actions_visible: final_state.more_actions_visible,
@@ -10076,6 +10079,7 @@ mod tests {
             manual_scroll_frame_count: 0,
             manual_scroll_can_finish: false,
             manual_scroll_capture_in_flight: false,
+            manual_scroll_finish_in_flight: false,
             manual_scroll_auto_capture_pending: false,
             manual_scroll_selection: None,
             overlay_count: 0,

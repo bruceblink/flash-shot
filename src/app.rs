@@ -115,6 +115,7 @@ pub struct FlashShotApp {
     manual_scroll: crate::scroll::ManualScrollCapture,
     manual_scroll_selection: Option<crate::domain::geometry::PhysicalRect>,
     manual_scroll_capture_in_flight: bool,
+    manual_scroll_finish_in_flight: bool,
     manual_scroll_auto_capture_generation: Option<u64>,
     recording_control: Option<crate::recording::RecordingControl>,
     // Acceptance-only flag that renders live Record controls without starting an FFmpeg worker.
@@ -660,6 +661,7 @@ impl FlashShotApp {
             manual_scroll: crate::scroll::ManualScrollCapture::default(),
             manual_scroll_selection: None,
             manual_scroll_capture_in_flight: false,
+            manual_scroll_finish_in_flight: false,
             manual_scroll_auto_capture_generation: None,
             recording_control: None,
             recording_acceptance_active: false,
@@ -830,6 +832,7 @@ impl FlashShotApp {
                                 manual_scroll_can_finish: this.manual_scroll.can_finish(),
                                 manual_scroll_capture_in_flight: this
                                     .manual_scroll_capture_in_flight,
+                                manual_scroll_finish_in_flight: this.manual_scroll_finish_in_flight,
                                 manual_scroll_auto_capture_pending: this
                                     .manual_scroll_auto_capture_generation
                                     .is_some(),
@@ -1219,6 +1222,7 @@ fn manual_scroll_state_label(state: crate::scroll::ManualScrollState) -> &'stati
     match state {
         crate::scroll::ManualScrollState::Idle => "idle",
         crate::scroll::ManualScrollState::Collecting => "collecting",
+        crate::scroll::ManualScrollState::Finishing => "finishing",
         crate::scroll::ManualScrollState::Completed => "completed",
         crate::scroll::ManualScrollState::Cancelled => "cancelled",
         crate::scroll::ManualScrollState::Failed => "failed",

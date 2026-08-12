@@ -31,6 +31,13 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        if self.manual_scroll.state() == crate::scroll::ManualScrollState::Finishing
+            || self.manual_scroll_finish_in_flight
+        {
+            self.status = "Wait for the scrolling screenshot to finish".to_owned();
+            cx.notify();
+            return;
+        }
         if self.manual_scroll.state() != crate::scroll::ManualScrollState::Idle {
             let _ = self.manual_scroll.reset();
         }
@@ -62,7 +69,7 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
-        if self.manual_scroll_capture_in_flight {
+        if self.manual_scroll_capture_in_flight || self.manual_scroll_finish_in_flight {
             self.status = "Scroll frame capture is already in progress".to_owned();
             cx.notify();
             return;
@@ -182,7 +189,7 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn finish_manual_scroll(&mut self, cx: &mut Context<Self>) {
-        if self.manual_scroll_capture_in_flight {
+        if self.manual_scroll_capture_in_flight || self.manual_scroll_finish_in_flight {
             self.status = "Wait for the current scroll frame capture to finish".to_owned();
             cx.notify();
             return;
@@ -192,9 +199,60 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
-        let stitched = match self.manual_scroll.finish(Default::default()) {
-            Ok(stitched) => stitched,
+        let finish = match self.manual_scroll.begin_finish() {
+            Ok(finish) => finish,
             Err(error) => {
+                self.status = format!("Could not finish scrolling screenshot: {error}");
+                cx.notify();
+                return;
+            }
+        };
+        self.manual_scroll_finish_in_flight = true;
+        self.status = "Stitching scrolling screenshot".to_owned();
+        let generation = self.operation_generation;
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let stitched = finish.stitch(Default::default())?;
+                        let preview = render_image_from_capture(&stitched.frame)?;
+                        Ok::<_, std::io::Error>((stitched, preview))
+                    })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| {
+                        this.finish_manual_scroll_background(result, generation, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Installs a prepared long capture only when the Finish request still owns the session.
+    fn finish_manual_scroll_background(
+        &mut self,
+        result: std::io::Result<(
+            crate::scroll::StitchedCapture,
+            crate::app::render_image::CaptureRenderImage,
+        )>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_current_operation(self.operation_generation, generation)
+            || !self.manual_scroll_finish_in_flight
+            || self.manual_scroll.state() != crate::scroll::ManualScrollState::Finishing
+        {
+            return;
+        }
+        self.manual_scroll_finish_in_flight = false;
+        let (stitched, preview) = match result {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = self.manual_scroll.finish_failed(&error);
                 self.abandon_manual_scroll();
                 self.close_manual_scroll_window(cx);
                 self.return_to_background();
@@ -205,8 +263,8 @@ impl FlashShotApp {
         };
         let frame = stitched.frame;
         let bounds = frame.bounds;
+        let app = cx.entity();
         let result = (|| -> std::io::Result<()> {
-            let preview = render_image_from_capture(&frame)?;
             let document = AnnotationDocument::new(bounds).map_err(std::io::Error::other)?;
             self.session.select(bounds).map_err(std::io::Error::other)?;
             self.preview = Some(preview.image);
@@ -223,28 +281,24 @@ impl FlashShotApp {
             self.manual_scroll_selection = None;
             self.manual_scroll_capture_in_flight = false;
             self.manual_scroll_auto_capture_generation = None;
+            self.manual_scroll.finish_succeeded()?;
+            self.status = format!(
+                "Scrolling screenshot stitched {} frames with {} overlap joins",
+                stitched.overlaps.len() + 1,
+                stitched.overlaps.len()
+            );
+            self.close_manual_scroll_window(cx);
+            let _ = self.manual_scroll.reset();
+            cx.defer(move |cx| open_image_overlay(app, bounds, cx));
             Ok(())
         })();
-        match result {
-            Ok(()) => {
-                self.status = format!(
-                    "Scrolling screenshot stitched {} frames with {} overlap joins",
-                    self.manual_scroll.frame_count(),
-                    stitched.overlaps.len()
-                );
-                self.close_manual_scroll_window(cx);
-                let _ = self.manual_scroll.reset();
-                let app = cx.entity();
-                cx.defer(move |cx| open_image_overlay(app, bounds, cx));
-            }
-            Err(error) => {
-                // A completed session cannot be captured again, so close the controller and
-                // return to the tray instead of leaving the user with disabled actions.
-                self.abandon_manual_scroll();
-                self.close_manual_scroll_window(cx);
-                self.return_to_background();
-                self.status = format!("Could not open stitched capture: {error}");
-            }
+        if let Err(error) = result {
+            let _ = self.manual_scroll.finish_failed(&error);
+            self.manual_scroll_finish_in_flight = false;
+            self.abandon_manual_scroll();
+            self.close_manual_scroll_window(cx);
+            self.return_to_background();
+            self.status = format!("Could not open stitched capture: {error}");
         }
         cx.notify();
     }
@@ -299,7 +353,11 @@ impl FlashShotApp {
     fn abandon_manual_scroll(&mut self) {
         // Invalidate queued frame completions before clearing the session they belong to.
         self.operation_generation = next_operation_generation(self.operation_generation);
-        if self.manual_scroll.state() == crate::scroll::ManualScrollState::Collecting {
+        if matches!(
+            self.manual_scroll.state(),
+            crate::scroll::ManualScrollState::Collecting
+                | crate::scroll::ManualScrollState::Finishing
+        ) {
             let _ = self.manual_scroll.cancel();
         }
         if self.manual_scroll.state() != crate::scroll::ManualScrollState::Idle {
@@ -307,6 +365,7 @@ impl FlashShotApp {
         }
         self.manual_scroll_selection = None;
         self.manual_scroll_capture_in_flight = false;
+        self.manual_scroll_finish_in_flight = false;
         self.manual_scroll_auto_capture_generation = None;
     }
 }

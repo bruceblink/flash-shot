@@ -192,6 +192,8 @@ pub struct OverlayInteractionCaptureState {
     pub manual_scroll_can_finish: bool,
     /// Whether a native frame capture is currently being appended asynchronously.
     pub manual_scroll_capture_in_flight: bool,
+    /// Whether long-page stitching and preview preparation are running asynchronously.
+    pub manual_scroll_finish_in_flight: bool,
     /// Whether an assisted scroll has been requested and is waiting for its delayed capture.
     pub manual_scroll_auto_capture_pending: bool,
     /// Selection used as the fixed viewport for the active manual-scroll session.

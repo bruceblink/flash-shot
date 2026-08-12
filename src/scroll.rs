@@ -38,9 +38,27 @@ pub enum ManualScrollState {
     #[default]
     Idle,
     Collecting,
+    /// The collected frames are being stitched away from the UI thread.
+    Finishing,
     Completed,
     Cancelled,
     Failed,
+}
+
+/// Owns the captured viewports after a Finish request has claimed the session.
+///
+/// Keeping this work separate lets the GPUI entity remain in `Finishing` while the expensive
+/// overlap scan and output allocation run on the background executor.
+#[derive(Debug)]
+pub struct ManualScrollFinish {
+    frames: Vec<CaptureFrame>,
+}
+
+impl ManualScrollFinish {
+    /// Stitches the claimed frames without touching the UI-owned session state.
+    pub fn stitch(self, options: OverlapOptions) -> io::Result<StitchedCapture> {
+        stitch_vertical(&self.frames, options)
+    }
 }
 
 /// Collects compatible viewport frames until the user finishes a manual scroll session.
@@ -103,23 +121,59 @@ impl ManualScrollCapture {
         Ok(overlap)
     }
 
-    pub fn finish(&mut self, options: OverlapOptions) -> io::Result<StitchedCapture> {
+    /// Claims the current frames for one Finish operation and prevents duplicate requests.
+    pub fn begin_finish(&mut self) -> io::Result<ManualScrollFinish> {
         self.require(ManualScrollState::Collecting, "finish")?;
-        match stitch_vertical(&self.frames, options) {
+        self.state = ManualScrollState::Finishing;
+        self.failure = None;
+        Ok(ManualScrollFinish {
+            // CaptureFrame clones share immutable pixel storage, so the UI can retain its frame
+            // count while the executor stitches without copying the captured pixels.
+            frames: self.frames.clone(),
+        })
+    }
+
+    /// Returns the number of frames claimed by the current finish operation.
+    pub fn finishing_frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// Marks a background stitch as completed so the caller can open the editor.
+    pub fn finish_succeeded(&mut self) -> io::Result<()> {
+        self.require(ManualScrollState::Finishing, "complete finish")?;
+        self.state = ManualScrollState::Completed;
+        Ok(())
+    }
+
+    /// Stores a stitch failure while retaining the explicit terminal lifecycle state.
+    pub fn finish_failed(&mut self, error: &io::Error) -> io::Result<()> {
+        self.require(ManualScrollState::Finishing, "fail finish")?;
+        self.state = ManualScrollState::Failed;
+        self.failure = Some(error.to_string());
+        Ok(())
+    }
+
+    pub fn finish(&mut self, options: OverlapOptions) -> io::Result<StitchedCapture> {
+        let work = self.begin_finish()?;
+        match work.stitch(options) {
             Ok(stitched) => {
-                self.state = ManualScrollState::Completed;
+                self.finish_succeeded()?;
                 Ok(stitched)
             }
             Err(error) => {
-                self.state = ManualScrollState::Failed;
-                self.failure = Some(error.to_string());
+                self.finish_failed(&error)?;
                 Err(error)
             }
         }
     }
 
     pub fn cancel(&mut self) -> io::Result<()> {
-        self.require(ManualScrollState::Collecting, "cancel")?;
+        if !matches!(
+            self.state,
+            ManualScrollState::Collecting | ManualScrollState::Finishing
+        ) {
+            return Err(invalid_transition(self.state, "cancel"));
+        }
         self.frames.clear();
         self.state = ManualScrollState::Cancelled;
         Ok(())
@@ -448,6 +502,37 @@ mod tests {
         capture.reset().unwrap();
         assert_eq!(capture.state(), ManualScrollState::Idle);
         assert_eq!(capture.frame_count(), 0);
+    }
+
+    #[test]
+    fn background_finish_claim_prevents_reentry_and_preserves_frame_count() {
+        let mut capture = ManualScrollCapture::default();
+        capture.begin(frame(0..10)).unwrap();
+        capture.append(frame(6..16), options()).unwrap();
+
+        let work = capture.begin_finish().unwrap();
+
+        assert_eq!(capture.state(), ManualScrollState::Finishing);
+        assert_eq!(capture.finishing_frame_count(), 0);
+        assert!(capture.begin_finish().is_err());
+        let stitched = work.stitch(options()).unwrap();
+        assert_eq!(stitched.frame.height, 16);
+        capture.finish_succeeded().unwrap();
+        assert_eq!(capture.state(), ManualScrollState::Completed);
+    }
+
+    #[test]
+    fn cancelling_a_background_finish_invalidates_the_session() {
+        let mut capture = ManualScrollCapture::default();
+        capture.begin(frame(0..10)).unwrap();
+        capture.append(frame(6..16), options()).unwrap();
+        let work = capture.begin_finish().unwrap();
+
+        capture.cancel().unwrap();
+        assert_eq!(capture.state(), ManualScrollState::Cancelled);
+        assert!(capture.finish_succeeded().is_err());
+        let stitched = work.stitch(options()).unwrap();
+        assert_eq!(stitched.frame.height, 16);
     }
 
     #[test]
