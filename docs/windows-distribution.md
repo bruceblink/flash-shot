@@ -62,9 +62,11 @@ signing an artifact:
 
 The preflight requires `signtool.exe` and a currently valid code-signing certificate with a private
 key in `Cert:\CurrentUser\My`. Use `-SignToolPath <absolute-path>` when SignTool is not on `PATH`,
-and `-CertificateThumbprint <sha1>` to select a specific certificate. The same validated certificate
-is then used for both `flash-shot.exe` and the setup executable. This preflight does not contact the
-timestamp service or replace the final signature verification performed during actual packaging.
+`-CertificateThumbprint <sha1>` to select a specific certificate, and `-TimestampUrl <absolute-http-or-https-url>`
+to use an approved RFC 3161 endpoint. The default is `http://timestamp.digicert.com`, which is the
+endpoint used for both signature operations. The same validated certificate is then used for both
+`flash-shot.exe` and the setup executable. This preflight validates the endpoint format but does not
+contact the timestamp service or replace the final signature verification performed during actual packaging.
 `-RequireSignature` fails instead of silently publishing an unsigned artifact. The installer does
 not bundle FFmpeg.
 

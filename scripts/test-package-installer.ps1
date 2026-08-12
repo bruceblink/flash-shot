@@ -5,6 +5,7 @@ $fixture = Join-Path $root "target\package-installer-fixture"
 $fakeSignTool = Join-Path $fixture "signtool.exe"
 $missingSignTool = Join-Path $fixture "missing-signtool.exe"
 $packageInstaller = Join-Path $PSScriptRoot "package-installer.ps1"
+$timestampValidationCertificate = "0000000000000000000000000000000000000000"
 
 # Runs one invalid preflight and requires the failure to come from the intended signing gate.
 function Assert-InstallerValidationFails([hashtable]$Parameters, [string]$ExpectedMessage) {
@@ -55,6 +56,19 @@ try {
         ValidateOnly = $true
         CertificateThumbprint = "0000000000000000000000000000000000000000"
     } "require -RequireSignature"
+
+    Assert-InstallerValidationFails @{
+        ValidateOnly = $true
+        TimestampUrl = "not-a-url"
+    } "require -RequireSignature"
+
+    Assert-InstallerValidationFails @{
+        ValidateOnly = $true
+        RequireSignature = $true
+        SignToolPath = $fakeSignTool
+        CertificateThumbprint = $timestampValidationCertificate
+        TimestampUrl = "ftp://timestamp.example.test"
+    } "absolute HTTP or HTTPS URL"
 }
 finally {
     if (Test-Path -LiteralPath $fixture) {

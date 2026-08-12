@@ -4,7 +4,8 @@ param(
     [switch]$RequireSignature,
     [switch]$ValidateOnly,
     [string]$SignToolPath = "",
-    [string]$CertificateThumbprint = ""
+    [string]$CertificateThumbprint = "",
+    [string]$TimestampUrl = "http://timestamp.digicert.com"
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +54,20 @@ function Get-CodeSigningCertificate([string]$Thumbprint) {
     return $certificates | Select-Object -First 1
 }
 
+# Validates the RFC 3161 endpoint before packaging so signing fails early with an actionable error.
+function Get-TimestampEndpoint([string]$Value) {
+    try {
+        $endpoint = [Uri]$Value
+    }
+    catch {
+        throw "-TimestampUrl must be an absolute HTTP or HTTPS URL."
+    }
+    if (-not $endpoint.IsAbsoluteUri -or $endpoint.Scheme -notin @("http", "https")) {
+        throw "-TimestampUrl must be an absolute HTTP or HTTPS URL."
+    }
+    return $endpoint.AbsoluteUri
+}
+
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $manifest = Join-Path $root "Cargo.toml"
 $installer = Join-Path $root "installer\flash-shot.iss"
@@ -78,17 +93,30 @@ if ($rustHost -notmatch "-pc-windows-msvc$") {
 
 $signTool = $null
 $signingCertificate = $null
-if (-not $RequireSignature -and ($SignToolPath.Length -gt 0 -or $CertificateThumbprint.Length -gt 0)) {
-    throw "-SignToolPath and -CertificateThumbprint require -RequireSignature."
+$timestampEndpoint = $null
+if (-not $RequireSignature -and (
+        $SignToolPath.Length -gt 0 -or
+        $CertificateThumbprint.Length -gt 0 -or
+        $PSBoundParameters.ContainsKey("TimestampUrl")
+    )) {
+    throw "-SignToolPath, -CertificateThumbprint, and -TimestampUrl require -RequireSignature."
 }
 if ($RequireSignature) {
-    $signTool = Get-CommandPath "signtool.exe" @(
+    $signToolCandidates = @(
         "${env:ProgramFiles(x86)}\Windows Kits\10\bin\x64\signtool.exe",
         "${env:ProgramFiles(x86)}\Windows Kits\10\bin\x86\signtool.exe"
-    ) $SignToolPath
+    )
+    $windowsKitsBin = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10\bin"
+    if (Test-Path -LiteralPath $windowsKitsBin -PathType Container) {
+        $signToolCandidates += Get-ChildItem -LiteralPath $windowsKitsBin -Directory |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName "x64\signtool.exe" }
+    }
+    $signTool = Get-CommandPath "signtool.exe" $signToolCandidates $SignToolPath
     if ($null -eq $signTool) {
         throw "-RequireSignature needs signtool.exe on PATH or an explicit -SignToolPath."
     }
+    $timestampEndpoint = Get-TimestampEndpoint $TimestampUrl
     $signingCertificate = Get-CodeSigningCertificate $CertificateThumbprint
     if ($null -eq $signingCertificate) {
         throw "-RequireSignature needs a valid CurrentUser code-signing certificate with a private key."
@@ -122,7 +150,7 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
 }
 
 if ($RequireSignature) {
-    & $signTool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 `
+    & $signTool sign /fd SHA256 /tr $timestampEndpoint /td SHA256 `
         /sha1 $signingCertificate.Thumbprint $executable
     if ($LASTEXITCODE -ne 0) {
         throw "Could not sign $executable."
@@ -172,7 +200,7 @@ if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
     throw "Inno Setup did not create the expected installer at $setup."
 }
 if ($RequireSignature) {
-    & $signTool sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 `
+    & $signTool sign /fd SHA256 /tr $timestampEndpoint /td SHA256 `
         /sha1 $signingCertificate.Thumbprint $setup
     if ($LASTEXITCODE -ne 0) {
         throw "Could not sign $setup."
