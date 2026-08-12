@@ -2,6 +2,8 @@
 
 use super::*;
 
+const CAPTURE_TEARDOWN_RETRY_INTERVAL: Duration = Duration::from_millis(1);
+
 impl FlashShotApp {
     pub(in crate::app) fn start_capture(&mut self, cx: &mut Context<Self>) {
         self.start_capture_with_options(self.capture_delay_seconds, false, cx);
@@ -22,6 +24,10 @@ impl FlashShotApp {
     /// Hides Flash Shot, captures the active external window, and opens it as an editable selection.
     pub(in crate::app) fn start_focused_window_capture(&mut self, cx: &mut Context<Self>) {
         if self.delayed_capture_generation.is_some() {
+            return;
+        }
+        if self.capture_teardown_pending {
+            self.defer_capture_until_teardown(0, false, true, cx);
             return;
         }
         if let Some(status) = capture_start_conflict_status(
@@ -202,6 +208,10 @@ impl FlashShotApp {
             self.cancel_delayed_capture(cx);
             return;
         }
+        if self.capture_teardown_pending {
+            self.defer_capture_until_teardown(delay_seconds, preselect_full_screen, false, cx);
+            return;
+        }
         if let Some(status) = capture_start_conflict_status(
             self.recording_control.is_some() || self.recording_acceptance_active,
             self.recording_start_in_flight,
@@ -215,6 +225,10 @@ impl FlashShotApp {
             return;
         }
         if !self.prepare_capture_restart(cx) {
+            return;
+        }
+        if self.capture_teardown_pending {
+            self.defer_capture_until_teardown(delay_seconds, preselect_full_screen, false, cx);
             return;
         }
         if delay_seconds == 0 {
@@ -252,9 +266,74 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Retries a capture after deferred native overlay teardown has quiesced.
+    ///
+    /// The retry owns an operation-generation token, so a newer shortcut, reset, or shutdown
+    /// cancels the old task. The original delay and preselection mode stay intact until retry.
+    fn defer_capture_until_teardown(
+        &mut self,
+        delay_seconds: u8,
+        preselect_full_screen: bool,
+        preselect_focused_window: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.operation_generation = self.operation_generation.wrapping_add(1);
+        let retry_generation = self.operation_generation;
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                loop {
+                    cx.background_executor()
+                        .timer(CAPTURE_TEARDOWN_RETRY_INTERVAL)
+                        .await;
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    let finished = this.update(&mut cx, |this, cx| {
+                        match capture_teardown_retry_decision(
+                            this.capture_teardown_pending,
+                            this.operation_generation,
+                            retry_generation,
+                        ) {
+                            CaptureTeardownRetryDecision::Cancel => true,
+                            CaptureTeardownRetryDecision::Wait => false,
+                            CaptureTeardownRetryDecision::Start => {
+                                // A managed export owns the selected pixels and keeps the
+                                // capture request ignored, matching the normal start guard.
+                                if !preselect_focused_window
+                                    && !this.capture_export_operations_idle()
+                                {
+                                    return true;
+                                }
+                                if this.delayed_capture_generation.is_some() {
+                                    return true;
+                                }
+                                if preselect_focused_window {
+                                    this.start_focused_window_capture(cx);
+                                } else {
+                                    this.start_capture_with_options(
+                                        delay_seconds,
+                                        preselect_full_screen,
+                                        cx,
+                                    );
+                                }
+                                true
+                            }
+                        }
+                    });
+                    if finished {
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Returns the production start predicate without capturing the desktop or opening overlays.
     pub(in crate::app) fn capture_preflight_ready(&self) -> bool {
-        self.capture_export_operations_idle()
+        !self.capture_teardown_pending
+            && self.capture_export_operations_idle()
             && self.delayed_capture_generation.is_none()
             && capture_start_conflict_status(
                 self.recording_control.is_some() || self.recording_acceptance_active,
@@ -322,7 +401,11 @@ impl FlashShotApp {
         }
         self.delayed_capture_generation = None;
         self.delayed_capture_remaining_seconds = None;
-        self.start_capture_immediately(preselect_full_screen, false, cx);
+        if self.capture_teardown_pending {
+            self.defer_capture_until_teardown(0, preselect_full_screen, false, cx);
+        } else {
+            self.start_capture_immediately(preselect_full_screen, false, cx);
+        }
         true
     }
 
@@ -332,6 +415,15 @@ impl FlashShotApp {
         preselect_focused_window: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.capture_teardown_pending {
+            self.defer_capture_until_teardown(
+                0,
+                preselect_full_screen,
+                preselect_focused_window,
+                cx,
+            );
+            return;
+        }
         if self.session.state() != CaptureSessionState::Idle {
             return;
         }
@@ -899,10 +991,53 @@ pub(super) const fn capture_session_can_restart(state: CaptureSessionState) -> b
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CaptureTeardownRetryDecision {
+    Cancel,
+    Wait,
+    Start,
+}
+
+/// Decides whether a deferred retry still owns the capture request and whether teardown is done.
+fn capture_teardown_retry_decision(
+    teardown_pending: bool,
+    current_generation: u64,
+    retry_generation: u64,
+) -> CaptureTeardownRetryDecision {
+    if current_generation != retry_generation {
+        CaptureTeardownRetryDecision::Cancel
+    } else if teardown_pending {
+        CaptureTeardownRetryDecision::Wait
+    } else {
+        CaptureTeardownRetryDecision::Start
+    }
+}
+
 /// Clips the native foreground-window rectangle to the captured virtual desktop.
 pub(super) fn focused_window_selection(
     focused_window: Option<PhysicalRect>,
     frame_bounds: PhysicalRect,
 ) -> Option<PhysicalRect> {
     focused_window.and_then(|target| intersect_rect(target, frame_bounds))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CaptureTeardownRetryDecision, capture_teardown_retry_decision};
+
+    #[test]
+    fn teardown_retry_waits_for_quiescence_and_rejects_stale_requests() {
+        assert_eq!(
+            capture_teardown_retry_decision(true, 8, 8),
+            CaptureTeardownRetryDecision::Wait
+        );
+        assert_eq!(
+            capture_teardown_retry_decision(false, 8, 8),
+            CaptureTeardownRetryDecision::Start
+        );
+        assert_eq!(
+            capture_teardown_retry_decision(false, 9, 8),
+            CaptureTeardownRetryDecision::Cancel
+        );
+    }
 }

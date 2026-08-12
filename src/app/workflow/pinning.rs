@@ -71,19 +71,29 @@ impl FlashShotApp {
         let generation = self.operation_generation;
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
+            let mut pinned_frame = Some(pinned_frame);
             async move {
-                // Yield to the native message loop so reset's deferred overlay
-                // teardown runs before this pin creates and focuses its own window.
-                cx.background_executor()
-                    .timer(Duration::from_millis(1))
-                    .await;
-                if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |app, cx| {
+                // Yield to the native message loop, then wait until every old overlay HWND has
+                // reported its close callback before creating a topmost Pin window.
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1))
+                        .await;
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    let finished = this.update(&mut cx, |app, cx| {
                         if app.operation_generation != generation
                             || app.session.state() != CaptureSessionState::Idle
                         {
-                            return;
+                            return true;
                         }
+                        if app.capture_teardown_pending {
+                            return false;
+                        }
+                        let Some(pinned_frame) = pinned_frame.take() else {
+                            return true;
+                        };
                         app.open_pinned_frame(
                             pinned_frame,
                             "Selection pinned in an always-on-top window",
@@ -91,7 +101,11 @@ impl FlashShotApp {
                             false,
                             cx,
                         );
+                        true
                     });
+                    if finished {
+                        break;
+                    }
                 }
             }
         })

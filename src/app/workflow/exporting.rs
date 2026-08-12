@@ -455,15 +455,24 @@ impl FlashShotApp {
         }
     }
 
-    /// Removes a natively closed overlay by exact ID and cancels an orphaned capture session.
+    /// Removes a natively closed overlay by exact ID and clears deferred teardown when all
+    /// windows from the same close batch have reported their native close callback.
     pub(in crate::app) fn unregister_capture_overlay(
         &mut self,
         closing_id: gpui::WindowId,
         cx: &mut Context<Self>,
     ) -> bool {
+        let teardown_complete =
+            finish_capture_teardown(&mut self.capture_teardown_windows, closing_id);
+        if teardown_complete {
+            self.capture_teardown_pending = false;
+        }
         let removed = remove_capture_overlay_by_id(&mut self.overlay_windows, closing_id);
         if !removed {
-            return false;
+            if teardown_complete {
+                cx.notify();
+            }
+            return teardown_complete;
         }
         if self.overlay_windows.is_empty() && self.session.state() != CaptureSessionState::Idle {
             self.reset(cx);
@@ -873,6 +882,9 @@ impl FlashShotApp {
         if !windows.is_empty() {
             // Invalidate callbacks queued by the old windows before their native teardown runs.
             self.operation_generation = self.operation_generation.wrapping_add(1);
+            self.capture_teardown_windows =
+                windows.iter().map(|window| window.window_id()).collect();
+            self.capture_teardown_pending = true;
             cx.defer(move |cx| close_overlay_windows(windows, cx));
         }
     }
@@ -896,6 +908,14 @@ fn remove_capture_overlay_by_id(
     windows.len() != previous_len
 }
 
+/// Returns true only when the last window from one deferred native teardown has closed.
+fn finish_capture_teardown(
+    pending_windows: &mut std::collections::HashSet<gpui::WindowId>,
+    closing_id: gpui::WindowId,
+) -> bool {
+    pending_windows.remove(&closing_id) && pending_windows.is_empty()
+}
+
 /// Claims the single managed pinned-save slot so concurrent Pin windows cannot race on history.
 pub(super) fn claim_pinned_save_slot(in_flight: &mut bool) -> bool {
     if *in_flight {
@@ -908,8 +928,9 @@ pub(super) fn claim_pinned_save_slot(in_flight: &mut bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CaptureOverlay, remove_capture_overlay_by_id};
+    use super::{CaptureOverlay, finish_capture_teardown, remove_capture_overlay_by_id};
     use gpui::{WindowHandle, WindowId};
+    use std::collections::HashSet;
 
     #[test]
     fn closing_one_capture_overlay_preserves_other_registered_displays() {
@@ -927,5 +948,18 @@ mod tests {
         assert_eq!(windows[0].window_id(), first_id);
         assert_eq!(windows[1].window_id(), third_id);
         assert!(!remove_capture_overlay_by_id(&mut windows, closing_id));
+    }
+
+    #[test]
+    fn capture_teardown_is_pending_until_the_last_native_window_closes() {
+        let first_id = WindowId::from(21_u64);
+        let second_id = WindowId::from(22_u64);
+        let mut pending = HashSet::from([first_id, second_id]);
+
+        assert!(!finish_capture_teardown(&mut pending, first_id));
+        assert!(!pending.is_empty());
+        assert!(!finish_capture_teardown(&mut pending, first_id));
+        assert!(finish_capture_teardown(&mut pending, second_id));
+        assert!(pending.is_empty());
     }
 }

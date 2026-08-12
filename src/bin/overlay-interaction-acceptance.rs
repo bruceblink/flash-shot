@@ -45,6 +45,7 @@ use flash_shot::platform::capture::{
 use std::{
     ffi::c_void,
     mem::size_of,
+    os::windows::process::CommandExt,
     panic::AssertUnwindSafe,
     ptr,
     sync::{
@@ -67,6 +68,7 @@ use windows_sys::Win32::{
         LibraryLoader::GetModuleHandleW,
         Memory::{GlobalLock, GlobalSize, GlobalUnlock},
         Ole::CF_DIB,
+        Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
         Threading::GetCurrentProcessId,
     },
     UI::{
@@ -115,9 +117,13 @@ const FOCUS_TITLEBAR_FALLBACK_DELAY: Duration = Duration::from_millis(250);
 const WINDOWS_BASE_DPI: f32 = 96.0;
 const SELECTION_EDGE_TOLERANCE: i32 = 1;
 const PAUSE_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
+// Give DWM and GPUI one quiet interval after native windows close before the next desktop sample.
+const DESKTOP_QUIESCENCE_SETTLE: Duration = Duration::from_millis(300);
 const MAX_RECORDING_GRID_MAE: f64 = 18.0;
 const WINDOW_TARGET_CHILD_MODE: &str = "--window-target-child";
 const SCROLL_TARGET_CHILD_MODE: &str = "--scroll-target-child";
+const CLIPBOARD_CONSUMER_CHILD_MODE: &str = "--clipboard-consumer-child";
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const WINDOW_FIXTURE_CLASS: &str = "FlashShotRecordingWindowFixture";
 const SCROLL_FIXTURE_CLASS: &str = "FlashShotScrollWindowFixture";
 const WINDOW_PHASE_SETTLE_US: u64 = 300_000;
@@ -166,6 +172,7 @@ static SCROLL_FIXTURE_OFFSET: AtomicI32 = AtomicI32::new(0);
 struct Options {
     allow_input: bool,
     allow_system_clipboard: bool,
+    copy_trigger: CopyTriggerOption,
     output_dir: PathBuf,
     timeout: Duration,
     settle_delay: Duration,
@@ -211,6 +218,23 @@ enum ScrollExportOption {
     Save,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum CopyTriggerOption {
+    #[default]
+    Toolbar,
+    Enter,
+}
+
+impl CopyTriggerOption {
+    /// Returns the stable report/CLI label for the input gesture used to finish Copy.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Toolbar => "toolbar",
+            Self::Enter => "enter",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecordTargetOption {
     Area,
@@ -243,6 +267,7 @@ impl Options {
         let mut options = Self {
             allow_input: false,
             allow_system_clipboard: false,
+            copy_trigger: CopyTriggerOption::Toolbar,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             timeout: DEFAULT_TIMEOUT,
             settle_delay: DEFAULT_SETTLE_DELAY,
@@ -257,6 +282,7 @@ impl Options {
         let mut capture_scenario_seen = false;
         let mut scroll_export_seen = false;
         let mut record_target_seen = false;
+        let mut copy_trigger_seen = false;
         while let Some(argument) = arguments.next() {
             let argument = argument
                 .into_string()
@@ -269,6 +295,19 @@ impl Options {
                 }
                 "--allow-system-clipboard" => {
                     return Err("--allow-system-clipboard may only be supplied once".to_owned());
+                }
+                "--copy-trigger" if !copy_trigger_seen => {
+                    let trigger = arguments
+                        .next()
+                        .ok_or_else(usage)?
+                        .into_string()
+                        .map_err(|_| "copy trigger must be valid Unicode".to_owned())?;
+                    options.copy_trigger = match trigger.as_str() {
+                        "toolbar" => CopyTriggerOption::Toolbar,
+                        "enter" => CopyTriggerOption::Enter,
+                        _ => return Err("copy trigger must be 'toolbar' or 'enter'".to_owned()),
+                    };
+                    copy_trigger_seen = true;
                 }
                 "--output-dir" if !output_seen => {
                     options.output_dir = PathBuf::from(
@@ -346,7 +385,7 @@ impl Options {
                     record_target_seen = true;
                 }
                 "--output-dir" | "--timeout-ms" | "--settle-ms" | "--capture-scenario"
-                | "--scroll-export" | "--record-target" => {
+                | "--scroll-export" | "--record-target" | "--copy-trigger" => {
                     return Err(format!("{argument} may only be supplied once"));
                 }
                 _ => return Err(usage()),
@@ -373,12 +412,21 @@ impl Options {
                     .to_owned(),
             );
         }
-        if options.allow_system_clipboard
-            && (options.capture_scenario != CaptureScenarioOption::ScrollRoundtrip
-                || options.scroll_export != ScrollExportOption::Copy)
-        {
+        let standard_capture = options.capture_scenario == CaptureScenarioOption::Standard
+            && options.record_target.is_none()
+            && !scroll_export_seen;
+        if copy_trigger_seen && !standard_capture {
+            return Err("--copy-trigger is only valid with standard capture".to_owned());
+        }
+        let standard_system_copy = options.capture_scenario == CaptureScenarioOption::Standard
+            && options.record_target.is_none()
+            && !scroll_export_seen;
+        let scroll_system_copy = options.capture_scenario == CaptureScenarioOption::ScrollRoundtrip
+            && options.scroll_export == ScrollExportOption::Copy;
+        if options.allow_system_clipboard && !standard_system_copy && !scroll_system_copy {
             return Err(
-                "--allow-system-clipboard is only valid with scroll-roundtrip Copy".to_owned(),
+                "--allow-system-clipboard is only valid with standard capture or scroll-roundtrip Copy"
+                    .to_owned(),
             );
         }
         Ok(options)
@@ -408,7 +456,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--capture-scenario <narrow-edge|pins-coexist|selection-transform|scroll-roundtrip> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <narrow-edge|pins-coexist|selection-transform|scroll-roundtrip> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -745,6 +793,7 @@ fn scroll_roundtrip_cleanup_complete(state: &OverlayInteractionCaptureState) -> 
         && !state.manual_scroll_capture_in_flight
         && !state.manual_scroll_auto_capture_pending
         && state.manual_scroll_selection.is_none()
+        && !state.capture_teardown_pending
         && state.capture_preflight_ready
         && matches!(
             state.session_state.as_str(),
@@ -1419,7 +1468,11 @@ enum ScrollExportReport {
         dib_bytes: usize,
         png_content: ExactPixelMatchReport,
         dib_content: ExactPixelMatchReport,
-        consumer_image_content: ExactPixelMatchReport,
+        consumer_image_content: Box<ExactPixelMatchReport>,
+        timing_clock: &'static str,
+        timing_boundary: &'static str,
+        input_to_consumer_readable_ms: f64,
+        consumer_result_path: String,
     },
     Save {
         path: String,
@@ -1484,6 +1537,9 @@ struct PinReport {
 
 #[derive(serde::Serialize)]
 struct CopyReport {
+    trigger: &'static str,
+    action: &'static str,
+    read_mechanism: &'static str,
     requested_selection: PhysicalRect,
     selection: PhysicalRect,
     copied_bounds: PhysicalRect,
@@ -1491,8 +1547,27 @@ struct CopyReport {
     height: u32,
     clipboard_sequence_before: u32,
     clipboard_sequence_after: u32,
-    clipboard_unchanged: bool,
-    content: ExactPixelMatchReport,
+    clipboard_sequence_changed: bool,
+    timing_clock: &'static str,
+    timing_boundary: &'static str,
+    input_to_consumer_readable_ms: Option<f64>,
+    sink: &'static str,
+    png_format_available: bool,
+    dib_format_available: bool,
+    png_path: Option<String>,
+    dib_path: Option<String>,
+    consumer_image_path: Option<String>,
+    png_bytes: Option<usize>,
+    dib_bytes: Option<usize>,
+    png_content: Option<ExactPixelMatchReport>,
+    dib_content: Option<ExactPixelMatchReport>,
+    consumer_image_content: ExactPixelMatchReport,
+    consumer_process_id: Option<u32>,
+    consumer_result_path: Option<String>,
+    consumer_ready_before_click: bool,
+    consumer_observing_before_click: bool,
+    consumer_cleaned_up: bool,
+    single_export_verified: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -1509,6 +1584,7 @@ struct CleanupReport {
     session_state: String,
     overlay_count: usize,
     pinned_count: usize,
+    capture_teardown_pending: bool,
     visible_process_windows: usize,
     capture_preflight_ready: bool,
 }
@@ -1630,6 +1706,8 @@ struct WorkerContext {
     shortcut_readiness: Receiver<bool>,
     interaction_commands: async_channel::Sender<OverlayInteractionAcceptanceCommand>,
     copy_results: Option<Receiver<CaptureFrame>>,
+    use_system_clipboard: bool,
+    copy_trigger: CopyTriggerOption,
     timeout: Duration,
     settle_delay: Duration,
     capture_scenario: CaptureScenarioOption,
@@ -1637,7 +1715,42 @@ struct WorkerContext {
     record_target: Option<RecordTargetOption>,
 }
 
+#[cfg(windows)]
+struct ClipboardConsumer {
+    child: process::Child,
+    process_group: ProcessGroup,
+    process_id: u32,
+    ready_path: PathBuf,
+    observing_path: PathBuf,
+    start_path: PathBuf,
+    result_path: PathBuf,
+    stopped: bool,
+}
+
+#[cfg(windows)]
+#[derive(serde::Deserialize, serde::Serialize)]
+struct ClipboardConsumerResult {
+    previous_sequence: u32,
+    observed_sequence: u32,
+    png_path: String,
+    dib_path: String,
+    consumer_image_path: String,
+    png_bytes: usize,
+    dib_bytes: usize,
+    consumer_read_qpc_ticks: u64,
+}
+
 fn main() {
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new(CLIPBOARD_CONSUMER_CHILD_MODE))
+    {
+        if let Err(error) = run_clipboard_consumer_child(std::env::args_os().skip(2)) {
+            eprintln!("clipboard consumer failed: {error}");
+            process::exit(1);
+        }
+        return;
+    }
     #[cfg(windows)]
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(WINDOW_TARGET_CHILD_MODE))
     {
@@ -1742,8 +1855,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let (shortcut_ready_tx, shortcut_ready_rx) = mpsc::sync_channel(1);
     let (interaction_tx, interaction_rx) = interaction_command_channel();
     let (copy_result_tx, copy_result_rx) = mpsc::channel();
-    let uses_system_clipboard = options.capture_scenario == CaptureScenarioOption::ScrollRoundtrip
-        && options.scroll_export == ScrollExportOption::Copy;
+    let uses_system_clipboard = options.allow_system_clipboard;
     let app_copy_results = (!uses_system_clipboard).then_some(copy_result_tx);
     let worker_copy_results = (!uses_system_clipboard).then_some(copy_result_rx);
     let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
@@ -1765,6 +1877,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         shortcut_readiness: shortcut_ready_rx,
         interaction_commands: interaction_tx,
         copy_results: worker_copy_results,
+        use_system_clipboard: uses_system_clipboard,
+        copy_trigger: options.copy_trigger,
         timeout: options.timeout,
         settle_delay: options.settle_delay,
         capture_scenario: options.capture_scenario,
@@ -1826,7 +1940,10 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        schema_version: 11,
+        // Increment when the machine-readable report shape changes; cleanup now exposes
+        // deferred native teardown so downstream evidence readers can distinguish hidden
+        // windows from fully quiescent capture state.
+        schema_version: 13,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2056,6 +2173,122 @@ fn run_scroll_fixture_child(arguments: impl IntoIterator<Item = OsString>) -> io
         unsafe { DestroyWindow(window) };
     }
     Ok(())
+}
+
+#[cfg(windows)]
+/// Waits without creating windows, snapshots all production image formats, and publishes atomically.
+fn run_clipboard_consumer_child(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
+    let mut arguments = arguments.into_iter();
+    let timeout_ms = arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid clipboard timeout"))?;
+    let ready_path = PathBuf::from(arguments.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard ready path is missing",
+        )
+    })?);
+    let observing_path = PathBuf::from(arguments.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard observing path is missing",
+        )
+    })?);
+    let start_path = PathBuf::from(arguments.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard start path is missing",
+        )
+    })?);
+    let result_path = PathBuf::from(arguments.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard result path is missing",
+        )
+    })?);
+    let artifact_dir = PathBuf::from(arguments.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard artifact directory is missing",
+        )
+    })?);
+    if arguments.next().is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard consumer received unexpected arguments",
+        ));
+    }
+    fs::create_dir_all(&artifact_dir)?;
+    fs::write(&ready_path, b"ready")?;
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let previous_sequence = loop {
+        if start_path.is_file() {
+            let marker = fs::read_to_string(&start_path)?;
+            match marker.trim().parse::<u32>() {
+                Ok(sequence) => break sequence,
+                Err(_) if marker.trim().is_empty() && Instant::now() < deadline => {}
+                Err(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "clipboard start marker did not contain a valid sequence",
+                    ));
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "clipboard consumer was ready but never armed",
+            ));
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "clipboard consumer arm deadline expired",
+        ));
+    }
+    // This marker is written only after the baseline is parsed and immediately before the
+    // monotonic clipboard wait begins. The parent uses it to distinguish "process started"
+    // from "consumer is actually observing the next export".
+    fs::write(&observing_path, b"observing")?;
+    let (observed_sequence, consumer_image, png, dib) =
+        wait_for_system_clipboard_image_change(previous_sequence, remaining)?;
+    let consumer_read_qpc_ticks = qpc_ticks()?;
+    let png_path = artifact_dir.join("registered-png.png");
+    let dib_path = artifact_dir.join("cf-dib.bin");
+    let consumer_image_path = artifact_dir.join("consumer-image.png");
+    fs::write(&png_path, &png)?;
+    fs::write(&dib_path, &dib)?;
+    consumer_image.save_png(&consumer_image_path)?;
+    let result = ClipboardConsumerResult {
+        previous_sequence,
+        observed_sequence,
+        png_path: png_path.to_string_lossy().into_owned(),
+        dib_path: dib_path.to_string_lossy().into_owned(),
+        consumer_image_path: consumer_image_path.to_string_lossy().into_owned(),
+        png_bytes: png.len(),
+        dib_bytes: dib.len(),
+        consumer_read_qpc_ticks,
+    };
+    let temporary = result_path.with_extension("json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(&result).map_err(io::Error::other)?,
+    )?;
+    fs::rename(temporary, result_path)
+}
+
+#[cfg(windows)]
+/// Publishes the clipboard baseline atomically so the child never observes a partial marker.
+fn write_clipboard_start_marker(path: &Path, sequence: u32) -> io::Result<()> {
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, sequence.to_string().as_bytes())?;
+    fs::rename(temporary, path)
 }
 
 #[cfg(windows)]
@@ -2431,9 +2664,14 @@ impl RecordingWindowFixture {
             .stderr(process::Stdio::inherit())
             .spawn()?;
         if let Err(error) = process_group.assign(&child) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "recording fixture could not join its Job Object ({error}); cleanup={cleanup:?}"
+            )));
         }
         let process_id = child.id();
         let handles = match wait_for_recording_fixture_windows(
@@ -2444,9 +2682,14 @@ impl RecordingWindowFixture {
         ) {
             Ok(handles) => handles,
             Err(error) => {
-                let _ = process_group.terminate();
-                let _ = child.wait();
-                return Err(error);
+                let cleanup = terminate_process_group_bounded(
+                    &process_group,
+                    &mut child,
+                    Duration::from_millis(500),
+                );
+                return Err(io::Error::other(format!(
+                    "recording fixture did not become ready ({error}); cleanup={cleanup:?}"
+                )));
             }
         };
         let target = handles[0];
@@ -2459,24 +2702,28 @@ impl RecordingWindowFixture {
         ] {
             let observed = external_window_bounds(window, process_id)?;
             if observed != initial_bounds {
-                let _ = process_group.terminate();
-                let _ = child.wait();
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("fixture {label} bounds are {observed:?}, expected {initial_bounds:?}"),
-                ));
+                let cleanup = terminate_process_group_bounded(
+                    &process_group,
+                    &mut child,
+                    Duration::from_millis(500),
+                );
+                return Err(io::Error::other(format!(
+                    "fixture {label} bounds are {observed:?}, expected {initial_bounds:?}; cleanup={cleanup:?}"
+                )));
             }
         }
         if unsafe { IsWindowVisible(target) } == 0
             || unsafe { IsWindowVisible(backdrop) } == 0
             || unsafe { IsWindowVisible(occluder) } != 0
         {
-            let _ = process_group.terminate();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "fixture windows did not start in target/backdrop visible, occluder hidden state",
-            ));
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "fixture windows did not start in target/backdrop visible, occluder hidden state; cleanup={cleanup:?}"
+            )));
         }
         let (moved_bounds, resized_bounds) = recording_fixture_dynamic_bounds(initial_bounds)?;
         Ok(Self {
@@ -2594,13 +2841,15 @@ impl RecordingWindowFixture {
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                let _ = self.process_group.terminate();
-                let _ = self.child.wait();
+                let cleanup = terminate_process_group_bounded(
+                    &self.process_group,
+                    &mut self.child,
+                    Duration::from_millis(500),
+                );
                 self.stopped = true;
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "recording fixture required forced process cleanup",
-                ));
+                return Err(io::Error::other(format!(
+                    "recording fixture required forced process cleanup ({cleanup:?})"
+                )));
             }
             thread::sleep(Duration::from_millis(25));
         }
@@ -2611,8 +2860,11 @@ impl RecordingWindowFixture {
 impl Drop for RecordingWindowFixture {
     fn drop(&mut self) {
         if !self.stopped {
-            let _ = self.process_group.terminate();
-            let _ = self.child.wait();
+            let _ = terminate_process_group_bounded(
+                &self.process_group,
+                &mut self.child,
+                Duration::from_millis(500),
+            );
             self.stopped = true;
         }
     }
@@ -2643,23 +2895,28 @@ impl ScrollWindowFixture {
             .stderr(process::Stdio::inherit())
             .spawn()?;
         if let Err(error) = process_group.assign(&child) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "scroll fixture could not join its Job Object ({error}); cleanup={cleanup:?}"
+            )));
         }
         let process_id = child.id();
         let target = wait_for_scroll_fixture_window(&mut child, process_id, &title, timeout)?;
         let observed = external_window_bounds(target, process_id)?;
         if observed != target_bounds || unsafe { IsWindowVisible(target) } == 0 {
-            let _ = process_group.terminate();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "scroll fixture target is bounds={observed:?}, visible={}, expected {target_bounds:?}",
-                    unsafe { IsWindowVisible(target) } != 0
-                ),
-            ));
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "scroll fixture target is bounds={observed:?}, visible={}, expected {target_bounds:?}; cleanup={cleanup:?}",
+                unsafe { IsWindowVisible(target) } != 0
+            )));
         }
         Ok(Self {
             child,
@@ -2708,13 +2965,15 @@ impl ScrollWindowFixture {
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                let _ = self.process_group.terminate();
-                let _ = self.child.wait();
+                let cleanup = terminate_process_group_bounded(
+                    &self.process_group,
+                    &mut self.child,
+                    Duration::from_millis(500),
+                );
                 self.stopped = true;
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "scroll fixture required forced process cleanup",
-                ));
+                return Err(io::Error::other(format!(
+                    "scroll fixture required forced process cleanup ({cleanup:?})"
+                )));
             }
             thread::sleep(Duration::from_millis(25));
         }
@@ -2725,9 +2984,234 @@ impl ScrollWindowFixture {
 impl Drop for ScrollWindowFixture {
     fn drop(&mut self) {
         if !self.stopped {
-            let _ = self.process_group.terminate();
-            let _ = self.child.wait();
+            let _ = terminate_process_group_bounded(
+                &self.process_group,
+                &mut self.child,
+                Duration::from_millis(500),
+            );
             self.stopped = true;
+        }
+    }
+}
+
+#[cfg(windows)]
+/// Terminates an acceptance child within a fixed budget and reaps it before returning.
+fn terminate_process_group_bounded(
+    process_group: &ProcessGroup,
+    child: &mut process::Child,
+    timeout: Duration,
+) -> io::Result<()> {
+    let terminate_error = process_group.terminate().err();
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait()? {
+            Some(_) => return Ok(()),
+            None if Instant::now() >= deadline => break,
+            None => thread::sleep(Duration::from_millis(10)),
+        }
+    }
+    let kill_error = child.kill().err();
+    let reap_deadline = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < reap_deadline {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "acceptance child could not be reaped (terminate={terminate_error:?}, kill={kill_error:?})"
+        ),
+    ))
+}
+
+#[cfg(windows)]
+impl ClipboardConsumer {
+    /// Starts a no-window child in a Job Object and proves it reached the wait loop before input.
+    fn launch(session_root: &Path, timeout: Duration) -> io::Result<Self> {
+        let consumer_root = session_root.join("clipboard-consumer");
+        fs::create_dir_all(&consumer_root)?;
+        let ready_path = consumer_root.join("ready");
+        let observing_path = consumer_root.join("observing");
+        let result_path = consumer_root.join("result.json");
+        let start_path = consumer_root.join("start");
+        let artifact_dir = consumer_root.join("artifacts");
+        for path in [&ready_path, &observing_path, &start_path, &result_path] {
+            if path.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("clipboard consumer path already exists: {}", path.display()),
+                ));
+            }
+        }
+        let process_group = ProcessGroup::create()?;
+        let mut child = process::Command::new(std::env::current_exe()?)
+            .arg(CLIPBOARD_CONSUMER_CHILD_MODE)
+            .arg(timeout.as_millis().to_string())
+            .arg(&ready_path)
+            .arg(&observing_path)
+            .arg(&start_path)
+            .arg(&result_path)
+            .arg(&artifact_dir)
+            .stdin(process::Stdio::null())
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::inherit())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()?;
+        if let Err(error) = process_group.assign(&child) {
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "clipboard consumer could not join its Job Object ({error}); cleanup={cleanup:?}"
+            )));
+        }
+        let process_id = child.id();
+        let deadline = Instant::now() + timeout;
+        loop {
+            if ready_path.is_file() {
+                break;
+            }
+            if let Some(status) = child.try_wait()? {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("clipboard consumer exited before ready: {status}"),
+                ));
+            }
+            if Instant::now() >= deadline {
+                let cleanup = terminate_process_group_bounded(
+                    &process_group,
+                    &mut child,
+                    Duration::from_millis(500),
+                );
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("clipboard consumer did not become ready (cleanup={cleanup:?})"),
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Ok(Self {
+            child,
+            process_group,
+            process_id,
+            ready_path,
+            observing_path,
+            start_path,
+            result_path,
+            stopped: false,
+        })
+    }
+
+    /// Captures the post-ready baseline and arms the child with an atomic marker.
+    fn arm(&self) -> io::Result<u32> {
+        // SAFETY: this call only reads the process-global clipboard change counter.
+        let sequence = unsafe { GetClipboardSequenceNumber() };
+        write_clipboard_start_marker(&self.start_path, sequence)?;
+        // Reject a mutation that happened while the marker was being published; callers then
+        // retry the whole consumer setup instead of attributing an unrelated change to Copy.
+        // SAFETY: this call only reads the process-global clipboard change counter.
+        let confirmed = unsafe { GetClipboardSequenceNumber() };
+        if confirmed != sequence {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "system clipboard changed while arming consumer ({sequence} -> {confirmed})"
+                ),
+            ));
+        }
+        Ok(sequence)
+    }
+
+    /// Terminates and polls the child without an unbounded `wait`, preserving the runner watchdog.
+    fn terminate_bounded(&mut self, timeout: Duration) -> io::Result<()> {
+        let terminate_error = self.process_group.terminate().err();
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.child.try_wait()? {
+                Some(_) => {
+                    self.stopped = true;
+                    return Ok(());
+                }
+                None if Instant::now() >= deadline => break,
+                None => thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        let kill_error = self.child.kill().err();
+        let reap_deadline = Instant::now() + Duration::from_millis(250);
+        while Instant::now() < reap_deadline {
+            if self.child.try_wait()?.is_some() {
+                self.stopped = true;
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "clipboard consumer could not be reaped (terminate={terminate_error:?}, kill={kill_error:?})"
+            ),
+        ))
+    }
+
+    /// Waits for the isolated result, reaps the child, and rejects partial or duplicate output.
+    fn wait_result(&mut self, timeout: Duration) -> io::Result<ClipboardConsumerResult> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.result_path.is_file() {
+                let result = serde_json::from_slice(&fs::read(&self.result_path)?)
+                    .map_err(io::Error::other)?;
+                // The result is written before process exit. Reap with the same deadline so a
+                // child that hangs after publishing cannot suspend the entire acceptance run.
+                loop {
+                    if let Some(status) = self.child.try_wait()? {
+                        self.stopped = true;
+                        if !status.success() {
+                            return Err(io::Error::other(format!(
+                                "clipboard consumer exited with {status}"
+                            )));
+                        }
+                        return Ok(result);
+                    }
+                    if Instant::now() >= deadline {
+                        let cleanup = self.terminate_bounded(Duration::from_millis(500));
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            format!(
+                                "clipboard consumer did not exit after publishing a result (cleanup={cleanup:?})"
+                            ),
+                        ));
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+            if let Some(status) = self.child.try_wait()? {
+                self.stopped = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("clipboard consumer exited without a result: {status}"),
+                ));
+            }
+            if Instant::now() >= deadline {
+                let cleanup = self.terminate_bounded(Duration::from_millis(500));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("clipboard consumer did not publish a result (cleanup={cleanup:?})"),
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ClipboardConsumer {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = self.terminate_bounded(Duration::from_millis(500));
         }
     }
 }
@@ -2988,6 +3472,13 @@ fn execute_narrow_edge_interactions(
         context.display.physical_bounds,
         context.timeout,
     )?;
+    // Settings is hidden by an asynchronous production callback. Do not drag until it is gone,
+    // otherwise the source frame can contain the controller or a stale native dialog.
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "capture overlay hides Settings",
+    )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
     let plan = narrow_edge_interaction_plan_for_window(overlay.handle)?;
@@ -3186,6 +3677,7 @@ fn execute_narrow_edge_interactions(
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
             pinned_count: final_state.pinned_count,
+            capture_teardown_pending: final_state.capture_teardown_pending,
             visible_process_windows,
             capture_preflight_ready: final_state.capture_preflight_ready,
         },
@@ -3371,6 +3863,13 @@ fn execute_pins_coexist_interactions(
         context.display.physical_bounds,
         context.timeout,
     )?;
+    // Settings is hidden by an asynchronous production callback. Do not drag until it is gone,
+    // otherwise the source frame can contain the controller or a stale native dialog.
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "capture overlay hides Settings",
+    )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
     let plan = interaction_plan_for_window(overlay.handle)?;
@@ -3503,6 +4002,7 @@ fn execute_pins_coexist_interactions(
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
             pinned_count: final_state.pinned_count,
+            capture_teardown_pending: final_state.capture_teardown_pending,
             visible_process_windows,
             capture_preflight_ready: final_state.capture_preflight_ready,
         },
@@ -3556,6 +4056,11 @@ fn execute_selection_transform_interactions(
         controller.handle,
         context.display.physical_bounds,
         context.timeout,
+    )?;
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "capture overlay hides Settings",
     )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
@@ -3810,6 +4315,7 @@ fn execute_selection_transform_interactions(
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
             pinned_count: final_state.pinned_count,
+            capture_teardown_pending: final_state.capture_teardown_pending,
             visible_process_windows,
             capture_preflight_ready: final_state.capture_preflight_ready,
         },
@@ -4149,6 +4655,7 @@ fn execute_scroll_roundtrip_interactions(
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
             pinned_count: final_state.pinned_count,
+            capture_teardown_pending: final_state.capture_teardown_pending,
             visible_process_windows,
             capture_preflight_ready: final_state.capture_preflight_ready,
         },
@@ -4204,9 +4711,45 @@ fn execute_scroll_copy_export(
             "scroll Copy must use the production system clipboard, not the injected sink",
         ));
     }
+    let mut consumer = ClipboardConsumer::launch(&context.session_root, context.timeout)?;
+    let consumer_ready_before_click = consumer.ready_path.is_file();
+    let clipboard_sequence_before = consumer.arm()?;
+    let consumer_observing_before_click = wait_for_path(
+        &consumer.observing_path,
+        context.timeout,
+        "scroll clipboard consumer observing marker",
+    )?;
+    // Keep the report boundary immediately adjacent to the injected gesture. A change after
+    // arming means another process won the disposable clipboard and this run must be rejected.
     // SAFETY: this call only reads the monotonic user32 clipboard change counter.
-    let clipboard_sequence_before = unsafe { GetClipboardSequenceNumber() };
-    let foreground = inject_mouse_click(overlay.handle, plan.copy)?;
+    let before_input_sequence = unsafe { GetClipboardSequenceNumber() };
+    if before_input_sequence != clipboard_sequence_before {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "system clipboard changed before scroll Copy input ({clipboard_sequence_before} -> {before_input_sequence})"
+            ),
+        ));
+    }
+    let (foreground, copy_started_qpc) =
+        inject_copy_trigger(overlay.handle, plan.copy, context.copy_trigger)?;
+    let consumer_result = consumer.wait_result(context.timeout)?;
+    if consumer_result.previous_sequence != clipboard_sequence_before {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "scroll clipboard consumer observed a mismatched launch sequence",
+        ));
+    }
+    for path in [
+        Path::new(&consumer_result.png_path),
+        Path::new(&consumer_result.dib_path),
+        Path::new(&consumer_result.consumer_image_path),
+    ] {
+        ensure_path_within(path, &context.session_root)?;
+    }
+    let copied = CaptureFrame::open_png(&consumer_result.consumer_image_path)?;
+    let clipboard_png = fs::read(&consumer_result.png_path)?;
+    let clipboard_dib = fs::read(&consumer_result.dib_path)?;
     wait_for_window_gone(overlay.handle, context.timeout, "scroll Copy")?;
     let state = wait_for_capture_state(context, "scroll Copy completion", |state| {
         state.session_state == "completed"
@@ -4215,30 +4758,38 @@ fn execute_scroll_copy_export(
             && state.capture_preflight_ready
             && state.status == "Selection copied to clipboard"
     })?;
-    let (clipboard_sequence_after, copied, clipboard_png, clipboard_dib) =
-        wait_for_system_clipboard_image_change(clipboard_sequence_before, context.timeout)?;
-    validate_frame_dimensions(&copied, selection, "system clipboard image")?;
-    let consumer_image_content =
-        validate_same_pixel_content(source, &copied, "system clipboard image")?;
-    let export_directory = context.session_root.join("exports");
-    fs::create_dir_all(&export_directory)?;
-    let png_path = export_directory.join("scroll-clipboard.png");
-    if png_path.exists() {
+    // SAFETY: this call only reads the monotonic user32 clipboard change counter.
+    let clipboard_sequence_after = unsafe { GetClipboardSequenceNumber() };
+    if clipboard_sequence_after != consumer_result.observed_sequence {
         return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
+            io::ErrorKind::InvalidData,
             format!(
-                "isolated clipboard PNG target already exists: {}",
-                png_path.display()
+                "system clipboard changed after consumer read ({:?} -> {clipboard_sequence_after})",
+                consumer_result.observed_sequence
             ),
         ));
     }
-    fs::write(&png_path, &clipboard_png)?;
+    validate_frame_dimensions(&copied, selection, "system clipboard image")?;
+    let consumer_image_content =
+        validate_same_pixel_content(source, &copied, "system clipboard image")?;
+    let png_path = PathBuf::from(&consumer_result.png_path);
     let decoded_png = CaptureFrame::open_png(&png_path)?;
     validate_frame_dimensions(&decoded_png, selection, "clipboard PNG format")?;
     let png_content = validate_same_pixel_content(source, &decoded_png, "clipboard PNG format")?;
     let decoded_dib = decode_clipboard_dib(&clipboard_dib)?;
     validate_frame_dimensions(&decoded_dib, selection, "clipboard CF_DIB format")?;
     let dib_content = validate_same_pixel_content(source, &decoded_dib, "clipboard CF_DIB format")?;
+    let input_to_consumer_readable_ms =
+        qpc_elapsed_ms(copy_started_qpc, consumer_result.consumer_read_qpc_ticks)?;
+    if clipboard_sequence_after == clipboard_sequence_before
+        || !consumer_ready_before_click
+        || !consumer_observing_before_click
+        || !consumer.stopped
+    {
+        return Err(io::Error::other(
+            "scroll clipboard consumer was not ready, did not observe a sequence change, or was not reaped",
+        ));
+    }
     ensure_path_within(&png_path, &context.session_root)?;
     record_step(
         report,
@@ -4266,7 +4817,16 @@ fn execute_scroll_copy_export(
         dib_bytes: clipboard_dib.len(),
         png_content,
         dib_content,
-        consumer_image_content,
+        consumer_image_content: Box::new(consumer_image_content),
+        timing_clock: "windows_qpc",
+        timing_boundary: "button_down_batch_to_consumer_decoded_image",
+        input_to_consumer_readable_ms,
+        consumer_result_path: consumer
+            .result_path
+            .strip_prefix(&context.session_root)
+            .unwrap_or(&consumer.result_path)
+            .to_string_lossy()
+            .into_owned(),
     })
 }
 
@@ -4309,6 +4869,34 @@ fn wait_for_system_clipboard_image_change(
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+#[cfg(windows)]
+/// Reads the Windows monotonic performance counter used for cross-process latency evidence.
+fn qpc_ticks() -> io::Result<u64> {
+    let mut ticks = 0_i64;
+    // SAFETY: both pointers refer to writable local storage owned for this call.
+    if unsafe { QueryPerformanceCounter(&mut ticks) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    u64::try_from(ticks).map_err(|_| io::Error::other("QPC returned a negative tick count"))
+}
+
+#[cfg(windows)]
+/// Converts a non-negative QPC delta to milliseconds using the machine's stable frequency.
+fn qpc_elapsed_ms(start_ticks: u64, end_ticks: u64) -> io::Result<f64> {
+    if end_ticks < start_ticks {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("QPC moved backwards from {start_ticks} to {end_ticks}"),
+        ));
+    }
+    let mut frequency = 0_i64;
+    // SAFETY: `frequency` is writable local storage and the API writes one integer value.
+    if unsafe { QueryPerformanceFrequency(&mut frequency) } == 0 || frequency <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((end_ticks - start_ticks) as f64 * 1000.0 / frequency as f64)
 }
 
 #[cfg(windows)]
@@ -4509,6 +5097,7 @@ fn execute_scroll_save_export(
         ));
     }
 
+    let dialogs_before_save = visible_common_dialogs()?;
     let foreground = inject_mouse_click(overlay.handle, plan.save)?;
     record_step(
         report,
@@ -4517,7 +5106,12 @@ fn execute_scroll_save_export(
         foreground,
         None,
     )?;
-    let dialog = wait_for_save_dialog(overlay.handle, controller.handle, context.timeout)?;
+    let dialog = wait_for_save_dialog(
+        overlay.handle,
+        controller.handle,
+        &dialogs_before_save,
+        context.timeout,
+    )?;
     thread::sleep(context.settle_delay);
     let dialog_evidence = capture_evidence(context, "05-scroll-save-dialog.png", dialog)?;
     record_step(
@@ -4528,17 +5122,7 @@ fn execute_scroll_save_export(
         Some(&dialog_evidence),
     )?;
 
-    let edit = save_file_name_edit(dialog.handle, "flash-shot.png")?;
-    let edit_center = PhysicalPoint {
-        x: edit.bounds.left + edit.bounds.width() as i32 / 2,
-        y: edit.bounds.top + edit.bounds.height() as i32 / 2,
-    };
-    inject_mouse_click(dialog.handle, edit_center)?;
-    wait_for_window_focus(dialog.handle, edit.handle, context.timeout)?;
-    inject_select_all(dialog.handle)?;
-    let target_text = target.to_string_lossy().into_owned();
-    inject_unicode_text(dialog.handle, &target_text)?;
-    wait_for_window_text(edit.handle, &target_text, context.timeout)?;
+    set_save_dialog_path(&dialog, &target, context.timeout)?;
     let path_evidence = capture_evidence(context, "06-scroll-save-path.png", dialog)?;
     record_step(
         report,
@@ -4549,6 +5133,7 @@ fn execute_scroll_save_export(
     )?;
     inject_key(dialog.handle, VK_RETURN)?;
     wait_for_window_gone(dialog.handle, context.timeout, "scroll Save confirmation")?;
+    wait_for_no_visible_save_dialogs(context.timeout, "scroll Save confirmation")?;
     wait_for_window_gone(overlay.handle, context.timeout, "scroll Save completion")?;
     wait_for_capture_state(context, "scroll Save completion", |state| {
         state.session_state == "completed"
@@ -4688,6 +5273,9 @@ fn execute_capture_interactions(
         None,
     )?;
     wait_for_window_gone(first_overlay.handle, context.timeout, "Capture restart")?;
+    wait_for_capture_state(context, "Capture restart teardown", |state| {
+        !state.capture_teardown_pending && state.capture_preflight_ready
+    })?;
     let second_overlay = wait_for_overlay(
         controller.handle,
         context.display.physical_bounds,
@@ -4768,6 +5356,7 @@ fn execute_capture_interactions(
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
             pinned_count: final_state.pinned_count,
+            capture_teardown_pending: final_state.capture_teardown_pending,
             visible_process_windows,
             capture_preflight_ready: final_state.capture_preflight_ready,
         },
@@ -4803,17 +5392,29 @@ fn begin_selected_overlay_with_plan(
     PhysicalRect,
     CaptureFrame,
 )> {
+    // A previous native Save dialog can leave a compositor frame behind for a short interval.
+    // Sample the whole desktop until it is quiet before asking production to start a new capture;
+    // otherwise the stale dialog becomes part of the next screenshot's source pixels.
+    wait_for_desktop_quiescence(context, "fresh capture setup", None)?;
     context
         .interaction_commands
         .send_blocking(OverlayInteractionAcceptanceCommand::ShowCaptureSettings)
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "capture command channel closed"))?;
     let controller = wait_for_owned_window_visible(controller.handle, context.timeout)?;
+    wait_for_no_visible_save_dialogs(context.timeout, "fresh capture setup")?;
     focus_owned_window(controller, context.timeout)?;
     inject_capture_shortcut(controller.handle)?;
     let overlay = wait_for_overlay(
         controller.handle,
         context.display.physical_bounds,
         context.timeout,
+    )?;
+    // Settings is hidden by an asynchronous production callback. Do not drag until it is gone,
+    // otherwise the source frame can contain the controller or a stale native dialog.
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "capture overlay hides Settings",
     )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
@@ -4874,6 +5475,7 @@ fn execute_save_interaction(
         Some(&selected),
     )?;
 
+    let dialogs_before_cancel = visible_common_dialogs()?;
     let foreground = inject_ctrl_s(overlay.handle)?;
     record_step(
         report,
@@ -4882,8 +5484,12 @@ fn execute_save_interaction(
         foreground,
         None,
     )?;
-    let cancelled_dialog =
-        wait_for_save_dialog(overlay.handle, controller.handle, context.timeout)?;
+    let cancelled_dialog = wait_for_save_dialog(
+        overlay.handle,
+        controller.handle,
+        &dialogs_before_cancel,
+        context.timeout,
+    )?;
     // The shell dialog becomes visible before its first paint and focus transition complete.
     thread::sleep(context.settle_delay);
     save_file_name_edit(cancelled_dialog.handle, "flash-shot.png")?;
@@ -4902,6 +5508,7 @@ fn execute_save_interaction(
         context.timeout,
         "Save dialog cancellation",
     )?;
+    wait_for_no_visible_save_dialogs(context.timeout, "Save dialog cancellation")?;
     let cancelled = wait_for_capture_state(context, "cancelled Save dialog", |state| {
         state.session_state == "selecting"
             && state.selection == Some(selection)
@@ -4930,6 +5537,7 @@ fn execute_save_interaction(
         Some(&restored),
     )?;
 
+    let dialogs_before_retry = visible_common_dialogs()?;
     let foreground = inject_ctrl_s(overlay.handle)?;
     record_step(
         report,
@@ -4938,20 +5546,15 @@ fn execute_save_interaction(
         foreground,
         None,
     )?;
-    let dialog = wait_for_save_dialog(overlay.handle, controller.handle, context.timeout)?;
+    let dialog = wait_for_save_dialog(
+        overlay.handle,
+        controller.handle,
+        &dialogs_before_retry,
+        context.timeout,
+    )?;
     thread::sleep(context.settle_delay);
 
-    let edit = save_file_name_edit(dialog.handle, "flash-shot.png")?;
-    let edit_center = PhysicalPoint {
-        x: edit.bounds.left + edit.bounds.width() as i32 / 2,
-        y: edit.bounds.top + edit.bounds.height() as i32 / 2,
-    };
-    inject_mouse_click(dialog.handle, edit_center)?;
-    wait_for_window_focus(dialog.handle, edit.handle, context.timeout)?;
-    inject_select_all(dialog.handle)?;
-    let target_text = target.to_string_lossy().into_owned();
-    inject_unicode_text(dialog.handle, &target_text)?;
-    wait_for_window_text(edit.handle, &target_text, context.timeout)?;
+    set_save_dialog_path(&dialog, &target, context.timeout)?;
     let path_evidence = capture_evidence(context, "09-save-path.png", dialog)?;
     record_step(
         report,
@@ -4962,6 +5565,7 @@ fn execute_save_interaction(
     )?;
     inject_key(dialog.handle, VK_RETURN)?;
     wait_for_window_gone(dialog.handle, context.timeout, "Save confirmation")?;
+    wait_for_no_visible_save_dialogs(context.timeout, "Save confirmation")?;
     wait_for_window_gone(overlay.handle, context.timeout, "Save completion")?;
     let state = wait_for_capture_state(context, "selection Save completion", |state| {
         state.session_state == "completed"
@@ -4974,6 +5578,18 @@ fn execute_save_interaction(
             "completed Save no longer reports the exported selection",
         ));
     }
+    let clean = wait_for_desktop_quiescence(
+        context,
+        "Save completion before Pin",
+        Some("save-complete-clean.png"),
+    )?;
+    record_desktop_step(
+        report,
+        &context.report_path,
+        "save_complete_clean",
+        "save-complete-clean.png",
+        &clean,
+    )?;
     let (saved, bytes) = wait_for_saved_png(&target, context.timeout)?;
     validate_frame_dimensions(&saved, selection, "saved PNG")?;
     let content = validate_same_pixel_content(&source, &saved, "saved PNG")?;
@@ -5014,6 +5630,7 @@ fn execute_pin_interaction(
         Some(&selected),
     )?;
 
+    let visible_before_pin = process_windows()?;
     let foreground = inject_mouse_click(overlay.handle, plan.pin)?;
     record_step(report, &context.report_path, "pin_click", foreground, None)?;
     wait_for_window_gone(overlay.handle, context.timeout, "Pin")?;
@@ -5033,7 +5650,13 @@ fn execute_pin_interaction(
         .last()
         .ok_or_else(|| io::Error::other("selected Pin did not expose its source pixels"))?;
     let content = validate_same_pixel_content(&source, &pinned, "pinned frame")?;
-    let pin = wait_for_single_visible_pin(controller.handle, context.timeout)?;
+    let pin = wait_for_new_pin_after_click(
+        controller.handle,
+        overlay.handle,
+        &visible_before_pin,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
     focus_owned_window(pin, context.timeout)?;
     thread::sleep(context.settle_delay);
     let pin_evidence = capture_evidence(context, "11-pin.png", pin)?;
@@ -5062,28 +5685,31 @@ fn execute_pin_interaction(
 }
 
 #[cfg(windows)]
-/// Routes a real Copy click into the injected sink and proves Windows clipboard state is unchanged.
+/// Routes one real Copy trigger to either the isolated sink or the explicitly authorized clipboard.
 fn execute_copy_interaction(
     context: &WorkerContext,
     report: &mut AcceptanceReport,
     controller: NativeWindow,
 ) -> io::Result<CopyReport> {
-    let copy_results = context.copy_results.as_ref().ok_or_else(|| {
-        io::Error::other("standard Copy acceptance requires the injected clipboard sink")
-    })?;
-    match copy_results.try_recv() {
-        Err(mpsc::TryRecvError::Empty) => {}
-        Err(mpsc::TryRecvError::Disconnected) => {
-            return Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "selection Copy result channel disconnected",
-            ));
+    if let Some(copy_results) = &context.copy_results {
+        match copy_results.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "selection Copy result channel disconnected",
+                ));
+            }
+            Ok(_) => {
+                return Err(io::Error::other(
+                    "selection Copy sink contained an unexpected earlier frame",
+                ));
+            }
         }
-        Ok(_) => {
-            return Err(io::Error::other(
-                "selection Copy sink contained an unexpected earlier frame",
-            ));
-        }
+    } else if !context.use_system_clipboard {
+        return Err(io::Error::other(
+            "standard Copy acceptance has neither an isolated sink nor clipboard authorization",
+        ));
     }
     let (overlay, plan, selection, requested_selection, source) =
         begin_selected_overlay(context, controller)?;
@@ -5097,21 +5723,136 @@ fn execute_copy_interaction(
         Some(&selected),
     )?;
 
+    let mut consumer = context
+        .use_system_clipboard
+        .then(|| ClipboardConsumer::launch(&context.session_root, context.timeout))
+        .transpose()?;
+    let consumer_ready_before_click = consumer
+        .as_ref()
+        .is_some_and(|consumer| consumer.ready_path.is_file());
+    let clipboard_sequence_before = if let Some(consumer) = consumer.as_ref() {
+        consumer.arm()?
+    } else {
+        // SAFETY: this call only reads the monotonic user32 clipboard change counter.
+        unsafe { GetClipboardSequenceNumber() }
+    };
+    let consumer_observing_before_click = if let Some(consumer) = consumer.as_ref() {
+        wait_for_path(
+            &consumer.observing_path,
+            context.timeout,
+            "clipboard consumer observing marker",
+        )?
+    } else {
+        false
+    };
+    // Check after the consumer has entered its wait path and immediately before SendInput. A
+    // change anywhere in the ready/start/observing handshake invalidates this isolated sample.
     // SAFETY: this call only reads the monotonic user32 clipboard change counter.
-    let clipboard_sequence_before = unsafe { GetClipboardSequenceNumber() };
-    let foreground = inject_mouse_click(overlay.handle, plan.copy)?;
-    let copied = copy_results
-        .recv_timeout(context.timeout)
-        .map_err(|error| match error {
-            RecvTimeoutError::Timeout => io::Error::new(
-                io::ErrorKind::TimedOut,
-                "selection Copy did not reach the injected sink",
+    let before_input_sequence = unsafe { GetClipboardSequenceNumber() };
+    if before_input_sequence != clipboard_sequence_before {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "system clipboard changed before Copy input ({clipboard_sequence_before} -> {before_input_sequence})"
             ),
-            RecvTimeoutError::Disconnected => io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "selection Copy result channel disconnected",
-            ),
-        })?;
+        ));
+    }
+    let (foreground, copy_started_qpc) =
+        inject_copy_trigger(overlay.handle, plan.copy, context.copy_trigger)?;
+    let (
+        copied,
+        clipboard_png,
+        clipboard_dib,
+        clipboard_sequence_after,
+        consumer_result_path,
+        consumer_read_qpc_ticks,
+        consumer_png_path,
+        consumer_dib_path,
+        consumer_image_path,
+    ) = if let Some(consumer) = consumer.as_mut() {
+        let result = consumer.wait_result(context.timeout)?;
+        let png_path = PathBuf::from(&result.png_path);
+        let dib_path = PathBuf::from(&result.dib_path);
+        let consumer_image_path = PathBuf::from(&result.consumer_image_path);
+        for path in [&png_path, &dib_path, &consumer_image_path] {
+            ensure_path_within(path, &context.session_root)?;
+        }
+        let copied = CaptureFrame::open_png(&consumer_image_path)?;
+        let png = fs::read(&png_path)?;
+        let dib = fs::read(&dib_path)?;
+        if result.previous_sequence != clipboard_sequence_before
+            || result.png_bytes != png.len()
+            || result.dib_bytes != dib.len()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "clipboard consumer result does not match its launch sequence or artifact sizes",
+            ));
+        }
+        ensure_path_within(&consumer.result_path, &context.session_root)?;
+        let result_path = consumer
+            .result_path
+            .strip_prefix(&context.session_root)
+            .unwrap_or(&consumer.result_path)
+            .to_string_lossy()
+            .into_owned();
+        (
+            copied,
+            Some(png),
+            Some(dib),
+            {
+                // SAFETY: this call only reads the monotonic user32 clipboard change counter.
+                let current = unsafe { GetClipboardSequenceNumber() };
+                if current != result.observed_sequence {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "system clipboard changed after consumer read ({} -> {current})",
+                            result.observed_sequence
+                        ),
+                    ));
+                }
+                current
+            },
+            Some(result_path),
+            Some(result.consumer_read_qpc_ticks),
+            Some(png_path),
+            Some(dib_path),
+            Some(consumer_image_path),
+        )
+    } else {
+        let copy_results = context
+            .copy_results
+            .as_ref()
+            .expect("isolated Copy sink was checked above");
+        let copied = copy_results
+            .recv_timeout(context.timeout)
+            .map_err(|error| match error {
+                RecvTimeoutError::Timeout => io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "selection Copy did not reach the injected sink",
+                ),
+                RecvTimeoutError::Disconnected => io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "selection Copy result channel disconnected",
+                ),
+            })?;
+        // SAFETY: this call only reads the monotonic user32 clipboard change counter.
+        let sequence = unsafe { GetClipboardSequenceNumber() };
+        (copied, None, None, sequence, None, None, None, None, None)
+    };
+    let input_to_consumer_readable_ms = consumer_read_qpc_ticks
+        .map(|read_ticks| qpc_elapsed_ms(copy_started_qpc, read_ticks))
+        .transpose()?;
+    if context.use_system_clipboard
+        && (input_to_consumer_readable_ms.is_none()
+            || !consumer_ready_before_click
+            || !consumer.as_ref().is_some_and(|consumer| consumer.stopped))
+    {
+        return Err(io::Error::other(
+            "clipboard consumer was not ready before input or was not reaped after reading",
+        ));
+    }
     wait_for_window_gone(overlay.handle, context.timeout, "Copy")?;
     let state = wait_for_capture_state(context, "selection Copy completion", |state| {
         state.session_state == "completed"
@@ -5124,28 +5865,107 @@ fn execute_copy_interaction(
             "completed Copy no longer reports the exported selection",
         ));
     }
-    if copy_results.try_recv().is_ok() {
+    if context.use_system_clipboard {
+        // Re-read after the production state transition, not only after the child snapshot, so
+        // a duplicate or late clipboard write cannot be hidden by an earlier observed counter.
+        let final_sequence = unsafe { GetClipboardSequenceNumber() };
+        if final_sequence != clipboard_sequence_after {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "system clipboard changed during Copy cleanup ({} -> {final_sequence})",
+                    clipboard_sequence_after
+                ),
+            ));
+        }
+    }
+    if context
+        .copy_results
+        .as_ref()
+        .is_some_and(|copy_results| copy_results.try_recv().is_ok())
+    {
         return Err(io::Error::other(
             "one Copy click produced more than one selection frame",
         ));
     }
     validate_frame_dimensions(&copied, selection, "copied frame")?;
-    if copied.bounds != selection {
+    if !context.use_system_clipboard && copied.bounds != selection {
         return Err(io::Error::other(format!(
             "copied frame bounds {:?} do not match selection {:?}",
             copied.bounds, selection
         )));
     }
-    let content = validate_same_pixel_content(&source, &copied, "copied frame")?;
-    // SAFETY: this call only reads the monotonic user32 clipboard change counter.
-    let clipboard_sequence_after = unsafe { GetClipboardSequenceNumber() };
-    if clipboard_sequence_after != clipboard_sequence_before {
+    let consumer_image_content = validate_same_pixel_content(&source, &copied, "copied frame")?;
+    if context.use_system_clipboard && clipboard_sequence_after == clipboard_sequence_before {
+        return Err(io::Error::other(
+            "system clipboard sequence did not change after the production Copy click",
+        ));
+    }
+    if !context.use_system_clipboard && clipboard_sequence_after != clipboard_sequence_before {
         return Err(io::Error::other(format!(
             "system clipboard sequence changed from {clipboard_sequence_before} to {clipboard_sequence_after}"
         )));
     }
-    record_step(report, &context.report_path, "copy_click", foreground, None)?;
+    let (png_path, dib_path, consumer_image_path, png_bytes, dib_bytes, png_content, dib_content) =
+        if let (Some(png), Some(dib)) = (clipboard_png, clipboard_dib) {
+            let png_artifact = consumer_png_path.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "clipboard PNG path is missing")
+            })?;
+            let dib_artifact = consumer_dib_path.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "clipboard DIB path is missing")
+            })?;
+            let image_artifact = consumer_image_path.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "consumer image path is missing")
+            })?;
+            let decoded_png = CaptureFrame::open_png(&png_artifact)?;
+            validate_frame_dimensions(&decoded_png, selection, "clipboard PNG format")?;
+            let png_content =
+                validate_same_pixel_content(&source, &decoded_png, "clipboard PNG format")?;
+            let decoded_dib = decode_clipboard_dib(&dib)?;
+            validate_frame_dimensions(&decoded_dib, selection, "clipboard CF_DIB format")?;
+            let dib_content =
+                validate_same_pixel_content(&source, &decoded_dib, "clipboard CF_DIB format")?;
+            let relative = |path: &Path| {
+                path.strip_prefix(&context.session_root)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            (
+                Some(relative(&png_artifact)),
+                Some(relative(&dib_artifact)),
+                Some(relative(&image_artifact)),
+                Some(png.len()),
+                Some(dib.len()),
+                Some(png_content),
+                Some(dib_content),
+            )
+        } else {
+            (None, None, None, None, None, None, None)
+        };
+    record_step(
+        report,
+        &context.report_path,
+        match (context.use_system_clipboard, context.copy_trigger) {
+            (true, CopyTriggerOption::Toolbar) => "copy_system_clipboard_toolbar",
+            (true, CopyTriggerOption::Enter) => "copy_system_clipboard_enter",
+            (false, CopyTriggerOption::Toolbar) => "copy_click",
+            (false, CopyTriggerOption::Enter) => "copy_enter",
+        },
+        foreground,
+        None,
+    )?;
     Ok(CopyReport {
+        trigger: context.copy_trigger.label(),
+        action: match context.copy_trigger {
+            CopyTriggerOption::Toolbar => "toolbar_click",
+            CopyTriggerOption::Enter => "enter_key",
+        },
+        read_mechanism: if context.use_system_clipboard {
+            "independent_process_png_cf_dib_and_arboard"
+        } else {
+            "process_local_capture_frame_channel"
+        },
         requested_selection,
         selection,
         copied_bounds: copied.bounds,
@@ -5153,8 +5973,35 @@ fn execute_copy_interaction(
         height: copied.height,
         clipboard_sequence_before,
         clipboard_sequence_after,
-        clipboard_unchanged: true,
-        content,
+        clipboard_sequence_changed: clipboard_sequence_after != clipboard_sequence_before,
+        timing_clock: "windows_qpc",
+        timing_boundary: "button_down_batch_to_consumer_decoded_image",
+        input_to_consumer_readable_ms,
+        sink: if context.use_system_clipboard {
+            "system_clipboard"
+        } else {
+            "isolated_observer"
+        },
+        png_format_available: context.use_system_clipboard,
+        dib_format_available: context.use_system_clipboard,
+        png_path,
+        dib_path,
+        consumer_image_path,
+        png_bytes,
+        dib_bytes,
+        png_content,
+        dib_content,
+        consumer_image_content,
+        consumer_process_id: consumer.as_ref().map(|consumer| consumer.process_id),
+        consumer_result_path,
+        consumer_ready_before_click,
+        consumer_observing_before_click,
+        consumer_cleaned_up: consumer.as_ref().is_none_or(|consumer| consumer.stopped),
+        single_export_verified: state.overlay_count == 0
+            && state.session_state == "completed"
+            && context.copy_results.as_ref().is_none_or(|copy_results| {
+                matches!(copy_results.try_recv(), Err(mpsc::TryRecvError::Empty))
+            }),
     })
 }
 
@@ -6694,6 +7541,110 @@ fn record_step(
     write_report(report_path, report)
 }
 
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug)]
+struct DesktopEvidence {
+    fingerprint: u64,
+    bounds: PhysicalRect,
+}
+
+#[cfg(windows)]
+/// Captures a full-display sample and rechecks the foreground after capture to reject races.
+fn capture_desktop_sample(context: &WorkerContext) -> io::Result<DesktopEvidence> {
+    let bounds = context.display.physical_bounds;
+    let before = unsafe { GetForegroundWindow() };
+    let frame = SystemCaptureBackend.capture(bounds)?;
+    let after = unsafe { GetForegroundWindow() };
+    if before != after {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("foreground changed while sampling desktop ({before:?} -> {after:?})"),
+        ));
+    }
+    Ok(DesktopEvidence {
+        fingerprint: pixel_fingerprint(&frame.pixels),
+        bounds,
+    })
+}
+
+#[cfg(windows)]
+/// Waits for two consecutive equal desktop samples after Save/Pin teardown settles.
+fn wait_for_desktop_quiescence(
+    context: &WorkerContext,
+    stage: &str,
+    screenshot_name: Option<&str>,
+) -> io::Result<DesktopEvidence> {
+    let deadline = Instant::now() + context.timeout;
+    let mut previous = None;
+    let mut stable_samples = 0_u8;
+    let mut quiet_since = None;
+    loop {
+        let state = query_capture_state(
+            context,
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(1)),
+        )?;
+        let dialogs = visible_common_dialogs()?;
+        if state.capture_teardown_pending
+            || state.overlay_count != 0
+            || state.pinned_count != 0
+            || !dialogs.is_empty()
+        {
+            stable_samples = 0;
+            previous = None;
+            quiet_since = None;
+        } else {
+            let quiet_start = *quiet_since.get_or_insert_with(Instant::now);
+            if quiet_start.elapsed() >= context.settle_delay.max(DESKTOP_QUIESCENCE_SETTLE) {
+                let sample = capture_desktop_sample(context)?;
+                let stable = previous.is_some_and(|old: DesktopEvidence| {
+                    old.bounds == sample.bounds && old.fingerprint == sample.fingerprint
+                });
+                stable_samples = if stable {
+                    stable_samples.saturating_add(1)
+                } else {
+                    0
+                };
+                previous = Some(sample);
+                if stable_samples >= 2 {
+                    if let Some(file_name) = screenshot_name {
+                        let frame =
+                            SystemCaptureBackend.capture(context.display.physical_bounds)?;
+                        let path = context.session_root.join("screenshots").join(file_name);
+                        frame.save_png(&path)?;
+                    }
+                    return Ok(sample);
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("timed out waiting for {stage} desktop quiescence"),
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(windows)]
+fn record_desktop_step(
+    report: &mut AcceptanceReport,
+    report_path: &Path,
+    action: &'static str,
+    file_name: &str,
+    evidence: &DesktopEvidence,
+) -> io::Result<()> {
+    report.steps.push(StepReport {
+        action,
+        foreground_window: unsafe { GetForegroundWindow() } as usize,
+        screenshot: Some(format!("screenshots/{file_name}")),
+        pixel_fingerprint: Some(format!("{:016x}", evidence.fingerprint)),
+    });
+    write_report(report_path, report)
+}
+
 fn write_report(path: &Path, report: &AcceptanceReport) -> io::Result<()> {
     let encoded = serde_json::to_vec_pretty(report).map_err(io::Error::other)?;
     fs::write(path, encoded)
@@ -7226,6 +8177,7 @@ fn window_drag_matches(
 fn wait_for_save_dialog(
     overlay: *mut c_void,
     controller: *mut c_void,
+    known_dialogs: &[*mut c_void],
     timeout: Duration,
 ) -> io::Result<NativeWindow> {
     let deadline = Instant::now() + timeout;
@@ -7233,6 +8185,7 @@ fn wait_for_save_dialog(
         let candidates = process_windows()?
             .into_iter()
             .filter(|window| window.handle != overlay && window.handle != controller)
+            .filter(|window| !known_dialogs.contains(&window.handle))
             .filter(|window| window_class_name(window.handle).is_ok_and(|class| class == "#32770"))
             .filter(|window| owner_chain_contains(window.handle, overlay))
             .collect::<Vec<_>>();
@@ -7254,6 +8207,39 @@ fn wait_for_save_dialog(
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+#[cfg(windows)]
+/// Waits until every visible process-owned common dialog is gone before the next UI evidence step.
+fn wait_for_no_visible_save_dialogs(timeout: Duration, action: &str) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let dialogs = visible_common_dialogs()?;
+        if dialogs.is_empty() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            let handles = dialogs
+                .iter()
+                .map(|window| format!("{window:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("visible Save dialog(s) remained after {action}: {handles}"),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+fn visible_common_dialogs() -> io::Result<Vec<*mut c_void>> {
+    Ok(process_windows()?
+        .into_iter()
+        .filter(|window| window_class_name(window.handle).is_ok_and(|class| class == "#32770"))
+        .map(|window| window.handle)
+        .collect())
 }
 
 #[cfg(windows)]
@@ -7289,6 +8275,22 @@ fn save_file_name_edit(dialog: *mut c_void, suggested_name: &str) -> io::Result<
         )));
     }
     Ok(matches.remove(0))
+}
+
+#[cfg(windows)]
+/// Replaces the native Save dialog filename without borrowing the clipboard, then verifies it.
+fn set_save_dialog_path(dialog: &NativeWindow, target: &Path, timeout: Duration) -> io::Result<()> {
+    let edit = save_file_name_edit(dialog.handle, "flash-shot.png")?;
+    let edit_center = PhysicalPoint {
+        x: edit.bounds.left + edit.bounds.width() as i32 / 2,
+        y: edit.bounds.top + edit.bounds.height() as i32 / 2,
+    };
+    inject_mouse_click(dialog.handle, edit_center)?;
+    wait_for_window_focus(dialog.handle, edit.handle, timeout)?;
+    inject_select_all(dialog.handle)?;
+    let target_text = target.to_string_lossy().into_owned();
+    inject_unicode_text(dialog.handle, &target_text)?;
+    wait_for_window_text(edit.handle, &target_text, timeout)
 }
 
 #[cfg(windows)]
@@ -7386,16 +8388,27 @@ fn owner_chain_contains(mut window: *mut c_void, expected_owner: *mut c_void) ->
 }
 
 #[cfg(windows)]
-/// Waits until one Pin is the only visible process window besides the hidden controller.
-fn wait_for_single_visible_pin(
+/// Waits for a new foreground process window after Pin, excluding the pre-click overlay/dialogs.
+fn wait_for_new_pin_after_click(
     controller: *mut c_void,
+    closed_overlay: *mut c_void,
+    before: &[NativeWindow],
+    display: PhysicalRect,
     timeout: Duration,
 ) -> io::Result<NativeWindow> {
+    let mut known = before
+        .iter()
+        .map(|window| window.handle)
+        .collect::<Vec<_>>();
+    known.push(closed_overlay);
     let deadline = Instant::now() + timeout;
     loop {
         let candidates = process_windows()?
             .into_iter()
             .filter(|window| window.handle != controller)
+            .filter(|window| !known.contains(&window.handle))
+            .filter(|window| window_class_name(window.handle).is_ok_and(|class| class != "#32770"))
+            .filter(|window| rect_inside_display(window.bounds, display))
             .collect::<Vec<_>>();
         let last_count = candidates.len();
         if let Some(pin) = candidates.into_iter().next()
@@ -7414,6 +8427,16 @@ fn wait_for_single_visible_pin(
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+#[cfg(windows)]
+fn rect_inside_display(bounds: PhysicalRect, display: PhysicalRect) -> bool {
+    bounds.left >= display.left
+        && bounds.top >= display.top
+        && bounds.right <= display.right
+        && bounds.bottom <= display.bottom
+        && bounds.width() > 0
+        && bounds.height() > 0
 }
 
 #[cfg(windows)]
@@ -7702,6 +8725,24 @@ fn wait_for_input_keys_released(keys: &[(u16, &str)], timeout: Duration) -> io::
 }
 
 #[cfg(windows)]
+/// Waits for a child marker while keeping the acceptance deadline finite and observable.
+fn wait_for_path(path: &Path, timeout: Duration, label: &str) -> io::Result<bool> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if path.is_file() {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("{label} did not appear: {}", path.display()),
+            ));
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(windows)]
 /// Tries a verified window's non-client title bar and reports when borderless geometry has none.
 fn activate_owned_window_via_titlebar(window: NativeWindow) -> io::Result<bool> {
     if left_button_held() {
@@ -7951,6 +8992,9 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
 #[cfg(windows)]
 fn inject_capture_shortcut(expected: *mut c_void) -> io::Result<NativeWindow> {
     let foreground = guard_foreground(expected)?;
+    // Keep the global shortcut independent from a user's current modifier state, then verify
+    // every injected key is released so a partial SendInput batch cannot poison the next step.
+    ensure_input_keys_released(&[(VK_CONTROL, "Control"), (VK_MENU, "Alt"), (VK_F24, "F24")])?;
     let inputs = [
         keyboard_input(VK_CONTROL, false),
         keyboard_input(VK_MENU, false),
@@ -7959,7 +9003,19 @@ fn inject_capture_shortcut(expected: *mut c_void) -> io::Result<NativeWindow> {
         keyboard_input(VK_MENU, true),
         keyboard_input(VK_CONTROL, true),
     ];
-    send_input_batch(expected, &inputs)?;
+    send_input_batch_with_cleanup(
+        expected,
+        &inputs,
+        &[
+            keyboard_input(VK_F24, true),
+            keyboard_input(VK_MENU, true),
+            keyboard_input(VK_CONTROL, true),
+        ],
+    )?;
+    wait_for_input_keys_released(
+        &[(VK_CONTROL, "Control"), (VK_MENU, "Alt"), (VK_F24, "F24")],
+        Duration::from_millis(250),
+    )?;
     Ok(foreground)
 }
 
@@ -8083,6 +9139,70 @@ fn inject_mouse_click(expected: *mut c_void, point: PhysicalPoint) -> io::Result
         &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
     )?;
     Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Performs the same guarded toolbar click but records time immediately before button-down input.
+fn inject_copy_click(
+    expected: *mut c_void,
+    point: PhysicalPoint,
+) -> io::Result<(NativeWindow, u64)> {
+    let foreground = guard_foreground(expected)?;
+    let desktop = virtual_desktop()?;
+    send_input_batch(
+        expected,
+        &[absolute_mouse_input(point, MOUSEEVENTF_MOVE, desktop)],
+    )?;
+    guard_current_pointer_target(expected)?;
+    let input_started_at = qpc_ticks()?;
+    send_input_batch_with_cleanup(
+        expected,
+        &[
+            mouse_button_input(MOUSEEVENTF_LEFTDOWN),
+            mouse_button_input(MOUSEEVENTF_LEFTUP),
+        ],
+        &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
+    )?;
+    Ok((foreground, input_started_at))
+}
+
+#[cfg(windows)]
+/// Injects the selected Copy gesture and returns the guarded foreground plus its QPC start tick.
+/// Enter reuses the same foreground and partial-input cleanup checks as every other key action.
+fn inject_copy_trigger(
+    expected: *mut c_void,
+    toolbar_point: PhysicalPoint,
+    trigger: CopyTriggerOption,
+) -> io::Result<(NativeWindow, u64)> {
+    match trigger {
+        CopyTriggerOption::Toolbar => inject_copy_click(expected, toolbar_point),
+        CopyTriggerOption::Enter => {
+            let foreground = guard_foreground(expected)?;
+            ensure_input_keys_released(&[(VK_RETURN, "Enter")])?;
+            let input_started_at = qpc_ticks()?;
+            let inputs = [
+                keyboard_input(VK_RETURN, false),
+                keyboard_input(VK_RETURN, true),
+            ];
+            let cleanup = [keyboard_input(VK_RETURN, true)];
+            send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+            if let Err(error) =
+                wait_for_input_keys_released(&[(VK_RETURN, "Enter")], Duration::from_millis(250))
+            {
+                let cleanup_error = send_input_unchecked(&cleanup).err();
+                return Err(match cleanup_error {
+                    Some(cleanup_error) => io::Error::new(
+                        error.kind(),
+                        format!(
+                            "Enter remained held after Copy input ({error}); defensive release also failed: {cleanup_error}"
+                        ),
+                    ),
+                    None => error,
+                });
+            }
+            Ok((foreground, input_started_at))
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -8603,13 +9723,13 @@ impl Drop for CursorRestore {
 #[cfg(test)]
 mod tests {
     use super::{
-        CaptureScenarioOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption, ScrollExportOption,
-        SelectionTransformKind, ensure_input_authorized, expected_selection_transform,
-        first_stable_recording_match, interaction_command_channel, interaction_plan,
-        map_capture_point_to_screen, map_screen_point_to_capture, map_screen_selection_to_capture,
-        narrow_edge_interaction_plan, normalize_axis, pin_coexist_interaction_plan,
-        recording_control_plan, recording_failed, recording_saved, rect_contains_rect,
-        scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
+        CaptureScenarioOption, CopyTriggerOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
+        ScrollExportOption, SelectionTransformKind, ensure_input_authorized,
+        expected_selection_transform, first_stable_recording_match, interaction_command_channel,
+        interaction_plan, map_capture_point_to_screen, map_screen_point_to_capture,
+        map_screen_selection_to_capture, narrow_edge_interaction_plan, normalize_axis,
+        pin_coexist_interaction_plan, recording_control_plan, recording_failed, recording_saved,
+        rect_contains_rect, scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
         scroll_shot_point_for_logical_selection, selection_aspect_ratio_preserved,
         selection_center_preserved, selection_transform_gesture, translated_rect,
         validate_distinct_recording_phase_fingerprints, validate_paused_progress,
@@ -8822,6 +9942,74 @@ mod tests {
     }
 
     #[test]
+    fn parser_gates_standard_system_clipboard_and_copy_trigger() {
+        let options =
+            Options::parse_from(arguments(&["--allow-input", "--allow-system-clipboard"])).unwrap();
+
+        assert_eq!(options.capture_scenario, CaptureScenarioOption::Standard);
+        assert!(options.allow_system_clipboard);
+        assert_eq!(options.copy_trigger, CopyTriggerOption::Toolbar);
+
+        let enter = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--allow-system-clipboard",
+            "--copy-trigger",
+            "enter",
+        ]))
+        .unwrap();
+        assert_eq!(enter.copy_trigger, CopyTriggerOption::Enter);
+        assert_eq!(enter.copy_trigger.label(), "enter");
+
+        let toolbar =
+            Options::parse_from(arguments(&["--allow-input", "--copy-trigger", "toolbar"]))
+                .unwrap();
+        assert_eq!(toolbar.copy_trigger, CopyTriggerOption::Toolbar);
+
+        for forbidden in [
+            vec![
+                "--capture-scenario",
+                "narrow-edge",
+                "--allow-system-clipboard",
+            ],
+            vec![
+                "--capture-scenario",
+                "pins-coexist",
+                "--allow-system-clipboard",
+            ],
+            vec![
+                "--capture-scenario",
+                "selection-transform",
+                "--allow-system-clipboard",
+            ],
+            vec!["--record-target", "area", "--allow-system-clipboard"],
+            vec!["--record-target", "window", "--allow-system-clipboard"],
+        ] {
+            let mut args = vec!["--allow-input"];
+            args.extend(forbidden);
+            assert!(Options::parse_from(arguments(&args)).is_err());
+        }
+        assert!(Options::parse_from(arguments(&["--copy-trigger", "space"])).is_err());
+        assert!(
+            Options::parse_from(arguments(&[
+                "--copy-trigger",
+                "enter",
+                "--copy-trigger",
+                "toolbar"
+            ]))
+            .is_err()
+        );
+        assert!(
+            Options::parse_from(arguments(&[
+                "--capture-scenario",
+                "scroll-roundtrip",
+                "--copy-trigger",
+                "enter",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn parser_gates_scroll_exports_and_system_clipboard_mutation() {
         let copy = Options::parse_from(arguments(&[
             "--allow-input",
@@ -8854,7 +10042,7 @@ mod tests {
             ]))
             .is_err()
         );
-        assert!(Options::parse_from(arguments(&["--allow-system-clipboard"])).is_err());
+        assert!(Options::parse_from(arguments(&["--allow-system-clipboard"])).is_ok());
         assert!(Options::parse_from(arguments(&["--scroll-export", "cancel"])).is_err());
         assert!(
             Options::parse_from(arguments(&[
@@ -8901,6 +10089,7 @@ mod tests {
             annotation_controls_visible: false,
             pinned_count: 0,
             pinned_source_bounds: None,
+            capture_teardown_pending: false,
             capture_preflight_ready: true,
             status: "Selection copied to clipboard".to_owned(),
         };
@@ -8927,8 +10116,11 @@ mod tests {
         stale = clean.clone();
         stale.more_actions_visible = true;
         assert!(!scroll_roundtrip_cleanup_complete(&stale));
-        stale = clean;
+        stale = clean.clone();
         stale.annotation_controls_visible = true;
+        assert!(!scroll_roundtrip_cleanup_complete(&stale));
+        stale = clean;
+        stale.capture_teardown_pending = true;
         assert!(!scroll_roundtrip_cleanup_complete(&stale));
     }
 

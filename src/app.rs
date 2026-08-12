@@ -154,6 +154,9 @@ pub struct FlashShotApp {
     overlay_annotation_controls: bool,
     operation_generation: u64,
     overlay_windows: Vec<WindowHandle<overlay::CaptureOverlay>>,
+    // Deferred native window removal remains observable until the close callback has run.
+    capture_teardown_pending: bool,
+    capture_teardown_windows: HashSet<gpui::WindowId>,
     pinned_windows: Vec<WindowHandle<pinned::PinnedImage>>,
     scroll_window: Option<WindowHandle<scroll_control::ManualScrollControl>>,
     settings_window_handle: Option<isize>,
@@ -693,6 +696,8 @@ impl FlashShotApp {
             overlay_annotation_controls: false,
             operation_generation: 0,
             overlay_windows: Vec::new(),
+            capture_teardown_pending: false,
+            capture_teardown_windows: HashSet::new(),
             pinned_windows: Vec::new(),
             scroll_window: None,
             settings_window_handle: None,
@@ -831,6 +836,7 @@ impl FlashShotApp {
                                 annotation_controls_visible: this.overlay_annotation_controls,
                                 pinned_count: this.pinned_windows.len(),
                                 pinned_source_bounds,
+                                capture_teardown_pending: this.capture_teardown_pending,
                                 capture_preflight_ready: this.capture_preflight_ready(),
                                 status: this.status.clone(),
                             });

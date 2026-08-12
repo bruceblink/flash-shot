@@ -174,6 +174,8 @@ pub struct OverlayInteractionCaptureState {
     pub annotation_controls_visible: bool,
     pub pinned_count: usize,
     pub pinned_source_bounds: Option<domain::geometry::PhysicalRect>,
+    /// Whether a previously visible capture overlay is still waiting for deferred native teardown.
+    pub capture_teardown_pending: bool,
     pub capture_preflight_ready: bool,
     pub status: String,
 }
