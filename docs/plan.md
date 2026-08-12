@@ -244,6 +244,21 @@ Save 完成后还等待 `capture_preflight_ready`、没有可见对话框/覆盖
 `target/overlay-interaction-acceptance/save-pin-quiescence-release-9/session-1786529894490-5828/report.json`；
 旧的 schema 12 Copy/Enter 报告仍作为历史证据保留。
 
+### Pin 帧准备的 UI 线程边界
+
+Pin 的大像素工作现在统一在 `background_executor` 完成。选区 Pin 在后台执行标注合成、裁切和
+`render_image_from_capture`；剪贴板 Pin 在后台读取并准备图像；全屏 Pin 在后台捕获并准备图像；历史
+Pin 在后台解码 PNG 并准备图像。UI 线程只接收 `PreparedPinnedFrame`，创建原生 Pin 窗口并注册生命周期，
+不会再因为 4K 帧的整图渲染而同步阻塞。`operation_generation`、`claim_idle_completion` 和选区的
+teardown 等待仍保留，晚到任务只能被丢弃，不能覆盖更新的状态。
+
+该切片的代码门禁已完成：`cargo fmt --all -- --check`、`cargo check --locked --all-targets`、严格
+Clippy、全库 `cargo test --locked --lib --no-fail-fast`（448 tests）和 Release 构建均通过。真实桌面
+验收仍必须在可控前台桌面重跑；本轮两次尝试在输入注入前被 `ShellExperienceHost` 抢占前台而安全失败，
+报告分别位于 `target/release-acceptance/current-core-pin-20260813/` 和
+`target/release-acceptance/current-core-pin-20260813-retry/`。这两份报告只证明 runner 能正确拒绝
+不安全的输入环境，不构成 Pin 截图或端到端延迟的通过证据。
+
 ### 长图导出准备性能优化思路
 
 1. 先用独立的 Release `export-stress` 固定测量 `composite_annotations(...).crop(frame.bounds)`，
