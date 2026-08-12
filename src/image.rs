@@ -2,7 +2,7 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io::{self, BufReader, Write},
+    io::{self, BufReader, BufWriter, Write},
     path::Path,
     sync::Arc,
 };
@@ -26,6 +26,7 @@ use crate::{
 
 const MOSAIC_BLOCK_SIZE: u32 = 10;
 const BLUR_RADIUS: i32 = 4;
+const PNG_FILE_WRITE_BUFFER_SIZE: usize = 64 * 1024;
 
 impl CaptureFrame {
     /// Decodes an external PNG into the BGRA frame format used by the editor.
@@ -749,20 +750,25 @@ impl CaptureFrame {
                     |extension| format!("{extension}.tmp"),
                 ),
         );
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
             .open(&temporary)?;
-        if let Err(error) = self.write_png(&mut file) {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
-        if let Err(error) = file.sync_all() {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
+        // The PNG crate emits 4 KiB IDAT chunks by default. Buffering the file sink coalesces
+        // those chunks into fewer Windows writes without retaining the full encoded image.
+        let mut file = BufWriter::with_capacity(PNG_FILE_WRITE_BUFFER_SIZE, file);
+        let result = self
+            .write_png(&mut file)
+            .and_then(|()| file.flush())
+            .and_then(|()| file.get_ref().sync_all());
+        // Release the Windows file handle before removing a failed temporary file or replacing
+        // the destination, since either operation can otherwise fail while it remains open.
         drop(file);
+        if let Err(error) = result {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
         replace_file(&temporary, path)
     }
 
@@ -918,7 +924,28 @@ mod tests {
         Annotation, AnnotationCommand, AnnotationDocument, AnnotationId, AnnotationKind,
         AnnotationStyle, CommandHistory,
     };
-    use std::{io::Cursor, time::Duration};
+    use std::{
+        io::{BufWriter, Cursor, Write},
+        time::Duration,
+    };
+
+    #[derive(Debug, Default)]
+    struct CountingWriter {
+        bytes: Vec<u8>,
+        write_calls: usize,
+    }
+
+    impl Write for CountingWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.write_calls += 1;
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn test_frame() -> CaptureFrame {
         CaptureFrame {
@@ -1094,6 +1121,46 @@ mod tests {
         };
 
         assert_eq!(decode(frame.encode_png().unwrap()), decode(legacy_png));
+    }
+
+    #[test]
+    fn buffered_png_sink_coalesces_encoder_chunk_writes_without_changing_bytes() {
+        const WIDTH: u32 = 96;
+        const HEIGHT: u32 = 96;
+        let mut pixels = vec![0_u8; WIDTH as usize * HEIGHT as usize * 4];
+        let mut state = 0x5A17_9C3D_u32;
+        for pixel in pixels.chunks_exact_mut(4) {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            pixel.copy_from_slice(&state.to_le_bytes());
+        }
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: WIDTH as i32,
+                bottom: HEIGHT as i32,
+            },
+            width: WIDTH,
+            height: HEIGHT,
+            stride: WIDTH as usize * 4,
+            format: PixelFormat::Bgra8,
+            pixels: pixels.into(),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+
+        let mut direct = CountingWriter::default();
+        frame.write_png(&mut direct).unwrap();
+
+        let mut buffered =
+            BufWriter::with_capacity(PNG_FILE_WRITE_BUFFER_SIZE, CountingWriter::default());
+        frame.write_png(&mut buffered).unwrap();
+        buffered.flush().unwrap();
+        let buffered = buffered.into_inner().unwrap();
+
+        assert_eq!(buffered.bytes, direct.bytes);
+        assert!(direct.write_calls > buffered.write_calls);
+        assert_eq!(buffered.write_calls, 1);
     }
 
     #[test]
