@@ -474,12 +474,78 @@ pub(super) struct CaptureOverlay {
     // The workflow generation prevents queued input from a closed overlay changing a later
     // capture session after the user presses Capture again.
     operation_generation: u64,
+    // Raw Windows pointer messages can arrive faster than the display refreshes. Retain only the
+    // latest sample until the next frame so selection work and redraw notifications stay bounded.
+    selection_updates: FrameInputBatch<PendingSelectionUpdate>,
     focus_handle: FocusHandle,
     more_actions_focus_handle: FocusHandle,
     secondary_action_focus_handles: [FocusHandle; SECONDARY_ACTION_COUNT],
     topmost_requested: bool,
     annotation_arrange_actions_for: Option<AnnotationId>,
     _app_observation: Subscription,
+}
+
+/// Captures the newest pointer sample that arrived before one rendered frame.
+///
+/// A new sample replaces the previous one while a callback is already scheduled. The generation
+/// makes an old callback harmless after a new gesture or mouse-up discards its pending sample.
+/// `push` returns a generation exactly once per pending frame, which is the testable scheduling
+/// contract used by the real GPUI `on_mouse_move` listener below.
+#[derive(Debug)]
+struct FrameInputBatch<T> {
+    latest: Option<T>,
+    generation: u64,
+    scheduled: bool,
+}
+
+impl<T> Default for FrameInputBatch<T> {
+    fn default() -> Self {
+        Self {
+            latest: None,
+            generation: 0,
+            scheduled: false,
+        }
+    }
+}
+
+impl<T> FrameInputBatch<T> {
+    /// Stores the latest input and returns a generation only when this frame needs a new callback.
+    fn push(&mut self, input: T) -> Option<u64> {
+        self.latest = Some(input);
+        if self.scheduled {
+            None
+        } else {
+            self.scheduled = true;
+            Some(self.generation)
+        }
+    }
+
+    /// Takes the latest sample only when the callback still belongs to the active gesture.
+    fn take(&mut self, generation: u64) -> Option<T> {
+        if self.scheduled && self.generation == generation {
+            self.scheduled = false;
+            self.latest.take()
+        } else {
+            None
+        }
+    }
+
+    /// Cancels an outstanding frame callback before a new gesture or final mouse position wins.
+    fn invalidate(&mut self) {
+        self.latest = None;
+        self.scheduled = false;
+        self.generation = self.generation.wrapping_add(1);
+    }
+}
+
+/// Contains the pointer state that must stay internally consistent when one frame applies it.
+#[derive(Clone, Copy, Debug)]
+struct PendingSelectionUpdate {
+    operation_generation: u64,
+    hover_point: Option<PhysicalPoint>,
+    dragging_point: Option<PhysicalPoint>,
+    preserve_aspect_ratio: bool,
+    resize_from_center: bool,
 }
 
 impl CaptureOverlay {
@@ -498,6 +564,7 @@ impl CaptureOverlay {
             preview,
             allow_cross_display_drag,
             operation_generation,
+            selection_updates: FrameInputBatch::default(),
             focus_handle: cx.focus_handle(),
             more_actions_focus_handle: cx.focus_handle().tab_stop(false),
             secondary_action_focus_handles: std::array::from_fn(|index| {
@@ -529,6 +596,8 @@ impl CaptureOverlay {
         else {
             return;
         };
+        // A new gesture must not consume a hover or drag sample that belonged to the prior one.
+        self.selection_updates.invalidate();
         let resize_handle = self
             .app
             .read(cx)
@@ -570,6 +639,7 @@ impl CaptureOverlay {
         &mut self,
         event: &MouseMoveEvent,
         viewport: Bounds<Pixels>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let operation_generation = self.operation_generation;
@@ -579,8 +649,8 @@ impl CaptureOverlay {
         let Some(transform) = self.transform(viewport) else {
             return;
         };
-        let point = transform.view_to_pixel(view_point(event.position));
-        let app = self.app.clone();
+        let view = view_point(event.position);
+        let point = transform.view_to_pixel(view);
         let preserve_aspect_ratio = event.modifiers.shift;
         let resize_from_center = event.modifiers.alt;
         // GPUI events are client-local. Mapping them through the preview keeps the selection in
@@ -588,29 +658,67 @@ impl CaptureOverlay {
         let dragging_point = event
             .dragging()
             .then(|| {
+                // Global cursor lookup is only meaningful once a full-display drag leaves this
+                // preview. Avoid a Win32 call for every in-bounds high-rate pointer message.
+                let outside_screen_point = (self.allow_cross_display_drag
+                    && !transform.fitted_view().contains(view))
+                .then(|| cursor::position().ok())
+                .flatten();
                 selection_point_from_view_or_screen(
                     transform,
                     event.position,
                     self.allow_cross_display_drag,
-                    cursor::position().ok(),
+                    outside_screen_point,
                 )
             })
             .flatten();
-        cx.defer(move |cx| {
-            app.update(cx, |app, cx| {
-                if !accepts_overlay_input(operation_generation, app.operation_generation) {
-                    return;
-                }
-                app.update_overlay_hover(point, cx);
-                if let Some(point) = dragging_point {
-                    app.update_overlay_selection(
-                        point,
-                        preserve_aspect_ratio,
-                        resize_from_center,
-                        cx,
-                    );
-                }
-            })
+        let update = PendingSelectionUpdate {
+            operation_generation,
+            hover_point: point,
+            dragging_point,
+            preserve_aspect_ratio,
+            resize_from_center,
+        };
+        let Some(frame_generation) = self.selection_updates.push(update) else {
+            return;
+        };
+        // This is the only deferred callback for all moves received before the next paint. The
+        // callback applies the most recent sample, not the first one that happened to arrive.
+        cx.on_next_frame(window, move |this, _, cx| {
+            if let Some(update) = this.selection_updates.take(frame_generation) {
+                this.apply_selection_update(update, cx);
+            }
+        });
+        // `on_next_frame` needs a paint to occur. GPUI deduplicates same-entity notifications in
+        // this event cycle, so repeated raw moves keep one queued callback and one invalidation.
+        cx.notify();
+    }
+
+    /// Applies one frame's newest pointer sample to the shared capture model.
+    ///
+    /// The overlay owns scheduling while `FlashShotApp` owns the actual selection and hover state;
+    /// checking both generations keeps a closed overlay from changing a later capture session.
+    fn apply_selection_update(&mut self, update: PendingSelectionUpdate, cx: &mut Context<Self>) {
+        if !accepts_overlay_input(
+            update.operation_generation,
+            self.app.read(cx).operation_generation,
+        ) {
+            return;
+        }
+        let app = self.app.clone();
+        app.update(cx, |app, cx| {
+            if !accepts_overlay_input(update.operation_generation, app.operation_generation) {
+                return;
+            }
+            app.update_overlay_hover(update.hover_point, cx);
+            if let Some(point) = update.dragging_point {
+                app.update_overlay_selection(
+                    point,
+                    update.preserve_aspect_ratio,
+                    update.resize_from_center,
+                    cx,
+                );
+            }
         });
     }
 
@@ -624,12 +732,20 @@ impl CaptureOverlay {
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
             return;
         }
+        // The final mouse position wins over any queued frame update from this gesture, so it
+        // cannot overwrite the selection after the button is released.
+        self.selection_updates.invalidate();
         let point = self.transform(viewport).and_then(|transform| {
+            let view = view_point(event.position);
+            let outside_screen_point = (self.allow_cross_display_drag
+                && !transform.fitted_view().contains(view))
+            .then(|| cursor::position().ok())
+            .flatten();
             selection_point_from_view_or_screen(
                 transform,
                 event.position,
                 self.allow_cross_display_drag,
-                cursor::position().ok(),
+                outside_screen_point,
             )
         });
         let Some(point) = point else { return };
@@ -1228,7 +1344,8 @@ impl Render for CaptureOverlay {
                         }),
                     )
                     .on_mouse_move(cx.listener(move |this, event, window, cx| {
-                        this.update_selection(event, local_viewport(window), cx)
+                        let viewport = local_viewport(window);
+                        this.update_selection(event, viewport, window, cx)
                     }))
                     .on_mouse_up(
                         MouseButton::Left,
@@ -4226,17 +4343,17 @@ fn selection_cursor(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionToolbarLayout, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP,
-        OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET,
-        OVERLAY_EDGE_INSET, OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
-        OVERLAY_SECONDARY_MENU_GAP, SecondaryAction, SecondaryActionFocusDirection,
-        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, accepts_overlay_input,
-        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
-        annotation_controls_visible, annotation_layer_label, annotation_style_panel_height,
-        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
-        arrange_context_for_selection, arrow_head_points, capture_double_click,
-        close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
-        more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
+        ActionToolbarLayout, FrameInputBatch, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
+        OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT,
+        OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET, OVERLAY_MORE_ACTIONS_ID,
+        OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP, SecondaryAction,
+        SecondaryActionFocusDirection, SelectionCursor, SelectionDimensionLayout,
+        SmartTargetHudLayout, accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
+        action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
+        annotation_style_panel_height, annotation_toolbar_height, annotation_toolbar_items,
+        annotation_toolbar_layout, arrange_context_for_selection, arrow_head_points,
+        capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
+        magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
         recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
@@ -4259,6 +4376,46 @@ mod tests {
         assert!(accepts_overlay_input(42, 42));
         assert!(!accepts_overlay_input(42, 43));
         assert!(!accepts_overlay_input(u64::MAX, 0));
+    }
+
+    #[test]
+    fn frame_input_batch_applies_only_the_latest_sample_once_per_frame() {
+        let mut batch = FrameInputBatch::default();
+
+        assert_eq!(batch.push(10), Some(0));
+        assert_eq!(batch.push(20), None);
+        assert_eq!(batch.push(30), None);
+        assert_eq!(batch.take(0), Some(30));
+        assert_eq!(batch.take(0), None);
+        assert_eq!(batch.push(40), Some(0));
+    }
+
+    #[test]
+    fn invalidated_frame_input_cannot_consume_the_next_gesture() {
+        let mut batch = FrameInputBatch::default();
+        let stale_generation = batch.push("old gesture").unwrap();
+
+        batch.invalidate();
+        let current_generation = batch.push("new gesture").unwrap();
+
+        assert_ne!(stale_generation, current_generation);
+        assert_eq!(batch.take(stale_generation), None);
+        assert_eq!(batch.take(current_generation), Some("new gesture"));
+    }
+
+    #[test]
+    fn frame_input_batch_bounds_a_burst_to_one_scheduled_callback() {
+        let mut batch = FrameInputBatch::default();
+        let mut callbacks = 0;
+
+        for sample in 0..1_000 {
+            if batch.push(sample).is_some() {
+                callbacks += 1;
+            }
+        }
+
+        assert_eq!(callbacks, 1);
+        assert_eq!(batch.take(0), Some(999));
     }
 
     #[test]
