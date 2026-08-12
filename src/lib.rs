@@ -12,6 +12,7 @@ pub mod ocr;
 pub mod performance;
 pub mod performance_report;
 pub mod platform;
+pub mod png_stress;
 pub mod recording;
 pub mod scroll;
 pub mod settings;
