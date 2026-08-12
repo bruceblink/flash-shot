@@ -53,26 +53,30 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
-        let pinned_frame = match frame
-            .composite_annotations(&document)
-            .and_then(|frame| frame.crop(selection))
-        {
-            Ok(frame) => frame,
-            Err(error) => {
-                self.status = format!("Could not pin selection: {error}");
-                cx.notify();
-                return;
-            }
-        };
         // Closing an overlay while handling one of its events must complete before a
         // normal topmost window is opened. Re-entering the window API from nested
         // deferred callbacks can leave the Windows event loop blocked instead.
         self.reset(cx);
         let generation = self.operation_generation;
+        self.status = "Preparing pinned image...".to_owned();
+        cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
-            let mut pinned_frame = Some(pinned_frame);
             async move {
+                // Annotation compositing and cropping can copy a large 4K frame, so keep that
+                // CPU work off the GPUI thread. The native Pin window is still opened on the UI
+                // thread after the prepared pixels arrive and capture teardown is complete.
+                let prepared = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let pinned_frame = frame
+                            .composite_annotations(&document)
+                            .and_then(|frame| frame.crop(selection))?;
+                        let rendered = render_image_from_capture(&pinned_frame)?.image;
+                        Ok::<_, std::io::Error>((pinned_frame, rendered))
+                    })
+                    .await;
+                let mut prepared = Some(prepared);
                 // Yield to the native message loop, then wait until every old overlay HWND has
                 // reported its close callback before creating a topmost Pin window.
                 loop {
@@ -91,16 +95,24 @@ impl FlashShotApp {
                         if app.capture_teardown_pending {
                             return false;
                         }
-                        let Some(pinned_frame) = pinned_frame.take() else {
+                        let Some(prepared) = prepared.take() else {
                             return true;
                         };
-                        app.open_pinned_frame(
-                            pinned_frame,
-                            "Selection pinned in an always-on-top window",
-                            None,
-                            false,
-                            cx,
-                        );
+                        match prepared {
+                            Ok((pinned_frame, rendered)) => app.open_rendered_pinned_frame(
+                                pinned_frame,
+                                rendered,
+                                "Selection pinned in an always-on-top window",
+                                None,
+                                false,
+                                cx,
+                            ),
+                            Err(error) => {
+                                app.status = format!("Could not pin selection: {error}");
+                                app.return_to_background();
+                                cx.notify();
+                            }
+                        }
                         true
                     });
                     if finished {
@@ -199,6 +211,26 @@ impl FlashShotApp {
                 return;
             }
         };
+        self.open_rendered_pinned_frame(
+            pinned_frame,
+            pinned.image,
+            success_status,
+            failure_notification,
+            show_saved_feedback,
+            cx,
+        );
+    }
+
+    /// Opens a Pin after pixel preparation has completed, keeping native window work on the UI thread.
+    fn open_rendered_pinned_frame(
+        &mut self,
+        pinned_frame: CaptureFrame,
+        image: Arc<gpui::RenderImage>,
+        success_status: &'static str,
+        failure_notification: Option<&'static str>,
+        show_saved_feedback: bool,
+        cx: &mut Context<Self>,
+    ) {
         let window_size = pinned_size(pinned_frame.width as f32, pinned_frame.height as f32);
         let window_bounds = WindowBounds::centered(window_size, cx);
         let pinned_app = cx.entity();
@@ -218,9 +250,8 @@ impl FlashShotApp {
                 ..Default::default()
             },
             move |window, cx| {
-                let pinned = cx.new(|cx| {
-                    PinnedImage::new(pinned.image, pinned_frame, pinned_app, pinned_colors, cx)
-                });
+                let pinned = cx
+                    .new(|cx| PinnedImage::new(image, pinned_frame, pinned_app, pinned_colors, cx));
                 if show_saved_feedback {
                     pinned.update(cx, |pinned, cx| pinned.finish_save_status(true, cx));
                 }
