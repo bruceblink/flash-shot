@@ -127,8 +127,15 @@ Windows 应用，而不是只看到应用自身的成功提示。
 `1280x720` 普通选区，计时覆盖合成、真实裁切、PNG/CF_DIB 写入及常规消费者读回。2026-08-12
 本机 Release 结果为 p50 `19.53 ms`、p95 `21.98 ms`、最大 `25.82 ms`，像素读回一致，低于
 `250 ms` 预算；机器可读报告位于 `target/copy-performance/release-1280x720.json` 和
-`target/copy-performance/release-summary.json`。真实覆盖层点击、关键截图和结束窗口清理仍由后续 UI
-验收切片补齐，不能用这项函数级主链路测量替代。
+`target/copy-performance/release-summary.json`。
+
+2026-08-12 的 Release UI 验收又通过真实输入执行了 `Ctrl+S -> Save 对话框 -> Escape -> 原选区恢复 ->
+Ctrl+S -> 保存`。报告位于
+`target/overlay-interaction-acceptance/ctrl-s-release-verified-retry/session-1786504134708-26760/report.json`；
+取消前后两张选区截图的 SHA-256 均为 `FEF5BD6B8D0884473502E29FC392A351A87ECD2B7F755122A9542A04B09FC185`，
+保存结果为 `1178x432`，源与解码结果像素一致，结束时 overlay、Pin 和可见进程窗口均为零。该 UI 证据
+补齐了标准保存快捷键、取消恢复和视觉清理，但普通 Copy 的系统剪贴板端到端时延仍以独立的 30 次
+`copy-performance` Release 报告为准，不能互相替代。
 
 ## 里程碑 3：原生标注
 
