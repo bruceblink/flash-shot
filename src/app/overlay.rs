@@ -73,14 +73,16 @@ const ANNOTATION_LAYERS_PREFERRED_HEIGHT: f32 = 200.0;
 const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 900.0;
 const ANNOTATION_TOOLBAR_MIN_CONTENT_WIDTH: f32 = 320.0;
 // Keep the core screenshot actions compact while optional actions use wider,
-// self-explanatory labels when they are expanded.
+// self-explanatory labels when they are expanded. These are outer button widths
+// paired with `secondary_action_button`, so the layout calculation and actual
+// rendered menu always wrap at the same places.
 const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 48.0, 58.0];
 const OVERLAY_MORE_ACTIONS_ID: &str = "overlay-more-actions";
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
-    150.0, 125.0, 150.0, 100.0, 65.0, 55.0, 90.0, 95.0, 115.0, 80.0, 60.0,
+    138.0, 111.0, 143.0, 92.0, 91.0, 38.0, 47.0, 92.0, 81.0, 101.0, 126.0,
 ];
-const OVERLAY_RECOGNITION_ACTION_WIDTHS: [f32; 2] = [60.0, 90.0];
-const OVERLAY_RETRY_ACTION_WIDTHS: [f32; 1] = [115.0];
+const OVERLAY_RECOGNITION_ACTION_WIDTHS: [f32; 2] = [76.0, 92.0];
+const OVERLAY_RETRY_ACTION_WIDTHS: [f32; 1] = [126.0];
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
 const ANNOTATION_FONT_SIZES: [u32; 4] = [16, 24, 32, 48];
@@ -102,6 +104,41 @@ fn secondary_action_tooltip(action_id: &str) -> &'static str {
         }
         _ => "",
     }
+}
+
+/// Builds one fixed-size secondary action so its visible bounds match the menu layout model.
+/// These actions deliberately stay out of Tab order; the primary toolbar remains the keyboard
+/// command surface while the expanded panel is mouse-discoverable.
+fn secondary_action_button(
+    id: impl Into<gpui::ElementId>,
+    label: &'static str,
+    width: f32,
+    colors: ThemeColors,
+    primary: bool,
+    tooltip: Option<&'static str>,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .w(px(width))
+        .h(px(OVERLAY_ACTION_ITEM_HEIGHT))
+        .flex_none()
+        .px_2()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(if primary { colors.accent } else { colors.panel })
+        .text_color(if primary {
+            colors.background
+        } else {
+            colors.text
+        })
+        .cursor_pointer()
+        .when_some(tooltip, |button, tooltip| {
+            button.tooltip(move |_, cx| cx.new(|_| OverlayTooltip(tooltip, colors)).into())
+        })
+        .on_click(on_click)
+        .child(label)
 }
 
 /// Keeps the primary capture commands and their keyboard equivalents discoverable.
@@ -2120,260 +2157,182 @@ impl Render for CaptureOverlay {
                                         .border_color(rgba(0xFFFFFF38))
                                         .bg(rgba(0x0B0D10F2))
                                         .shadow_lg()
-                                        .child(
-                                            div()
-                                                .id("overlay-save-annotations")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.save_annotation_document(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Save annotations"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-save-editable-project")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.save_editable_project(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Save editable"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-open-annotations")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.open_annotation_document(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Open annotations"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-quick-save")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.quick_save_selection(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Quick save"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-manual-scroll")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .tooltip(move |_, cx| {
-                                                    cx.new(|_| {
-                                                        OverlayTooltip(
-                                                            secondary_action_tooltip("scroll"),
-                                                            colors,
-                                                        )
+                                        .child(secondary_action_button(
+                                            "overlay-save-annotations",
+                                            "Save annotations",
+                                            OVERLAY_MORE_ACTION_WIDTHS[0],
+                                            colors,
+                                            false,
+                                            None,
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.save_annotation_document(cx)
                                                     })
-                                                    .into()
-                                                })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.start_manual_scroll(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Scroll shot"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-qr")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .tooltip(move |_, cx| {
-                                                    cx.new(|_| {
-                                                        OverlayTooltip(
-                                                            secondary_action_tooltip("qr"),
-                                                            colors,
-                                                        )
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-save-editable-project",
+                                            "Save editable",
+                                            OVERLAY_MORE_ACTION_WIDTHS[1],
+                                            colors,
+                                            false,
+                                            None,
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.save_editable_project(cx)
                                                     })
-                                                    .into()
-                                                })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.recognize_qr_selection(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("QR"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-ocr")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .tooltip(move |_, cx| {
-                                                    cx.new(|_| {
-                                                        OverlayTooltip(
-                                                            secondary_action_tooltip("ocr"),
-                                                            colors,
-                                                        )
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-open-annotations",
+                                            "Open annotations",
+                                            OVERLAY_MORE_ACTION_WIDTHS[2],
+                                            colors,
+                                            false,
+                                            None,
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.open_annotation_document(cx)
                                                     })
-                                                    .into()
-                                                })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.recognize_text_selection(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("OCR"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-copy-color")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.copy_hover_color(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Copy color"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-translate")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .tooltip(move |_, cx| {
-                                                    cx.new(|_| {
-                                                        OverlayTooltip(
-                                                            secondary_action_tooltip("translate"),
-                                                            colors,
-                                                        )
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-quick-save",
+                                            "Quick save",
+                                            OVERLAY_MORE_ACTION_WIDTHS[3],
+                                            colors,
+                                            true,
+                                            Some("Save the selection to the configured library"),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.quick_save_selection(cx)
                                                     })
-                                                    .into()
-                                                })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.translate_selection(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Translate"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-record-area")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .tooltip(move |_, cx| {
-                                                    cx.new(|_| {
-                                                        OverlayTooltip(
-                                                            secondary_action_tooltip("record-area"),
-                                                            colors,
-                                                        )
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-manual-scroll",
+                                            "Scroll shot",
+                                            OVERLAY_MORE_ACTION_WIDTHS[4],
+                                            colors,
+                                            false,
+                                            Some(secondary_action_tooltip("scroll")),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.start_manual_scroll(cx)
                                                     })
-                                                    .into()
-                                                })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.start_region_recording(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Record area"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("overlay-record-window")
-                                                .px_3()
-                                                .py_2()
-                                                .bg(colors.panel)
-                                                .text_color(colors.text)
-                                                .cursor_pointer()
-                                                .tooltip(move |_, cx| {
-                                                    cx.new(|_| {
-                                                        OverlayTooltip(
-                                                            secondary_action_tooltip(
-                                                                "record-window",
-                                                            ),
-                                                            colors,
-                                                        )
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-qr",
+                                            "QR",
+                                            OVERLAY_MORE_ACTION_WIDTHS[5],
+                                            colors,
+                                            false,
+                                            Some(secondary_action_tooltip("qr")),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.recognize_qr_selection(cx)
                                                     })
-                                                    .into()
-                                                })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    let app = this.app.clone();
-                                                    cx.defer(move |cx| {
-                                                        app.update(cx, |app, cx| {
-                                                            app.start_selected_window_recording(cx)
-                                                        })
-                                                    });
-                                                }))
-                                                .child("Record window"),
-                                        )
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-ocr",
+                                            "OCR",
+                                            OVERLAY_MORE_ACTION_WIDTHS[6],
+                                            colors,
+                                            false,
+                                            Some(secondary_action_tooltip("ocr")),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.recognize_text_selection(cx)
+                                                    })
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-copy-color",
+                                            "Copy color",
+                                            OVERLAY_MORE_ACTION_WIDTHS[7],
+                                            colors,
+                                            false,
+                                            Some("Copy the color beneath the pointer"),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.copy_hover_color(cx)
+                                                    })
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-translate",
+                                            "Translate",
+                                            OVERLAY_MORE_ACTION_WIDTHS[8],
+                                            colors,
+                                            false,
+                                            Some(secondary_action_tooltip("translate")),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.translate_selection(cx)
+                                                    })
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-record-area",
+                                            "Record area",
+                                            OVERLAY_MORE_ACTION_WIDTHS[9],
+                                            colors,
+                                            false,
+                                            Some(secondary_action_tooltip("record-area")),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.start_region_recording(cx)
+                                                    })
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            "overlay-record-window",
+                                            "Record window",
+                                            OVERLAY_MORE_ACTION_WIDTHS[10],
+                                            colors,
+                                            false,
+                                            Some(secondary_action_tooltip("record-window")),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.start_selected_window_recording(cx)
+                                                    })
+                                                });
+                                            }),
+                                        ))
                                         .when(recognition_in_flight, |actions| {
                                             actions.child(
                                                 div()
