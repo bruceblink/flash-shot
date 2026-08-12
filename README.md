@@ -226,11 +226,11 @@ cargo run --release --bin performance-report -- --input "<application data direc
 ```
 
 The command accepts only Release-profile samples by default, so Debug runs and legacy unmarked
-records cannot affect a release p95 decision. Its JSON reports `release_gate_applied: true` only
-when all three default p95 gates use Release samples, and `release_qualified: true` only when
-those gates pass. It exits with status `2` when a threshold fails, and with status `1` when
-samples are malformed or insufficient. `--no-gate` and `--include-nonrelease` produce
-exploratory reports with both fields set to `false`.
+records cannot affect a release p95 decision. Its JSON reports `release_gate_applied: true` when
+at least one enabled p95 gate uses Release samples, and `release_qualified: true` only when every
+enabled gate has enough samples and passes. It exits with status `2` when a threshold fails, and
+with status `1` when samples are malformed or insufficient. `--no-gate` and
+`--include-nonrelease` produce exploratory reports with both fields set to `false`.
 
 Collect an isolated twenty-startup Release baseline without mixing older samples into the result:
 
