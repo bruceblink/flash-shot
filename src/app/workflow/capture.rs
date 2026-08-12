@@ -277,6 +277,9 @@ impl FlashShotApp {
         preselect_focused_window: bool,
         cx: &mut Context<Self>,
     ) {
+        // Hide the settings window before waiting so a deferred shortcut still immediately
+        // returns the desktop to the capture surface instead of leaving the controller visible.
+        self.hide_settings_window();
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let retry_generation = self.operation_generation;
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
