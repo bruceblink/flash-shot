@@ -47,6 +47,10 @@ To produce an unsigned installer, install Inno Setup 6 and run:
 .\scripts\package-installer.ps1
 ```
 
+The packaging step checks that every `MessagesFile` declared by the installer definition is present
+under the selected Inno Setup installation before it signs the executable. Install the full Inno Setup
+language pack when this check reports a missing `.isl` file.
+
 To require an Authenticode signature for both the installed executable and setup program, make `signtool.exe` and a usable code-signing certificate available, then run:
 
 ```powershell

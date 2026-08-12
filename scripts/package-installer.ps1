@@ -149,6 +149,26 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "Release executable not found at $executable. Run without -SkipBuild or build the $rustHost target."
 }
 
+$iscc = Get-CommandPath "ISCC.exe" @(
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+    "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
+)
+if ($null -eq $iscc) {
+    throw "Inno Setup 6 is required. Install it or make ISCC.exe available on PATH."
+}
+
+# Checks compiler language files before signing so a failed installer build leaves no signed partial artifact.
+$isccRoot = Split-Path -Parent $iscc
+$languageFiles = @(
+    [regex]::Matches((Get-Content -Raw $installer), 'MessagesFile:\s*"compiler:Languages\\([^" ]+)"') |
+        ForEach-Object { Join-Path $isccRoot (Join-Path "Languages" $_.Groups[1].Value) }
+)
+$missingLanguageFiles = @($languageFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+if ($missingLanguageFiles.Count -gt 0) {
+    throw "Inno Setup language files are missing: $($missingLanguageFiles -join ', '). Install the full Inno Setup language pack."
+}
+
 if ($RequireSignature) {
     & $signTool sign /fd SHA256 /tr $timestampEndpoint /td SHA256 `
         /sha1 $signingCertificate.Thumbprint $executable
@@ -159,14 +179,6 @@ if ($RequireSignature) {
     if ($LASTEXITCODE -ne 0) {
         throw "Signature verification failed for $executable."
     }
-}
-
-$iscc = Get-CommandPath "ISCC.exe" @(
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
-)
-if ($null -eq $iscc) {
-    throw "Inno Setup 6 is required. Install it or make ISCC.exe available on PATH."
 }
 
 $output = [IO.Path]::GetFullPath((Join-Path $root $OutputDirectory))
