@@ -186,8 +186,11 @@ Ctrl+S -> 保存`。报告位于
 
 1. Copy 和 Save 成功后都会关闭编辑器，因此 runner 用 `--scroll-export copy|save` 启动两个独立进程，
    每个进程都重新执行完整的真实输入链路，不能复用第一次会话的拼接状态。
-2. 普通验收仍把 Copy 路由到进程内观察器；只有显式同时提供 `--scroll-export copy` 与
-   `--allow-system-clipboard` 时，应用才使用生产 `SystemClipboard`，避免普通测试意外覆盖用户剪贴板。
+2. 普通验收默认仍把 Copy 路由到进程内观察器；只有标准场景显式提供
+   `--allow-system-clipboard`，或滚动场景同时提供 `--scroll-export copy` 与该授权时，应用才使用
+   生产 `SystemClipboard`，避免普通测试意外覆盖用户剪贴板。生产路径会在点击前启动一个加入
+   Job Object 的无窗口独立消费者，通过 ready/start/result 文件协议同步，并在报告中记录 PNG、CF_DIB、
+   常规图像读回、QPC 单调延迟和有界清理结果。
 3. 点击出口前先固定编辑器中的拼接源帧。Copy 同时读取注册 PNG、CF_DIB 和常规消费者图像，分别
    解码并逐像素比对；Save 必须经过唯一归属的原生文件对话框，再从隔离路径重新打开 PNG 比对。
 4. 两次会话还要得到相同的初始帧、第二帧和拼接源指纹，并在结束时证明滚动帧、后台捕获、菜单、
@@ -202,6 +205,32 @@ Save 报告位于
 两次均从 1484x380 拼接到 1484x663，源指纹均为 `f21a929cfd054de1`；系统 PNG、CF_DIB、消费者
 读取和保存 PNG 均逐像素一致，结束后所有滚动状态与可见探针窗口为零。空标注整帧导出的冗余
 合成与裁切已经在后续独立性能切片中消除；PNG 的整帧 RGBA 与压缩输出缓冲仍保留为下一项工作。
+
+2026-08-12 又以标准单屏场景完成一次真实生产剪贴板 Copy：
+`target/overlay-interaction-acceptance/standard-system-clipboard-final-2/session-1786507020308-21492/report.json`。
+该历史报告为 schema 12，序号 `353 -> 358`，PNG、CF_DIB 和常规消费者三路逐像素一致，消费者在点击前
+ready、已回收，最终没有可见窗口。该证据只覆盖一次工具栏点击；至少 30 次真实 UI
+样本/p50/p95/失败数仍未完成，不能由 `copy-performance` 的内部合成基准替代。
+
+标准 Copy runner 现支持 `--copy-trigger toolbar|enter`；两种触发均共享同一个生产导出状态断言、
+独立消费者和像素 oracle。`toolbar` 真实 Release 证据已归档；`enter` 的单次真实 Release 证据已归档于
+`target/overlay-interaction-acceptance/standard-system-clipboard-enter-final/session-1786512571193-22568/report.json`：
+序号 `368 -> 373`、Windows QPC 端到端延迟 `84.1912 ms`，三路内容逐像素一致并完成消费者清理。
+这只关闭单次键盘出口验收；至少 30 次真实 UI 样本的样本列表、p50/p95 和失败数仍未完成，不能由
+`copy-performance` 的内部合成基准替代。
+
+### Save、Pin 与再次 Capture 的 teardown 屏障
+
+生产关闭覆盖层使用 GPUI deferred callback，不能只用“窗口句柄不可见”判定桌面已经干净。应用现在以
+`OverlayInteractionCaptureState.capture_teardown_pending` 暴露仍在等待 native close callback 的窗口批次，
+并在最后一个窗口回调后清零；Capture preflight、Pin 和验收 runner 都以该状态作为硬门禁。真实 runner 在
+Save 完成后还等待 `capture_preflight_ready`、没有可见对话框/覆盖层/Pin，并连续采样稳定桌面，保存
+`save-complete-clean.png` 后才开始下一次 Capture 或 Pin。该屏障解决了 Save As 关闭后 DWM/GPUI 残影进入
+下一张截图的问题；它不扩大当前单屏 100% 验收范围。
+
+当前 schema 13 Release 证据位于
+`target/overlay-interaction-acceptance/save-pin-quiescence-release-9/session-1786529894490-5828/report.json`；
+旧的 schema 12 Copy/Enter 报告仍作为历史证据保留。
 
 ### 长图导出准备性能优化思路
 

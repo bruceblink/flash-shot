@@ -121,6 +121,7 @@ cargo run --release --bin windows-acceptance-probe -- --output target/windows-ac
 - [产品需求](docs/requirements.md)
 - [架构设计](docs/architecture.md)
 - [开发计划](docs/plan.md)
+- [开发流程与验收证据](docs/development-workflow.md)
 - [Windows 截图技术验证报告](docs/windows-capture-validation.md)
 - [Windows 手工验收记录](docs/windows-manual-acceptance.md)
 - [Windows 分发](docs/windows-distribution.md)
@@ -265,6 +266,24 @@ the Windows clipboard sequence did not change:
 
 ```powershell
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
+```
+
+要验收同一条普通选区 Copy 的生产剪贴板出口，请在一次性 Windows 桌面中显式授权：
+
+```powershell
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --allow-system-clipboard --output-dir target/overlay-interaction-system-clipboard-acceptance
+```
+
+该模式会替换当前系统剪贴板，只用于可丢弃的验收会话。Copy 点击前会启动无窗口的独立消费者；
+消费者通过 PNG、CF_DIB 和常规图像读取三条路径取得结果，父进程再与选区源帧逐像素比较，并在
+`report.json` 中记录序号、单调计时、格式产物、像素指纹、消费者 observing 状态和子进程清理状态。默认命令仍使用进程内
+观察器，不会改写用户剪贴板。工具栏 Copy 与一次真实 `Enter` 快捷键输入均已有单屏 Release 报告；
+至少 30 次真实 UI 样本的 p50/p95 和失败数仍按 [交付计划](docs/plan.md) 的后续验收项执行。
+
+在同一标准场景中验证键盘出口时，将触发器切换为 `Enter`：
+
+```powershell
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --allow-system-clipboard --copy-trigger enter --output-dir target/overlay-interaction-system-clipboard-enter-acceptance
 ```
 
 Use the opt-in narrow-edge scenario to open the real 420x420 minimum Settings client, drag a
