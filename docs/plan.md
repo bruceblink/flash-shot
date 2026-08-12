@@ -146,9 +146,31 @@ Tauri/WebView/Excalidraw 架构。后续优先级只围绕快捷键到截图导�
 Save 报告位于
 `target/overlay-interaction-acceptance/scroll-save-release-ui-final/session-1786492902079-27312/report.json`。
 两次均从 1484x380 拼接到 1484x663，源指纹均为 `f21a929cfd054de1`；系统 PNG、CF_DIB、消费者
-读取和保存 PNG 均逐像素一致，结束后所有滚动状态与可见探针窗口为零。下一项性能工作单独测量
-Finish 到编辑器、出口完成延迟和峰值工作集，再评估空标注整帧导出的冗余合成、裁切与 RGBA 缓冲，
-不与本次正确性验收混入同一提交。
+读取和保存 PNG 均逐像素一致，结束后所有滚动状态与可见探针窗口为零。空标注整帧导出的冗余
+合成与裁切已经在后续独立性能切片中消除；PNG 的整帧 RGBA 与压缩输出缓冲仍保留为下一项工作。
+
+### 长图导出准备性能优化思路
+
+1. 先用独立的 Release `export-stress` 固定测量 `composite_annotations(...).crop(frame.bounds)`，
+   默认样本为 1440x6000、30 次计时和 2 次预热。报告同时记录 p50/p95、额外 CPU 复制、复制
+   流量估算、`Arc` 是否复用、像素恒等和稳定指纹；它不包含 PNG 编码、文件同步或剪贴板写入。
+2. `CaptureFrame` 的像素由不可变 `Arc<[u8]>` 持有，因此空 `AnnotationDocument` 可以安全返回
+   frame clone。整帧 crop 仅在交集等于源 bounds、宽高一致且 stride 已紧密排列时复用像素；带
+   padding 的帧仍执行原有裁切，以保留“裁切结果紧密排列”的契约。
+3. 同机 30 次 Release 对比中，1440x6000 源图为 34,560,000 bytes。优化前 p95 为
+   `60.0825 ms`、额外复制 `2` 次、复制流量估算 `69,120,000` bytes、`Arc` 不复用；优化后
+   p95 为 `0.0001 ms`、额外复制和复制流量均为 `0`、`Arc` 复用。两次像素指纹均为
+   `15936792589717756389`，像素恒等门禁通过。报告位于
+   `target/export-prep-baseline-30.json` 与 `target/export-prep-optimized-30.json`。
+4. 非空标注仍必须真实合成。4K、4 个标注的 30 次 Release 压力样本 p95 为 `39.9048 ms`，
+   指纹为 `10401088384397431893`；局部裁切、负坐标和带 padding stride 继续由像素测试覆盖。
+5. 优化后的 Copy/Save 分别重新执行完整滚动截图 roundtrip；PNG、CF_DIB、普通剪贴板消费者和
+   保存 PNG 仍与拼接源 `f21a929cfd054de1` 逐像素一致。优化前后的初始帧、第二帧、控制条和
+   拼接编辑器四张证据 PNG 的 SHA-256 分别完全相同，证明性能快路径没有改变 UI 或导出内容。
+
+下一性能切片应单独处理 `encode_png`：使用逐行 BGRA 到 RGBA 转换和 png stream writer，减少
+整张 RGBA 与压缩中间缓冲；保存路径还可直接流式写入原子临时文件。该工作必须用独立 encode/save
+基线、带 padding stride 的解码像素测试和真实 Copy/Save 回归验证，不能由本节的准备阶段数据代替。
 
 ## 里程碑 6：录屏
 

@@ -81,6 +81,27 @@ target\release\capture-stress.exe --iterations 100 --output target\capture-stres
 连续导出不会导致资源无界增长；它包含 PNG 编码，不能替代快捷键到可交互
 覆盖层的 100 ms p95 指标。
 
+## 长图导出准备基线
+
+2026-08-12 增加了只测编辑器导出准备阶段的 Release 工具。它精确执行空标注合成和整帧裁切，
+不包含 PNG 编码、剪贴板、原子写入或 `fsync`，因此数据不能表述为完整导出耗时：
+
+```powershell
+cargo build --release --bin export-stress
+target\release\export-stress.exe --iterations 30 --output target\export-prep-optimized-30.json
+```
+
+同机 1440x6000 样本的源像素为 `34,560,000` bytes。`e645f9b` 基线 p50/p95 为
+`57.8073/60.0825 ms`，空标注合成与整帧裁切产生 2 次额外复制，复制流量估算
+`69,120,000` bytes，且未复用像素 Arc。`e91a24a` 通过不可变像素共享将 p50/p95 降为
+`0.0001/0.0001 ms`，额外复制与复制流量归零并复用 Arc；前后 FNV-1a 指纹都为
+`15936792589717756389`，逐字节恒等门禁通过。基线与优化报告分别位于
+`target\export-prep-baseline-30.json` 和 `target\export-prep-optimized-30.json`。
+
+该快路径只在空文档或完整且紧密 stride 的裁切上生效。非空标注、局部裁切和带 padding 的帧
+仍保留实际像素处理；当前 4K 非空标注压力 p95 为 `39.9048 ms`，指纹保持
+`10401088384397431893`。PNG 编码仍会建立整张 RGBA 和压缩输出缓冲，应在独立基线中继续优化。
+
 ## 验证命令
 
 ```powershell
