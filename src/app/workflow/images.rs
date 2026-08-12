@@ -1,6 +1,18 @@
 //! Image, project, and screenshot-history workflows.
 
+use std::collections::{HashSet, VecDeque};
+
 use super::*;
+
+pub(super) const HISTORY_THUMBNAIL_MAX_IN_FLIGHT: usize = 2;
+
+/// Removes queued thumbnail work for files that are no longer visible or retained.
+pub(in crate::app) fn retain_history_thumbnail_pending(
+    pending: &mut VecDeque<PathBuf>,
+    retained: &HashSet<PathBuf>,
+) {
+    pending.retain(|path| retained.contains(path));
+}
 
 impl FlashShotApp {
     pub(in crate::app) fn open_image(&mut self, cx: &mut Context<Self>) {
@@ -254,32 +266,48 @@ impl FlashShotApp {
         if self.history_thumbnail_failed.contains(path) {
             return None;
         }
-        if !self.history_thumbnail_loading.insert(path.clone()) {
+        if !enqueue_history_thumbnail_path(
+            path.clone(),
+            &mut self.history_thumbnail_pending,
+            &self.history_thumbnail_loading,
+        ) {
             return None;
         }
-        let path = path.clone();
-        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let mut cx = cx.clone();
-            async move {
-                let result = cx
-                    .background_executor()
-                    .spawn({
-                        let decode_path = path.clone();
-                        async move {
-                            let frame = CaptureFrame::open_png(&decode_path)?;
-                            history_thumbnail_frame(&frame)
-                        }
-                    })
-                    .await;
-                if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
-                        this.finish_history_thumbnail(path, result, cx)
-                    });
-                }
-            }
-        })
-        .detach();
+        self.pump_history_thumbnail_queue(cx);
         None
+    }
+
+    /// Starts at most two PNG decodes at once so expanding a long history cannot flood the
+    /// background executor or compete with a user-initiated capture/export.
+    fn pump_history_thumbnail_queue(&mut self, cx: &mut Context<Self>) {
+        while let Some(path) = take_next_history_thumbnail(
+            &mut self.history_thumbnail_pending,
+            &mut self.history_thumbnail_loading,
+            HISTORY_THUMBNAIL_MAX_IN_FLIGHT,
+        ) {
+            let this_path = path.clone();
+            cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let result = cx
+                        .background_executor()
+                        .spawn({
+                            let decode_path = this_path.clone();
+                            async move {
+                                let frame = CaptureFrame::open_png(&decode_path)?;
+                                history_thumbnail_frame(&frame)
+                            }
+                        })
+                        .await;
+                    if let Some(this) = this.upgrade() {
+                        this.update(&mut cx, |this, cx| {
+                            this.finish_history_thumbnail(this_path, result, cx)
+                        });
+                    }
+                }
+            })
+            .detach();
+        }
     }
 
     /// Stores a successfully decoded preview without surfacing transient list-rendering errors.
@@ -290,16 +318,24 @@ impl FlashShotApp {
         cx: &mut Context<Self>,
     ) {
         self.history_thumbnail_loading.remove(&path);
-        match result.and_then(|frame| render_image_from_capture(&frame)) {
-            Ok(thumbnail) => {
-                self.history_thumbnail_failed.remove(&path);
-                self.history_thumbnails.insert(path, thumbnail.image);
-            }
-            Err(error) => {
-                log::warn!(target: "flash_shot::history", "history_thumbnail_failed path={} error={error}", path.display());
-                self.history_thumbnail_failed.insert(path);
+        let still_retained = self
+            .history
+            .entries()
+            .iter()
+            .any(|entry| entry.path == path);
+        if still_retained {
+            match result.and_then(|frame| render_image_from_capture(&frame)) {
+                Ok(thumbnail) => {
+                    self.history_thumbnail_failed.remove(&path);
+                    self.history_thumbnails.insert(path, thumbnail.image);
+                }
+                Err(error) => {
+                    log::warn!(target: "flash_shot::history", "history_thumbnail_failed path={} error={error}", path.display());
+                    self.history_thumbnail_failed.insert(path);
+                }
             }
         }
+        self.pump_history_thumbnail_queue(cx);
         cx.notify();
     }
 
@@ -402,5 +438,157 @@ impl FlashShotApp {
             Err(error) => format!("Could not copy history image: {error}"),
         };
         cx.notify();
+    }
+}
+
+/// Adds a thumbnail request once, preserving FIFO order across repeated UI renders.
+fn enqueue_history_thumbnail_path(
+    path: PathBuf,
+    pending: &mut VecDeque<PathBuf>,
+    loading: &HashSet<PathBuf>,
+) -> bool {
+    if loading.contains(&path) || pending.contains(&path) {
+        return false;
+    }
+    pending.push_back(path);
+    true
+}
+
+/// Claims the next pending request only while the fixed decode budget has room.
+fn take_next_history_thumbnail(
+    pending: &mut VecDeque<PathBuf>,
+    loading: &mut HashSet<PathBuf>,
+    max_in_flight: usize,
+) -> Option<PathBuf> {
+    if loading.len() >= max_in_flight {
+        return None;
+    }
+    let path = pending.pop_front()?;
+    loading.insert(path.clone());
+    Some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        HISTORY_THUMBNAIL_MAX_IN_FLIGHT, enqueue_history_thumbnail_path,
+        retain_history_thumbnail_pending, take_next_history_thumbnail,
+    };
+    use std::{
+        collections::{HashSet, VecDeque},
+        path::PathBuf,
+    };
+
+    #[test]
+    fn thumbnail_queue_deduplicates_pending_and_loading_paths() {
+        let path = PathBuf::from("first.png");
+        let mut pending = VecDeque::new();
+        let mut loading = HashSet::new();
+
+        assert!(enqueue_history_thumbnail_path(
+            path.clone(),
+            &mut pending,
+            &loading
+        ));
+        assert!(!enqueue_history_thumbnail_path(
+            path.clone(),
+            &mut pending,
+            &loading
+        ));
+        let claimed = take_next_history_thumbnail(&mut pending, &mut loading, 2);
+        assert_eq!(claimed, Some(path.clone()));
+        assert!(!enqueue_history_thumbnail_path(
+            path,
+            &mut pending,
+            &loading
+        ));
+    }
+
+    #[test]
+    fn thumbnail_queue_preserves_fifo_and_caps_in_flight_work() {
+        let mut pending = VecDeque::from([
+            PathBuf::from("first.png"),
+            PathBuf::from("second.png"),
+            PathBuf::from("third.png"),
+        ]);
+        let mut loading = HashSet::new();
+
+        assert_eq!(
+            take_next_history_thumbnail(&mut pending, &mut loading, 2),
+            Some(PathBuf::from("first.png"))
+        );
+        assert_eq!(
+            take_next_history_thumbnail(&mut pending, &mut loading, 2),
+            Some(PathBuf::from("second.png"))
+        );
+        assert_eq!(
+            take_next_history_thumbnail(&mut pending, &mut loading, 2),
+            None
+        );
+        loading.remove(&PathBuf::from("first.png"));
+        assert_eq!(
+            take_next_history_thumbnail(&mut pending, &mut loading, 2),
+            Some(PathBuf::from("third.png"))
+        );
+    }
+
+    #[test]
+    fn thumbnail_queue_drops_paths_removed_from_history() {
+        let removed = PathBuf::from("removed.png");
+        let kept = PathBuf::from("kept.png");
+        let mut pending = VecDeque::from([removed, kept.clone()]);
+        let retained = HashSet::from([kept.clone()]);
+
+        retain_history_thumbnail_pending(&mut pending, &retained);
+
+        assert_eq!(pending.into_iter().collect::<Vec<_>>(), vec![kept]);
+    }
+
+    #[test]
+    fn thumbnail_queue_keeps_300_history_requests_bounded() {
+        let mut pending = VecDeque::new();
+        let mut loading = HashSet::new();
+        for index in 0..300 {
+            assert!(enqueue_history_thumbnail_path(
+                PathBuf::from(format!("capture-{index:03}.png")),
+                &mut pending,
+                &loading,
+            ));
+        }
+
+        let first = take_next_history_thumbnail(
+            &mut pending,
+            &mut loading,
+            HISTORY_THUMBNAIL_MAX_IN_FLIGHT,
+        );
+        let second = take_next_history_thumbnail(
+            &mut pending,
+            &mut loading,
+            HISTORY_THUMBNAIL_MAX_IN_FLIGHT,
+        );
+
+        assert_eq!(first, Some(PathBuf::from("capture-000.png")));
+        assert_eq!(second, Some(PathBuf::from("capture-001.png")));
+        assert_eq!(loading.len(), HISTORY_THUMBNAIL_MAX_IN_FLIGHT);
+        assert_eq!(pending.len(), 300 - HISTORY_THUMBNAIL_MAX_IN_FLIGHT);
+        assert_eq!(
+            take_next_history_thumbnail(
+                &mut pending,
+                &mut loading,
+                HISTORY_THUMBNAIL_MAX_IN_FLIGHT,
+            ),
+            None,
+        );
+
+        loading.remove(&PathBuf::from("capture-000.png"));
+        assert_eq!(
+            take_next_history_thumbnail(
+                &mut pending,
+                &mut loading,
+                HISTORY_THUMBNAIL_MAX_IN_FLIGHT,
+            ),
+            Some(PathBuf::from("capture-002.png")),
+        );
+        assert_eq!(loading.len(), HISTORY_THUMBNAIL_MAX_IN_FLIGHT);
     }
 }

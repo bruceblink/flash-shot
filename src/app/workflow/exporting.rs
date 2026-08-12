@@ -745,8 +745,10 @@ impl FlashShotApp {
         }
         self.history_thumbnails
             .retain(|path, _| retained.contains(path));
-        self.history_thumbnail_loading
-            .retain(|path| retained.contains(path));
+        super::images::retain_history_thumbnail_pending(
+            &mut self.history_thumbnail_pending,
+            &retained,
+        );
         self.history_thumbnail_failed
             .retain(|path| retained.contains(path));
     }

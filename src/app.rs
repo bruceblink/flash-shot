@@ -10,7 +10,7 @@ mod view;
 mod workflow;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -188,6 +188,8 @@ pub struct FlashShotApp {
     history_deletions_in_flight: HashSet<PathBuf>,
     history_thumbnails: HashMap<PathBuf, Arc<RenderImage>>,
     history_thumbnail_loading: HashSet<PathBuf>,
+    // Keeps a large Library expansion from queuing one full PNG decode per saved capture.
+    history_thumbnail_pending: VecDeque<PathBuf>,
     history_thumbnail_failed: HashSet<PathBuf>,
     selection_clipboard: Arc<dyn ClipboardService + Send + Sync>,
     system_services: SystemServices,
@@ -727,6 +729,7 @@ impl FlashShotApp {
             history_deletions_in_flight: HashSet::new(),
             history_thumbnails: HashMap::new(),
             history_thumbnail_loading: HashSet::new(),
+            history_thumbnail_pending: VecDeque::new(),
             history_thumbnail_failed: HashSet::new(),
             selection_clipboard,
             system_services,

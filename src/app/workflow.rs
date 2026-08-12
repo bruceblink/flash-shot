@@ -14,6 +14,7 @@ mod support;
 mod windowing;
 
 use file_io::*;
+pub(in crate::app) use images::retain_history_thumbnail_pending;
 pub(super) use settings::shortcut_option_label;
 pub(super) use support::*;
 use windowing::*;

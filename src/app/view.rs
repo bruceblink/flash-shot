@@ -1,5 +1,7 @@
 //! The small, on-demand settings window for the background capture service.
 
+use std::collections::HashSet;
+
 use gpui::{
     CursorStyle, ElementInputHandler, FocusHandle, FontWeight, KeyDownEvent, ObjectFit, Window,
     canvas, div, img, prelude::*, px,
@@ -85,21 +87,31 @@ impl gpui::Render for FlashShotApp {
             .iter()
             .filter(|entry| self.history_selected_paths.contains(&entry.path))
             .count();
-        let history_entries: Vec<_> = visible_history_entries(
+        let visible_entries = visible_history_entries(
             self.history.entries(),
             self.history_expanded,
             self.history_filter,
             &history_query,
-        )
-        .into_iter()
-        .map(|entry| {
-            let thumbnail = self.history_thumbnail(&entry.path, cx);
-            let deleting = self.history_deletions_in_flight.contains(&entry.path);
-            let selected = self.history_selected_paths.contains(&entry.path);
-            let focused = self.history_keyboard_focus.as_ref() == Some(&entry.path);
-            (entry, thumbnail, deleting, selected, focused)
-        })
-        .collect();
+        );
+        let visible_thumbnail_paths = visible_entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<HashSet<_>>();
+        // Do not keep decoding records that became hidden after a filter, search, or collapse.
+        super::workflow::retain_history_thumbnail_pending(
+            &mut self.history_thumbnail_pending,
+            &visible_thumbnail_paths,
+        );
+        let history_entries: Vec<_> = visible_entries
+            .into_iter()
+            .map(|entry| {
+                let thumbnail = self.history_thumbnail(&entry.path, cx);
+                let deleting = self.history_deletions_in_flight.contains(&entry.path);
+                let selected = self.history_selected_paths.contains(&entry.path);
+                let focused = self.history_keyboard_focus.as_ref() == Some(&entry.path);
+                (entry, thumbnail, deleting, selected, focused)
+            })
+            .collect();
         let app = cx.entity();
 
         div()
