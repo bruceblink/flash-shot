@@ -270,11 +270,12 @@ Save 完成后还等待 `capture_preflight_ready`、没有可见对话框/覆盖
 `CaptureFrame` 来自 Windows 时通常是 BGRA 字节序，而 PNG 导出契约是 8-bit RGBA。旧的实现如果先把
 整张图转换成一个新的 RGBA `Vec`，再一次性交给 PNG 编码器，长图会同时保留源 BGRA、完整的已转换
 RGBA 和最终 PNG 字节。这里的“流式”首先解决中间 RGBA 整帧副本，而不是把一切都变成零内存：当前
-`encode_png` 仍需返回最终 PNG `Vec` 以供 Copy 和 Save 共用，因此最终编码结果仍会驻留在内存中。
+`encode_png` 仍需返回最终 PNG `Vec` 以供 Copy 共用，因此 Copy 的最终编码结果仍会驻留在内存中；文件 Save
+走独立的流式写入路径，不再为了落盘保留第二份完整 PNG `Vec`。
 
-本切片的目标是只复用一行 RGBA 缓冲完成颜色转换，保持现有 Copy、Save、滚动截图和像素契约不变。
-它不改变截图采集、标注合成、PNG 色彩管理或压缩参数，也不把 Save 改成直接向原子临时文件写入；
-后者可以在单独的文件 I/O 切片中处理。OCR、翻译、模型加载和在线服务继续是未来可选扩展，不参与
+本切片的目标是只复用一行 RGBA 缓冲完成颜色转换，并让 PNG 文件 Save 直接流入原子临时文件，保持现有
+Copy、Save、滚动截图和像素契约不变。它不改变截图采集、标注合成、PNG 色彩管理或压缩参数；
+`encode_png` 仍为需要内存结果的 Copy 路径保留，文件 Save 则不再构造完整编码 `Vec`。OCR、翻译、模型加载和在线服务继续是未来可选扩展，不参与
 当前导出主链路的性能目标或验收门禁。
 
 #### 逐行转换方案
@@ -299,7 +300,8 @@ RGBA 和最终 PNG 字节。这里的“流式”首先解决中间 RGBA 整帧�
    这些门禁证明转换、错误传播和调用范围可构建；它们不替代真实 Windows 导出。
 3. 使用独立的 Release `png-stress` 在相同输入、预热次数和迭代次数下记录编码延迟分位数、源图字节数、
    最终 PNG 大小和解码像素恒等。只有同机、同输入、同配置的编码基线才能与流式版本比较；
-   `export-stress` 只覆盖合成与裁切准备，不能用来证明 PNG 编码变快。
+   `export-stress` 只覆盖合成与裁切准备，不能用来证明 PNG 编码变快。文件 Save 还应检查临时文件
+   在成功替换后消失，并在编码/同步失败时不留下半成品。
 4. 用 Release `overlay-interaction-acceptance --capture-scenario scroll-roundtrip` 分别执行 Copy 和 Save
    两个独立会话。每个会话都走真实 `More -> Scroll shot ->` 采集第二帧 `-> Finish -> Copy/Save` 链路，
    因为任一导出动作可能关闭编辑器，不能复用第一次会话的内存结果。
@@ -307,6 +309,12 @@ RGBA 和最终 PNG 字节。这里的“流式”首先解决中间 RGBA 整帧�
    导出前的拼接源逐像素比较，并记录尺寸、指纹、会话清理状态和输出路径。保存 More 菜单、第二帧就绪、
    拼接编辑器以及 Copy/Save 结果的截图，复核工具栏没有遮挡捕获区域、文字未截断、菜单没有混入导出图像。
    结构化报告、解码像素比较和截图必须相互对应，不能以其中任一项单独宣告通过。
+
+本轮当前源码的单次 Enter 系统剪贴板闭环也已重新执行：报告位于
+`target/overlay-interaction-acceptance/current-enter-streaming-retry2/session-1786536827730-20476/report.json`
+（schema 13）。触发器为 `enter_key`，PNG、CF_DIB 和常规消费者均逐像素匹配，指纹为
+`c97b8733199d4db9`，QPC 端到端耗时 `82.7588 ms`，消费者在点击前已 observing 且已回收；
+最终 teardown、overlay、Pin 和可见进程窗口均清零。该单次报告不替代 30 次批量门禁。
 
 #### 已知测量边界
 
