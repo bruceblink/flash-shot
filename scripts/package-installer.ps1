@@ -187,6 +187,9 @@ if ($ValidateOnly) {
     if ($installerDefinition -notmatch "ChineseMessagesFile") {
         throw "Installer script does not accept an explicit Simplified Chinese messages file."
     }
+    if ($installerDefinition -notmatch '(?m)^PrivilegesRequiredOverridesAllowed=commandline\s*$') {
+        throw "Installer script does not allow the isolated current-user release smoke test."
+    }
     $signingStatus = if ($RequireSignature) {
         " Signing prerequisites are ready for certificate $($signingCertificate.Thumbprint)."
     }

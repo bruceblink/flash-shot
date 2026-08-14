@@ -49,6 +49,17 @@ $chineseMessages = .\scripts\fetch-inno-language.ps1
 .\scripts\package-installer.ps1 -ChineseMessagesFile $chineseMessages
 ```
 
+Exercise the actual setup, installed executable, isolated profile, and uninstaller without changing
+the default per-machine installation policy. The smoke script uses Inno Setup's explicit
+current-user command-line override and installs only into a unique temporary directory:
+
+```powershell
+.\scripts\smoke-installer.ps1 -InstallerPath "dist\FlashShot-0.1.0-windows-setup.exe"
+```
+
+Pass `-RequireSignature` on a release machine so the setup and the executable read back from the
+installation directory must both have valid Authenticode signatures.
+
 The fetch script uses Git to read `ChineseSimplified.isl` from pinned Inno Setup source commit
 `3cfb0e5632828e0dd9b49400a185834e8f1ab570`, verifies SHA-256
 `e0b0b350e2245f3c5e65586dfe43d574f6e7f06f2261149aba284954b3fc9a8d`, and caches the file under
