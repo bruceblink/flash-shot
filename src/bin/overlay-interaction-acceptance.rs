@@ -119,6 +119,7 @@ const FOREGROUND_CHANGED_INPUT_ERROR: &str =
     "foreground window changed; input injection was aborted";
 const COPY_TRIGGER_ATTEMPTS: usize = 2;
 const COPY_TRIGGER_ACK_TIMEOUT: Duration = Duration::from_secs(1);
+const COPY_STATUS_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 const WINDOWS_BASE_DPI: f32 = 96.0;
 const SELECTION_EDGE_TOLERANCE: i32 = 1;
 const PAUSE_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
@@ -3183,7 +3184,18 @@ impl ClipboardConsumer {
 
     /// Waits for the isolated result, reaps the child, and rejects partial or duplicate output.
     fn wait_result(&mut self, timeout: Duration) -> io::Result<ClipboardConsumerResult> {
+        self.wait_result_with_probe(timeout, |_| Ok(()))
+    }
+
+    /// Also polls the producer while the consumer waits, so an application-side Copy failure is
+    /// reported immediately instead of looking like a consumer timeout.
+    fn wait_result_with_probe(
+        &mut self,
+        timeout: Duration,
+        mut probe_producer: impl FnMut(Duration) -> io::Result<()>,
+    ) -> io::Result<ClipboardConsumerResult> {
         let deadline = Instant::now() + timeout;
+        let mut next_probe = Instant::now();
         loop {
             if self.result_path.is_file() {
                 let result = serde_json::from_slice(&fs::read(&self.result_path)?)
@@ -3225,6 +3237,11 @@ impl ClipboardConsumer {
                     io::ErrorKind::TimedOut,
                     format!("clipboard consumer did not publish a result (cleanup={cleanup:?})"),
                 ));
+            }
+            let now = Instant::now();
+            if now >= next_probe {
+                probe_producer(deadline.saturating_duration_since(now))?;
+                next_probe = now + COPY_STATUS_PROBE_INTERVAL;
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -5837,7 +5854,25 @@ fn execute_copy_interaction(
         consumer_dib_path,
         consumer_image_path,
     ) = if let Some(consumer) = consumer.as_mut() {
-        let result = consumer.wait_result(context.timeout)?;
+        let result =
+            consumer.wait_result_with_probe(
+                context.timeout,
+                |remaining| match query_capture_state(
+                    context,
+                    remaining.min(Duration::from_millis(100)),
+                ) {
+                    Ok(state) if state.status.starts_with("Copy failed:") => {
+                        Err(io::Error::other(state.status))
+                    }
+                    Ok(_) => Ok(()),
+                    Err(error)
+                        if error.kind() == io::ErrorKind::TimedOut && !remaining.is_zero() =>
+                    {
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                },
+            )?;
         let png_path = PathBuf::from(&result.png_path);
         let dib_path = PathBuf::from(&result.dib_path);
         let consumer_image_path = PathBuf::from(&result.consumer_image_path);

@@ -83,7 +83,7 @@ Tauri/WebView/Excalidraw 架构。后续优先级只围绕快捷键到截图导�
 边界：取色、OCR、翻译和录屏继续保留，但在上述主链路通过真实交互与性能验收前，
 不再作为当前迭代重点。
 
-### 下一项主链路：普通选区复制响应
+### 已完成主链路：普通选区复制响应
 
 这一项只打磨用户最常重复的“选中后复制”动作。用户已经完成取景和选区时，工具不应再要求
 寻找菜单、等待不确定的后台状态，或把复制结果留在只能被应用内部观察器读取的测试路径中。
@@ -141,13 +141,28 @@ PNG/CF_DIB/常规消费者逐像素结果、cleanup 状态和 QPC 时间边界�
 和常规消费者逐像素校验均通过，所有子报告 cleanup 安全。该报告对应当时的 Release 二进制；源码或二进制
 变更后必须重新生成当前证据。
 
-2026-08-15 在提交 `d30d9c3` 的当前源码上重建 Release runner，并保存当前 toolbar 证据到
+2026-08-15 在提交 `d30d9c3` 的源码上重建 Release runner，并保存该阶段的 toolbar 证据到
 `target/overlay-copy-batch/production-toolbar-github-final-current-20260815-002201/session-1786724521963-26900/batch-report.json`。
 该会话完成 1 次预热 + 30/30 有效样本，失败数为 0，p50 `49.711 ms`、p95 `51.9642 ms`，最慢样本
 `52.4163 ms`；runner SHA-256 为 `c19baef67d72aadcc1b5c0d2b42b8b46ce1ea960151bd3c896d6d11b5dc9af65`。
 31 条迭代记录全部同时通过生产系统剪贴板、PNG/CF_DIB/常规消费者逐像素和 cleanup 断言，显示器仍为
-单屏 DPI 96/scale 1.0。Enter 路径仍需单独完成同样的批量证据；任何
-`copy-performance` 结果都不能替代真实键鼠端到端 p50/p95。
+单屏 DPI 96/scale 1.0。该记录作为后续剪贴板争用修复前的性能基线保留。
+
+随后在包含剪贴板争用修复和默认图片命名更新的当前源码上，用同一个 Release runner 分别重跑 toolbar 和 Enter。
+toolbar 报告位于
+`target/overlay-copy-batch/current-source-toolbar-naming-20260815/session-1786734049398-20680/batch-report.json`，
+完成 1 次预热 + 30/30 有效样本，失败数为 0，p50 `51.077 ms`、p95 `52.3159 ms`、最大值
+`52.4555 ms`。Enter 报告位于
+`target/overlay-copy-batch/current-source-enter-naming-20260815/session-1786734503147-32644/batch-report.json`，
+同样完成 1 次预热 + 30/30 有效样本，失败数为 0，p50 `26.8764 ms`、p95 `28.5772 ms`、最大值
+`29.6926 ms`。两份报告的 runner SHA-256 均为
+`a702ba1c06add16f125e8246908aad97add30367d86e7ecabe193c32564442ce`，与磁盘 Release 二进制一致；
+62 条迭代全部通过生产系统剪贴板、PNG/CF_DIB/常规消费者逐像素、编辑器保留、显式 Escape 和 cleanup
+断言，显示器为单屏 DPI 96/scale 1.0。修复前一次 toolbar 会话在 26 个有效样本后因前台抢占安全停止，
+另一次会话暴露应用 Copy 失败未及时传给消费者与外层超时过早的问题；修复后的第一次 Enter 会话仍因
+第二次拖选前的外部前台抢占安全停止。以上失败均保留为 fail-closed 证据，没有合并进最终零失败样本。
+当前源码的 toolbar/Enter 真实 UI 30 次门禁已完成；任何 `copy-performance` 结果仍不能替代这两份真实
+键鼠端到端 p50/p95。
 
 2026-08-12 的 Release UI 验收又通过真实输入执行了 `Ctrl+S -> Save 对话框 -> Escape -> 原选区恢复 ->
 Ctrl+S -> 保存`。报告位于
@@ -230,15 +245,15 @@ Save 报告位于
 2026-08-12 又以标准单屏场景完成一次真实生产剪贴板 Copy：
 `target/overlay-interaction-acceptance/standard-system-clipboard-final-2/session-1786507020308-21492/report.json`。
 该历史报告为 schema 12，序号 `353 -> 358`，PNG、CF_DIB 和常规消费者三路逐像素一致，消费者在点击前
-ready、已回收，最终没有可见窗口。该证据只覆盖一次工具栏点击；至少 30 次真实 UI
-样本/p50/p95/失败数仍未完成，不能由 `copy-performance` 的内部合成基准替代。
+ready、已回收，最终没有可见窗口。该证据当时只覆盖一次工具栏点击；后续 toolbar/Enter 各 30 次的
+当前源码证据已在本节前述 2026-08-15 记录中完成，仍不能由 `copy-performance` 的内部合成基准替代。
 
 标准 Copy runner 现支持 `--copy-trigger toolbar|enter`；两种触发均共享同一个生产导出状态断言、
 独立消费者和像素 oracle。`toolbar` 真实 Release 证据已归档；`enter` 的单次真实 Release 证据已归档于
 `target/overlay-interaction-acceptance/standard-system-clipboard-enter-final/session-1786512571193-22568/report.json`：
 序号 `368 -> 373`、Windows QPC 端到端延迟 `84.1912 ms`，三路内容逐像素一致并完成消费者清理。
-这只关闭单次键盘出口验收；至少 30 次真实 UI 样本的样本列表、p50/p95 和失败数仍未完成，不能由
-`copy-performance` 的内部合成基准替代。
+该记录当时只关闭单次键盘出口验收；后续 Enter 30 次真实 UI 样本、p50/p95 和零失败门禁已在本节
+前述 2026-08-15 记录中完成，不能由 `copy-performance` 的内部合成基准替代。
 
 ### Save、Pin 与再次 Capture 的 teardown 屏障
 

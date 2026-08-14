@@ -151,7 +151,10 @@ fn write_i32(target: &mut [u8], offset: usize, value: i32) {
 #[cfg(windows)]
 mod platform {
     use super::{CaptureFrame, ClipboardCommitGate, encode_dib, frame_from_rgba};
-    use std::{io, ptr, thread, time::Duration};
+    use std::{
+        io, ptr, thread,
+        time::{Duration, Instant},
+    };
     use windows_sys::Win32::{
         Foundation::{GlobalFree, HANDLE, HGLOBAL},
         System::{
@@ -164,18 +167,20 @@ mod platform {
         },
     };
 
-    const OPEN_ATTEMPTS: usize = 8;
+    const READ_ATTEMPTS: usize = 8;
+    const OPEN_RETRY_TIMEOUT: Duration = Duration::from_millis(200);
+    const OPEN_RETRY_DELAY: Duration = Duration::from_millis(5);
 
     pub fn read_image() -> io::Result<CaptureFrame> {
         let mut last_error = None;
-        for attempt in 0..OPEN_ATTEMPTS {
+        for attempt in 0..READ_ATTEMPTS {
             match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_image()) {
                 Ok(image) => {
                     return frame_from_rgba(image.width, image.height, image.bytes.as_ref());
                 }
                 Err(error) => last_error = Some(error),
             }
-            if attempt + 1 < OPEN_ATTEMPTS {
+            if attempt + 1 < READ_ATTEMPTS {
                 thread::sleep(Duration::from_millis(5));
             }
         }
@@ -277,33 +282,61 @@ mod platform {
 
     impl ClipboardGuard {
         fn open() -> io::Result<Self> {
-            for attempt in 0..OPEN_ATTEMPTS {
-                // SAFETY: a null owner is valid for a short synchronous clipboard operation.
-                if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
-                    return Ok(Self);
-                }
-                if attempt + 1 < OPEN_ATTEMPTS {
-                    thread::sleep(Duration::from_millis(5));
-                }
-            }
-            Err(io::Error::last_os_error())
+            retry_clipboard_operation(
+                OPEN_RETRY_TIMEOUT,
+                OPEN_RETRY_DELAY,
+                || false,
+                open_clipboard_once,
+            )?
+            .ok_or_else(|| io::Error::other("clipboard open was unexpectedly cancelled"))
         }
 
         /// Retries for ownership without holding the cancellation gate during a reversible wait.
         fn open_cancellable(gate: &dyn ClipboardCommitGate) -> io::Result<Option<Self>> {
-            for attempt in 0..OPEN_ATTEMPTS {
-                if gate.is_cancelled() {
-                    return Ok(None);
-                }
-                // SAFETY: a null owner is valid for a short synchronous clipboard operation.
-                if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
-                    return Ok(Some(Self));
-                }
-                if attempt + 1 < OPEN_ATTEMPTS {
-                    thread::sleep(Duration::from_millis(5));
+            retry_clipboard_operation(
+                OPEN_RETRY_TIMEOUT,
+                OPEN_RETRY_DELAY,
+                || gate.is_cancelled(),
+                open_clipboard_once,
+            )
+        }
+    }
+
+    /// Opens the process-global clipboard once so the retry policy remains independently testable.
+    fn open_clipboard_once() -> io::Result<ClipboardGuard> {
+        // SAFETY: a null owner is valid for this short synchronous clipboard operation.
+        if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
+            Ok(ClipboardGuard)
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    /// Retries a reversible clipboard operation until it succeeds, is cancelled, or exhausts its
+    /// fixed contention budget. Cancellation is checked before every attempt so waiting never
+    /// claims the caller's irreversible clipboard commit gate.
+    fn retry_clipboard_operation<T>(
+        timeout: Duration,
+        retry_delay: Duration,
+        mut cancelled: impl FnMut() -> bool,
+        mut operation: impl FnMut() -> io::Result<T>,
+    ) -> io::Result<Option<T>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if cancelled() {
+                return Ok(None);
+            }
+            match operation() {
+                Ok(value) => return Ok(Some(value)),
+                Err(error) if Instant::now() >= deadline => return Err(error),
+                Err(error) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    thread::sleep(retry_delay.min(remaining));
+                    if retry_delay >= remaining {
+                        return Err(error);
+                    }
                 }
             }
-            Err(io::Error::last_os_error())
         }
     }
 
@@ -354,6 +387,71 @@ mod platform {
                 // SAFETY: failed clipboard transfers leave ownership with this wrapper.
                 unsafe { GlobalFree(self.handle) };
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::retry_clipboard_operation;
+        use std::{cell::Cell, io, time::Duration};
+
+        #[test]
+        fn clipboard_retry_recovers_from_transient_contention() {
+            let attempts = Cell::new(0);
+            let result = retry_clipboard_operation(
+                Duration::from_secs(1),
+                Duration::ZERO,
+                || false,
+                || {
+                    let attempt = attempts.get() + 1;
+                    attempts.set(attempt);
+                    if attempt < 3 {
+                        Err(io::Error::new(io::ErrorKind::WouldBlock, "clipboard busy"))
+                    } else {
+                        Ok(42)
+                    }
+                },
+            )
+            .unwrap();
+
+            assert_eq!(result, Some(42));
+            assert_eq!(attempts.get(), 3);
+        }
+
+        #[test]
+        fn clipboard_retry_checks_cancellation_before_another_attempt() {
+            let attempts = Cell::new(0);
+            let result = retry_clipboard_operation(
+                Duration::from_secs(1),
+                Duration::ZERO,
+                || attempts.get() == 1,
+                || -> io::Result<()> {
+                    attempts.set(attempts.get() + 1);
+                    Err(io::Error::new(io::ErrorKind::WouldBlock, "clipboard busy"))
+                },
+            )
+            .unwrap();
+
+            assert_eq!(result, None);
+            assert_eq!(attempts.get(), 1);
+        }
+
+        #[test]
+        fn clipboard_retry_attempts_once_when_the_budget_is_zero() {
+            let attempts = Cell::new(0);
+            let error = retry_clipboard_operation(
+                Duration::ZERO,
+                Duration::from_millis(5),
+                || false,
+                || -> io::Result<()> {
+                    attempts.set(attempts.get() + 1);
+                    Err(io::Error::new(io::ErrorKind::WouldBlock, "clipboard busy"))
+                },
+            )
+            .unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            assert_eq!(attempts.get(), 1);
         }
     }
 }

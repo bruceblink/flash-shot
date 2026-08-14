@@ -33,8 +33,10 @@ const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_P95_MS: f64 = 250.0;
 const REPORT_SCHEMA_VERSION: u32 = 1;
-// The runner owns its own workflow deadline and report write. Give it a small tail after the
-// requested limit so the batch can preserve that report instead of killing it at the same tick.
+// The child timeout bounds one workflow wait, while a successful standard Copy session first
+// performs capture, Save, and Pin setup. Reserve that measured setup budget plus a small report
+// tail so a late Copy failure can persist its own diagnostics before the outer watchdog reaps it.
+const COPY_WORKFLOW_SETUP_BUDGET: Duration = Duration::from_secs(20);
 const RUNNER_REPORT_GRACE: Duration = Duration::from_secs(2);
 // Windows releases a process-scoped RegisterHotKey registration during process teardown. Keep
 // consecutive isolated samples apart long enough that the next child does not race that release.
@@ -721,9 +723,8 @@ fn run_iteration(
         // because collecting descendant output could otherwise outlive the root process.
         .stderr(Stdio::null());
     command.creation_flags(CREATE_NO_WINDOW);
-    // The child runner has its own workflow deadline, but the batch process also needs a hard
-    // outer bound so one wedged desktop session cannot consume the entire sample run. The small
-    // grace interval belongs to report persistence, not the measured Copy latency.
+    // The batch keeps a hard outer bound while allowing the child's per-wait timeout to begin
+    // after normal setup. Neither setup nor report grace belongs to the measured Copy latency.
     let output = spawn_and_wait(&mut command, runner_timeout(options.timeout));
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
     let report_path = find_report(&iteration_dir).ok();
@@ -822,9 +823,11 @@ fn run_iteration(
     })
 }
 
-/// Extends only the wrapper's kill deadline so a child can write its own final report.
+/// Extends only the wrapper's kill deadline for normal setup and final report persistence.
 fn runner_timeout(timeout: Duration) -> Duration {
-    timeout.saturating_add(RUNNER_REPORT_GRACE)
+    timeout
+        .saturating_add(COPY_WORKFLOW_SETUP_BUDGET)
+        .saturating_add(RUNNER_REPORT_GRACE)
 }
 
 #[cfg(windows)]
@@ -1139,10 +1142,10 @@ mod tests {
     }
 
     #[test]
-    fn runner_timeout_reserves_only_the_bounded_report_grace() {
+    fn runner_timeout_reserves_bounded_setup_and_report_budgets() {
         assert_eq!(
             super::runner_timeout(Duration::from_secs(30)),
-            Duration::from_secs(32)
+            Duration::from_secs(52)
         );
         assert_eq!(
             super::runner_timeout(Duration::MAX),
