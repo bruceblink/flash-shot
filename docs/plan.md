@@ -139,7 +139,14 @@ PNG/CF_DIB/常规消费者逐像素结果、cleanup 状态和 QPC 时间边界�
 记录 1 次预热 + 30/30 有效样本，失败数为 0，p50 `79.0749 ms`、p95 `106.1236 ms`，显示器为
 单屏 DPI 96/scale 1.0，`windows_qpc` 的 `button_down_batch_to_consumer_decoded_image` 边界，PNG、CF_DIB
 和常规消费者逐像素校验均通过，所有子报告 cleanup 安全。该报告对应当时的 Release 二进制；源码或二进制
-变更后必须重新生成当前证据。Enter 路径仍需单独完成同样的批量证据；任何
+变更后必须重新生成当前证据。
+
+2026-08-15 在提交 `d30d9c3` 的当前源码上重建 Release runner，并保存当前 toolbar 证据到
+`target/overlay-copy-batch/production-toolbar-github-final-current-20260815-002201/session-1786724521963-26900/batch-report.json`。
+该会话完成 1 次预热 + 30/30 有效样本，失败数为 0，p50 `49.711 ms`、p95 `51.9642 ms`，最慢样本
+`52.4163 ms`；runner SHA-256 为 `c19baef67d72aadcc1b5c0d2b42b8b46ce1ea960151bd3c896d6d11b5dc9af65`。
+31 条迭代记录全部同时通过生产系统剪贴板、PNG/CF_DIB/常规消费者逐像素和 cleanup 断言，显示器仍为
+单屏 DPI 96/scale 1.0。Enter 路径仍需单独完成同样的批量证据；任何
 `copy-performance` 结果都不能替代真实键鼠端到端 p50/p95。
 
 2026-08-12 的 Release UI 验收又通过真实输入执行了 `Ctrl+S -> Save 对话框 -> Escape -> 原选区恢复 ->
