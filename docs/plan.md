@@ -147,8 +147,8 @@ Ctrl+S -> 保存`。报告位于
 `target/overlay-interaction-acceptance/ctrl-s-release-verified-retry/session-1786504134708-26760/report.json`；
 取消前后两张选区截图的 SHA-256 均为 `FEF5BD6B8D0884473502E29FC392A351A87ECD2B7F755122A9542A04B09FC185`，
 保存结果为 `1178x432`，源与解码结果像素一致，结束时 overlay、Pin 和可见进程窗口均为零。该 UI 证据
-补齐了标准保存快捷键、取消恢复和视觉清理，但普通 Copy 的系统剪贴板端到端时延仍以独立的 30 次
-`copy-performance` Release 报告为准，不能互相替代。
+补齐了标准保存快捷键、取消恢复和视觉清理，但普通 Copy 的系统剪贴板端到端时延仍以当前源码的
+`overlay-copy-batch` toolbar/Enter 各 30 次 Release 报告为准，不能互相替代。
 
 ## 里程碑 3：原生标注
 
