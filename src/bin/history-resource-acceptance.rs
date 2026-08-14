@@ -66,6 +66,12 @@ struct NativeWindow {
     handle: *mut std::ffi::c_void,
 }
 
+/// Records whether the Library worker has stopped before its isolated fixture tree is removed.
+struct WorkerShutdown {
+    finished: bool,
+    result: io::Result<()>,
+}
+
 fn main() {
     match run() {
         Ok(report) => {
@@ -103,8 +109,9 @@ fn run() -> io::Result<serde_json::Value> {
     let performance = PerformanceRecorder::new(session_root.join("metrics"))?;
     let settings_path = session_root.join("settings.json");
     let (command_tx, command_rx) = async_channel::unbounded();
-    let worker = thread::spawn(move || -> Result<(), String> {
-        flash_shot::run_history_resource_acceptance(
+    let (worker_result_tx, worker_result_rx) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || {
+        let result = flash_shot::run_history_resource_acceptance(
             Instant::now(),
             performance,
             history,
@@ -116,7 +123,8 @@ fn run() -> io::Result<serde_json::Value> {
                 commands: command_rx,
             },
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+        let _ = worker_result_tx.send(result);
     });
 
     let result = (|| -> io::Result<serde_json::Value> {
@@ -235,22 +243,32 @@ fn run() -> io::Result<serde_json::Value> {
         }
     })();
 
-    // Persist measurements before GPUI handles Quit and tears down its native event loop.
-    if let Ok(report) = &result {
-        fs::write(
-            &report_path,
-            serde_json::to_vec_pretty(report).map_err(io::Error::other)?,
-        )?;
-    }
-    let _ = request_quit(&command_tx, options.timeout);
+    let shutdown_started = Instant::now();
+    let quit_result = request_quit(&command_tx, options.timeout);
     // Let the app release decoded thumbnails before removing the isolated fixture tree.
-    thread::sleep(Duration::from_millis(250));
-    let worker_result = worker
-        .join()
-        .map_err(|_| io::Error::other("history resource app thread panicked"))
-        .and_then(|result| result.map_err(io::Error::other));
-    let cleanup_result = remove_history_root(&history_root);
-    match (result, worker_result) {
+    let settle_delay =
+        Duration::from_millis(250).min(options.timeout.saturating_sub(shutdown_started.elapsed()));
+    if !settle_delay.is_zero() {
+        thread::sleep(settle_delay);
+    }
+    let worker_shutdown = wait_for_worker_shutdown(
+        worker,
+        worker_result_rx,
+        options.timeout.saturating_sub(shutdown_started.elapsed()),
+    );
+    let worker_finished = worker_shutdown.finished;
+    let shutdown_result = combine_shutdown_results(quit_result, worker_shutdown.result);
+    // A timed-out worker may still read the fixture. Leave it intact for diagnosis instead of
+    // racing Windows file sharing; process exit will end the detached worker.
+    let cleanup_result = if worker_finished {
+        remove_history_root(&history_root)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "history resource worker did not stop; fixture cleanup was skipped",
+        ))
+    };
+    match (result, shutdown_result) {
         (Ok(mut report), Ok(())) => {
             let history_root_exists = history_root.exists();
             report["cleanup"]["fixture_files_removed"] =
@@ -272,7 +290,8 @@ fn run() -> io::Result<serde_json::Value> {
             )?;
             Ok(report)
         }
-        (Err(error), _) | (Ok(_), Err(error)) => {
+        (probe_result, shutdown_result) => {
+            let error = combine_acceptance_errors(probe_result.err(), shutdown_result.err());
             let failure_report = serde_json::json!({
                 "schema_version": 1,
                 "test": "history_thumbnail_resource_acceptance",
@@ -295,6 +314,69 @@ fn run() -> io::Result<serde_json::Value> {
             )?;
             Err(error)
         }
+    }
+}
+
+/// Waits only until the caller's deadline, detaching a stuck worker instead of blocking forever.
+fn wait_for_worker_shutdown(
+    worker: thread::JoinHandle<()>,
+    results: mpsc::Receiver<Result<(), String>>,
+    timeout: Duration,
+) -> WorkerShutdown {
+    match results.recv_timeout(timeout) {
+        Ok(result) => WorkerShutdown {
+            finished: true,
+            result: worker
+                .join()
+                .map_err(|_| io::Error::other("history resource app thread panicked"))
+                .and_then(|_| result.map_err(io::Error::other)),
+        },
+        Err(mpsc::RecvTimeoutError::Disconnected) => WorkerShutdown {
+            finished: true,
+            result: worker.join().map_err(|_| {
+                io::Error::other("history resource app thread panicked before reporting completion")
+            }),
+        },
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            drop(worker);
+            WorkerShutdown {
+                finished: false,
+                result: Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "history resource app thread did not stop before the shutdown deadline",
+                )),
+            }
+        }
+    }
+}
+
+/// Keeps both probe and shutdown failures visible instead of discarding the later lifecycle error.
+fn combine_acceptance_errors(
+    probe_error: Option<io::Error>,
+    shutdown_error: Option<io::Error>,
+) -> io::Error {
+    match (probe_error, shutdown_error) {
+        (Some(probe_error), Some(shutdown_error)) => io::Error::new(
+            probe_error.kind(),
+            format!("{probe_error}; resource worker shutdown also failed: {shutdown_error}"),
+        ),
+        (Some(error), None) | (None, Some(error)) => error,
+        (None, None) => io::Error::other("history resource acceptance failed without an error"),
+    }
+}
+
+/// Combines the command acknowledgement and worker result while preserving both diagnostics.
+fn combine_shutdown_results(
+    quit_result: io::Result<()>,
+    worker_result: io::Result<()>,
+) -> io::Result<()> {
+    match (quit_result, worker_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(quit_error), Err(worker_error)) => Err(io::Error::new(
+            quit_error.kind(),
+            format!("{quit_error}; resource worker shutdown also failed: {worker_error}"),
+        )),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
     }
 }
 
@@ -689,15 +771,18 @@ fn resource_snapshot() -> io::Result<ResourceSnapshot> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FIXTURE_COUNT, ResourceSample, ResourceSnapshot, create_session_root, parse_args,
-        peak_for_phase,
+        FIXTURE_COUNT, ResourceSample, ResourceSnapshot, combine_acceptance_errors,
+        combine_shutdown_results, create_session_root, parse_args, peak_for_phase,
+        wait_for_worker_shutdown,
     };
     use flash_shot::HistoryResourceAcceptanceState;
     use std::{
         fs,
         path::PathBuf,
         process,
-        time::{SystemTime, UNIX_EPOCH},
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     #[test]
@@ -788,5 +873,61 @@ mod tests {
         assert!(first.starts_with(&output));
         assert!(second.starts_with(&output));
         fs::remove_dir_all(&output).unwrap();
+    }
+
+    #[test]
+    fn worker_shutdown_returns_at_its_deadline_without_joining_a_stuck_thread() {
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(75));
+            drop(result_tx);
+        });
+        let started = Instant::now();
+
+        let shutdown = wait_for_worker_shutdown(worker, result_rx, Duration::from_millis(5));
+
+        assert!(!shutdown.finished);
+        assert_eq!(
+            shutdown.result.unwrap_err().kind(),
+            std::io::ErrorKind::TimedOut
+        );
+        assert!(started.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn worker_shutdown_joins_a_completed_worker() {
+        let (result_tx, result_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        let worker = thread::spawn(move || {
+            result_tx.send(Ok(())).unwrap();
+        });
+
+        let shutdown = wait_for_worker_shutdown(worker, result_rx, Duration::from_millis(50));
+
+        assert!(shutdown.finished);
+        assert!(shutdown.result.is_ok());
+    }
+
+    #[test]
+    fn shutdown_errors_preserve_probe_and_worker_diagnostics() {
+        let combined = combine_acceptance_errors(
+            Some(std::io::Error::other("probe failed")),
+            Some(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "worker did not stop",
+            )),
+        );
+        assert!(combined.to_string().contains("probe failed"));
+        assert!(combined.to_string().contains("worker did not stop"));
+
+        let shutdown = combine_shutdown_results(
+            Err(std::io::Error::other("quit reply timed out")),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "worker did not stop",
+            )),
+        )
+        .unwrap_err();
+        assert!(shutdown.to_string().contains("quit reply timed out"));
+        assert!(shutdown.to_string().contains("worker did not stop"));
     }
 }
