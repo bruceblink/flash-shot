@@ -250,6 +250,14 @@ Save 完成后还等待 `capture_preflight_ready`、没有可见对话框/覆盖
 `selecting`、原选区不变且只有一个覆盖层；`cleanup_after_escape=true` 才证明后续显式 Escape 将会话、
 覆盖层和 teardown 屏障全部清理。旧 schema 12/13 证据不具备这两个字段，不能替代当前源码的重跑。
 
+2026-08-14 的当前源码 Release 回归位于
+`target/release-acceptance/copy-retained-current-20260814-221237/session-1786716757097-24128/report.json`。
+该会话在单屏 `2560x1440`、DPI 96 下通过真实工具栏 Copy，固定选区为 `1178x432`，源与结果指纹均为
+`acf69e150b9e2f90`。报告的 `copy_editor_retained` 截图和结构化断言确认 Copy 完成后编辑器仍可操作，
+随后 `copy_escape_cleanup` 确认会话回到 idle、overlay/Pin/可见进程窗口均为零且 capture preflight 恢复。
+本次仅使用进程内 `isolated_observer`，系统剪贴板序号保持 `36 -> 36`；它证明当前后台 Copy 的 UI 保留与
+清理契约，不替代需要 `--allow-system-clipboard` 的 toolbar/Enter 各 30 次外部消费者性能批次。
+
 ### Pin 帧准备的 UI 线程边界
 
 Pin 的大像素工作现在统一在 `background_executor` 完成。选区 Pin 在后台执行标注合成、裁切和
