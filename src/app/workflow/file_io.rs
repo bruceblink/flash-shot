@@ -33,6 +33,99 @@ pub(super) fn save_annotated_frame_selection(
         .save_image(path)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ImageTimestamp {
+    year: u16,
+    month: u16,
+    day: u16,
+    hour: u16,
+    minute: u16,
+    second: u16,
+    millisecond: u16,
+}
+
+/// Builds the native Save dialog's collision-resistant default image name.
+///
+/// The timestamp is local time with millisecond precision, while the UUIDv7 keeps two captures
+/// created in the same millisecond distinct without relying on a filesystem collision suffix.
+pub(super) fn default_image_filename(export_format: u8) -> String {
+    format_default_image_filename(
+        crate::settings::DEFAULT_SAVE_PREFIX,
+        local_image_timestamp(),
+        uuid::Uuid::now_v7(),
+        export_extension(export_format),
+    )
+}
+
+fn format_default_image_filename(
+    software_name: &str,
+    timestamp: ImageTimestamp,
+    uuid: uuid::Uuid,
+    extension: &str,
+) -> String {
+    format!(
+        "{software_name}{:04}{:02}{:02}{:02}{:02}{:02}{:03}{uuid}.{extension}",
+        timestamp.year,
+        timestamp.month,
+        timestamp.day,
+        timestamp.hour,
+        timestamp.minute,
+        timestamp.second,
+        timestamp.millisecond,
+    )
+}
+
+#[cfg(windows)]
+fn local_image_timestamp() -> ImageTimestamp {
+    use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetLocalTime};
+
+    let mut system_time = SYSTEMTIME::default();
+    // SAFETY: GetLocalTime writes a SYSTEMTIME into the valid mutable pointer we provide.
+    unsafe { GetLocalTime(&mut system_time) };
+    ImageTimestamp {
+        year: system_time.wYear,
+        month: system_time.wMonth,
+        day: system_time.wDay,
+        hour: system_time.wHour,
+        minute: system_time.wMinute,
+        second: system_time.wSecond,
+        millisecond: system_time.wMilliseconds,
+    }
+}
+
+#[cfg(not(windows))]
+fn local_image_timestamp() -> ImageTimestamp {
+    let timestamp_ms = unix_timestamp_ms();
+    let days = (timestamp_ms / 86_400_000) as i64;
+    let day_ms = timestamp_ms % 86_400_000;
+    let (year, month, day) = civil_date_from_days(days);
+    ImageTimestamp {
+        year,
+        month,
+        day,
+        hour: (day_ms / 3_600_000) as u16,
+        minute: ((day_ms / 60_000) % 60) as u16,
+        second: ((day_ms / 1_000) % 60) as u16,
+        millisecond: (day_ms % 1_000) as u16,
+    }
+}
+
+#[cfg(not(windows))]
+fn civil_date_from_days(days_since_unix_epoch: i64) -> (u16, u16, u16) {
+    let z = days_since_unix_epoch + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_part = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_part + 2) / 5 + 1;
+    let month = month_part + if month_part < 10 { 3 } else { -9 };
+    let year = year + if month <= 2 { 1 } else { 0 };
+    (year as u16, month as u16, day as u16)
+}
+
 /// Writes a quick save using the active history root and persisted filename prefix.
 pub(super) fn quick_save_annotated_frame_selection_with_prefix(
     frame: &CaptureFrame,
@@ -227,6 +320,36 @@ pub(super) const fn export_extension(format: u8) -> &'static str {
         1 => "jpg",
         2 => "webp",
         _ => "png",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ImageTimestamp, format_default_image_filename};
+
+    #[test]
+    fn default_image_filename_contains_local_timestamp_and_uuid_v7() {
+        let uuid = uuid::Uuid::parse_str("018f2b50-7b2d-7cc0-8000-000000000000").unwrap();
+        let name = format_default_image_filename(
+            "FlashShot",
+            ImageTimestamp {
+                year: 2026,
+                month: 8,
+                day: 14,
+                hour: 12,
+                minute: 30,
+                second: 45,
+                millisecond: 987,
+            },
+            uuid,
+            "png",
+        );
+
+        assert_eq!(
+            name,
+            "FlashShot20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png"
+        );
+        assert_eq!(uuid.get_version_num(), 7);
     }
 }
 

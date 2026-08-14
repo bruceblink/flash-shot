@@ -33,10 +33,7 @@ impl FlashShotApp {
         // native dialog and background writer eventually return.
         let history_source = self.history_source;
         cx.notify();
-        let suggested_name = format!(
-            "flash-shot.{}",
-            export_extension(self.settings.export_format)
-        );
+        let suggested_name = default_image_filename(self.settings.export_format);
         let prompt = cx.prompt_for_new_path(&PathBuf::default(), Some(&suggested_name));
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
