@@ -44,7 +44,8 @@ jobs:
         shell: pwsh
         run: |
           .\scripts\package-portable.ps1
-          .\scripts\package-installer.ps1
+          $chineseMessages = .\scripts\fetch-inno-language.ps1
+          .\scripts\package-installer.ps1 -ChineseMessagesFile $chineseMessages
       - name: Smoke test portable startup
         shell: pwsh
         run: |

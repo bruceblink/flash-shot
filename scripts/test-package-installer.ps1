@@ -4,6 +4,8 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $fixture = Join-Path $root "target\package-installer-fixture"
 $fakeSignTool = Join-Path $fixture "signtool.exe"
 $missingSignTool = Join-Path $fixture "missing-signtool.exe"
+$fakeLanguage = Join-Path $fixture "ChineseSimplified.isl"
+$invalidLanguage = Join-Path $fixture "invalid-language.isl"
 $packageInstaller = Join-Path $PSScriptRoot "package-installer.ps1"
 $timestampValidationCertificate = "0000000000000000000000000000000000000000"
 
@@ -30,6 +32,30 @@ try {
     New-Item -ItemType Directory -Force -Path $fixture | Out-Null
 
     & $packageInstaller -ValidateOnly
+
+    @(
+        "[LangOptions]",
+        'LanguageID=$0804',
+        "[Messages]",
+        "SetupAppTitle=Install"
+    ) | Set-Content -LiteralPath $fakeLanguage -Encoding UTF8
+    & $packageInstaller -ValidateOnly -ChineseMessagesFile $fakeLanguage
+
+    Assert-InstallerValidationFails @{
+        ValidateOnly = $true
+        ChineseMessagesFile = "relative\ChineseSimplified.isl"
+    } "must be an absolute path"
+
+    Assert-InstallerValidationFails @{
+        ValidateOnly = $true
+        ChineseMessagesFile = (Join-Path $fixture "missing-language.isl")
+    } "messages file does not exist"
+
+    "invalid language" | Set-Content -LiteralPath $invalidLanguage -Encoding UTF8
+    Assert-InstallerValidationFails @{
+        ValidateOnly = $true
+        ChineseMessagesFile = $invalidLanguage
+    } "not a Simplified Chinese"
 
     Assert-InstallerValidationFails @{
         ValidateOnly = $true

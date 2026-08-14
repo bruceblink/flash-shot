@@ -386,14 +386,18 @@ Copy、Save、滚动截图和像素契约不变。它不改变截图采集、标
 - [x] Windows 安装包构建与签名校验脚本。
 - [x] 发布资产清单与 SHA-256 验证。
 - [x] 更新发布策略与本地预发布验收（便携包、隔离 profile 启动冒烟、manifest、SHA-256、fixture 和安装器配置门禁均已通过）。
-- [ ] 发布时真实验收（签名、安装器和干净 Windows 用户账户仍需在发布环境执行）。
+- [ ] 发布时真实验收（受信签名、真实安装/卸载和干净 Windows 用户账户仍需在发布环境执行）。
 
 当前发布预检会在 `-ValidateOnly -RequireSignature` 下同时要求可执行的 SignTool 和当前用户证书库中
 带私钥、未过期且含代码签名用途的证书；实际签名固定使用该次预检选中的证书。2026-08-13 本机已
 验证版本化 Windows SDK SignTool、用户级 Inno Setup 路径、RFC 3161 时间戳参数和签名预检回归；短期
-自签名证书只用于脚本闭环并已清理。隔离便携包生成/校验通过，但本机 Inno 安装缺少
-`ChineseSimplified.isl`，因此真实安装器产物尚未生成；生产信任证书、安装器和干净 Windows 用户账户
-仍必须在发布环境执行，不将发布时真实验收标记为完成。
+自签名证书只用于脚本闭环并已清理。2026-08-14 又将官方简体中文消息固定到 Inno Setup 源提交
+`3cfb0e5` 和 SHA-256 `e0b0b350...b3fc9a8d`，获取器只从该 Git blob 导出并在交给打包器前验证
+`LanguageID=$0804`。隔离的当前源码 Release 构建随后由 Inno Setup 6.7.3 生成未签名安装器
+`target/installer-acceptance-20260814/dist/FlashShot-0.1.0-windows-setup.exe`，大小 `6,593,265` bytes，
+SHA-256 `48515393bc660d8b0442f87301ab494517e7531a66dd2656c4c61b6387a79772`，sidecar 匹配且
+Authenticode 状态明确为 `NotSigned`。这关闭了本机语言资源和安装器编译阻塞，但生产信任证书、实际
+安装/卸载和干净 Windows 用户账户仍必须在发布环境执行，不将发布时真实验收标记为完成。
 - macOS 截图与平台实现，以及权限交互。
 - 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 

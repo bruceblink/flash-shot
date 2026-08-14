@@ -41,15 +41,28 @@ The project includes an Inno Setup 6 installer definition for a standard per-mac
 .\scripts\package-installer.ps1 -ValidateOnly
 ```
 
-To produce an unsigned installer, install Inno Setup 6 and run:
+To produce an unsigned installer, install Inno Setup 6, fetch the pinned official Simplified
+Chinese messages, and pass the verified absolute path to the packager:
 
 ```powershell
-.\scripts\package-installer.ps1
+$chineseMessages = .\scripts\fetch-inno-language.ps1
+.\scripts\package-installer.ps1 -ChineseMessagesFile $chineseMessages
 ```
 
-The packaging step checks that every `MessagesFile` declared by the installer definition is present
-under the selected Inno Setup installation before it signs the executable. Install the full Inno Setup
-language pack when this check reports a missing `.isl` file.
+The fetch script uses Git to read `ChineseSimplified.isl` from pinned Inno Setup source commit
+`3cfb0e5632828e0dd9b49400a185834e8f1ab570`, verifies SHA-256
+`e0b0b350e2245f3c5e65586dfe43d574f6e7f06f2261149aba284954b3fc9a8d`, and caches the file under
+`target\inno-languages`. The translation is listed on the
+[official Inno Setup translations page](https://jrsoftware.org/files/istrans/) for version 6.5.0 and
+newer; the upstream [Inno Setup license](https://github.com/jrsoftware/issrc/blob/main/license.txt)
+permits redistribution while retaining its notices. Pinning both commit and bytes prevents a changed
+network response from silently entering a release. If the selected Inno Setup installation already
+contains the same language file, `package-installer.ps1` can still use that local compiler resource
+without `-ChineseMessagesFile`.
+
+The packaging step validates the Chinese locale identity and checks every compiler-relative
+`MessagesFile` before it signs the executable. A missing local translation now has an actionable path
+through `fetch-inno-language.ps1`; it does not require modifying the Inno Setup installation.
 
 To require an Authenticode signature for both the installed executable and setup program, make `signtool.exe` and a usable code-signing certificate available, then run:
 
@@ -109,7 +122,13 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow runs the Rust gates, builds the unsigned portable ZIP and Inno Setup executable, starts the freshly extracted portable ZIP for five seconds, generates and re-verifies `release-manifest.json`, then creates a **draft** GitHub Release with the ZIP, installer, their SHA-256 sidecars, and manifest. Publishing the draft is a deliberate operator action after clean-profile smoke testing. Releases are unsigned unless the packaging process has been separately extended with an available code-signing certificate; an unsigned release must remain identified as such.
+The workflow runs the Rust gates, fetches and verifies the pinned official Simplified Chinese Inno
+Setup messages, builds the unsigned portable ZIP and installer, starts the freshly extracted portable
+ZIP for five seconds, generates and re-verifies `release-manifest.json`, then creates a **draft**
+GitHub Release with the ZIP, installer, their SHA-256 sidecars, and manifest. Publishing the draft is a
+deliberate operator action after clean-profile smoke testing. Releases are unsigned unless the
+packaging process has been separately extended with an available code-signing certificate; an unsigned
+release must remain identified as such.
 
 ## Release checks
 

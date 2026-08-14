@@ -5,7 +5,8 @@ param(
     [switch]$ValidateOnly,
     [string]$SignToolPath = "",
     [string]$CertificateThumbprint = "",
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "http://timestamp.digicert.com",
+    [string]$ChineseMessagesFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,6 +69,24 @@ function Get-TimestampEndpoint([string]$Value) {
     return $endpoint.AbsoluteUri
 }
 
+# Validates an operator-supplied language file early so ISCC never sees an ambiguous path or locale.
+function Get-ChineseMessagesFile([string]$Path) {
+    if (-not [IO.Path]::IsPathRooted($Path)) {
+        throw "-ChineseMessagesFile must be an absolute path."
+    }
+    $resolved = [IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+        throw "Inno Setup Simplified Chinese messages file does not exist: $resolved"
+    }
+    $content = Get-Content -LiteralPath $resolved -Raw -Encoding UTF8
+    if ($content -notmatch '(?m)^LanguageID=\$0804\s*$' -or
+        $content -notmatch '(?m)^\[Messages\]\s*$' -or
+        $content -notmatch '(?m)^SetupAppTitle=') {
+        throw "-ChineseMessagesFile is not a Simplified Chinese Inno Setup messages file."
+    }
+    return $resolved
+}
+
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $manifest = Join-Path $root "Cargo.toml"
 $installer = Join-Path $root "installer\flash-shot.iss"
@@ -79,6 +98,12 @@ foreach ($path in $required) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required installer input is missing: $path"
     }
+}
+$resolvedChineseMessagesFile = if ($ChineseMessagesFile.Length -gt 0) {
+    Get-ChineseMessagesFile $ChineseMessagesFile
+}
+else {
+    $null
 }
 
 $metadata = & cargo metadata --no-deps --format-version 1 --manifest-path $manifest | ConvertFrom-Json
@@ -124,8 +149,12 @@ if ($RequireSignature) {
 }
 
 if ($ValidateOnly) {
-    if ((Get-Content -Raw $installer) -notmatch "MyAppVersion") {
+    $installerDefinition = Get-Content -Raw $installer
+    if ($installerDefinition -notmatch "MyAppVersion") {
         throw "Installer script does not accept a version from Cargo metadata."
+    }
+    if ($installerDefinition -notmatch "ChineseMessagesFile") {
+        throw "Installer script does not accept an explicit Simplified Chinese messages file."
     }
     $signingStatus = if ($RequireSignature) {
         " Signing prerequisites are ready for certificate $($signingCertificate.Thumbprint)."
@@ -160,11 +189,20 @@ if ($null -eq $iscc) {
 
 # Checks every compiler message file before signing so a failed installer build leaves no signed partial artifact.
 $isccRoot = Split-Path -Parent $iscc
-$languageFiles = @(
+$compilerLanguageFiles = @(
     [regex]::Matches((Get-Content -Raw $installer), 'MessagesFile:\s*"compiler:([^" ]+)"') |
         ForEach-Object { Join-Path $isccRoot $_.Groups[1].Value.Replace('\', [IO.Path]::DirectorySeparatorChar) }
 )
-$missingLanguageFiles = @($languageFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+$defaultChineseMessagesFile = Join-Path $isccRoot "Languages\ChineseSimplified.isl"
+if ($null -eq $resolvedChineseMessagesFile) {
+    if (Test-Path -LiteralPath $defaultChineseMessagesFile -PathType Leaf) {
+        $resolvedChineseMessagesFile = Get-ChineseMessagesFile $defaultChineseMessagesFile
+    }
+    else {
+        throw "Inno Setup Simplified Chinese messages are missing. Run scripts\fetch-inno-language.ps1 and pass its absolute output with -ChineseMessagesFile."
+    }
+}
+$missingLanguageFiles = @($compilerLanguageFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
 if ($missingLanguageFiles.Count -gt 0) {
     throw "Inno Setup compiler message files are missing: $($missingLanguageFiles -join ', '). Install the full Inno Setup language pack."
 }
@@ -196,7 +234,8 @@ try {
         "Target: $rustHost"
     ) | Set-Content -LiteralPath (Join-Path $staging "PORTABLE.txt") -Encoding ascii
 
-    & $iscc "/DMyAppVersion=$($package.version)" "/DMySourceDir=$staging" "/O$output" $installer
+    & $iscc "/DMyAppVersion=$($package.version)" "/DMySourceDir=$staging" `
+        "/DChineseMessagesFile=$resolvedChineseMessagesFile" "/O$output" $installer
     if ($LASTEXITCODE -ne 0) {
         throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
     }

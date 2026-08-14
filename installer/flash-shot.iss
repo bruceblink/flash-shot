@@ -10,6 +10,10 @@
   #error MySourceDir must be supplied by scripts/package-installer.ps1
 #endif
 
+#ifndef ChineseMessagesFile
+  #define ChineseMessagesFile "compiler:Languages\ChineseSimplified.isl"
+#endif
+
 [Setup]
 AppId={{BF3C499B-7D1B-4E5D-9E9B-7BF1A1E9297D}
 AppName={#MyAppName}
@@ -32,7 +36,7 @@ LicenseFile={#MySourceDir}\LICENSE.txt
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "{#ChineseMessagesFile}"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
