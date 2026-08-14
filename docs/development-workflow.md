@@ -104,6 +104,8 @@ PNG 文件 Save 使用逐行 BGRA 到 RGBA 的流式编码，并通过原子临�
 资源样本须记录构建 profile、显示器/DPI、默认 5 条与显式 300 条展开、首批缩略图时间、峰值私有字节、
 截图和报告路径。当前实现已通过代码/全库回归；Release 单屏样本已完成并归档在
 `target/history-resource-acceptance/release-gate-clean-20260813/report.json`，默认预览条数保持不变。
+新的资源探针会在指定输出目录下创建独立的 `session-<timestamp>-<pid>` 目录，并将报告、两张截图、
+设置和指标写入其中；临时 history fixture 同样受该目录约束并在清理阶段删除，避免并行或重试会话覆盖彼此的证据。
 
 本轮视觉切片选择最常用的“拖选 -> Save 取消/保存 -> Pin -> Copy -> 清理”主流程。通过条件是同一
 Release 会话同时具备真实 `--allow-input` 报告、关键步骤原生截图、Save/Pin/Copy 逐像素结果和最终

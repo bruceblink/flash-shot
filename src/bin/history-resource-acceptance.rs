@@ -6,7 +6,7 @@ use std::{
     process,
     sync::{Arc, mpsc},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(windows)]
@@ -90,9 +90,11 @@ fn run() -> io::Result<serde_json::Value> {
         fs::create_dir_all(&options.output_dir)?;
         fs::canonicalize(&options.output_dir)
     })?;
-    let session_root = output_dir.join(format!("session-{}", process::id()));
+    let session_root = create_session_root(&output_dir)?;
     let history_root = session_root.join("history");
     fs::create_dir_all(&history_root)?;
+    fs::create_dir_all(session_root.join("screenshots"))?;
+    let report_path = session_root.join("report.json");
     let fixture_paths = create_history_fixtures(&history_root)?;
     let mut history = ScreenshotHistory::open_with_limit(&history_root, FIXTURE_COUNT)?;
     for path in &fixture_paths {
@@ -139,7 +141,7 @@ fn run() -> io::Result<serde_json::Value> {
                 started,
                 &mut samples,
             )?;
-            let default_screenshot = output_dir.join("default-5-preview.png");
+            let default_screenshot = session_root.join("screenshots/default-5-preview.png");
             capture_window(&window, &default_screenshot)?;
             let baseline = resource_snapshot()?;
 
@@ -150,7 +152,7 @@ fn run() -> io::Result<serde_json::Value> {
                 started,
                 &mut samples,
             )?;
-            let expanded_screenshot = output_dir.join("expanded-300-preview.png");
+            let expanded_screenshot = session_root.join("screenshots/expanded-300-preview.png");
             capture_window(&window, &expanded_screenshot)?;
             let peak = peak_for_phase(baseline, &samples, "expanded_300");
             let peak_loading = samples
@@ -187,6 +189,7 @@ fn run() -> io::Result<serde_json::Value> {
                     && first_thumbnail_elapsed_ms.is_some(),
                 "measurement_mode": "release_resource",
                 "build_profile": build_profile(),
+                "session_root": session_root.to_string_lossy().into_owned(),
                 "fixture_count": FIXTURE_COUNT,
                 "default_preview_count": DEFAULT_VISIBLE_COUNT,
                 "fixture_dimensions": { "width": FIXTURE_WIDTH, "height": FIXTURE_HEIGHT },
@@ -218,12 +221,13 @@ fn run() -> io::Result<serde_json::Value> {
                 },
                 "samples": samples,
                 "screenshots": {
-                    "default_5": default_screenshot.file_name().and_then(|name| name.to_str()),
-                    "expanded_300": expanded_screenshot.file_name().and_then(|name| name.to_str()),
+                    "default_5": "screenshots/default-5-preview.png",
+                    "expanded_300": "screenshots/expanded-300-preview.png",
                 },
                 "cleanup": {
                     "fixture_count_created": fixture_paths.len(),
                     "fixture_files_removed": false,
+                    "history_root_exists": true,
                     "history_root": history_root.to_string_lossy(),
                 },
             });
@@ -234,7 +238,7 @@ fn run() -> io::Result<serde_json::Value> {
     // Persist measurements before GPUI handles Quit and tears down its native event loop.
     if let Ok(report) = &result {
         fs::write(
-            output_dir.join("report.json"),
+            &report_path,
             serde_json::to_vec_pretty(report).map_err(io::Error::other)?,
         )?;
     }
@@ -248,18 +252,22 @@ fn run() -> io::Result<serde_json::Value> {
     let cleanup_result = remove_history_root(&history_root);
     match (result, worker_result) {
         (Ok(mut report), Ok(())) => {
+            let history_root_exists = history_root.exists();
             report["cleanup"]["fixture_files_removed"] =
                 serde_json::Value::Bool(cleanup_result.is_ok());
+            report["cleanup"]["history_root_exists"] = serde_json::Value::Bool(history_root_exists);
             report["cleanup"]["fixture_cleanup_error"] = cleanup_result
                 .as_ref()
                 .err()
                 .map(|error| serde_json::Value::String(error.to_string()))
                 .unwrap_or(serde_json::Value::Null);
             report["passed"] = serde_json::Value::Bool(
-                report["passed"].as_bool().unwrap_or(false) && cleanup_result.is_ok(),
+                report["passed"].as_bool().unwrap_or(false)
+                    && cleanup_result.is_ok()
+                    && !history_root_exists,
             );
             fs::write(
-                output_dir.join("report.json"),
+                &report_path,
                 serde_json::to_vec_pretty(&report).map_err(io::Error::other)?,
             )?;
             Ok(report)
@@ -270,8 +278,10 @@ fn run() -> io::Result<serde_json::Value> {
                 "test": "history_thumbnail_resource_acceptance",
                 "passed": false,
                 "error": error.to_string(),
+                "session_root": session_root.to_string_lossy().into_owned(),
                 "cleanup": {
                     "fixture_files_removed": cleanup_result.is_ok(),
+                    "history_root_exists": history_root.exists(),
                     "fixture_cleanup_error": cleanup_result
                         .as_ref()
                         .err()
@@ -280,12 +290,38 @@ fn run() -> io::Result<serde_json::Value> {
                 },
             });
             fs::write(
-                output_dir.join("report.json"),
+                &report_path,
                 serde_json::to_vec_pretty(&failure_report).map_err(io::Error::other)?,
             )?;
             Err(error)
         }
     }
+}
+
+/// Creates one fresh evidence directory so retries and concurrent probes cannot overwrite output.
+fn create_session_root(output_dir: &Path) -> io::Result<PathBuf> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let process_id = process::id();
+    for attempt in 0_u16..=100 {
+        let suffix = if attempt == 0 {
+            String::new()
+        } else {
+            format!("-{attempt}")
+        };
+        let root = output_dir.join(format!("session-{timestamp}-{process_id}{suffix}"));
+        match fs::create_dir(&root) {
+            Ok(()) => return Ok(root),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a unique history resource acceptance session directory",
+    ))
 }
 
 /// Removes the isolated fixture tree, retrying transient Windows file locks.
@@ -652,9 +688,17 @@ fn resource_snapshot() -> io::Result<ResourceSnapshot> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FIXTURE_COUNT, ResourceSample, ResourceSnapshot, parse_args, peak_for_phase};
+    use super::{
+        FIXTURE_COUNT, ResourceSample, ResourceSnapshot, create_session_root, parse_args,
+        peak_for_phase,
+    };
     use flash_shot::HistoryResourceAcceptanceState;
-    use std::path::PathBuf;
+    use std::{
+        fs,
+        path::PathBuf,
+        process,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn parser_defaults_to_bounded_release_resource_sampling() {
@@ -723,5 +767,26 @@ mod tests {
 
         assert_eq!(value["private_commit_bytes"], 2);
         assert!(value.get("private_bytes").is_none());
+    }
+
+    #[test]
+    fn session_root_keeps_retries_from_reusing_evidence_paths() {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let output = std::env::temp_dir().join(format!(
+            "flash-shot-history-resource-test-{}-{timestamp}",
+            process::id()
+        ));
+        fs::create_dir_all(&output).unwrap();
+
+        let first = create_session_root(&output).unwrap();
+        let second = create_session_root(&output).unwrap();
+
+        assert_ne!(first, second);
+        assert!(first.starts_with(&output));
+        assert!(second.starts_with(&output));
+        fs::remove_dir_all(&output).unwrap();
     }
 }
