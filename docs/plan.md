@@ -436,6 +436,13 @@ SHA-256 为 `c04504be...f8fc87b`，但仍明确为 `NotSigned`。GitHub Release 
 回退：它要求生产 PFX secrets，在导入证书前完成 Release 构建，随后签名 EXE/安装器、从同一已签名
 EXE 生成便携包，并在新的 GitHub runner 上执行签名回读和真实安装/启动/卸载。当前仓库尚未配置生产
 PFX secrets，也没有新的受信签名 workflow 报告，因此本项继续保持未完成。
+
+2026-08-15 又以当前 `372f9da` 在隔离 `CARGO_TARGET_DIR` 下完成 `0.1.1` Release 发布前预检，证据目录为
+`target/release-preflight-v0.1.1-20260815/`，机器报告为 `preflight-report.json`。便携包启动 5 秒、
+current-user 安装、隔离 `config/data/cache/history` 启动、静默卸载和零残留均通过；安装器和便携包的
+manifest/sidecar 也通过，安装器 SHA-256 为 `864bde2f...5aeaf566`，便携包 SHA-256 为
+`de3b6ba8...14e4046`。该构建的 Authenticode 仍为 `NotSigned`，所以它加强了版本与生命周期证据，
+但不能替代生产 PFX、受信签名和 GitHub runner 的发布时真实验收；本项仍保持未完成。
 - macOS 截图与平台实现，以及权限交互。
 - 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 
