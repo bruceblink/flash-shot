@@ -198,14 +198,21 @@ cargo build --release --bin overlay-interaction-acceptance --bin overlay-copy-ba
 target\release\overlay-copy-batch.exe --allow-input --allow-system-clipboard --output-dir target\overlay-copy-batch
 ```
 
-The batch report is `measurement_mode=real_ui` and `real_ui=true`; a recorded Release toolbar run
-with 1 warmup + 30 samples is preserved at
-`target/overlay-copy-batch/release-toolbar-20260812/batch-report.json`
-(p50 `79.0749 ms`, p95 `106.1236 ms`, 0 failures on a 96-DPI display). Re-run the batch after
-source or binary changes; this historical artifact is not a substitute for current-source evidence. The synthetic
+The batch report is `measurement_mode=real_ui` and `real_ui=true`. Current-source Release evidence
+contains 1 warmup plus 30/30 valid samples for both toolbar and Enter Copy, with zero failures on a
+96-DPI display:
+
+- toolbar: `target/overlay-copy-batch/current-source-toolbar-naming-20260815/session-1786734049398-20680/batch-report.json`
+  (p50 `51.077 ms`, p95 `52.3159 ms`);
+- Enter: `target/overlay-copy-batch/current-source-enter-naming-20260815/session-1786734503147-32644/batch-report.json`
+  (p50 `26.8764 ms`, p95 `28.5772 ms`).
+
+All 62 warmup/sample iterations passed the production clipboard, PNG/CF_DIB/normal-consumer pixel,
+editor-retention, explicit-Escape, and cleanup checks. Re-run both batches after source or binary
+changes; historical artifacts are not substitutes for current-source evidence. The synthetic
 `copy-performance` report must not be used as a substitute for this evidence. Use
-`--copy-trigger enter` to measure the keyboard route, or `--copy-iterations 30` to make the
-minimum sample count explicit.
+`--copy-trigger enter` to measure the keyboard route, or `--copy-iterations 30` to make the minimum
+sample count explicit.
 
 The global capture shortcut can be disabled from the tray `System` menu or Capture settings without changing its configured key combination. The preference persists across restarts, while the tray capture commands remain available.
 
