@@ -2,8 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $fixture = Join-Path $root "target\release-manifest-fixture"
-$asset = Join-Path $fixture "FlashShot-0.1.0-windows-x86_64.zip"
-$installer = Join-Path $fixture "FlashShot-0.1.0-windows-setup.exe"
+$asset = Join-Path $fixture "FlashShot-0.1.1-windows-x86_64.zip"
+$installer = Join-Path $fixture "FlashShot-0.1.1-windows-setup.exe"
 try {
     New-Item -ItemType Directory -Force -Path $fixture | Out-Null
     [IO.File]::WriteAllText($asset, "release-manifest-fixture")
@@ -33,7 +33,7 @@ try {
     [IO.File]::WriteAllText($installer, "release-manifest-installer-fixture")
     "$installerHash  $([IO.Path]::GetFileName($installer))" | Set-Content -LiteralPath "$installer.sha256" -Encoding ascii
 
-    $duplicate = Join-Path $fixture "FlashShot-0.1.0-windows-arm64.zip"
+    $duplicate = Join-Path $fixture "FlashShot-0.1.1-windows-arm64.zip"
     [IO.File]::WriteAllText($duplicate, "duplicate portable fixture")
     $duplicateHash = (Get-FileHash -LiteralPath $duplicate -Algorithm SHA256).Hash.ToLowerInvariant()
     "$duplicateHash  $([IO.Path]::GetFileName($duplicate))" | Set-Content -LiteralPath "$duplicate.sha256" -Encoding ascii
@@ -64,7 +64,7 @@ try {
     }
 
     "$hash  $([IO.Path]::GetFileName($asset))" | Set-Content -LiteralPath "$asset.sha256" -Encoding ascii
-    $unexpected = Join-Path $fixture "FlashShot-0.1.0-windows-x86_64.exe"
+    $unexpected = Join-Path $fixture "FlashShot-0.1.1-windows-x86_64.exe"
     [IO.File]::WriteAllText($unexpected, "unexpected release asset")
     $unexpectedHash = (Get-FileHash -LiteralPath $unexpected -Algorithm SHA256).Hash.ToLowerInvariant()
     "$unexpectedHash  $([IO.Path]::GetFileName($unexpected))" | Set-Content -LiteralPath "$unexpected.sha256" -Encoding ascii

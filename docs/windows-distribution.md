@@ -12,13 +12,13 @@ The output is written to `dist\FlashShot-<version>-windows-<architecture>.zip` w
 The packaging script verifies the SHA-256 sidecar and this exact archive layout before reporting success. Re-check an existing archive independently with:
 
 ```powershell
-.\scripts\verify-portable-package.ps1 -ArchivePath "dist\FlashShot-0.1.0-windows-x86_64.zip"
+.\scripts\verify-portable-package.ps1 -ArchivePath "dist\FlashShot-0.1.1-windows-x86_64.zip"
 ```
 
 Before distributing a portable ZIP, run its release executable from a fresh temporary extraction and require it to stay alive for five seconds:
 
 ```powershell
-.\scripts\smoke-portable-startup.ps1 -ArchivePath "dist\FlashShot-0.1.0-windows-x86_64.zip"
+.\scripts\smoke-portable-startup.ps1 -ArchivePath "dist\FlashShot-0.1.1-windows-x86_64.zip"
 ```
 
 The smoke script sets `FLASH_SHOT_PROFILE_DIR` to a disposable directory and verifies that config,
@@ -54,7 +54,7 @@ the default per-machine installation policy. The smoke script uses Inno Setup's 
 current-user command-line override and installs only into a unique temporary directory:
 
 ```powershell
-.\scripts\smoke-installer.ps1 -InstallerPath "dist\FlashShot-0.1.0-windows-setup.exe"
+.\scripts\smoke-installer.ps1 -InstallerPath "dist\FlashShot-0.1.1-windows-setup.exe"
 ```
 
 Pass `-RequireSignature` on a release machine so the setup and the executable read back from the
@@ -126,11 +126,11 @@ The application makes no update network request until the user clicks the button
 
 ## GitHub release workflow
 
-The repository packages a Windows release when a `v<major>.<minor>.<patch>` tag is pushed, or when the `Release` workflow is manually run for an existing tag. The tag must exactly match the Cargo package version; for example, `Cargo.toml` version `0.1.0` requires tag `v0.1.0`:
+The repository packages a Windows release when a `v<major>.<minor>.<patch>` tag is pushed, or when the `Release` workflow is manually run for an existing tag. The tag must exactly match the Cargo package version; for example, `Cargo.toml` version `0.1.1` requires tag `v0.1.1`:
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Before triggering a release, configure these repository Actions secrets:

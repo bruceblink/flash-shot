@@ -2,9 +2,9 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $fixture = Join-Path $root "target\verify-release-assets-fixture"
-$packageRoot = Join-Path $fixture "FlashShot-0.1.0-windows-x86_64"
-$archive = Join-Path $fixture "FlashShot-0.1.0-windows-x86_64.zip"
-$installer = Join-Path $fixture "FlashShot-0.1.0-windows-setup.exe"
+$packageRoot = Join-Path $fixture "FlashShot-0.1.1-windows-x86_64"
+$archive = Join-Path $fixture "FlashShot-0.1.1-windows-x86_64.zip"
+$installer = Join-Path $fixture "FlashShot-0.1.1-windows-setup.exe"
 $verify = Join-Path $PSScriptRoot "verify-release-assets.ps1"
 
 # Rebuilds the fixture manifest so each negative case changes only the asset inventory under test.
@@ -12,7 +12,7 @@ function Write-FixtureManifest([object[]]$Records) {
     [ordered]@{
         schema_version = 1
         product = "Flash Shot"
-        version = "0.1.0"
+        version = "0.1.1"
         platform = "windows"
         assets = @($Records)
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $fixture "release-manifest.json") -Encoding ascii
@@ -43,7 +43,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $packageRoot "flash-shot.exe"), "fixture executable")
     [IO.File]::WriteAllText((Join-Path $packageRoot "LICENSE.txt"), "fixture license")
     [IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), "fixture readme")
-    [IO.File]::WriteAllText((Join-Path $packageRoot "PORTABLE.txt"), "Version: 0.1.0")
+    [IO.File]::WriteAllText((Join-Path $packageRoot "PORTABLE.txt"), "Version: 0.1.1")
     Compress-Archive -LiteralPath $packageRoot -DestinationPath $archive
     [IO.File]::WriteAllText($installer, "fixture installer")
 
@@ -84,7 +84,7 @@ try {
     Write-FixtureManifest -Records @($records[1])
     Assert-AssetVerificationFails "exactly one portable ZIP asset; found 0"
 
-    $duplicateArchive = Join-Path $fixture "FlashShot-0.1.0-windows-arm64.zip"
+    $duplicateArchive = Join-Path $fixture "FlashShot-0.1.1-windows-arm64.zip"
     Copy-Item -LiteralPath $archive -Destination $duplicateArchive
     $duplicateHash = (Get-FileHash -LiteralPath $duplicateArchive -Algorithm SHA256).Hash.ToLowerInvariant()
     "$duplicateHash  $([IO.Path]::GetFileName($duplicateArchive))" |

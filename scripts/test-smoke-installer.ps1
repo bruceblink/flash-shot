@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $fixture = Join-Path $root "target\smoke-installer-fixture"
 $smokeInstaller = Join-Path $PSScriptRoot "smoke-installer.ps1"
-$expectedInstaller = Join-Path $fixture "FlashShot-0.1.0-windows-setup.exe"
+$expectedInstaller = Join-Path $fixture "FlashShot-0.1.1-windows-setup.exe"
 $wrongNameInstaller = Join-Path $fixture "unexpected-setup.exe"
 
 # Requires a pre-install validation case to fail for the exact release-safety reason under test.
@@ -35,7 +35,7 @@ try {
     [IO.File]::WriteAllText($wrongNameInstaller, "fixture installer")
     Assert-SmokeValidationFails @{
         InstallerPath = $wrongNameInstaller
-    } "Expected installer 'FlashShot-0.1.0-windows-setup.exe'"
+    } "Expected installer 'FlashShot-0.1.1-windows-setup.exe'"
 
     [IO.File]::WriteAllText($expectedInstaller, "unsigned fixture installer")
     Assert-SmokeValidationFails @{
