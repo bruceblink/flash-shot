@@ -6,6 +6,10 @@ $fakeSignTool = Join-Path $fixture "signtool.exe"
 $missingSignTool = Join-Path $fixture "missing-signtool.exe"
 $fakeLanguage = Join-Path $fixture "ChineseSimplified.isl"
 $invalidLanguage = Join-Path $fixture "invalid-language.isl"
+$fakeShimDirectory = Join-Path $fixture "chocolatey-bin"
+$fakeShim = Join-Path $fakeShimDirectory "ISCC.exe"
+$fakeInnoRoot = Join-Path $fixture "Inno Setup 6"
+$fakeInnoCompiler = Join-Path $fakeInnoRoot "ISCC.exe"
 $packageInstaller = Join-Path $PSScriptRoot "package-installer.ps1"
 $timestampValidationCertificate = "0000000000000000000000000000000000000000"
 
@@ -30,6 +34,17 @@ function Assert-InstallerValidationFails([hashtable]$Parameters, [string]$Expect
 
 try {
     New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+
+    # Load the helper through its normal validation path, then exercise the shim resolution rule directly.
+    . $packageInstaller -ValidateOnly
+    New-Item -ItemType Directory -Force -Path $fakeShimDirectory, $fakeInnoRoot | Out-Null
+    [IO.File]::WriteAllText($fakeShim, "fixture Chocolatey shim")
+    [IO.File]::WriteAllText($fakeInnoCompiler, "fixture Inno compiler")
+    [IO.File]::WriteAllText((Join-Path $fakeInnoRoot "Default.isl"), "fixture compiler messages")
+    $resolvedCompiler = Get-InnoSetupCompilerPath @($fakeInnoCompiler) $fakeShim
+    if ($resolvedCompiler -ne [IO.Path]::GetFullPath($fakeInnoCompiler)) {
+        throw "Inno compiler resolution did not bypass a package-manager shim."
+    }
 
     & $packageInstaller -ValidateOnly
 

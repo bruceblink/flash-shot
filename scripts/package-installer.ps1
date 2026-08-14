@@ -35,6 +35,37 @@ function Get-CommandPath([string]$Name, [string[]]$Candidates, [string]$Explicit
     return $null
 }
 
+# Chooses a real Inno installation instead of a package-manager shim so compiler: paths resolve beside ISCC.
+function Get-InnoSetupCompilerPath([string[]]$Candidates, [string]$PathCandidate = "") {
+    $paths = @()
+    if ($PathCandidate.Length -gt 0) {
+        $paths += $PathCandidate
+    }
+    $paths += $Candidates
+
+    $fallback = $null
+    $seen = @{}
+    foreach ($candidate in $paths) {
+        if ($candidate.Length -eq 0) {
+            continue
+        }
+        $resolved = [IO.Path]::GetFullPath($candidate)
+        $key = $resolved.ToUpperInvariant()
+        if ($seen.ContainsKey($key) -or -not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+            continue
+        }
+        $seen[$key] = $true
+        if ($null -eq $fallback) {
+            $fallback = $resolved
+        }
+        $compilerRoot = Split-Path -Parent $resolved
+        if (Test-Path -LiteralPath (Join-Path $compilerRoot "Default.isl") -PathType Leaf) {
+            return $resolved
+        }
+    }
+    return $fallback
+}
+
 # Selects the exact valid private certificate that SignTool will use from the current-user store.
 function Get-CodeSigningCertificate([string]$Thumbprint) {
     $normalized = ($Thumbprint -replace '\s', '').ToUpperInvariant()
@@ -178,11 +209,12 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "Release executable not found at $executable. Run without -SkipBuild or build the $rustHost target."
 }
 
-$iscc = Get-CommandPath "ISCC.exe" @(
+$isccCandidates = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
     "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
 )
+$iscc = Get-InnoSetupCompilerPath $isccCandidates (Get-CommandPath "ISCC.exe" $isccCandidates)
 if ($null -eq $iscc) {
     throw "Inno Setup 6 is required. Install it or make ISCC.exe available on PATH."
 }
