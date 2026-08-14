@@ -36,7 +36,7 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 
 环境要求：
 
-- Rust 1.92 或更高版本；
+- Rust 1.93 或更高版本；
 - Visual Studio 2022 MSVC 工具链与 Windows SDK；
 - GPUI 在目标平台所需的原生构建环境。
 
@@ -158,7 +158,7 @@ the real-environment matrix.
 
 Requirements:
 
-- Rust 1.92 or newer;
+- Rust 1.93 or newer;
 - Visual Studio 2022 MSVC toolchain and Windows SDK;
 - native build prerequisites required by GPUI on the target platform.
 
