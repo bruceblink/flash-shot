@@ -113,6 +113,7 @@ const MAX_TIMEOUT: Duration = Duration::from_secs(60);
 const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(5);
 const FOCUS_TITLEBAR_FALLBACK_DELAY: Duration = Duration::from_millis(250);
+const FOCUS_FOREGROUND_ASSIST_DELAY: Duration = Duration::from_millis(250);
 const WINDOWS_BASE_DPI: f32 = 96.0;
 const SELECTION_EDGE_TOLERANCE: i32 = 1;
 const PAUSE_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
@@ -8886,6 +8887,12 @@ fn titlebar_fallback_ready(elapsed: Duration, attempted: bool) -> bool {
 }
 
 #[cfg(windows)]
+/// Allows one explicit foreground-policy assist after verified API activation has had time to work.
+fn foreground_assist_ready(elapsed: Duration, attempted: bool) -> bool {
+    !attempted && elapsed >= FOCUS_FOREGROUND_ASSIST_DELAY
+}
+
+#[cfg(windows)]
 /// Finds an uncovered point in the middle half of a title bar, away from its icon and buttons.
 fn find_visible_titlebar_point(
     window: NativeWindow,
@@ -9018,12 +9025,58 @@ fn send_titlebar_click(expected: HWND) -> io::Result<()> {
 }
 
 #[cfg(windows)]
+/// Mirrors GPUI's one-shot Alt gesture before retrying a verified process-owned foreground request.
+///
+/// The acceptance runner reaches this only after `--allow-input` was checked before GPUI starts.
+/// It never relaxes later foreground guards, and it releases Alt defensively if Windows accepts
+/// only part of the batch or delays the key-up notification.
+fn activate_owned_window_via_alt(window: NativeWindow) -> io::Result<()> {
+    owned_window(window.handle)?;
+    let alt_key = [(VK_MENU, "Alt")];
+    ensure_input_keys_released(&alt_key)?;
+
+    let alt_release = [keyboard_input(VK_MENU, true)];
+    let result = send_input_unchecked(&[
+        keyboard_input(VK_MENU, false),
+        keyboard_input(VK_MENU, true),
+    ]);
+    if let Err(error) = result {
+        return match send_input_unchecked(&alt_release) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(io::Error::new(
+                error.kind(),
+                format!("{error}; defensive Alt release also failed: {cleanup_error}"),
+            )),
+        };
+    }
+
+    if let Err(error) = wait_for_input_keys_released(&alt_key, Duration::from_millis(250)) {
+        return match send_input_unchecked(&alt_release) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(io::Error::new(
+                error.kind(),
+                format!("{error}; defensive Alt release also failed: {cleanup_error}"),
+            )),
+        };
+    }
+
+    // The HWND may have closed while Windows dispatched the synthetic key pair.
+    owned_window(window.handle)?;
+    // SAFETY: the handle was revalidated above and no ownership transfers across this call.
+    unsafe {
+        SetForegroundWindow(window.handle);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
 /// Raises a verified window, then waits until Windows confirms foreground ownership.
 fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()> {
     owned_window(window.handle)?;
     let started = Instant::now();
     let deadline = started + timeout.min(Duration::from_secs(3));
     let mut titlebar_fallback_attempted = false;
+    let mut foreground_assist_attempted = false;
     // SAFETY: both calls borrow a verified process-owned HWND without transferring ownership.
     unsafe {
         ShowWindow(window.handle, SW_RESTORE);
@@ -9066,9 +9119,16 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
                 continue;
             }
         }
+        if foreground_assist_ready(now.duration_since(started), foreground_assist_attempted) {
+            foreground_assist_attempted = true;
+            // Windows can reject API-only foreground requests from the worker thread. Match
+            // GPUI's one-shot Alt workaround, then immediately revalidate exact foreground
+            // ownership before any real acceptance input is injected.
+            activate_owned_window_via_alt(window)?;
+            continue;
+        }
         // Foreground policy may briefly defer activation while a popup is being created. Retry
-        // only the verified process-owned HWND; never send a modifier to the unrelated window
-        // that currently owns global input.
+        // only the verified process-owned HWND after the single explicit assist above.
         unsafe {
             BringWindowToTop(window.handle);
             SetForegroundWindow(window.handle);
@@ -9827,11 +9887,12 @@ mod tests {
     };
     #[cfg(windows)]
     use super::{
-        FixturePhaseState, NativeWindow, decode_clipboard_dib, has_safe_titlebar_band,
-        horizontal_pin_layout, panic_payload_message, parse_recording_window_fixture_arguments,
-        recording_fixture_dynamic_bounds, request_recording_state, titlebar_fallback_ready,
-        validate_fixture_phase_state, validate_recording_frame_content,
-        validate_same_pixel_content, validate_scroll_fixture_frame,
+        FixturePhaseState, NativeWindow, decode_clipboard_dib, foreground_assist_ready,
+        has_safe_titlebar_band, horizontal_pin_layout, panic_payload_message,
+        parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
+        request_recording_state, titlebar_fallback_ready, validate_fixture_phase_state,
+        validate_recording_frame_content, validate_same_pixel_content,
+        validate_scroll_fixture_frame,
     };
     use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -9891,7 +9952,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn borderless_focus_uses_api_retries_without_requiring_a_titlebar() {
+    fn borderless_focus_uses_one_shot_foreground_assist_without_a_titlebar() {
         let window = PhysicalRect {
             left: -1920,
             top: 0,
@@ -9906,6 +9967,9 @@ mod tests {
         assert!(!titlebar_fallback_ready(Duration::from_millis(249), false));
         assert!(titlebar_fallback_ready(Duration::from_millis(250), false));
         assert!(!titlebar_fallback_ready(Duration::from_secs(1), true));
+        assert!(!foreground_assist_ready(Duration::from_millis(249), false));
+        assert!(foreground_assist_ready(Duration::from_millis(250), false));
+        assert!(!foreground_assist_ready(Duration::from_secs(1), true));
     }
 
     #[test]
