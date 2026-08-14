@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$AssetDirectory,
-    [switch]$SkipStartupSmoke
+    [switch]$SkipStartupSmoke,
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,6 +97,13 @@ $installerRecords = @($records | Where-Object { $_.name.EndsWith("-windows-setup
 if ($installerRecords.Count -ne 1) {
     throw "Release manifest must contain exactly one setup EXE asset; found $($installerRecords.Count)."
 }
+if ($RequireSignature) {
+    $setup = Join-Path $assetRoot $installerRecords[0].name
+    $signature = Get-AuthenticodeSignature -LiteralPath $setup
+    if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid) {
+        throw "Setup Authenticode signature is not valid: $($signature.Status)."
+    }
+}
 
 $downloadedAssets = Get-ChildItem -LiteralPath $assetRoot -File |
     ForEach-Object Name |
@@ -113,7 +121,7 @@ $verifyPortable = Join-Path $PSScriptRoot "verify-portable-package.ps1"
 $smokePortable = Join-Path $PSScriptRoot "smoke-portable-startup.ps1"
 foreach ($record in $portableRecords) {
     $archive = Join-Path $assetRoot $record.name
-    & $verifyPortable -ArchivePath $archive
+    & $verifyPortable -ArchivePath $archive -RequireSignature:$RequireSignature
     if ($LASTEXITCODE -ne 0) {
         throw "Portable package verification failed with exit code $LASTEXITCODE."
     }

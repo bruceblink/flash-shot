@@ -65,6 +65,19 @@ try {
         throw "Valid downloaded release fixture was rejected by an absolute asset directory."
     }
 
+    $failed = $false
+    $failureMessage = ""
+    try {
+        & $verify -AssetDirectory $fixture -SkipStartupSmoke -RequireSignature
+    }
+    catch {
+        $failed = $true
+        $failureMessage = $_.Exception.Message
+    }
+    if (-not $failed -or -not $failureMessage.Contains("Setup Authenticode signature is not valid")) {
+        throw "Release asset verification did not reject an unsigned setup for the expected reason."
+    }
+
     Write-FixtureManifest -Records @($records[0])
     Assert-AssetVerificationFails "exactly one setup EXE asset; found 0"
 

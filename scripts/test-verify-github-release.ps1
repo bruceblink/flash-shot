@@ -105,6 +105,20 @@ exit /b 1
         throw "Draft GitHub release verification fixture was rejected."
     }
 
+    $failed = $false
+    $failureMessage = ""
+    try {
+        & $verify -Tag "v0.1.0" -Repository "fixture/flash-shot" `
+            -RequireDraft -SkipStartupSmoke -RequireSignature
+    }
+    catch {
+        $failed = $true
+        $failureMessage = $_.Exception.Message
+    }
+    if (-not $failed -or -not $failureMessage.Contains("Setup Authenticode signature is not valid")) {
+        throw "GitHub release verification did not forward the signature requirement."
+    }
+
     Assert-GithubVerificationFails @(
         $portableName,
         "$portableName.sha256",

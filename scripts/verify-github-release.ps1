@@ -4,7 +4,8 @@ param(
     [string]$Repository = "bruceblink/flash-shot",
     [string]$OutputDirectory = "",
     [switch]$RequireDraft,
-    [switch]$SkipStartupSmoke
+    [switch]$SkipStartupSmoke,
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,12 +76,9 @@ try {
     }
 
     $verifyAssets = Join-Path $PSScriptRoot "verify-release-assets.ps1"
-    if ($SkipStartupSmoke) {
-        & $verifyAssets -AssetDirectory $destination -SkipStartupSmoke
-    }
-    else {
-        & $verifyAssets -AssetDirectory $destination
-    }
+    & $verifyAssets -AssetDirectory $destination `
+        -SkipStartupSmoke:$SkipStartupSmoke `
+        -RequireSignature:$RequireSignature
     if ($LASTEXITCODE -ne 0) {
         throw "Downloaded GitHub release asset verification failed with exit code $LASTEXITCODE."
     }

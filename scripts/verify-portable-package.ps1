@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$ArchivePath
+    [string]$ArchivePath,
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +60,13 @@ try {
     $portable = Get-Content -Raw -LiteralPath (Join-Path (Join-Path $staging $packageRoot) "PORTABLE.txt")
     if ($portable -notmatch [regex]::Escape("Version: $($package.version)")) {
         throw "Portable package metadata does not identify Flash Shot $($package.version)."
+    }
+    if ($RequireSignature) {
+        $executable = Join-Path (Join-Path $staging $packageRoot) "flash-shot.exe"
+        $signature = Get-AuthenticodeSignature -LiteralPath $executable
+        if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid) {
+            throw "Portable executable Authenticode signature is not valid: $($signature.Status)."
+        }
     }
 }
 finally {

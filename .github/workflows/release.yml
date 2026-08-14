@@ -40,12 +40,15 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress --yes
-      - name: Build release assets
+      - name: Build release executable
         shell: pwsh
-        run: |
-          .\scripts\package-portable.ps1
-          $chineseMessages = .\scripts\fetch-inno-language.ps1
-          .\scripts\package-installer.ps1 -ChineseMessagesFile $chineseMessages
+        run: cargo build --release --bin flash-shot --target x86_64-pc-windows-msvc
+      - name: Build signed release assets
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: .\scripts\package-github-release.ps1 -SkipBuild
       - name: Smoke test portable startup
         shell: pwsh
         run: |
@@ -54,11 +57,20 @@ jobs:
             throw "Expected exactly one portable release archive, found $($portable.Count)."
           }
           .\scripts\smoke-portable-startup.ps1 -ArchivePath $portable.FullName
+      - name: Smoke test installer lifecycle
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -LiteralPath dist -Filter "FlashShot-*-windows-setup.exe" -File
+          if ($installer.Count -ne 1) {
+            throw "Expected exactly one installer, found $($installer.Count)."
+          }
+          .\scripts\smoke-installer.ps1 -InstallerPath $installer.FullName -RequireSignature
       - name: Generate release manifest
         shell: pwsh
         run: |
           .\scripts\release-manifest.ps1 -AssetDirectory dist
           .\scripts\release-manifest.ps1 -AssetDirectory dist -VerifyOnly
+          .\scripts\verify-release-assets.ps1 -AssetDirectory dist -SkipStartupSmoke -RequireSignature
       - name: Create draft GitHub release
         uses: softprops/action-gh-release@v2
         with:

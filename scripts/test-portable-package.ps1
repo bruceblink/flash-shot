@@ -20,6 +20,19 @@ try {
         throw "Valid portable package fixture was rejected."
     }
 
+    $failed = $false
+    $failureMessage = ""
+    try {
+        & $verify -ArchivePath $archive -RequireSignature
+    }
+    catch {
+        $failed = $true
+        $failureMessage = $_.Exception.Message
+    }
+    if (-not $failed -or -not $failureMessage.Contains("Portable executable Authenticode signature is not valid")) {
+        throw "Portable package verification did not reject an unsigned executable."
+    }
+
     [IO.File]::WriteAllText((Join-Path $staging "unexpected.txt"), "unexpected")
     Remove-Item -LiteralPath $archive, "$archive.sha256"
     Compress-Archive -LiteralPath $staging -DestinationPath $archive

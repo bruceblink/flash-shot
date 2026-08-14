@@ -428,6 +428,14 @@ Copy、Save、滚动截图和像素契约不变。它不改变截图采集、标
 SHA-256 `48515393bc660d8b0442f87301ab494517e7531a66dd2656c4c61b6387a79772`，sidecar 匹配且
 Authenticode 状态明确为 `NotSigned`。这关闭了本机语言资源和安装器编译阻塞，但生产信任证书、实际
 安装/卸载和干净 Windows 用户账户仍必须在发布环境执行，不将发布时真实验收标记为完成。
+
+2026-08-15 新增 `smoke-installer.ps1`，以 Inno 明确的 current-user 命令行覆盖安装到唯一临时目录，
+真实验证安装文件、Start 菜单快捷方式、卸载注册、隔离 profile 启动和卸载后零残留。本机当前源码
+安装器 `target/installer-smoke-current-20260815/FlashShot-0.1.0-windows-setup.exe` 已完成该生命周期，
+SHA-256 为 `c04504be...f8fc87b`，但仍明确为 `NotSigned`。GitHub Release 工作流现在不再提供未签名
+回退：它要求生产 PFX secrets，在导入证书前完成 Release 构建，随后签名 EXE/安装器、从同一已签名
+EXE 生成便携包，并在新的 GitHub runner 上执行签名回读和真实安装/启动/卸载。当前仓库尚未配置生产
+PFX secrets，也没有新的受信签名 workflow 报告，因此本项继续保持未完成。
 - macOS 截图与平台实现，以及权限交互。
 - 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 
