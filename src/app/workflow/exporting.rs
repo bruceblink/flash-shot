@@ -291,7 +291,8 @@ impl FlashShotApp {
         };
         self.status = "Choose where to save the editable image...".to_owned();
         cx.notify();
-        let prompt = cx.prompt_for_new_path(&PathBuf::default(), Some("flash-shot-editable.png"));
+        let suggested_name = default_png_image_filename();
+        let prompt = cx.prompt_for_new_path(&PathBuf::default(), Some(&suggested_name));
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {

@@ -34,14 +34,14 @@ pub(super) fn save_annotated_frame_selection(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ImageTimestamp {
-    year: u16,
-    month: u16,
-    day: u16,
-    hour: u16,
-    minute: u16,
-    second: u16,
-    millisecond: u16,
+pub(super) struct ImageTimestamp {
+    pub(super) year: u16,
+    pub(super) month: u16,
+    pub(super) day: u16,
+    pub(super) hour: u16,
+    pub(super) minute: u16,
+    pub(super) second: u16,
+    pub(super) millisecond: u16,
 }
 
 /// Builds the native Save dialog's collision-resistant default image name.
@@ -49,11 +49,27 @@ struct ImageTimestamp {
 /// The timestamp is local time with millisecond precision, while the UUIDv7 keeps two captures
 /// created in the same millisecond distinct without relying on a filesystem collision suffix.
 pub(super) fn default_image_filename(export_format: u8) -> String {
-    format_default_image_filename(
+    generated_image_filename(
         crate::settings::DEFAULT_SAVE_PREFIX,
+        export_extension(export_format),
+    )
+}
+
+/// Builds the lossless PNG name shared by quick saves and editable-project exports.
+///
+/// The default prefix is the product name. A local timestamp makes files easy to scan, while a
+/// UUIDv7 prevents same-millisecond captures from sharing a filename.
+pub(super) fn default_png_image_filename() -> String {
+    generated_image_filename(crate::settings::DEFAULT_SAVE_PREFIX, "png")
+}
+
+/// Combines a safe name prefix with the current local timestamp and a UUIDv7.
+fn generated_image_filename(software_name: &str, extension: &str) -> String {
+    format_default_image_filename(
+        software_name,
         local_image_timestamp(),
         uuid::Uuid::now_v7(),
-        export_extension(export_format),
+        extension,
     )
 }
 
@@ -140,7 +156,8 @@ pub(super) fn quick_save_annotated_frame_selection_with_prefix(
         selection,
         directory,
         prefix,
-        unix_timestamp_ms(),
+        local_image_timestamp(),
+        uuid::Uuid::now_v7(),
     )
 }
 
@@ -197,7 +214,13 @@ pub(super) fn quick_save_full_screen_frame_with_prefix(
     directory: &Path,
     prefix: &str,
 ) -> std::io::Result<PathBuf> {
-    quick_save_full_screen_frame_in_with_prefix(frame, directory, prefix, unix_timestamp_ms())
+    quick_save_full_screen_frame_in_with_prefix(
+        frame,
+        directory,
+        prefix,
+        local_image_timestamp(),
+        uuid::Uuid::now_v7(),
+    )
 }
 
 pub(super) fn quick_save_full_screen_frame_with_fallback(
@@ -215,9 +238,10 @@ pub(super) fn quick_save_full_screen_frame_in_with_prefix(
     frame: &CaptureFrame,
     directory: &Path,
     prefix: &str,
-    timestamp_ms: u128,
+    timestamp: ImageTimestamp,
+    uuid: uuid::Uuid,
 ) -> std::io::Result<PathBuf> {
-    let path = reserve_quick_save_path(directory, prefix, timestamp_ms)?;
+    let path = reserve_quick_save_path(directory, prefix, timestamp, uuid)?;
     match frame.save_png(&path) {
         Ok(()) => Ok(path),
         Err(error) => {
@@ -233,9 +257,10 @@ pub(super) fn quick_save_annotated_frame_selection_in_with_prefix(
     selection: PhysicalRect,
     directory: &Path,
     prefix: &str,
-    timestamp_ms: u128,
+    timestamp: ImageTimestamp,
+    uuid: uuid::Uuid,
 ) -> std::io::Result<PathBuf> {
-    let path = reserve_quick_save_path(directory, prefix, timestamp_ms)?;
+    let path = reserve_quick_save_path(directory, prefix, timestamp, uuid)?;
     match save_annotated_frame_selection(frame, document, selection, path.clone()) {
         Ok(()) => Ok(path),
         Err(error) => {
@@ -245,20 +270,24 @@ pub(super) fn quick_save_annotated_frame_selection_in_with_prefix(
     }
 }
 
-/// Atomically reserves a collision-safe final name before an encoder can start writing.
+/// Atomically reserves a generated PNG name before an encoder starts writing.
 ///
-/// A plain existence check is insufficient when two capture workflows finish in the same
-/// millisecond. The zero-byte reservation makes the filename claim exclusive; the image writer
-/// replaces that reservation only after the encoded bytes are complete.
+/// A UUIDv7 makes collisions exceptionally unlikely. `create_new` remains the final filesystem
+/// authority and retries with a new UUIDv7 if a pre-existing file has the same generated name.
 pub(super) fn reserve_quick_save_path(
     directory: &Path,
     prefix: &str,
-    timestamp_ms: u128,
+    timestamp: ImageTimestamp,
+    mut generated_uuid: uuid::Uuid,
 ) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(directory)?;
-    let mut candidate =
-        next_quick_save_path_with_prefix(directory, prefix, timestamp_ms, Path::exists);
     loop {
+        let candidate = directory.join(format_default_image_filename(
+            prefix,
+            timestamp,
+            generated_uuid,
+            "png",
+        ));
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -269,32 +298,11 @@ pub(super) fn reserve_quick_save_path(
                 return Ok(candidate);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                candidate =
-                    next_quick_save_path_with_prefix(directory, prefix, timestamp_ms, Path::exists);
+                generated_uuid = uuid::Uuid::now_v7();
             }
             Err(error) => return Err(error),
         }
     }
-}
-
-pub(super) fn next_quick_save_path_with_prefix(
-    directory: &Path,
-    prefix: &str,
-    timestamp_ms: u128,
-    exists: impl Fn(&Path) -> bool,
-) -> PathBuf {
-    let stem = format!("{prefix}-{timestamp_ms}");
-    let initial = directory.join(format!("{stem}.png"));
-    if !exists(&initial) {
-        return initial;
-    }
-    for index in 2_u32.. {
-        let path = directory.join(format!("{stem}-{index}.png"));
-        if !exists(&path) {
-            return path;
-        }
-    }
-    unreachable!("u32 path suffixes cannot be exhausted")
 }
 
 pub(super) fn unix_timestamp_ms() -> u128 {

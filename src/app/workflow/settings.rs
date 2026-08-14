@@ -232,7 +232,7 @@ impl FlashShotApp {
         self.settings.quick_save_prefix = UserSettings::next_save_prefix(&previous);
         self.status = match self.settings.save(&self.settings_path) {
             Ok(()) => format!(
-                "Quick-save names use {}-<timestamp>.png",
+                "Quick-save names use {}<yyyyMMddHHmmssSSS><UUIDv7>.png",
                 self.settings.quick_save_prefix
             ),
             Err(error) => {

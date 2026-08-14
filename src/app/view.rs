@@ -803,7 +803,7 @@ fn file_settings(
         )))
         .child(settings_row("File name", colors).child(settings_button(
             "settings-quick-save-prefix",
-            &format!("{}-timestamp", app_state.settings.quick_save_prefix),
+            &format!("{}+time+UUIDv7", app_state.settings.quick_save_prefix),
             colors,
             is_idle,
             {

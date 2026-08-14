@@ -1,7 +1,7 @@
 use super::exporting::{claim_pinned_save_slot, selection_copy_completion_can_report};
 use super::recognition::recognition_completion_is_current;
 use super::{
-    ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
+    ColorFormat, ImageTimestamp, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
     annotation_position, annotation_sidecar_path, capture::focused_window_selection,
     capture_session_can_restart, capture_start_conflict_status, claim_idle_completion,
@@ -10,10 +10,9 @@ use super::{
     format_recording_stopping, hovered_color, intersect_rect, is_current_operation,
     keyboard_command, load_annotation_document, manual_scroll_control_bounds,
     manual_scroll_control_rect, next_annotation_counters, next_annotation_selection,
-    next_quick_save_path_with_prefix, next_recording_audio_selection,
-    next_recording_display_selection, ocr_language_label, ocr_support_status,
-    open_annotation_project, open_image_project, pinned_size, project_image_path,
-    quick_save_annotated_frame_selection_in_with_prefix,
+    next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
+    ocr_support_status, open_annotation_project, open_image_project, pinned_size,
+    project_image_path, quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
     recognition_start_conflict_status, recording_audio_selection_label,
@@ -56,6 +55,22 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+fn test_image_timestamp() -> ImageTimestamp {
+    ImageTimestamp {
+        year: 2026,
+        month: 8,
+        day: 14,
+        hour: 12,
+        minute: 30,
+        second: 45,
+        millisecond: 987,
+    }
+}
+
+fn test_image_uuid() -> uuid::Uuid {
+    uuid::Uuid::parse_str("018f2b50-7b2d-7cc0-8000-000000000000").unwrap()
+}
 
 #[derive(Default)]
 struct RecordingClipboard {
@@ -1105,10 +1120,14 @@ fn annotated_save_and_quick_save_encode_the_composited_selection() {
         selection,
         &directory,
         "FlashShot",
-        1_725_000_000_123,
+        test_image_timestamp(),
+        test_image_uuid(),
     )
     .unwrap();
-    assert_eq!(quick, directory.join("FlashShot-1725000000123.png"));
+    assert_eq!(
+        quick,
+        directory.join("FlashShot20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png")
+    );
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1375,18 +1394,34 @@ fn loaded_annotation_counters_continue_existing_ids_and_sequence_numbers() {
 }
 
 #[test]
-fn quick_save_names_are_timestamped_and_do_not_overwrite_existing_files() {
-    let directory = PathBuf::from("Pictures").join("Flash Shot");
-    let timestamp_ms = 1_725_000_000_123_u128;
-    let first = next_quick_save_path_with_prefix(&directory, "FlashShot", timestamp_ms, |_| false);
+fn quick_save_names_include_timestamp_and_uuid_v7_without_overwriting() {
+    let root = std::env::temp_dir().join(format!(
+        "flash-shot-quick-save-name-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let timestamp = test_image_timestamp();
+    let uuid = test_image_uuid();
+    let first = reserve_quick_save_path(&root, "FlashShot", timestamp, uuid).unwrap();
 
-    assert_eq!(first, directory.join("FlashShot-1725000000123.png"));
+    assert_eq!(
+        first,
+        root.join("FlashShot20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png")
+    );
 
-    let second = next_quick_save_path_with_prefix(&directory, "FlashShot", timestamp_ms, |path| {
-        path.file_name()
-            .is_some_and(|name| name == "FlashShot-1725000000123.png")
-    });
-    assert_eq!(second, directory.join("FlashShot-1725000000123-2.png"));
+    let second = reserve_quick_save_path(&root, "FlashShot", timestamp, uuid).unwrap();
+    assert_ne!(second, first);
+    assert!(second.is_file());
+    assert!(
+        second
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix("FlashShot20260814123045987"))
+            .is_some_and(|uuid| {
+                uuid::Uuid::parse_str(uuid).is_ok_and(|value| value.get_version_num() == 7)
+            })
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1400,10 +1435,18 @@ fn quick_save_reservations_are_unique_when_captures_finish_together() {
         std::process::id()
     ));
     let directory = Arc::new(root.join("captures"));
+    let timestamp = test_image_timestamp();
     let handles = (0..8)
         .map(|_| {
             let directory = Arc::clone(&directory);
-            std::thread::spawn(move || reserve_quick_save_path(directory.as_ref(), "FlashShot", 42))
+            std::thread::spawn(move || {
+                reserve_quick_save_path(
+                    directory.as_ref(),
+                    "FlashShot",
+                    timestamp,
+                    uuid::Uuid::now_v7(),
+                )
+            })
         })
         .collect::<Vec<_>>();
 
@@ -1415,15 +1458,19 @@ fn quick_save_reservations_are_unique_when_captures_finish_together() {
     paths.dedup();
 
     assert_eq!(paths.len(), 8);
-    for index in 0..8 {
-        let expected = if index == 0 {
-            root.join("captures/FlashShot-42.png")
-        } else {
-            root.join(format!("captures/FlashShot-42-{}.png", index + 1))
-        };
+    for path in paths {
         assert!(
-            paths.contains(&expected),
-            "missing reservation {expected:?}"
+            path.file_stem()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("FlashShot20260814123045987"))
+                .is_some_and(|uuid| {
+                    uuid::Uuid::parse_str(uuid).is_ok_and(|value| value.get_version_num() == 7)
+                }),
+            "unexpected generated quick-save path {path:?}"
+        );
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("png")
         );
     }
     std::fs::remove_dir_all(root).unwrap();
@@ -1499,21 +1546,24 @@ fn annotated_quick_save_fallback_writes_the_capture_to_the_recovery_root() {
 }
 
 #[test]
-fn quick_save_prefix_is_part_of_the_collision_resistant_name() {
-    let directory = PathBuf::from("Pictures").join("Flash Shot");
+fn configured_quick_save_prefix_is_used_for_generated_paths() {
+    let root = std::env::temp_dir().join(format!(
+        "flash-shot-configured-quick-save-name-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let path = reserve_quick_save_path(
+        &root,
+        "Release_Notes",
+        test_image_timestamp(),
+        test_image_uuid(),
+    )
+    .unwrap();
     assert_eq!(
-        next_quick_save_path_with_prefix(&directory, "Release_Notes", 42, |_| false),
-        directory.join("Release_Notes-42.png")
+        path,
+        root.join("Release_Notes20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png")
     );
-}
-
-#[test]
-fn configured_quick_save_prefix_is_used_for_collision_safe_paths() {
-    let directory = PathBuf::from("Pictures").join("Configured Flash Shot");
-    assert_eq!(
-        next_quick_save_path_with_prefix(&directory, "Release_Notes", 42, |_| false),
-        directory.join("Release_Notes-42.png")
-    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1894,11 +1944,15 @@ fn quick_save_writes_the_selected_png_to_the_default_style_directory() {
         },
         &directory,
         "FlashShot",
-        1_725_000_000_123,
+        test_image_timestamp(),
+        test_image_uuid(),
     )
     .unwrap();
 
-    assert_eq!(path, directory.join("FlashShot-1725000000123.png"));
+    assert_eq!(
+        path,
+        directory.join("FlashShot20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png")
+    );
     let decoder = png::Decoder::new(BufReader::new(std::fs::File::open(&path).unwrap()));
     let mut reader = decoder.read_info().unwrap();
     let mut output = vec![0; reader.output_buffer_size().unwrap()];
@@ -1935,11 +1989,15 @@ fn full_screen_quick_save_writes_the_entire_png_with_the_managed_name() {
         &frame,
         &directory,
         "FlashShot",
-        1_725_000_000_123,
+        test_image_timestamp(),
+        test_image_uuid(),
     )
     .unwrap();
 
-    assert_eq!(path, directory.join("FlashShot-1725000000123.png"));
+    assert_eq!(
+        path,
+        directory.join("FlashShot20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png")
+    );
     let decoder = png::Decoder::new(BufReader::new(std::fs::File::open(&path).unwrap()));
     let mut reader = decoder.read_info().unwrap();
     let mut output = vec![0; reader.output_buffer_size().unwrap()];

@@ -67,9 +67,9 @@ Record 页的 `Video folder` 会显示当前 MP4 目录，并提供选择、恢�
 
 `Display` 按钮会按主显示器优先顺序轮换可录制显示器；显示器选择、音频选择都只在点击时查询系统，不影响应用启动。
 
-快速保存默认写入 `Pictures\Flash Shot\FlashShot-<timestamp>.png`。在 `Files` 中选择
+快速保存默认写入 `Pictures\Flash Shot\FlashShot<yyyyMMddHHmmssSSS><UUIDv7>.png`。在 `Files` 中选择
 `Choose folder` 可将快速保存与其受限历史记录一起切换到新目录；`File name` 可在安全
-前缀间切换，生成的名称始终包含时间戳以避免覆盖已有截图。
+前缀间切换，生成的名称始终包含本地时间戳和 UUIDv7 以避免覆盖已有截图。
 
 ### 验证
 
