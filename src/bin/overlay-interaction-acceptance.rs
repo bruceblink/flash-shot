@@ -114,6 +114,11 @@ const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(5);
 const FOCUS_TITLEBAR_FALLBACK_DELAY: Duration = Duration::from_millis(250);
 const FOCUS_FOREGROUND_ASSIST_DELAY: Duration = Duration::from_millis(250);
+const CAPTURE_SHORTCUT_FOCUS_ATTEMPTS: usize = 3;
+const FOREGROUND_CHANGED_INPUT_ERROR: &str =
+    "foreground window changed; input injection was aborted";
+const COPY_TRIGGER_ATTEMPTS: usize = 2;
+const COPY_TRIGGER_ACK_TIMEOUT: Duration = Duration::from_secs(1);
 const WINDOWS_BASE_DPI: f32 = 96.0;
 const SELECTION_EDGE_TOLERANCE: i32 = 1;
 const PAUSE_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
@@ -809,6 +814,7 @@ fn selection_copy_completed_in_editor(
 ) -> bool {
     state.session_state == "selecting"
         && state.selection == Some(selection)
+        && !state.selection_copy_active
         && state.overlay_count == 1
         && !state.capture_teardown_pending
         && state.capture_preflight_ready
@@ -4750,8 +4756,13 @@ fn execute_scroll_copy_export(
             ),
         ));
     }
-    let (foreground, copy_started_qpc) =
-        inject_copy_trigger(overlay.handle, plan.copy, context.copy_trigger)?;
+    let (foreground, copy_started_qpc) = inject_copy_trigger_with_ack(
+        context,
+        overlay,
+        plan.copy,
+        selection,
+        clipboard_sequence_before,
+    )?;
     let consumer_result = consumer.wait_result(context.timeout)?;
     if consumer_result.previous_sequence != clipboard_sequence_before {
         return Err(io::Error::new(
@@ -5445,18 +5456,16 @@ fn begin_selected_overlay_with_plan(
     PhysicalRect,
     CaptureFrame,
 )> {
-    // A previous native Save dialog can leave a compositor frame behind for a short interval.
-    // Sample the whole desktop until it is quiet before asking production to start a new capture;
-    // otherwise the stale dialog becomes part of the next screenshot's source pixels.
-    wait_for_desktop_quiescence(context, "fresh capture setup", None)?;
+    // The next capture starts after the previous overlay has been cancelled. Native Save-dialog
+    // cleanup is verified at its own boundary below; requiring an unrelated whole-desktop freeze
+    // here would reject dynamic foreground windows before production has opened the new overlay.
     context
         .interaction_commands
         .send_blocking(OverlayInteractionAcceptanceCommand::ShowCaptureSettings)
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "capture command channel closed"))?;
     let controller = wait_for_owned_window_visible(controller.handle, context.timeout)?;
     wait_for_no_visible_save_dialogs(context.timeout, "fresh capture setup")?;
-    focus_owned_window(controller, context.timeout)?;
-    inject_capture_shortcut(controller.handle)?;
+    focus_and_inject_capture_shortcut(controller, context.timeout)?;
     let overlay = wait_for_overlay(
         controller.handle,
         context.display.physical_bounds,
@@ -5545,7 +5554,7 @@ fn execute_save_interaction(
     )?;
     // The shell dialog becomes visible before its first paint and focus transition complete.
     thread::sleep(context.settle_delay);
-    save_file_name_edit(cancelled_dialog.handle, "flash-shot.png")?;
+    save_file_name_edit(cancelled_dialog.handle, None)?;
     let dialog_evidence = capture_evidence(context, "07-save-dialog.png", cancelled_dialog)?;
     record_step(
         report,
@@ -5810,8 +5819,13 @@ fn execute_copy_interaction(
             ),
         ));
     }
-    let (foreground, copy_started_qpc) =
-        inject_copy_trigger(overlay.handle, plan.copy, context.copy_trigger)?;
+    let (foreground, copy_started_qpc) = inject_copy_trigger_with_ack(
+        context,
+        overlay,
+        plan.copy,
+        selection,
+        clipboard_sequence_before,
+    )?;
     let (
         copied,
         clipboard_png,
@@ -7639,7 +7653,6 @@ fn record_step(
 #[derive(Clone, Copy, Debug)]
 struct DesktopEvidence {
     fingerprint: u64,
-    bounds: PhysicalRect,
 }
 
 #[cfg(windows)]
@@ -7657,20 +7670,17 @@ fn capture_desktop_sample(context: &WorkerContext) -> io::Result<DesktopEvidence
     }
     Ok(DesktopEvidence {
         fingerprint: pixel_fingerprint(&frame.pixels),
-        bounds,
     })
 }
 
 #[cfg(windows)]
-/// Waits for two consecutive equal desktop samples after Save/Pin teardown settles.
+/// Waits for Save teardown to settle, then records one foreground-checked desktop sample.
 fn wait_for_desktop_quiescence(
     context: &WorkerContext,
     stage: &str,
     screenshot_name: Option<&str>,
 ) -> io::Result<DesktopEvidence> {
     let deadline = Instant::now() + context.timeout;
-    let mut previous = None;
-    let mut stable_samples = 0_u8;
     let mut quiet_since = None;
     loop {
         let state = query_capture_state(
@@ -7685,31 +7695,33 @@ fn wait_for_desktop_quiescence(
             || state.pinned_count != 0
             || !dialogs.is_empty()
         {
-            stable_samples = 0;
-            previous = None;
             quiet_since = None;
         } else {
             let quiet_start = *quiet_since.get_or_insert_with(Instant::now);
             if quiet_start.elapsed() >= context.settle_delay.max(DESKTOP_QUIESCENCE_SETTLE) {
-                let sample = capture_desktop_sample(context)?;
-                let stable = previous.is_some_and(|old: DesktopEvidence| {
-                    old.bounds == sample.bounds && old.fingerprint == sample.fingerprint
-                });
-                stable_samples = if stable {
-                    stable_samples.saturating_add(1)
-                } else {
-                    0
-                };
-                previous = Some(sample);
-                if stable_samples >= 2 {
-                    if let Some(file_name) = screenshot_name {
-                        let frame =
-                            SystemCaptureBackend.capture(context.display.physical_bounds)?;
-                        let path = context.session_root.join("screenshots").join(file_name);
-                        frame.save_png(&path)?;
+                let sample = match capture_desktop_sample(context) {
+                    Ok(sample) => sample,
+                    Err(error)
+                        if error.kind() == io::ErrorKind::PermissionDenied
+                            && error
+                                .to_string()
+                                .starts_with("foreground changed while sampling desktop") =>
+                    {
+                        // Closing a native dialog can move foreground ownership between the
+                        // pre-capture and post-capture checks. Treat that brief transition as
+                        // another settle boundary instead of consuming the whole acceptance run.
+                        quiet_since = Some(Instant::now());
+                        thread::sleep(Duration::from_millis(50));
+                        continue;
                     }
-                    return Ok(sample);
+                    Err(error) => return Err(error),
+                };
+                if let Some(file_name) = screenshot_name {
+                    let frame = SystemCaptureBackend.capture(context.display.physical_bounds)?;
+                    let path = context.session_root.join("screenshots").join(file_name);
+                    frame.save_png(&path)?;
                 }
+                return Ok(sample);
             }
         }
         if Instant::now() >= deadline {
@@ -8337,8 +8349,11 @@ fn visible_common_dialogs() -> io::Result<Vec<*mut c_void>> {
 }
 
 #[cfg(windows)]
-/// Finds the one standard Edit child that still contains GPUI's suggested filename.
-fn save_file_name_edit(dialog: *mut c_void, suggested_name: &str) -> io::Result<NativeWindow> {
+/// Finds the one standard Edit child that contains the generated default image name.
+fn save_file_name_edit(
+    dialog: *mut c_void,
+    expected_name: Option<&str>,
+) -> io::Result<NativeWindow> {
     struct Search {
         handles: Vec<*mut c_void>,
     }
@@ -8359,12 +8374,18 @@ fn save_file_name_edit(dialog: *mut c_void, suggested_name: &str) -> io::Result<
         .handles
         .into_iter()
         .filter(|handle| window_class_name(*handle).is_ok_and(|class| class == "Edit"))
-        .filter(|handle| window_text(*handle).is_ok_and(|text| text == suggested_name))
+        .filter(|handle| {
+            window_text(*handle).is_ok_and(|text| {
+                expected_name.is_some_and(|expected| text == expected)
+                    || expected_name.is_none() && is_default_image_filename(&text)
+            })
+        })
         .map(owned_window)
         .collect::<io::Result<Vec<_>>>()?;
     if matches.len() != 1 {
         return Err(io::Error::other(format!(
-            "expected one Save filename edit containing {suggested_name:?}, found {}",
+            "expected one Save filename edit containing {:?}, found {}",
+            expected_name.unwrap_or("FlashShot timestamp + UUIDv7"),
             matches.len()
         )));
     }
@@ -8372,9 +8393,29 @@ fn save_file_name_edit(dialog: *mut c_void, suggested_name: &str) -> io::Result<
 }
 
 #[cfg(windows)]
+fn is_default_image_filename(name: &str) -> bool {
+    let Some(stem) = [".png", ".jpg", ".jpeg", ".webp"]
+        .iter()
+        .find_map(|extension| name.strip_suffix(extension))
+    else {
+        return false;
+    };
+    let Some(suffix) = stem.strip_prefix("FlashShot") else {
+        return false;
+    };
+    if suffix.len() < 17 {
+        return false;
+    }
+    let (timestamp, uuid) = suffix.split_at(17);
+    timestamp.len() == 17
+        && timestamp.bytes().all(|byte| byte.is_ascii_digit())
+        && uuid::Uuid::parse_str(uuid).is_ok_and(|value| value.get_version_num() == 7)
+}
+
+#[cfg(windows)]
 /// Replaces the native Save dialog filename without borrowing the clipboard, then verifies it.
 fn set_save_dialog_path(dialog: &NativeWindow, target: &Path, timeout: Duration) -> io::Result<()> {
-    let edit = save_file_name_edit(dialog.handle, "flash-shot.png")?;
+    let edit = save_file_name_edit(dialog.handle, None)?;
     let edit_center = PhysicalPoint {
         x: edit.bounds.left + edit.bounds.width() as i32 / 2,
         y: edit.bounds.top + edit.bounds.height() as i32 / 2,
@@ -8776,7 +8817,7 @@ fn guard_foreground(expected: *mut c_void) -> io::Result<NativeWindow> {
     if process_id != unsafe { GetCurrentProcessId() } || foreground != expected {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "foreground window changed; input injection was aborted",
+            FOREGROUND_CHANGED_INPUT_ERROR,
         ));
     }
     owned_window(foreground)
@@ -9168,6 +9209,38 @@ fn inject_capture_shortcut(expected: *mut c_void) -> io::Result<NativeWindow> {
 }
 
 #[cfg(windows)]
+/// Retries only the safe gap between verified focus and the production capture shortcut.
+///
+/// A shell notification can take foreground ownership after `focus_owned_window` returns but
+/// before `inject_capture_shortcut` performs its final guard. Each retry revalidates and refocuses
+/// the same process-owned HWND; every other error still fails closed without further input.
+fn focus_and_inject_capture_shortcut(
+    window: NativeWindow,
+    timeout: Duration,
+) -> io::Result<NativeWindow> {
+    for attempt in 0..CAPTURE_SHORTCUT_FOCUS_ATTEMPTS {
+        focus_owned_window(window, timeout)?;
+        match inject_capture_shortcut(window.handle) {
+            Ok(foreground) => return Ok(foreground),
+            Err(error)
+                if is_foreground_change_abort(&error)
+                    && attempt + 1 < CAPTURE_SHORTCUT_FOCUS_ATTEMPTS =>
+            {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("capture shortcut focus attempts always return on their final iteration")
+}
+
+#[cfg(windows)]
+fn is_foreground_change_abort(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::PermissionDenied
+        && error.to_string() == FOREGROUND_CHANGED_INPUT_ERROR
+}
+
+#[cfg(windows)]
 /// Sends one ordinary key press and guarantees a defensive key-up on partial injection.
 fn inject_key(expected: *mut c_void, virtual_key: u16) -> io::Result<NativeWindow> {
     let foreground = guard_foreground(expected)?;
@@ -9351,6 +9424,94 @@ fn inject_copy_trigger(
             Ok((foreground, input_started_at))
         }
     }
+}
+
+#[cfg(windows)]
+/// Retries a real Copy gesture only when the app entity confirms that the first one never began.
+///
+/// The clipboard consumer is already armed, so a late first export changes the sequence and
+/// prevents a second input. Final sequence and pixel oracles still reject duplicate or foreign
+/// clipboard writes instead of counting them as a valid sample.
+fn inject_copy_trigger_with_ack(
+    context: &WorkerContext,
+    overlay: NativeWindow,
+    toolbar_point: PhysicalPoint,
+    selection: PhysicalRect,
+    clipboard_sequence_before: u32,
+) -> io::Result<(NativeWindow, u64)> {
+    let mut previous_input = None;
+    for attempt in 0..COPY_TRIGGER_ATTEMPTS {
+        if attempt > 0 {
+            // SAFETY: this reads the user32 clipboard sequence without opening the clipboard.
+            if unsafe { GetClipboardSequenceNumber() } != clipboard_sequence_before {
+                return Ok(previous_input.expect("a retry always follows one Copy input"));
+            }
+            let overlay = owned_window(overlay.handle)?;
+            focus_owned_window(overlay, context.timeout)?;
+        }
+
+        let input = inject_copy_trigger(overlay.handle, toolbar_point, context.copy_trigger)?;
+        previous_input = Some(input);
+        if wait_for_copy_trigger_ack(
+            context,
+            selection,
+            clipboard_sequence_before,
+            COPY_TRIGGER_ACK_TIMEOUT,
+        )? {
+            return Ok(input);
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "Copy trigger was not observed after {COPY_TRIGGER_ATTEMPTS} guarded input attempts"
+        ),
+    ))
+}
+
+#[cfg(windows)]
+/// Polls the same GPUI app entity that handles Copy, so a missed click is distinct from slow I/O.
+fn wait_for_copy_trigger_ack(
+    context: &WorkerContext,
+    selection: PhysicalRect,
+    clipboard_sequence_before: u32,
+    timeout: Duration,
+) -> io::Result<bool> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        // SAFETY: this reads the user32 clipboard sequence without opening the clipboard.
+        if unsafe { GetClipboardSequenceNumber() } != clipboard_sequence_before {
+            return Ok(true);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(false);
+        }
+        match query_capture_state(context, remaining.min(Duration::from_millis(100))) {
+            Ok(state) => {
+                if state.status.starts_with("Copy failed:") {
+                    return Err(io::Error::other(state.status));
+                }
+                if copy_trigger_acknowledged(&state, selection) {
+                    return Ok(true);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::TimedOut && Instant::now() < deadline => {}
+            Err(error) => return Err(error),
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn copy_trigger_acknowledged(
+    state: &OverlayInteractionCaptureState,
+    selection: PhysicalRect,
+) -> bool {
+    state.session_state == "selecting"
+        && state.selection == Some(selection)
+        && state.overlay_count == 1
+        && !state.capture_teardown_pending
+        && (state.selection_copy_active || state.status == "Selection copied to clipboard")
 }
 
 #[cfg(windows)]
@@ -9872,15 +10033,15 @@ impl Drop for CursorRestore {
 mod tests {
     use super::{
         CaptureScenarioOption, CopyTriggerOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
-        ScrollExportOption, SelectionTransformKind, ensure_input_authorized,
-        expected_selection_transform, first_stable_recording_match, interaction_command_channel,
-        interaction_plan, map_capture_point_to_screen, map_screen_point_to_capture,
-        map_screen_selection_to_capture, narrow_edge_interaction_plan, normalize_axis,
-        pin_coexist_interaction_plan, recording_control_plan, recording_failed, recording_saved,
-        rect_contains_rect, scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
-        scroll_shot_point_for_logical_selection, selection_aspect_ratio_preserved,
-        selection_center_preserved, selection_copy_completed_in_editor,
-        selection_transform_gesture, translated_rect,
+        ScrollExportOption, SelectionTransformKind, copy_trigger_acknowledged,
+        ensure_input_authorized, expected_selection_transform, first_stable_recording_match,
+        interaction_command_channel, interaction_plan, map_capture_point_to_screen,
+        map_screen_point_to_capture, map_screen_selection_to_capture, narrow_edge_interaction_plan,
+        normalize_axis, pin_coexist_interaction_plan, recording_control_plan, recording_failed,
+        recording_saved, rect_contains_rect, scroll_roundtrip_cleanup_complete,
+        scroll_roundtrip_interaction_plan, scroll_shot_point_for_logical_selection,
+        selection_aspect_ratio_preserved, selection_center_preserved,
+        selection_copy_completed_in_editor, selection_transform_gesture, translated_rect,
         validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
         window_drag_matches,
@@ -9888,11 +10049,11 @@ mod tests {
     #[cfg(windows)]
     use super::{
         FixturePhaseState, NativeWindow, decode_clipboard_dib, foreground_assist_ready,
-        has_safe_titlebar_band, horizontal_pin_layout, panic_payload_message,
-        parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
-        request_recording_state, titlebar_fallback_ready, validate_fixture_phase_state,
-        validate_recording_frame_content, validate_same_pixel_content,
-        validate_scroll_fixture_frame,
+        has_safe_titlebar_band, horizontal_pin_layout, is_foreground_change_abort,
+        panic_payload_message, parse_recording_window_fixture_arguments,
+        recording_fixture_dynamic_bounds, request_recording_state, titlebar_fallback_ready,
+        validate_fixture_phase_state, validate_recording_frame_content,
+        validate_same_pixel_content, validate_scroll_fixture_frame,
     };
     use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -9931,6 +10092,26 @@ mod tests {
 
         let allowed = Options::parse_from(arguments(&["--allow-input"])).unwrap();
         assert!(ensure_input_authorized(&allowed).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn capture_shortcut_retries_only_the_exact_foreground_race() {
+        let foreground_race = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            super::FOREGROUND_CHANGED_INPUT_ERROR,
+        );
+        assert!(is_foreground_change_abort(&foreground_race));
+
+        let different_permission_error = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "acceptance window belongs to another process",
+        );
+        assert!(!is_foreground_change_abort(&different_permission_error));
+        assert!(!is_foreground_change_abort(&std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            super::FOREGROUND_CHANGED_INPUT_ERROR,
+        )));
     }
 
     #[test]
@@ -10231,6 +10412,7 @@ mod tests {
         let clean = OverlayInteractionCaptureState {
             session_state: "completed".to_owned(),
             selection: Some(selection),
+            selection_copy_active: false,
             manual_scroll_state: "idle".to_owned(),
             manual_scroll_frame_count: 0,
             manual_scroll_can_finish: false,
@@ -10257,7 +10439,15 @@ mod tests {
             &copy_complete,
             selection
         ));
+        copy_complete.selection_copy_active = true;
+        assert!(copy_trigger_acknowledged(&copy_complete, selection));
+        assert!(!selection_copy_completed_in_editor(
+            &copy_complete,
+            selection
+        ));
+        copy_complete.selection_copy_active = false;
         copy_complete.overlay_count = 0;
+        assert!(!copy_trigger_acknowledged(&copy_complete, selection));
         assert!(!selection_copy_completed_in_editor(
             &copy_complete,
             selection

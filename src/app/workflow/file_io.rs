@@ -323,36 +323,6 @@ pub(super) const fn export_extension(format: u8) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{ImageTimestamp, format_default_image_filename};
-
-    #[test]
-    fn default_image_filename_contains_local_timestamp_and_uuid_v7() {
-        let uuid = uuid::Uuid::parse_str("018f2b50-7b2d-7cc0-8000-000000000000").unwrap();
-        let name = format_default_image_filename(
-            "FlashShot",
-            ImageTimestamp {
-                year: 2026,
-                month: 8,
-                day: 14,
-                hour: 12,
-                minute: 30,
-                second: 45,
-                millisecond: 987,
-            },
-            uuid,
-            "png",
-        );
-
-        assert_eq!(
-            name,
-            "FlashShot20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png"
-        );
-        assert_eq!(uuid.get_version_num(), 7);
-    }
-}
-
 /// Keeps editable-project images lossless even when a caller chooses another extension.
 pub(super) fn png_path(mut path: PathBuf) -> PathBuf {
     let is_png = path
@@ -508,4 +478,34 @@ pub(super) fn next_annotation_counters(document: &AnnotationDocument) -> (u64, u
         .unwrap_or(0)
         .saturating_add(1);
     (next_id, next_sequence)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ImageTimestamp, format_default_image_filename};
+
+    #[test]
+    fn default_image_filename_contains_local_timestamp_and_uuid_v7() {
+        let uuid = uuid::Uuid::parse_str("018f2b50-7b2d-7cc0-8000-000000000000").unwrap();
+        let name = format_default_image_filename(
+            "FlashShot",
+            ImageTimestamp {
+                year: 2026,
+                month: 8,
+                day: 14,
+                hour: 12,
+                minute: 30,
+                second: 45,
+                millisecond: 987,
+            },
+            uuid,
+            "png",
+        );
+
+        assert_eq!(
+            name,
+            "FlashShot20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png"
+        );
+        assert_eq!(uuid.get_version_num(), 7);
+    }
 }

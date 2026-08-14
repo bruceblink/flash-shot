@@ -184,6 +184,8 @@ pub struct OverlayInteractionRecordingState {
 pub struct OverlayInteractionCaptureState {
     pub session_state: String,
     pub selection: Option<domain::geometry::PhysicalRect>,
+    /// Whether the editor currently owns a background selection Copy worker.
+    pub selection_copy_active: bool,
     /// Current production manual-scroll lifecycle label (for example, `collecting`).
     pub manual_scroll_state: String,
     /// Number of viewport frames accepted by the active manual-scroll session.
