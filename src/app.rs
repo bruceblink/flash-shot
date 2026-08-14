@@ -13,7 +13,10 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     ops::Range,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
     time::Instant,
 };
 
@@ -138,6 +141,13 @@ pub struct FlashShotApp {
     delayed_capture_generation: Option<u64>,
     delayed_capture_remaining_seconds: Option<u8>,
     full_screen_copy_generation: Option<u64>,
+    // A selection Copy owns the image-clipboard slot until its background task has stopped or
+    // committed. Its id is independent from capture generations so normal tools may continue.
+    selection_copy: Option<SelectionCopyLease>,
+    // A single shared lease prevents independent UI surfaces from racing to replace clipboard
+    // contents while their heavy image encoding remains off the UI thread.
+    clipboard_write_sequence: u64,
+    clipboard_write_lease: Option<ClipboardWriteLease>,
     full_screen_save_generation: Option<u64>,
     full_screen_pin_generation: Option<u64>,
     clipboard_pin_generation: Option<u64>,
@@ -156,6 +166,7 @@ pub struct FlashShotApp {
     recognition_result: Option<RecognitionResult>,
     recognition_retry: Option<RecognitionRetry>,
     recognition_in_flight: bool,
+    recognition_generation: u64,
     translation_service_test_in_flight: bool,
     translation_service_test_generation: u64,
     ocr_support_check_in_flight: bool,
@@ -203,7 +214,7 @@ pub struct FlashShotApp {
     history_thumbnail_failed: HashSet<PathBuf>,
     // Invalidates best-effort thumbnail reads when a file mutation starts or completes.
     history_thumbnail_revision: u64,
-    selection_clipboard: Arc<dyn ClipboardService + Send + Sync>,
+    image_clipboard: Arc<dyn ClipboardService + Send + Sync>,
     system_services: SystemServices,
     _shutdown: Subscription,
     _window_closed: Subscription,
@@ -215,6 +226,122 @@ pub struct FlashShotApp {
 enum SystemServices {
     Production,
     DisabledForAcceptance,
+}
+
+/// Owns one selection Copy while its background preparation and clipboard commit are active.
+///
+/// The cancellation state crosses the UI/background boundary so Escape can stop a copy before
+/// it reaches the irreversible native clipboard write.
+pub(super) struct SelectionCopyLease {
+    pub(super) id: u64,
+    pub(super) status_generation: u64,
+    pub(super) recognition_generation: u64,
+    pub(super) cancellation: Arc<SelectionCopyCancellation>,
+    pub(super) cancel_requested: bool,
+}
+
+impl SelectionCopyLease {
+    /// Lets only the first Escape belong to Copy; a later Escape closes the editor normally.
+    pub(super) const fn owns_escape(&self) -> bool {
+        !self.cancel_requested
+    }
+}
+
+/// Identifies the one asynchronous task that currently owns an image clipboard write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ClipboardWriteLease {
+    pub(super) id: u64,
+}
+
+/// Coordinates the last cancellable point before a selection Copy changes the system clipboard.
+pub(super) struct SelectionCopyCancellation {
+    state: AtomicU8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SelectionCopyCancelRequest {
+    CancelledBeforeCommit,
+    AlreadyCancelled,
+    ClipboardCommitStarted,
+}
+
+const SELECTION_COPY_PREPARING: u8 = 0;
+const SELECTION_COPY_CANCELLED: u8 = 1;
+const SELECTION_COPY_COMMITTING: u8 = 2;
+const SELECTION_COPY_COMMITTED: u8 = 3;
+
+impl Default for SelectionCopyCancellation {
+    fn default() -> Self {
+        Self {
+            state: AtomicU8::new(SELECTION_COPY_PREPARING),
+        }
+    }
+}
+
+impl SelectionCopyCancellation {
+    /// Claims the native clipboard write only if cancellation has not already won the race.
+    pub(super) fn begin_clipboard_commit(&self) -> bool {
+        self.state
+            .compare_exchange(
+                SELECTION_COPY_PREPARING,
+                SELECTION_COPY_COMMITTING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// Marks the clipboard call as finished, including a failed call that may have emptied it.
+    pub(super) fn finish_clipboard_commit(&self) {
+        self.state
+            .store(SELECTION_COPY_COMMITTED, Ordering::Release);
+    }
+
+    /// Requests cancellation while pixel preparation is still reversible.
+    pub(super) fn request_cancel(&self) -> SelectionCopyCancelRequest {
+        loop {
+            match self.state.load(Ordering::Acquire) {
+                SELECTION_COPY_PREPARING => {
+                    if self
+                        .state
+                        .compare_exchange(
+                            SELECTION_COPY_PREPARING,
+                            SELECTION_COPY_CANCELLED,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return SelectionCopyCancelRequest::CancelledBeforeCommit;
+                    }
+                }
+                SELECTION_COPY_CANCELLED => return SelectionCopyCancelRequest::AlreadyCancelled,
+                SELECTION_COPY_COMMITTING | SELECTION_COPY_COMMITTED => {
+                    return SelectionCopyCancelRequest::ClipboardCommitStarted;
+                }
+                _ => unreachable!("selection Copy cancellation state is valid"),
+            }
+        }
+    }
+
+    /// Checks whether Escape cancelled the task before it begins expensive pixel preparation.
+    pub(super) fn is_cancelled(&self) -> bool {
+        self.state.load(Ordering::Acquire) == SELECTION_COPY_CANCELLED
+    }
+}
+
+impl crate::platform::clipboard::ClipboardCommitGate for SelectionCopyCancellation {
+    fn is_cancelled(&self) -> bool {
+        self.is_cancelled()
+    }
+
+    fn begin_clipboard_commit(&self) -> bool {
+        self.begin_clipboard_commit()
+    }
+
+    fn finish_clipboard_commit(&self) {
+        self.finish_clipboard_commit();
+    }
 }
 
 /// The settings window is intentionally segmented so the capture service has
@@ -532,7 +659,7 @@ impl FlashShotApp {
         history: ScreenshotHistory,
         settings: UserSettings,
         settings_path: PathBuf,
-        selection_clipboard: Arc<dyn ClipboardService + Send + Sync>,
+        image_clipboard: Arc<dyn ClipboardService + Send + Sync>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_with_system_services(
@@ -540,7 +667,7 @@ impl FlashShotApp {
             history,
             settings,
             settings_path,
-            selection_clipboard,
+            image_clipboard,
             SystemServices::Production,
             cx,
         )
@@ -552,7 +679,7 @@ impl FlashShotApp {
         history: ScreenshotHistory,
         settings: UserSettings,
         settings_path: PathBuf,
-        selection_clipboard: Arc<dyn ClipboardService + Send + Sync>,
+        image_clipboard: Arc<dyn ClipboardService + Send + Sync>,
         system_services: SystemServices,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -713,6 +840,9 @@ impl FlashShotApp {
             delayed_capture_generation: None,
             delayed_capture_remaining_seconds: None,
             full_screen_copy_generation: None,
+            selection_copy: None,
+            clipboard_write_sequence: 0,
+            clipboard_write_lease: None,
             full_screen_save_generation: None,
             full_screen_pin_generation: None,
             clipboard_pin_generation: None,
@@ -726,6 +856,7 @@ impl FlashShotApp {
             recognition_result: None,
             recognition_retry: None,
             recognition_in_flight: false,
+            recognition_generation: 0,
             translation_service_test_in_flight: false,
             translation_service_test_generation: 0,
             ocr_support_check_in_flight: false,
@@ -768,7 +899,7 @@ impl FlashShotApp {
             history_thumbnail_pending: VecDeque::new(),
             history_thumbnail_failed: HashSet::new(),
             history_thumbnail_revision: 0,
-            selection_clipboard,
+            image_clipboard,
             system_services,
             _shutdown: shutdown,
             _window_closed: window_closed,

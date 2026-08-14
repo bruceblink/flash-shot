@@ -2,13 +2,23 @@
 
 use super::*;
 
-pub(super) fn copy_annotated_frame_selection(
+/// Prepares a selection Copy and commits it only while cancellation has not won the race.
+///
+/// Pixel compositing is intentionally done before the final atomic check: Escape can discard the
+/// prepared image without changing the user's clipboard, but a native clipboard write itself is
+/// not safely interruptible once it begins.
+pub(super) fn copy_selection_snapshot_cancellable(
     frame: &CaptureFrame,
     document: &AnnotationDocument,
     selection: PhysicalRect,
     clipboard: &(impl ClipboardService + ?Sized),
-) -> std::io::Result<()> {
-    clipboard.copy_image(&frame.composite_annotations(document)?.crop(selection)?)
+    cancellation: &crate::app::SelectionCopyCancellation,
+) -> std::io::Result<bool> {
+    if cancellation.is_cancelled() {
+        return Ok(false);
+    }
+    let copied = frame.composite_annotations(document)?.crop(selection)?;
+    clipboard.copy_image_cancellable(&copied, cancellation)
 }
 
 pub(super) fn save_annotated_frame_selection(

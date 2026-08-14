@@ -316,6 +316,8 @@ struct CopySnapshot {
     sink: Option<String>,
     consumer_image_content: Option<ExactPixelSnapshot>,
     consumer_cleaned_up: Option<bool>,
+    editor_retained_after_copy: Option<bool>,
+    cleanup_after_escape: Option<bool>,
     single_export_verified: Option<bool>,
 }
 
@@ -398,6 +400,8 @@ impl ParsedAcceptance {
             == Some("independent_process_png_cf_dib_and_arboard")
             && copy.sink.as_deref() == Some("system_clipboard")
             && copy.consumer_cleaned_up == Some(true)
+            && copy.editor_retained_after_copy == Some(true)
+            && copy.cleanup_after_escape == Some(true)
             && copy.single_export_verified == Some(true);
         Ok(Self {
             status: report.status.unwrap_or_default(),

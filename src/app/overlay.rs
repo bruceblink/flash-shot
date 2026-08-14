@@ -644,6 +644,7 @@ impl CaptureOverlay {
     ) {
         let operation_generation = self.operation_generation;
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
+            self.selection_updates.invalidate();
             return;
         }
         let Some(transform) = self.transform(viewport) else {
@@ -730,6 +731,7 @@ impl CaptureOverlay {
     ) {
         let operation_generation = self.operation_generation;
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
+            self.selection_updates.invalidate();
             return;
         }
         // The final mouse position wins over any queued frame update from this gesture, so it
@@ -777,6 +779,16 @@ impl CaptureOverlay {
     ) {
         let operation_generation = self.operation_generation;
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
+            return;
+        }
+        // Copy cancellation has priority over More and text-editor Escape handling. The copied
+        // pixels are already frozen, so this leaves the user in their current editing context.
+        if event.keystroke.key == "escape"
+            && !event.keystroke.modifiers.modified()
+            && self.app.read(cx).selection_copy_owns_escape()
+        {
+            self.app.update(cx, |app, cx| app.cancel_selection_copy(cx));
+            cx.stop_propagation();
             return;
         }
         if close_more_actions_shortcut(&event.keystroke)
@@ -1291,6 +1303,9 @@ impl Render for CaptureOverlay {
             viewport,
         );
         let has_selection = selection.is_some();
+        let selection_copy_in_progress = app.selection_copy_is_active();
+        // Copy owns a frozen snapshot, not this editor. Keep the normal action bar available so
+        // large PNG/DIB encoding never turns a simple Copy into a workflow dead end.
         let can_export = has_selection && owns_action_toolbar;
         let show_action_toolbar = !has_selection || owns_action_toolbar;
         let selection_cursor = selection_cursor(
@@ -2419,25 +2434,51 @@ impl Render for CaptureOverlay {
                                     .rounded_md()
                                     .border_1()
                                     .border_color(rgba(0xFFFFFF00))
-                                    .bg(colors.accent)
-                                    .text_color(colors.background)
+                                    .bg(if selection_copy_in_progress {
+                                        colors.panel
+                                    } else {
+                                        colors.accent
+                                    })
+                                    .text_color(if selection_copy_in_progress {
+                                        colors.muted
+                                    } else {
+                                        colors.background
+                                    })
                                     .focusable()
-                                    .focus_visible(|style| style.border_color(colors.background))
+                                    .focus_visible(|style| {
+                                        style.border_color(if selection_copy_in_progress {
+                                            colors.accent
+                                        } else {
+                                            colors.background
+                                        })
+                                    })
                                     .text_sm()
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(colors.accent))
+                                    .when(!selection_copy_in_progress, |button| {
+                                        button
+                                            .cursor_pointer()
+                                            .hover(|style| style.bg(colors.accent))
+                                    })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
-                                            OverlayTooltip(primary_action_tooltip("copy"), colors)
+                                            OverlayTooltip(
+                                                if selection_copy_in_progress {
+                                                    "Copying selection in the background"
+                                                } else {
+                                                    primary_action_tooltip("copy")
+                                                },
+                                                colors,
+                                            )
                                         })
                                         .into()
                                     })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.copy_selection(cx))
-                                        });
-                                    }))
+                                    .when(!selection_copy_in_progress, |button| {
+                                        button.on_click(cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| app.copy_selection(cx))
+                                            });
+                                        }))
+                                    })
                                     .on_key_down(stop_overlay_action_key_propagation)
                                     .child("Copy"),
                             )

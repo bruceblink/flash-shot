@@ -26,7 +26,7 @@ impl FlashShotApp {
         if self.delayed_capture_generation.is_some() {
             return;
         }
-        if !self.capture_export_operations_idle() {
+        if !self.capture_restart_operations_idle() {
             return;
         }
         if self.capture_teardown_pending {
@@ -68,6 +68,11 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        let Some(clipboard_write_id) =
+            self.try_begin_clipboard_write("copying the full screen", cx)
+        else {
+            return;
+        };
         let generation = self.operation_generation;
         self.full_screen_copy_generation = Some(generation);
         self.status = "Capturing full screen for clipboard...".to_owned();
@@ -87,7 +92,7 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_full_screen_copy(result, generation, cx)
+                        this.finish_full_screen_copy(result, generation, clipboard_write_id, cx)
                     });
                 }
             }
@@ -217,7 +222,7 @@ impl FlashShotApp {
         preselect_full_screen: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self.capture_export_operations_idle() {
+        if !self.capture_restart_operations_idle() {
             return;
         }
         if self.delayed_capture_generation.is_some() {
@@ -320,7 +325,7 @@ impl FlashShotApp {
                                 // A managed export owns the selected pixels and keeps the
                                 // capture request ignored, matching the normal start guard.
                                 if !preselect_focused_window
-                                    && !this.capture_export_operations_idle()
+                                    && !this.capture_restart_operations_idle()
                                 {
                                     return true;
                                 }
@@ -352,7 +357,7 @@ impl FlashShotApp {
     /// Returns the production start predicate without capturing the desktop or opening overlays.
     pub(in crate::app) fn capture_preflight_ready(&self) -> bool {
         !self.capture_teardown_pending
-            && self.capture_export_operations_idle()
+            && self.capture_restart_operations_idle()
             && self.delayed_capture_generation.is_none()
             && capture_start_conflict_status(
                 self.recording_control.is_some() || self.recording_acceptance_active,
@@ -374,6 +379,14 @@ impl FlashShotApp {
             && self.generic_open_generation.is_none()
             && self.history_write_generation.is_none()
             && !self.history_root_change_in_flight
+    }
+
+    /// Starts a new capture only after tasks that still depend on the editable session finish.
+    ///
+    /// A selection Copy is intentionally absent: it owns a frozen clone and must not make Save,
+    /// Pin, scroll capture, annotation editing, or a new selection wait for clipboard encoding.
+    fn capture_restart_operations_idle(&self) -> bool {
+        self.capture_export_operations_idle() && !self.manual_scroll_finish_in_flight
     }
 
     /// Clears a replaceable finished selection before a fresh capture request starts.
@@ -483,9 +496,7 @@ impl FlashShotApp {
         self.manual_scroll_capture_in_flight = false;
         self.manual_scroll_finish_in_flight = false;
         self.manual_scroll_auto_capture_generation = None;
-        self.recognition_result = None;
-        self.recognition_retry = None;
-        self.recognition_in_flight = false;
+        self.invalidate_recognition();
         self.translation_service_test_in_flight = false;
         self.translation_service_test_generation =
             self.translation_service_test_generation.wrapping_add(1);
@@ -664,6 +675,11 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn reset(&mut self, cx: &mut Context<Self>) {
+        // A reset starts a new editing lifecycle. Its frozen Copy worker may still be encoding,
+        // so ask it to stop before it reaches the irreversible native clipboard commit.
+        if let Some(copy) = self.selection_copy.take() {
+            let _ = copy.cancellation.request_cancel();
+        }
         match self.session.state() {
             CaptureSessionState::Capturing
             | CaptureSessionState::Selecting
@@ -705,8 +721,7 @@ impl FlashShotApp {
         self.manual_scroll_capture_in_flight = false;
         self.manual_scroll_finish_in_flight = false;
         self.manual_scroll_auto_capture_generation = None;
-        self.recognition_result = None;
-        self.recognition_retry = None;
+        self.invalidate_recognition();
         self.translation_service_test_in_flight = false;
         self.translation_service_test_generation =
             self.translation_service_test_generation.wrapping_add(1);
@@ -739,7 +754,13 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn shutdown(&mut self, _cx: &mut Context<Self>) {
+        // A shutdown cannot undo a native clipboard write already in progress, but it can still
+        // prevent a prepared selection from committing after the app begins closing.
+        if let Some(copy) = self.selection_copy.take() {
+            let _ = copy.cancellation.request_cancel();
+        }
         self.operation_generation = self.operation_generation.wrapping_add(1);
+        self.invalidate_recognition();
         self.delayed_capture_generation = None;
         self.delayed_capture_remaining_seconds = None;
         if self.session.state() != CaptureSessionState::Idle {
@@ -763,9 +784,6 @@ impl FlashShotApp {
         self.manual_scroll_capture_in_flight = false;
         self.manual_scroll_finish_in_flight = false;
         self.manual_scroll_auto_capture_generation = None;
-        self.recognition_result = None;
-        self.recognition_retry = None;
-        self.recognition_in_flight = false;
         self.translation_service_test_in_flight = false;
         self.translation_service_test_generation =
             self.translation_service_test_generation.wrapping_add(1);

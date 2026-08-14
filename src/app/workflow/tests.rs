@@ -1,10 +1,11 @@
-use super::exporting::claim_pinned_save_slot;
+use super::exporting::{claim_pinned_save_slot, selection_copy_completion_can_report};
+use super::recognition::recognition_completion_is_current;
 use super::{
     ColorFormat, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
     annotation_position, annotation_sidecar_path, capture::focused_window_selection,
     capture_session_can_restart, capture_start_conflict_status, claim_idle_completion,
-    compose_captured_displays, copy_annotated_frame_selection, delayed_capture_status,
+    compose_captured_displays, copy_selection_snapshot_cancellable, delayed_capture_status,
     drawing_status, export_path, fill_alpha, fill_color, format_hsl, format_recording_progress,
     format_recording_stopping, hovered_color, intersect_rect, is_current_operation,
     keyboard_command, load_annotation_document, manual_scroll_control_bounds,
@@ -21,11 +22,14 @@ use super::{
     recording_output_path_from_candidates, recording_start_cancellation_generation,
     recording_start_conflict_status, recording_start_failure_status,
     recording_start_result_is_applicable, recording_support_check_conflict_status,
-    recording_support_status, recording_target_label, reserve_quick_save_path,
-    resolve_pointer_selection, save_annotated_frame_selection, save_annotation_document,
-    save_editable_project, smart_target_status, style_for_tool, text_annotation_with_content,
-    tool_selected_status, translation_failure_status, translation_service_test_status,
-    translation_support_status, with_alpha,
+    recording_support_status, recording_target_label, release_clipboard_write_lease,
+    reserve_quick_save_path, resolve_pointer_selection, save_annotated_frame_selection,
+    save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+    text_annotation_with_content, tool_selected_status, translation_failure_status,
+    translation_service_test_status, translation_support_status, with_alpha,
+};
+use crate::app::{
+    ClipboardWriteLease, SelectionCopyCancelRequest, SelectionCopyCancellation, SelectionCopyLease,
 };
 use crate::{
     domain::{
@@ -69,6 +73,48 @@ impl ClipboardService for RecordingClipboard {
     }
 }
 
+/// A test-only clipboard that holds a commit after it becomes irreversible.
+///
+/// This models the Windows boundary after `EmptyClipboard`: later Escape requests may update UI
+/// feedback, but they must not promise to restore the previous system clipboard contents.
+struct CommittingClipboard {
+    started: std::sync::mpsc::SyncSender<()>,
+    resume: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    copied: std::sync::Mutex<Option<CaptureFrame>>,
+}
+
+impl ClipboardService for CommittingClipboard {
+    fn copy_image(&self, frame: &CaptureFrame) -> io::Result<()> {
+        *self.copied.lock().expect("test clipboard lock") = Some(frame.clone());
+        Ok(())
+    }
+
+    fn copy_image_cancellable(
+        &self,
+        frame: &CaptureFrame,
+        gate: &dyn crate::platform::clipboard::ClipboardCommitGate,
+    ) -> io::Result<bool> {
+        if !gate.begin_clipboard_commit() {
+            return Ok(false);
+        }
+        self.started.send(()).map_err(|_| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "test commit observer dropped")
+        })?;
+        self.resume
+            .lock()
+            .expect("test clipboard lock")
+            .recv()
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "test commit resume dropped"))?;
+        let result = self.copy_image(frame);
+        gate.finish_clipboard_commit();
+        result.map(|()| true)
+    }
+
+    fn copy_text(&self, _text: &str) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 #[test]
 fn copy_uses_the_pixel_correct_selected_region() {
     let frame = CaptureFrame {
@@ -92,18 +138,21 @@ fn copy_uses_the_pixel_correct_selected_region() {
     let clipboard = RecordingClipboard::default();
     let document = AnnotationDocument::new(frame.bounds).unwrap();
 
-    copy_annotated_frame_selection(
-        &frame,
-        &document,
-        PhysicalRect {
-            left: -1,
-            top: 10,
-            right: 1,
-            bottom: 12,
-        },
-        &clipboard,
-    )
-    .unwrap();
+    assert!(
+        copy_selection_snapshot_cancellable(
+            &frame,
+            &document,
+            PhysicalRect {
+                left: -1,
+                top: 10,
+                right: 1,
+                bottom: 12,
+            },
+            &clipboard,
+            &SelectionCopyCancellation::default(),
+        )
+        .unwrap()
+    );
 
     let copied = clipboard.copied.borrow();
     let copied = copied.as_ref().unwrap();
@@ -153,18 +202,21 @@ fn annotated_copy_composites_before_cropping_the_selection() {
         .unwrap();
     let clipboard = RecordingClipboard::default();
 
-    copy_annotated_frame_selection(
-        &frame,
-        &document,
-        PhysicalRect {
-            left: -1,
-            top: 10,
-            right: 1,
-            bottom: 11,
-        },
-        &clipboard,
-    )
-    .unwrap();
+    assert!(
+        copy_selection_snapshot_cancellable(
+            &frame,
+            &document,
+            PhysicalRect {
+                left: -1,
+                top: 10,
+                right: 1,
+                bottom: 11,
+            },
+            &clipboard,
+            &SelectionCopyCancellation::default(),
+        )
+        .unwrap()
+    );
 
     let copied = clipboard.copied.borrow();
     let copied = copied.as_ref().unwrap();
@@ -641,6 +693,248 @@ fn stale_idle_completion_releases_its_slot_without_overriding_new_state() {
         CaptureSessionState::Capturing
     ));
     assert_eq!(active_capture, None);
+}
+
+#[test]
+fn cancelled_selection_copy_keeps_the_clipboard_unchanged() {
+    let frame = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2,
+            bottom: 1,
+        },
+        width: 2,
+        height: 1,
+        stride: 8,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from([1, 2, 3, 255, 4, 5, 6, 255]),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    let clipboard = RecordingClipboard::default();
+    let document = AnnotationDocument::new(frame.bounds).unwrap();
+    let cancellation = SelectionCopyCancellation::default();
+
+    assert_eq!(
+        cancellation.request_cancel(),
+        SelectionCopyCancelRequest::CancelledBeforeCommit
+    );
+    assert!(
+        !copy_selection_snapshot_cancellable(
+            &frame,
+            &document,
+            frame.bounds,
+            &clipboard,
+            &cancellation,
+        )
+        .unwrap()
+    );
+    assert!(clipboard.copied.borrow().is_none());
+}
+
+#[test]
+fn cancelled_selection_copy_never_calls_clipboard_at_the_commit_boundary() {
+    let frame = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1,
+            bottom: 1,
+        },
+        width: 1,
+        height: 1,
+        stride: 4,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from([1, 2, 3, 255]),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    let clipboard = RecordingClipboard::default();
+    let cancellation = SelectionCopyCancellation::default();
+
+    assert_eq!(
+        cancellation.request_cancel(),
+        SelectionCopyCancelRequest::CancelledBeforeCommit
+    );
+    assert!(
+        !clipboard
+            .copy_image_cancellable(&frame, &cancellation)
+            .unwrap()
+    );
+    assert!(clipboard.copied.borrow().is_none());
+}
+
+#[test]
+fn selection_copy_cancellation_does_not_interrupt_a_started_clipboard_commit() {
+    let cancellation = SelectionCopyCancellation::default();
+
+    assert!(cancellation.begin_clipboard_commit());
+    assert_eq!(
+        cancellation.request_cancel(),
+        SelectionCopyCancelRequest::ClipboardCommitStarted
+    );
+    cancellation.finish_clipboard_commit();
+    assert_eq!(
+        cancellation.request_cancel(),
+        SelectionCopyCancelRequest::ClipboardCommitStarted
+    );
+}
+
+#[test]
+fn cancelling_after_the_native_commit_boundary_keeps_the_copy_running() {
+    let frame = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1,
+            bottom: 1,
+        },
+        width: 1,
+        height: 1,
+        stride: 4,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from([1, 2, 3, 255]),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    let (started, commit_started) = std::sync::mpsc::sync_channel(1);
+    let (resume, resume_worker) = std::sync::mpsc::sync_channel(1);
+    let clipboard = Arc::new(CommittingClipboard {
+        started,
+        resume: std::sync::Mutex::new(resume_worker),
+        copied: std::sync::Mutex::default(),
+    });
+    let cancellation = Arc::new(SelectionCopyCancellation::default());
+    let worker_clipboard = clipboard.clone();
+    let worker_cancellation = cancellation.clone();
+    let worker_frame = frame.clone();
+    let worker = std::thread::spawn(move || {
+        worker_clipboard.copy_image_cancellable(&worker_frame, worker_cancellation.as_ref())
+    });
+
+    commit_started.recv().unwrap();
+    assert_eq!(
+        cancellation.request_cancel(),
+        SelectionCopyCancelRequest::ClipboardCommitStarted
+    );
+    resume.send(()).unwrap();
+    assert!(worker.join().unwrap().unwrap());
+    assert_eq!(
+        clipboard
+            .copied
+            .lock()
+            .expect("test clipboard lock")
+            .as_ref()
+            .unwrap()
+            .pixels,
+        frame.pixels
+    );
+}
+
+#[test]
+fn selection_copy_snapshot_uses_the_pixels_prepared_for_its_worker() {
+    let copied = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1,
+            bottom: 1,
+        },
+        width: 1,
+        height: 1,
+        stride: 4,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from([1, 2, 3, 255]),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    let editor_replacement = CaptureFrame {
+        pixels: Arc::from([9, 8, 7, 255]),
+        ..copied.clone()
+    };
+    let clipboard = RecordingClipboard::default();
+    let cancellation = SelectionCopyCancellation::default();
+
+    // The worker receives its own frozen source/document snapshot.
+    assert!(
+        copy_selection_snapshot_cancellable(
+            &copied,
+            &AnnotationDocument::new(copied.bounds).unwrap(),
+            copied.bounds,
+            &clipboard,
+            &cancellation,
+        )
+        .unwrap()
+    );
+    assert_ne!(copied.pixels, editor_replacement.pixels);
+    assert_eq!(
+        clipboard.copied.borrow().as_ref().unwrap().pixels,
+        copied.pixels
+    );
+}
+
+#[test]
+fn clipboard_write_lease_only_releases_its_matching_owner() {
+    let mut active = Some(ClipboardWriteLease { id: 12 });
+
+    assert!(!release_clipboard_write_lease(&mut active, 11));
+    assert_eq!(active, Some(ClipboardWriteLease { id: 12 }));
+    assert!(release_clipboard_write_lease(&mut active, 12));
+    assert!(active.is_none());
+}
+
+#[test]
+fn selection_copy_gives_escape_back_to_the_editor_after_one_cancel_request() {
+    let mut copy = SelectionCopyLease {
+        id: 7,
+        status_generation: 3,
+        recognition_generation: 5,
+        cancellation: Arc::new(SelectionCopyCancellation::default()),
+        cancel_requested: false,
+    };
+
+    assert!(copy.owns_escape());
+    copy.cancel_requested = true;
+    assert!(!copy.owns_escape());
+}
+
+#[test]
+fn selection_copy_completion_uses_generations_instead_of_transient_status_text() {
+    assert!(selection_copy_completion_can_report(
+        3,
+        3,
+        5,
+        5,
+        CaptureSessionState::Selecting,
+    ));
+    assert!(!selection_copy_completion_can_report(
+        3,
+        3,
+        5,
+        6,
+        CaptureSessionState::Selecting,
+    ));
+    assert!(!selection_copy_completion_can_report(
+        3,
+        4,
+        5,
+        5,
+        CaptureSessionState::Selecting,
+    ));
+    assert!(!selection_copy_completion_can_report(
+        3,
+        3,
+        5,
+        5,
+        CaptureSessionState::Exporting,
+    ));
+}
+
+#[test]
+fn recognition_completion_is_rejected_after_its_editor_generation_changes() {
+    assert!(recognition_completion_is_current(9, 9));
+    assert!(!recognition_completion_is_current(10, 9));
 }
 
 #[test]

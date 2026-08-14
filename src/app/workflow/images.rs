@@ -352,6 +352,11 @@ impl FlashShotApp {
         if !self.can_start_history_reader(&path) {
             return;
         }
+        let Some(clipboard_write_id) =
+            self.try_begin_clipboard_write("copying a history image", cx)
+        else {
+            return;
+        };
         let generation = self.begin_history_reader(HistoryReaderKind::Copy, path.clone());
         self.status = format!("Copying {}...", path.display());
         cx.notify();
@@ -367,7 +372,7 @@ impl FlashShotApp {
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_history_copy(result, generation, cx)
+                        this.finish_history_copy(result, generation, clipboard_write_id, cx)
                     });
                 }
             }
@@ -631,10 +636,12 @@ impl FlashShotApp {
         &mut self,
         result: std::io::Result<()>,
         generation: u64,
+        clipboard_write_id: u64,
         cx: &mut Context<Self>,
     ) {
+        let released_clipboard = self.finish_clipboard_write(clipboard_write_id);
         let current = self.finish_history_reader(HistoryReaderKind::Copy, generation);
-        if !current || self.session.state() != CaptureSessionState::Idle {
+        if !released_clipboard || !current || self.session.state() != CaptureSessionState::Idle {
             cx.notify();
             return;
         }

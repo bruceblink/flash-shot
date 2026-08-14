@@ -507,12 +507,19 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let command = keyboard_command(&event.keystroke);
+        // A pending image Copy owns Escape even while text or annotation editing is active.
+        if matches!(command, Some(KeyboardCommand::Cancel)) && self.selection_copy_owns_escape() {
+            self.cancel_selection_copy(cx);
+            cx.stop_propagation();
+            return;
+        }
         // Printable keystrokes belong to the active native text editor, not
         // the annotation shortcut map.
         if self.text_edit.is_some() {
             return;
         }
-        let Some(command) = keyboard_command(&event.keystroke) else {
+        let Some(command) = command else {
             return;
         };
         let handled = match command {
@@ -557,7 +564,12 @@ impl FlashShotApp {
                 }
             }
             KeyboardCommand::CopyColor => {
-                if hovered_color(
+                // An image Copy owns the clipboard until its worker releases the shared lease.
+                // Ignore the color shortcut during that window so a fast `C` cannot replace the
+                // image with text while its native clipboard commit is still pending.
+                if self.selection_copy_is_active() {
+                    false
+                } else if hovered_color(
                     self.frame.as_ref(),
                     self.hover_pixel,
                     ColorFormat::from_setting(self.settings.color_format),
@@ -621,6 +633,10 @@ impl FlashShotApp {
     }
 
     fn cancel_editor_or_capture(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.selection_copy_owns_escape() {
+            self.cancel_selection_copy(cx);
+            return true;
+        }
         if self.cancel_text_edit(cx) {
             return true;
         }

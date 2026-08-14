@@ -53,6 +53,8 @@
 - `clipboard_sequence_before`/`clipboard_sequence_after` 是否变化；
 - `consumer_ready_before_click`、`consumer_observing_before_click`、`consumer_cleaned_up` 和
   `single_export_verified` 是否为真；
+- `editor_retained_after_copy` 是否证明 Copy 完成后仍保留原选区与唯一覆盖层，
+  `cleanup_after_escape` 是否证明随后由显式 Escape 完成清理；
 - PNG、CF_DIB 与常规图像消费者是否都逐像素匹配源帧。
 
 任何一项缺失、消费者未回收、键盘或鼠标按键未释放、或超时后仍有残留，都只能记录为失败/待执行，不能

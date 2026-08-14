@@ -814,30 +814,52 @@ impl FlashShotApp {
 
     pub(super) fn finish_copy(
         &mut self,
-        result: std::io::Result<()>,
-        generation: u64,
+        result: std::io::Result<bool>,
+        copy_id: u64,
         cx: &mut Context<Self>,
     ) {
-        if !is_current_operation(self.operation_generation, generation) {
+        let completion_context = self
+            .selection_copy
+            .as_ref()
+            .filter(|copy| copy.id == copy_id)
+            .map(|copy| (copy.status_generation, copy.recognition_generation));
+        let owns_completion = completion_context.is_some();
+        let released_clipboard = self.finish_clipboard_write(copy_id);
+        if owns_completion {
+            self.selection_copy = None;
+        }
+        if !owns_completion || !released_clipboard {
+            cx.notify();
+            return;
+        }
+        // Pointer movement and duplicate Copy commands may change status text without replacing
+        // this editor. Only a new editor operation or recognition generation suppresses the late
+        // result; the worker still releases both leases in every case.
+        let Some((operation_generation, recognition_generation)) = completion_context else {
+            cx.notify();
+            return;
+        };
+        if !selection_copy_completion_can_report(
+            operation_generation,
+            self.operation_generation,
+            recognition_generation,
+            self.recognition_generation,
+            self.session.state(),
+        ) {
+            cx.notify();
             return;
         }
         match result {
-            Ok(()) => {
-                if let Err(error) = self.session.export_completed() {
-                    self.status = error.to_string();
-                } else {
-                    self.status = "Selection copied to clipboard".to_owned();
-                    self.notify_user("Flash Shot", "Screenshot copied to clipboard");
-                    self.close_capture_overlays(cx);
-                    self.return_to_background();
-                }
+            Ok(true) => {
+                self.status = "Selection copied to clipboard".to_owned();
+                self.notify_user("Flash Shot", "Screenshot copied to clipboard");
+            }
+            Ok(false) => {
+                self.status = "Copy cancelled before the clipboard changed".to_owned();
             }
             Err(error) => {
                 let message = format!("Copy failed: {error}");
-                let _ = self.session.fail(message.clone());
                 self.status = message;
-                self.close_capture_overlays(cx);
-                self.return_to_background();
             }
         }
         cx.notify();
@@ -847,14 +869,18 @@ impl FlashShotApp {
         &mut self,
         result: std::io::Result<()>,
         generation: u64,
+        clipboard_write_id: u64,
         cx: &mut Context<Self>,
     ) {
+        let released_clipboard = self.finish_clipboard_write(clipboard_write_id);
         if !claim_idle_completion(
             &mut self.full_screen_copy_generation,
             self.operation_generation,
             generation,
             self.session.state(),
-        ) {
+        ) || !released_clipboard
+        {
+            cx.notify();
             return;
         }
         match result {
@@ -961,6 +987,9 @@ impl FlashShotApp {
         if !windows.is_empty() {
             // Invalidate callbacks queued by the old windows before their native teardown runs.
             self.operation_generation = self.operation_generation.wrapping_add(1);
+            // OCR, QR, and translation own their own generation so they can coexist with Copy.
+            // Closing the source editor must invalidate that generation explicitly.
+            self.invalidate_recognition();
             self.capture_teardown_windows =
                 windows.iter().map(|window| window.window_id()).collect();
             self.capture_teardown_pending = true;
@@ -975,6 +1004,19 @@ impl FlashShotApp {
             });
         }
     }
+}
+
+/// Allows Copy feedback only while both its source editor and recognition context remain current.
+pub(super) const fn selection_copy_completion_can_report(
+    task_operation_generation: u64,
+    current_operation_generation: u64,
+    task_recognition_generation: u64,
+    current_recognition_generation: u64,
+    session_state: CaptureSessionState,
+) -> bool {
+    task_operation_generation == current_operation_generation
+        && task_recognition_generation == current_recognition_generation
+        && matches!(session_state, CaptureSessionState::Selecting)
 }
 
 /// Applies exact-ID removal without probing a window while its native close is in progress.

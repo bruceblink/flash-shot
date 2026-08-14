@@ -801,6 +801,19 @@ fn scroll_roundtrip_cleanup_complete(state: &OverlayInteractionCaptureState) -> 
         )
 }
 
+/// Confirms that Copy finished without consuming the editable selection it cloned.
+fn selection_copy_completed_in_editor(
+    state: &OverlayInteractionCaptureState,
+    selection: PhysicalRect,
+) -> bool {
+    state.session_state == "selecting"
+        && state.selection == Some(selection)
+        && state.overlay_count == 1
+        && !state.capture_teardown_pending
+        && state.capture_preflight_ready
+        && state.status == "Selection copied to clipboard"
+}
+
 /// Places a 160x96 selection at the bottom-right edge and predicts the relocated Mark control.
 fn narrow_edge_interaction_plan(
     bounds: PhysicalRect,
@@ -1474,6 +1487,8 @@ enum ScrollExportReport {
         timing_boundary: &'static str,
         input_to_consumer_readable_ms: f64,
         consumer_result_path: String,
+        editor_retained_after_copy: bool,
+        cleanup_after_escape: bool,
     },
     Save {
         path: String,
@@ -1568,6 +1583,8 @@ struct CopyReport {
     consumer_ready_before_click: bool,
     consumer_observing_before_click: bool,
     consumer_cleaned_up: bool,
+    editor_retained_after_copy: bool,
+    cleanup_after_escape: bool,
     single_export_verified: bool,
 }
 
@@ -1941,10 +1958,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes; cleanup now exposes
-        // deferred native teardown so downstream evidence readers can distinguish hidden
-        // windows from fully quiescent capture state.
-        schema_version: 13,
+        // Increment when the machine-readable report shape changes. Schema 14 proves Copy keeps
+        // the editor alive, then records the explicit Escape that reaches fully quiescent state.
+        schema_version: 14,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -4752,14 +4768,18 @@ fn execute_scroll_copy_export(
     let copied = CaptureFrame::open_png(&consumer_result.consumer_image_path)?;
     let clipboard_png = fs::read(&consumer_result.png_path)?;
     let clipboard_dib = fs::read(&consumer_result.dib_path)?;
-    wait_for_window_gone(overlay.handle, context.timeout, "scroll Copy")?;
     let state = wait_for_capture_state(context, "scroll Copy completion", |state| {
-        state.session_state == "completed"
-            && state.selection == Some(selection)
-            && state.overlay_count == 0
-            && state.capture_preflight_ready
-            && state.status == "Selection copied to clipboard"
+        selection_copy_completed_in_editor(state, selection)
     })?;
+    thread::sleep(context.settle_delay);
+    let retained = capture_evidence(context, "05-scroll-copy-complete.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_copy_editor_retained",
+        guard_foreground(overlay.handle)?,
+        Some(&retained),
+    )?;
     // SAFETY: this call only reads the monotonic user32 clipboard change counter.
     let clipboard_sequence_after = unsafe { GetClipboardSequenceNumber() };
     if clipboard_sequence_after != consumer_result.observed_sequence {
@@ -4800,6 +4820,34 @@ fn execute_scroll_copy_export(
         foreground,
         None,
     )?;
+    let escape_foreground = inject_key(overlay.handle, VK_ESCAPE)?;
+    wait_for_window_gone(
+        overlay.handle,
+        context.timeout,
+        "scroll Copy Escape cleanup",
+    )?;
+    let cleanup_state = wait_for_capture_state(
+        context,
+        "scroll Copy Escape cleanup",
+        scroll_roundtrip_cleanup_complete,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "scroll_roundtrip_copy_escape_cleanup",
+        escape_foreground,
+        None,
+    )?;
+    // SAFETY: this call only reads the monotonic user32 clipboard change counter.
+    let sequence_after_cleanup = unsafe { GetClipboardSequenceNumber() };
+    if sequence_after_cleanup != clipboard_sequence_after {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "system clipboard changed during scroll Copy cleanup ({clipboard_sequence_after} -> {sequence_after_cleanup})"
+            ),
+        ));
+    }
     debug_assert_eq!(state.selection, Some(selection));
     Ok(ScrollExportReport::Copy {
         clipboard_sequence_before,
@@ -4829,6 +4877,8 @@ fn execute_scroll_copy_export(
             .unwrap_or(&consumer.result_path)
             .to_string_lossy()
             .into_owned(),
+        editor_retained_after_copy: selection_copy_completed_in_editor(&state, selection),
+        cleanup_after_escape: scroll_roundtrip_cleanup_complete(&cleanup_state),
     })
 }
 
@@ -5855,16 +5905,12 @@ fn execute_copy_interaction(
             "clipboard consumer was not ready before input or was not reaped after reading",
         ));
     }
-    wait_for_window_gone(overlay.handle, context.timeout, "Copy")?;
     let state = wait_for_capture_state(context, "selection Copy completion", |state| {
-        state.session_state == "completed"
-            && state.overlay_count == 0
-            && state.capture_preflight_ready
-            && state.status == "Selection copied to clipboard"
+        selection_copy_completed_in_editor(state, selection)
     })?;
     if state.selection != Some(selection) {
         return Err(io::Error::other(
-            "completed Copy no longer reports the exported selection",
+            "completed Copy no longer reports its editable selection",
         ));
     }
     if context.use_system_clipboard {
@@ -5957,6 +6003,49 @@ fn execute_copy_interaction(
         foreground,
         None,
     )?;
+    thread::sleep(context.settle_delay);
+    let retained = capture_evidence(context, "13-copy-complete-editor.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "copy_editor_retained",
+        guard_foreground(overlay.handle)?,
+        Some(&retained),
+    )?;
+    let cleanup_foreground = inject_key(overlay.handle, VK_ESCAPE)?;
+    wait_for_window_gone(overlay.handle, context.timeout, "Copy Escape cleanup")?;
+    let cleanup_state = wait_for_capture_state(context, "Copy Escape cleanup", |state| {
+        state.session_state == "idle"
+            && state.selection.is_none()
+            && state.overlay_count == 0
+            && !state.capture_teardown_pending
+            && state.capture_preflight_ready
+    })?;
+    record_step(
+        report,
+        &context.report_path,
+        "copy_escape_cleanup",
+        cleanup_foreground,
+        None,
+    )?;
+    if context.use_system_clipboard {
+        // SAFETY: this call only reads the monotonic user32 clipboard change counter.
+        let final_sequence = unsafe { GetClipboardSequenceNumber() };
+        if final_sequence != clipboard_sequence_after {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "system clipboard changed during explicit Copy cleanup ({clipboard_sequence_after} -> {final_sequence})"
+                ),
+            ));
+        }
+    }
+    let editor_retained_after_copy = selection_copy_completed_in_editor(&state, selection);
+    let cleanup_after_escape = cleanup_state.session_state == "idle"
+        && cleanup_state.selection.is_none()
+        && cleanup_state.overlay_count == 0
+        && !cleanup_state.capture_teardown_pending
+        && cleanup_state.capture_preflight_ready;
     Ok(CopyReport {
         trigger: context.copy_trigger.label(),
         action: match context.copy_trigger {
@@ -5999,8 +6088,10 @@ fn execute_copy_interaction(
         consumer_ready_before_click,
         consumer_observing_before_click,
         consumer_cleaned_up: consumer.as_ref().is_none_or(|consumer| consumer.stopped),
-        single_export_verified: state.overlay_count == 0
-            && state.session_state == "completed"
+        editor_retained_after_copy,
+        cleanup_after_escape,
+        single_export_verified: editor_retained_after_copy
+            && cleanup_after_escape
             && context.copy_results.as_ref().is_none_or(|copy_results| {
                 matches!(copy_results.try_recv(), Err(mpsc::TryRecvError::Empty))
             }),
@@ -9728,7 +9819,8 @@ mod tests {
         pin_coexist_interaction_plan, recording_control_plan, recording_failed, recording_saved,
         rect_contains_rect, scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
         scroll_shot_point_for_logical_selection, selection_aspect_ratio_preserved,
-        selection_center_preserved, selection_transform_gesture, translated_rect,
+        selection_center_preserved, selection_copy_completed_in_editor,
+        selection_transform_gesture, translated_rect,
         validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
         window_drag_matches,
@@ -10092,6 +10184,20 @@ mod tests {
             status: "Selection copied to clipboard".to_owned(),
         };
         assert!(scroll_roundtrip_cleanup_complete(&clean));
+
+        let mut copy_complete = clean.clone();
+        copy_complete.session_state = "selecting".to_owned();
+        copy_complete.overlay_count = 1;
+        copy_complete.status = "Selection copied to clipboard".to_owned();
+        assert!(selection_copy_completed_in_editor(
+            &copy_complete,
+            selection
+        ));
+        copy_complete.overlay_count = 0;
+        assert!(!selection_copy_completed_in_editor(
+            &copy_complete,
+            selection
+        ));
 
         let mut stale = clean.clone();
         stale.manual_scroll_state = "collecting".to_owned();

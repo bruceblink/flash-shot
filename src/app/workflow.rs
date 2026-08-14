@@ -55,8 +55,9 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::{
-    FlashShotApp, HistoryFilter, HistoryReaderKind, HistoryReaderLease, RecognitionResult,
-    RecognitionRetry, RecordingAudioSelection, RecordingDisplaySelection, SettingsSection,
+    ClipboardWriteLease, FlashShotApp, HistoryFilter, HistoryReaderKind, HistoryReaderLease,
+    RecognitionResult, RecognitionRetry, RecordingAudioSelection, RecordingDisplaySelection,
+    SelectionCopyCancelRequest, SelectionCopyCancellation, SelectionCopyLease, SettingsSection,
     overlay::CaptureOverlay,
     pinned::PinnedImage,
     render_image::{history_thumbnail_frame, render_image_from_capture},
@@ -234,10 +235,16 @@ impl FlashShotApp {
         let Some(result) = self.recognition_result.as_ref() else {
             return;
         };
-        self.status = match SystemClipboard.copy_text(&result.text) {
-            Ok(()) => format!("{} copied to clipboard", result.title),
-            Err(error) => format!("Could not copy {}: {error}", result.title),
+        let title = result.title.clone();
+        let text = result.text.clone();
+        let Some(write_id) = self.try_begin_clipboard_write("copying recognized text", cx) else {
+            return;
         };
+        self.status = match SystemClipboard.copy_text(&text) {
+            Ok(()) => format!("{title} copied to clipboard"),
+            Err(error) => format!("Could not copy {title}: {error}"),
+        };
+        self.finish_clipboard_write(write_id);
         cx.notify();
     }
 
@@ -249,10 +256,14 @@ impl FlashShotApp {
             cx.notify();
             return;
         };
+        let Some(write_id) = self.try_begin_clipboard_write("copying a color", cx) else {
+            return;
+        };
         self.status = match SystemClipboard.copy_text(&color) {
             Ok(()) => format!("{color} copied to clipboard"),
             Err(error) => format!("Could not copy {color}: {error}"),
         };
+        self.finish_clipboard_write(write_id);
         cx.notify();
     }
 
@@ -362,8 +373,47 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Reserves the native clipboard for one writer without blocking unrelated capture actions.
+    ///
+    /// The returned id must be released by the same async completion, even when that completion
+    /// is stale for the current capture session. This prevents an older writer from unlocking a
+    /// newer clipboard operation.
+    pub(in crate::app) fn try_begin_clipboard_write(
+        &mut self,
+        action: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        if self.clipboard_write_lease.is_some() {
+            self.status = format!("Wait for the current clipboard copy to finish before {action}");
+            cx.notify();
+            return None;
+        }
+        self.clipboard_write_sequence = self.clipboard_write_sequence.wrapping_add(1);
+        let id = self.clipboard_write_sequence;
+        self.clipboard_write_lease = Some(ClipboardWriteLease { id });
+        Some(id)
+    }
+
+    /// Releases a clipboard reservation only when the matching writer has completed.
+    pub(in crate::app) fn finish_clipboard_write(&mut self, id: u64) -> bool {
+        release_clipboard_write_lease(&mut self.clipboard_write_lease, id)
+    }
+
     fn return_to_background(&mut self) {
         self.hide_settings_window();
+    }
+}
+
+/// Clears a clipboard lease only for the worker that originally acquired it.
+///
+/// A stale completion must leave a newer writer's reservation intact, otherwise two background
+/// clipboard jobs could overlap and the older job could publish pixels last.
+fn release_clipboard_write_lease(lease: &mut Option<ClipboardWriteLease>, id: u64) -> bool {
+    if lease.is_some_and(|active| active.id == id) {
+        *lease = None;
+        true
+    } else {
+        false
     }
 }
 

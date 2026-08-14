@@ -4,8 +4,38 @@ use std::io;
 
 use crate::platform::capture::CaptureFrame;
 
+/// Coordinates a cancellable image copy at the point where it can change the clipboard.
+///
+/// Image encoding and acquiring the clipboard stay reversible. The caller must claim the commit
+/// immediately before `EmptyClipboard`, because Windows cannot restore the previous contents once
+/// that call succeeds.
+pub trait ClipboardCommitGate: Send + Sync {
+    fn is_cancelled(&self) -> bool;
+    fn begin_clipboard_commit(&self) -> bool;
+    fn finish_clipboard_commit(&self);
+}
+
 pub trait ClipboardService {
     fn copy_image(&self, frame: &CaptureFrame) -> io::Result<()>;
+
+    /// Copies pixels only after the caller claims the non-reversible clipboard commit.
+    ///
+    /// Implementations that cannot move the gate deeper use this final check directly before
+    /// `copy_image`. The Windows implementation overrides it to claim immediately before
+    /// `EmptyClipboard`.
+    fn copy_image_cancellable(
+        &self,
+        frame: &CaptureFrame,
+        gate: &dyn ClipboardCommitGate,
+    ) -> io::Result<bool> {
+        if gate.is_cancelled() || !gate.begin_clipboard_commit() {
+            return Ok(false);
+        }
+        let result = self.copy_image(frame);
+        gate.finish_clipboard_commit();
+        result.map(|()| true)
+    }
+
     fn copy_text(&self, text: &str) -> io::Result<()>;
 }
 
@@ -15,6 +45,14 @@ pub struct SystemClipboard;
 impl ClipboardService for SystemClipboard {
     fn copy_image(&self, frame: &CaptureFrame) -> io::Result<()> {
         platform::copy_image(frame)
+    }
+
+    fn copy_image_cancellable(
+        &self,
+        frame: &CaptureFrame,
+        gate: &dyn ClipboardCommitGate,
+    ) -> io::Result<bool> {
+        platform::copy_image_cancellable(frame, gate)
     }
 
     fn copy_text(&self, text: &str) -> io::Result<()> {
@@ -112,7 +150,7 @@ fn write_i32(target: &mut [u8], offset: usize, value: i32) {
 
 #[cfg(windows)]
 mod platform {
-    use super::{CaptureFrame, encode_dib, frame_from_rgba};
+    use super::{CaptureFrame, ClipboardCommitGate, encode_dib, frame_from_rgba};
     use std::{io, ptr, thread, time::Duration};
     use windows_sys::Win32::{
         Foundation::{GlobalFree, HANDLE, HGLOBAL},
@@ -154,6 +192,44 @@ mod platform {
         let png = frame.encode_png()?;
         let dib = encode_dib(frame)?;
         let clipboard = ClipboardGuard::open()?;
+        write_image_to_open_clipboard(&png, &dib)?;
+        drop(clipboard);
+        Ok(())
+    }
+
+    /// Keeps cancellation available while encoding and waiting for clipboard ownership.
+    ///
+    /// The gate is deliberately claimed only after `OpenClipboard` succeeds and immediately
+    /// before `EmptyClipboard`, which is the first irreversible mutation of clipboard state.
+    pub fn copy_image_cancellable(
+        frame: &CaptureFrame,
+        gate: &dyn ClipboardCommitGate,
+    ) -> io::Result<bool> {
+        if gate.is_cancelled() {
+            return Ok(false);
+        }
+        let png = frame.encode_png()?;
+        if gate.is_cancelled() {
+            return Ok(false);
+        }
+        let dib = encode_dib(frame)?;
+        if gate.is_cancelled() {
+            return Ok(false);
+        }
+        let Some(clipboard) = ClipboardGuard::open_cancellable(gate)? else {
+            return Ok(false);
+        };
+        if !gate.begin_clipboard_commit() {
+            return Ok(false);
+        }
+        let result = write_image_to_open_clipboard(&png, &dib);
+        gate.finish_clipboard_commit();
+        drop(clipboard);
+        result.map(|()| true)
+    }
+
+    /// Publishes pre-encoded data while the caller owns the native clipboard.
+    fn write_image_to_open_clipboard(png: &[u8], dib: &[u8]) -> io::Result<()> {
         // SAFETY: clipboard is open on this thread.
         if unsafe { EmptyClipboard() } == 0 {
             return Err(io::Error::last_os_error());
@@ -166,9 +242,8 @@ mod platform {
             return Err(io::Error::last_os_error());
         }
 
-        set_data(png_format, &png)?;
-        set_data(CF_DIB as u32, &dib)?;
-        drop(clipboard);
+        set_data(png_format, png)?;
+        set_data(CF_DIB as u32, dib)?;
         Ok(())
     }
 
@@ -206,6 +281,23 @@ mod platform {
                 // SAFETY: a null owner is valid for a short synchronous clipboard operation.
                 if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
                     return Ok(Self);
+                }
+                if attempt + 1 < OPEN_ATTEMPTS {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            Err(io::Error::last_os_error())
+        }
+
+        /// Retries for ownership without holding the cancellation gate during a reversible wait.
+        fn open_cancellable(gate: &dyn ClipboardCommitGate) -> io::Result<Option<Self>> {
+            for attempt in 0..OPEN_ATTEMPTS {
+                if gate.is_cancelled() {
+                    return Ok(None);
+                }
+                // SAFETY: a null owner is valid for a short synchronous clipboard operation.
+                if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
+                    return Ok(Some(Self));
                 }
                 if attempt + 1 < OPEN_ATTEMPTS {
                     thread::sleep(Duration::from_millis(5));
@@ -268,7 +360,7 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::CaptureFrame;
+    use super::{CaptureFrame, ClipboardCommitGate};
     use std::io;
 
     pub fn copy_image(_frame: &CaptureFrame) -> io::Result<()> {
@@ -276,6 +368,18 @@ mod platform {
             io::ErrorKind::Unsupported,
             "image clipboard is currently Windows-only",
         ))
+    }
+
+    pub fn copy_image_cancellable(
+        frame: &CaptureFrame,
+        gate: &dyn ClipboardCommitGate,
+    ) -> io::Result<bool> {
+        if gate.is_cancelled() || !gate.begin_clipboard_commit() {
+            return Ok(false);
+        }
+        let result = copy_image(frame);
+        gate.finish_clipboard_commit();
+        result.map(|()| true)
     }
 
     pub fn read_image() -> io::Result<CaptureFrame> {

@@ -9,10 +9,7 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::FlashShotApp;
-use crate::platform::{
-    capture::CaptureFrame,
-    clipboard::{ClipboardService, SystemClipboard},
-};
+use crate::platform::{capture::CaptureFrame, clipboard::ClipboardService};
 
 const PIN_OPACITY_STEPS: [u8; 4] = [255, 191, 128, 64];
 const PIN_FEEDBACK_VISIBLE_FOR: Duration = Duration::from_secs(3);
@@ -63,6 +60,7 @@ pub(super) struct PinnedImage {
     status: &'static str,
     feedback_visible: bool,
     feedback_generation: u64,
+    copy_in_flight: bool,
     pending_zoom_size: Option<Size<Pixels>>,
 }
 
@@ -86,21 +84,54 @@ impl PinnedImage {
             status: "Pinned capture",
             feedback_visible: false,
             feedback_generation: 0,
+            copy_in_flight: false,
             pending_zoom_size: None,
         }
     }
 
-    fn copy_image(&mut self, cx: &mut Context<Self>) {
-        self.copy_image_with(&SystemClipboard, cx);
+    pub(super) fn copy_image(&mut self, cx: &mut Context<Self>) {
+        if !pinned_copy_can_start(self.copy_in_flight) {
+            self.show_operation_feedback("Copying image...", cx);
+            return;
+        }
+        let Some((write_id, clipboard)) = self.app.update(cx, |app, cx| {
+            app.try_begin_clipboard_write("copying a pinned image", cx)
+                .map(|write_id| (write_id, app.image_clipboard.clone()))
+        }) else {
+            self.show_operation_feedback("Waiting for clipboard copy", cx);
+            return;
+        };
+
+        // Keep native clipboard encoding and retries off GPUI's event thread. The shared lease
+        // prevents another screen surface from replacing the system clipboard while this Pin runs.
+        self.copy_in_flight = true;
+        self.show_operation_feedback("Copying image...", cx);
+        let frame = self.frame.clone();
+        let app = self.app.clone();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { copy_pinned_image(&frame, clipboard.as_ref()) })
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(&mut cx, |this, cx| this.finish_copy_status(result, cx));
+                }
+                // A Pin may close before its worker returns. The app-level lease must still be
+                // released so a later screenshot, history, or Pin copy cannot remain blocked.
+                app.update(&mut cx, |app, _| {
+                    app.finish_clipboard_write(write_id);
+                });
+            }
+        })
+        .detach();
     }
 
-    /// Runs the production copy feedback path with an injected clipboard for isolated acceptance.
-    pub(super) fn copy_image_with(
-        &mut self,
-        clipboard: &impl ClipboardService,
-        cx: &mut Context<Self>,
-    ) {
-        let feedback = match copy_pinned_image(&self.frame, clipboard) {
+    /// Applies a completed background copy only to this Pin's small feedback state.
+    fn finish_copy_status(&mut self, result: std::io::Result<()>, cx: &mut Context<Self>) {
+        self.copy_in_flight = false;
+        let feedback = match result {
             Ok(()) => "Copied image",
             Err(error) => {
                 log::warn!(target: "flash_shot::pinned", "pinned_window_copy_failed error={error}");
@@ -128,6 +159,11 @@ impl PinnedImage {
     /// Keeps controls visible while a no-input acceptance runner exercises native Pin actions.
     pub(super) fn show_controls_for_acceptance(&mut self, cx: &mut Context<Self>) {
         self.show_operation_feedback("Pinned capture", cx);
+    }
+
+    /// Exposes only task completion to the no-input Pin lifecycle probe.
+    pub(super) const fn copy_in_flight_for_acceptance(&self) -> bool {
+        self.copy_in_flight
     }
 
     /// Returns the uncapped source dimensions while the native acceptance runner owns this Pin.
@@ -336,9 +372,14 @@ impl PinnedImage {
 
 fn copy_pinned_image(
     frame: &CaptureFrame,
-    clipboard: &impl ClipboardService,
+    clipboard: &(impl ClipboardService + ?Sized),
 ) -> std::io::Result<()> {
     clipboard.copy_image(frame)
+}
+
+/// Allows only one background clipboard write for an individual Pin window at a time.
+const fn pinned_copy_can_start(copy_in_flight: bool) -> bool {
+    !copy_in_flight
 }
 
 impl Focusable for PinnedImage {
@@ -469,7 +510,7 @@ impl Render for PinnedImage {
             .border_color(colors.border)
             .rounded_lg()
             .shadow_lg()
-            .when(!self.feedback_visible, |toolbar| {
+            .when(!self.feedback_visible && !self.copy_in_flight, |toolbar| {
                 toolbar
                     .invisible()
                     .group_hover("pinned-window", |toolbar| toolbar.visible())
@@ -717,7 +758,7 @@ mod tests {
     use super::{
         PinnedKeyboardCommand, copy_pinned_image, next_pin_opacity, next_pin_zoom_size,
         opacity_percentage, pin_feedback_timer_is_current, pin_zoom_target_reached,
-        pinned_close_key, pinned_control_tooltip, pinned_keyboard_command,
+        pinned_close_key, pinned_control_tooltip, pinned_copy_can_start, pinned_keyboard_command,
         pinned_save_result_status,
     };
     use crate::{
@@ -789,6 +830,12 @@ mod tests {
         assert_eq!(copied.bounds, frame.bounds);
         assert_eq!(copied.pixels.as_ref(), frame.pixels.as_ref());
         assert_eq!(copied.cpu_copy_count, frame.cpu_copy_count);
+    }
+
+    #[test]
+    fn pinned_copy_rejects_duplicate_clicks_while_its_worker_is_running() {
+        assert!(pinned_copy_can_start(false));
+        assert!(!pinned_copy_can_start(true));
     }
 
     #[test]

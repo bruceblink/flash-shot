@@ -50,7 +50,7 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !is_current_operation(self.operation_generation, generation) {
+        if !recognition_completion_is_current(self.recognition_generation, generation) {
             return;
         }
         self.recognition_in_flight = false;
@@ -126,7 +126,7 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !is_current_operation(self.operation_generation, generation) {
+        if !recognition_completion_is_current(self.recognition_generation, generation) {
             return;
         }
         self.recognition_in_flight = false;
@@ -218,11 +218,19 @@ impl FlashShotApp {
 
     /// Starts one recognition request, clearing stale output and invalidating older async tasks.
     fn begin_recognition_operation(&mut self) -> u64 {
-        self.operation_generation = self.operation_generation.wrapping_add(1);
+        self.recognition_generation = self.recognition_generation.wrapping_add(1);
         self.recognition_result = None;
         self.recognition_retry = None;
         self.recognition_in_flight = true;
-        self.operation_generation
+        self.recognition_generation
+    }
+
+    /// Invalidates recognition output whenever its source editor is discarded or replaced.
+    pub(in crate::app) fn invalidate_recognition(&mut self) {
+        self.recognition_generation = self.recognition_generation.wrapping_add(1);
+        self.recognition_result = None;
+        self.recognition_retry = None;
+        self.recognition_in_flight = false;
     }
 
     fn finish_translation(
@@ -231,7 +239,7 @@ impl FlashShotApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if !is_current_operation(self.operation_generation, generation) {
+        if !recognition_completion_is_current(self.recognition_generation, generation) {
             return;
         }
         self.recognition_in_flight = false;
@@ -270,6 +278,11 @@ impl FlashShotApp {
         };
         cx.notify();
     }
+}
+
+/// Accepts an async recognition result only while its original editor generation still owns it.
+pub(crate) const fn recognition_completion_is_current(current: u64, task: u64) -> bool {
+    current == task
 }
 
 /// Prevents overlapping OCR, translation, and QR requests from replacing one another.

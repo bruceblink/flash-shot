@@ -6,7 +6,7 @@ mod windows {
         ffi::c_void,
         fs, io,
         path::{Path, PathBuf},
-        sync::Mutex,
+        sync::{Arc, Mutex},
         time::{Duration, Instant},
     };
 
@@ -110,6 +110,8 @@ mod windows {
     struct CopyReport {
         calls: usize,
         complete_frame_equal: bool,
+        background_worker_completed: bool,
+        shared_lease_released: bool,
     }
 
     #[derive(serde::Serialize)]
@@ -270,7 +272,7 @@ mod windows {
     impl PinLifecycleReport {
         fn new(acceptance: &PinLifecycleAcceptanceOptions) -> Self {
             Self {
-                schema_version: 2,
+                schema_version: 3,
                 test: "pin_lifecycle_acceptance",
                 status: "running".to_owned(),
                 process_id: unsafe { GetCurrentProcessId() },
@@ -387,10 +389,27 @@ mod windows {
         handles[1]
             .update(cx, |pin, window, cx| pin.cycle_opacity(window, cx))
             .map_err(|error| io::Error::other(error.to_string()))?;
-        let clipboard = RecordingClipboard::default();
+        let clipboard = Arc::new(RecordingClipboard::default());
+        let injected_clipboard: Arc<dyn ClipboardService + Send + Sync> = clipboard.clone();
+        app.update(cx, |app, _| {
+            app.image_clipboard = injected_clipboard;
+        });
         handles[2]
-            .update(cx, |pin, _, cx| pin.copy_image_with(&clipboard, cx))
+            .update(cx, |pin, _, cx| {
+                pin.copy_image(cx);
+                // A rapid second command must reuse the visible in-flight state, not enqueue
+                // another clipboard write behind the first one.
+                pin.copy_image(cx);
+            })
             .map_err(|error| io::Error::other(error.to_string()))?;
+        let copied = wait_for_pinned_copy(
+            &app,
+            &handles[2],
+            clipboard.as_ref(),
+            acceptance.timeout,
+            cx,
+        )
+        .await?;
         cx.background_executor()
             .timer(acceptance.settle_delay)
             .await;
@@ -424,7 +443,6 @@ mod windows {
             observed_alpha,
         });
 
-        let copied = clipboard.frames()?;
         let complete_frame_equal = copied.len() == 1 && frames_equal(&copied[0], &frames[2]);
         if !complete_frame_equal {
             return Err(io::Error::other(
@@ -434,6 +452,8 @@ mod windows {
         report.copy = Some(CopyReport {
             calls: copied.len(),
             complete_frame_equal,
+            background_worker_completed: true,
+            shared_lease_released: true,
         });
 
         handles[0]
@@ -581,6 +601,42 @@ mod windows {
 
     struct SavedPin {
         path: PathBuf,
+    }
+
+    /// Waits for the production Pin worker and app-wide clipboard lease to finish together.
+    async fn wait_for_pinned_copy(
+        app: &Entity<FlashShotApp>,
+        pin: &WindowHandle<PinnedImage>,
+        clipboard: &RecordingClipboard,
+        timeout: Duration,
+        cx: &mut AsyncApp,
+    ) -> io::Result<Vec<CaptureFrame>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let pin_in_flight = pin
+                .update(cx, |pin, _, _| pin.copy_in_flight_for_acceptance())
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            let lease_in_flight = app.update(cx, |app, _| app.clipboard_write_lease.is_some());
+            let frames = clipboard.frames()?;
+            if !pin_in_flight && !lease_in_flight {
+                if frames.len() == 1 {
+                    return Ok(frames);
+                }
+                return Err(io::Error::other(format!(
+                    "Pin Copy finished with {} clipboard writes; expected exactly one",
+                    frames.len()
+                )));
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Pin Copy worker or shared clipboard lease did not finish before timeout",
+                ));
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(25))
+                .await;
+        }
     }
 
     /// Waits for the real async save worker and requires a Pinned history entry before continuing.

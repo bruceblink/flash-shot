@@ -121,7 +121,8 @@ Windows 应用，而不是只看到应用自身的成功提示。
 3. 外部消费者必须分别读取 PNG、CF_DIB 和常规图像格式，解码后与导出源逐像素比较尺寸与指纹；
    仅确认剪贴板格式已注册、或只读取应用内观察器，均不能证明真实可粘贴性。
 4. 保存选区完成、Copy 触发和结束清理的关键截图，以及关联的结构化报告、消费者读取结果和像素比对结果。
-   证据还必须证明覆盖层、菜单、临时窗口和后台任务在结束后没有残留，且控件没有遮挡选区或发生截断。
+   Copy 成功后必须保持原选区和唯一覆盖层可继续编辑，随后由 runner 显式发送 Escape；证据还必须证明
+   覆盖层、菜单、临时窗口和后台任务在 Escape 后没有残留，且控件没有遮挡选区或发生截断。
 
 当前性能基础设施状态：`copy-performance` 提供显式授权的 Release **合成**系统剪贴板基准，默认执行
 30 次 `1280x720` 生成帧的合成、裁切、生产剪贴板写入和同进程读回。报告 schema 2 会保存完整样本、失败
@@ -196,8 +197,9 @@ Ctrl+S -> 保存`。报告位于
 
 ### 双出口验收实现思路
 
-1. Copy 和 Save 成功后都会关闭编辑器，因此 runner 用 `--scroll-export copy|save` 启动两个独立进程，
-   每个进程都重新执行完整的真实输入链路，不能复用第一次会话的拼接状态。
+1. Copy 成功后保留拼接编辑器，runner 会先验证原选区仍可编辑，再显式发送 Escape；Save 成功后关闭
+   编辑器。`--scroll-export copy|save` 仍启动两个独立进程，每个进程都重新执行完整真实输入链路，
+   不能复用第一次会话的拼接状态。
 2. 普通验收默认仍把 Copy 路由到进程内观察器；只有标准场景显式提供
    `--allow-system-clipboard`，或滚动场景同时提供 `--scroll-export copy` 与该授权时，应用才使用
    生产 `SystemClipboard`，避免普通测试意外覆盖用户剪贴板。生产路径会在点击前启动一个加入
@@ -243,6 +245,10 @@ Save 完成后还等待 `capture_preflight_ready`、没有可见对话框/覆盖
 当前 schema 13 Release 证据位于
 `target/overlay-interaction-acceptance/save-pin-quiescence-release-9/session-1786529894490-5828/report.json`；
 旧的 schema 12 Copy/Enter 报告仍作为历史证据保留。
+
+后台 Copy 的新报告契约使用 schema 14：`editor_retained_after_copy=true` 才证明 Copy 完成时会话仍为
+`selecting`、原选区不变且只有一个覆盖层；`cleanup_after_escape=true` 才证明后续显式 Escape 将会话、
+覆盖层和 teardown 屏障全部清理。旧 schema 12/13 证据不具备这两个字段，不能替代当前源码的重跑。
 
 ### Pin 帧准备的 UI 线程边界
 

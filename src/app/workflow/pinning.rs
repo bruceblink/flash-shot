@@ -20,22 +20,35 @@ pub(super) fn prepare_pinned_frame(frame: CaptureFrame) -> std::io::Result<Prepa
 
 impl FlashShotApp {
     pub(in crate::app) fn copy_selection(&mut self, cx: &mut Context<Self>) {
-        let selection = match self.session.start_export() {
-            Ok(selection) => selection,
-            Err(error) => {
-                self.status = error.to_string();
-                cx.notify();
-                return;
-            }
+        let Some(selection) = (self.session.state() == CaptureSessionState::Selecting)
+            .then(|| self.session.selection())
+            .flatten()
+        else {
+            self.status = "Select an area before copying".to_owned();
+            cx.notify();
+            return;
         };
         let Some((frame, document)) = self.export_source() else {
             cx.notify();
             return;
         };
-
-        self.status = "Copying selection...".to_owned();
-        let generation = self.operation_generation;
-        let clipboard = self.selection_clipboard.clone();
+        // Copy owns only its immutable pixel snapshot and the clipboard. The editable capture
+        // stays in Selecting so Save, Pin, Scroll shot, and annotation work remain responsive.
+        // The cloned source goes to the worker, which composites and crops it away from GPUI.
+        let Some(copy_id) = self.try_begin_clipboard_write("copying a selection", cx) else {
+            return;
+        };
+        self.status = "Copying selection in the background...".to_owned();
+        let status_generation = self.operation_generation;
+        let cancellation = Arc::new(SelectionCopyCancellation::default());
+        self.selection_copy = Some(SelectionCopyLease {
+            id: copy_id,
+            status_generation,
+            recognition_generation: self.recognition_generation,
+            cancellation: cancellation.clone(),
+            cancel_requested: false,
+        });
+        let clipboard = self.image_clipboard.clone();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -43,20 +56,51 @@ impl FlashShotApp {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        copy_annotated_frame_selection(
+                        copy_selection_snapshot_cancellable(
                             &frame,
                             &document,
                             selection,
                             clipboard.as_ref(),
+                            cancellation.as_ref(),
                         )
                     })
                     .await;
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| this.finish_copy(result, generation, cx));
+                    this.update(&mut cx, |this, cx| this.finish_copy(result, copy_id, cx));
                 }
             }
         })
         .detach();
+    }
+
+    /// Requests cancellation without resetting the editable capture that a background Copy reads.
+    pub(in crate::app) fn cancel_selection_copy(&mut self, cx: &mut Context<Self>) {
+        let Some(copy) = self.selection_copy.as_mut() else {
+            return;
+        };
+        copy.cancel_requested = true;
+        self.status = match copy.cancellation.request_cancel() {
+            SelectionCopyCancelRequest::CancelledBeforeCommit
+            | SelectionCopyCancelRequest::AlreadyCancelled => {
+                "Cancelling background clipboard copy...".to_owned()
+            }
+            SelectionCopyCancelRequest::ClipboardCommitStarted => {
+                "Clipboard write already started; waiting for copy to finish...".to_owned()
+            }
+        };
+        cx.notify();
+    }
+
+    /// Reports whether this editor still owns a large-image Copy worker.
+    pub(in crate::app) fn selection_copy_is_active(&self) -> bool {
+        self.selection_copy.is_some()
+    }
+
+    /// Gives Copy only the first Escape so cancellation never traps the editor until encoding ends.
+    pub(in crate::app) fn selection_copy_owns_escape(&self) -> bool {
+        self.selection_copy
+            .as_ref()
+            .is_some_and(SelectionCopyLease::owns_escape)
     }
 
     pub(in crate::app) fn pin_selection(&mut self, cx: &mut Context<Self>) {
@@ -140,6 +184,12 @@ impl FlashShotApp {
 
     /// Reads the current clipboard image away from the UI thread and pins only the latest request.
     pub(in crate::app) fn pin_clipboard_image(&mut self, cx: &mut Context<Self>) {
+        if self.clipboard_write_lease.is_some() {
+            self.status =
+                "Wait for the current clipboard copy to finish before pinning it".to_owned();
+            cx.notify();
+            return;
+        }
         if self.clipboard_pin_generation.is_some()
             || self.full_screen_copy_generation.is_some()
             || self.full_screen_save_generation.is_some()

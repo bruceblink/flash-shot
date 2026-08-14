@@ -481,8 +481,8 @@ fn capture_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    // A history reader or managed save owns a retained PNG until its worker finishes, so capture
-    // commands must not replace the session or race a possible history retention prune.
+    // History readers and managed saves own files that capture actions may otherwise replace.
+    // Clipboard encoding owns only a frozen image snapshot, so it must not block a new capture.
     let capture_actions_enabled = is_idle
         && app_state.history_reader.is_none()
         && app_state.history_write_generation.is_none()
