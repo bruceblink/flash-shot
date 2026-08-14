@@ -353,13 +353,9 @@ impl FlashShotApp {
 
     pub(crate) fn hide_settings_window(&mut self) {
         if let Some(handle) = self.settings_window_handle
-            && let Err(error) = window_visibility::hide(handle)
+            && let Err(error) = window_visibility::hide_and_flush_if_changed(handle)
         {
             log::warn!(target: "flash_shot::settings", "settings_window_hide_failed error={error}");
-        } else if self.settings_window_handle.is_some()
-            && let Err(error) = window_visibility::flush_after_visibility_change()
-        {
-            log::warn!(target: "flash_shot::settings", "settings_window_compositor_flush_failed error={error}");
         }
     }
 

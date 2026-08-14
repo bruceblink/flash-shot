@@ -25,12 +25,29 @@ fn scaled_extent(extent: i32, scale: f32, minimum: i32, maximum: i32) -> i32 {
 }
 
 pub fn hide(handle: isize) -> io::Result<()> {
-    platform::hide(handle)
+    platform::hide(handle).map(|_| ())
+}
+
+/// Hides a surface and waits for composition only when it was visibly removed.
+///
+/// Repeated backgrounding commonly targets an already-hidden Settings window. Skipping the
+/// synchronous compositor wait in that case keeps the GPUI event thread available for teardown
+/// callbacks and acceptance snapshots.
+pub fn hide_and_flush_if_changed(handle: isize) -> io::Result<()> {
+    if compositor_flush_needed_after_hide(platform::hide(handle)?) {
+        platform::flush_after_visibility_change()?;
+    }
+    Ok(())
 }
 
 /// Waits for a native visibility change to reach the compositor before a desktop capture samples it.
 pub fn flush_after_visibility_change() -> io::Result<()> {
     platform::flush_after_visibility_change()
+}
+
+/// Preserves the capture guarantee only for a real visible-to-hidden transition.
+const fn compositor_flush_needed_after_hide(was_visible: bool) -> bool {
+    was_visible
 }
 
 pub fn restore(handle: isize) -> io::Result<()> {
@@ -117,11 +134,11 @@ mod platform {
         }
     }
 
-    pub fn hide(handle: isize) -> io::Result<()> {
+    pub fn hide(handle: isize) -> io::Result<bool> {
         let window = window(handle)?;
         // SAFETY: window is a live HWND borrowed from GPUI.
-        unsafe { ShowWindow(window, SW_HIDE) };
-        Ok(())
+        // ShowWindow reports whether it actually hid a previously visible surface.
+        Ok(unsafe { ShowWindow(window, SW_HIDE) } != 0)
     }
 
     pub fn flush_after_visibility_change() -> io::Result<()> {
@@ -273,8 +290,8 @@ mod platform {
     use super::NativeWindowCenter;
     use std::io;
 
-    pub fn hide(_handle: isize) -> io::Result<()> {
-        Ok(())
+    pub fn hide(_handle: isize) -> io::Result<bool> {
+        Ok(false)
     }
 
     pub fn flush_after_visibility_change() -> io::Result<()> {
@@ -336,8 +353,14 @@ fn centered_outer_origin(
 mod tests {
     use super::{
         NativeWindowCenter, PIN_WINDOW_MAX_WIDTH, PIN_WINDOW_MIN_WIDTH, centered_outer_origin,
-        scaled_extent,
+        compositor_flush_needed_after_hide, scaled_extent,
     };
+
+    #[test]
+    fn repeated_hide_skips_the_compositor_wait() {
+        assert!(compositor_flush_needed_after_hide(true));
+        assert!(!compositor_flush_needed_after_hide(false));
+    }
 
     #[test]
     fn pin_window_zoom_scales_and_clamps_the_window_extent() {
