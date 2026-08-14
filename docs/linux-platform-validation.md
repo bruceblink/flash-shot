@@ -18,7 +18,7 @@ Flash Shot 当前是 Windows-first 应用。核心图像、标注、会话和导
 
 X11 会话需要可访问的 `DISPLAY` 和 `xdpyinfo`。Wayland 会话需要 `WAYLAND_DISPLAY`、用户 D-Bus、`busctl`，并且 `org.freedesktop.portal.Desktop` 必须公开 `ScreenCast` 与 `GlobalShortcuts` 接口。脚本完成会话和服务前置检查后执行宿主 `cargo check --workspace --all-targets`。
 
-运行脚本的系统还需要 Rust 1.93+、C 编译器、`pkg-config` 和 GPUI 所需的图形/字体开发库。以发行版包名为准安装相关依赖；不要在项目中固化只适用于单一发行版的包名。
+运行脚本的系统还需要 Rust 1.95+、C 编译器、`pkg-config` 和 GPUI 所需的图形/字体开发库。以发行版包名为准安装相关依赖；不要在项目中固化只适用于单一发行版的包名。
 
 ## 验收矩阵
 
