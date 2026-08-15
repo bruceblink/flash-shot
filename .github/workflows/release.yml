@@ -68,12 +68,23 @@ jobs:
           .\scripts\release-manifest.ps1 -AssetDirectory dist
           .\scripts\release-manifest.ps1 -AssetDirectory dist -VerifyOnly
           .\scripts\verify-release-assets.ps1 -AssetDirectory dist -SkipStartupSmoke
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          python .github/scripts/generate_release_notes.py `
+            --tag "${{ inputs.tag || github.ref_name }}" `
+            --output dist/RELEASE_NOTES.md
       - name: Create draft GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           draft: true
-          generate_release_notes: true
+          body_path: dist/RELEASE_NOTES.md
+          generate_release_notes: false
           files: |
             dist/*.zip
             dist/*.zip.sha256
