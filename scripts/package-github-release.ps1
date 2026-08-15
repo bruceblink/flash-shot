@@ -2,36 +2,12 @@ param(
     [string]$OutputDirectory = "dist",
     [switch]$ValidateOnly,
     [switch]$SkipBuild,
+    [switch]$RequireSignature,
     [string]$SignToolPath = "",
     [string]$TimestampUrl = "http://timestamp.digicert.com"
 )
 
 $ErrorActionPreference = "Stop"
-
-$certificateBase64 = [Environment]::GetEnvironmentVariable(
-    "WINDOWS_SIGNING_CERTIFICATE_BASE64",
-    "Process"
-)
-$certificatePassword = [Environment]::GetEnvironmentVariable(
-    "WINDOWS_SIGNING_CERTIFICATE_PASSWORD",
-    "Process"
-)
-if ([string]::IsNullOrWhiteSpace($certificateBase64)) {
-    throw "WINDOWS_SIGNING_CERTIFICATE_BASE64 must contain a base64-encoded production PFX."
-}
-if ([string]::IsNullOrWhiteSpace($certificatePassword)) {
-    throw "WINDOWS_SIGNING_CERTIFICATE_PASSWORD must contain the PFX password."
-}
-
-try {
-    $certificateBytes = [Convert]::FromBase64String($certificateBase64)
-}
-catch {
-    throw "WINDOWS_SIGNING_CERTIFICATE_BASE64 is not valid base64."
-}
-if ($certificateBytes.Length -eq 0) {
-    throw "WINDOWS_SIGNING_CERTIFICATE_BASE64 decoded to an empty PFX."
-}
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([IO.Path]::IsPathRooted($OutputDirectory)) {
@@ -42,45 +18,78 @@ $rootPrefix = $root.TrimEnd('\') + [IO.Path]::DirectorySeparatorChar
 if (-not $assetRoot.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "-OutputDirectory must stay inside the repository: $OutputDirectory"
 }
-$pfxPath = Join-Path ([IO.Path]::GetTempPath()) ("flash-shot-signing-" + [guid]::NewGuid() + ".pfx")
-$existingThumbprints = @{}
-Get-ChildItem -Path Cert:\CurrentUser\My -ErrorAction SilentlyContinue | ForEach-Object {
-    $existingThumbprints[$_.Thumbprint.ToUpperInvariant()] = $true
+
+if (-not $RequireSignature -and ($SignToolPath.Length -gt 0 -or $PSBoundParameters.ContainsKey("TimestampUrl"))) {
+    throw "-SignToolPath and -TimestampUrl require -RequireSignature."
 }
+
+$pfxPath = $null
+$existingThumbprints = @{}
 $newThumbprints = @()
+$installerParameters = @{
+    OutputDirectory = $OutputDirectory
+}
 
 try {
-    [IO.File]::WriteAllBytes($pfxPath, $certificateBytes)
-    $securePassword = ConvertTo-SecureString -String $certificatePassword -AsPlainText -Force
-    $importedCertificates = @(Import-PfxCertificate -FilePath $pfxPath `
-        -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword)
-    $newThumbprints = @($importedCertificates |
-        ForEach-Object { $_.Thumbprint.ToUpperInvariant() } |
-        Sort-Object -Unique |
-        Where-Object { -not $existingThumbprints.ContainsKey($_) })
+    if ($RequireSignature) {
+        $certificateBase64 = [Environment]::GetEnvironmentVariable(
+            "WINDOWS_SIGNING_CERTIFICATE_BASE64",
+            "Process"
+        )
+        $certificatePassword = [Environment]::GetEnvironmentVariable(
+            "WINDOWS_SIGNING_CERTIFICATE_PASSWORD",
+            "Process"
+        )
+        if ([string]::IsNullOrWhiteSpace($certificateBase64)) {
+            throw "WINDOWS_SIGNING_CERTIFICATE_BASE64 must contain a base64-encoded production PFX."
+        }
+        if ([string]::IsNullOrWhiteSpace($certificatePassword)) {
+            throw "WINDOWS_SIGNING_CERTIFICATE_PASSWORD must contain the PFX password."
+        }
 
-    $now = Get-Date
-    $codeSigningOid = "1.3.6.1.5.5.7.3.3"
-    $signingCertificate = $importedCertificates |
-        Where-Object {
-            $usages = @($_.EnhancedKeyUsageList | ForEach-Object { [string]$_.ObjectId })
-            $_.HasPrivateKey -and $_.NotBefore -le $now -and $_.NotAfter -gt $now -and
-                $usages -contains $codeSigningOid
-        } |
-        Sort-Object NotAfter -Descending |
-        Select-Object -First 1
-    if ($null -eq $signingCertificate) {
-        throw "The imported PFX has no valid private certificate with the Code Signing usage."
-    }
+        try {
+            $certificateBytes = [Convert]::FromBase64String($certificateBase64)
+        }
+        catch {
+            throw "WINDOWS_SIGNING_CERTIFICATE_BASE64 is not valid base64."
+        }
+        if ($certificateBytes.Length -eq 0) {
+            throw "WINDOWS_SIGNING_CERTIFICATE_BASE64 decoded to an empty PFX."
+        }
 
-    $installerParameters = @{
-        OutputDirectory = $OutputDirectory
-        RequireSignature = $true
-        CertificateThumbprint = $signingCertificate.Thumbprint
-        TimestampUrl = $TimestampUrl
-    }
-    if ($SignToolPath.Length -gt 0) {
-        $installerParameters.SignToolPath = $SignToolPath
+        $pfxPath = Join-Path ([IO.Path]::GetTempPath()) ("flash-shot-signing-" + [guid]::NewGuid() + ".pfx")
+        Get-ChildItem -Path Cert:\CurrentUser\My -ErrorAction SilentlyContinue | ForEach-Object {
+            $existingThumbprints[$_.Thumbprint.ToUpperInvariant()] = $true
+        }
+        [IO.File]::WriteAllBytes($pfxPath, $certificateBytes)
+        $securePassword = ConvertTo-SecureString -String $certificatePassword -AsPlainText -Force
+        $importedCertificates = @(Import-PfxCertificate -FilePath $pfxPath `
+            -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword)
+        $newThumbprints = @($importedCertificates |
+            ForEach-Object { $_.Thumbprint.ToUpperInvariant() } |
+            Sort-Object -Unique |
+            Where-Object { -not $existingThumbprints.ContainsKey($_) })
+
+        $now = Get-Date
+        $codeSigningOid = "1.3.6.1.5.5.7.3.3"
+        $signingCertificate = $importedCertificates |
+            Where-Object {
+                $usages = @($_.EnhancedKeyUsageList | ForEach-Object { [string]$_.ObjectId })
+                $_.HasPrivateKey -and $_.NotBefore -le $now -and $_.NotAfter -gt $now -and
+                    $usages -contains $codeSigningOid
+            } |
+            Sort-Object NotAfter -Descending |
+            Select-Object -First 1
+        if ($null -eq $signingCertificate) {
+            throw "The imported PFX has no valid private certificate with the Code Signing usage."
+        }
+
+        $installerParameters.RequireSignature = $true
+        $installerParameters.CertificateThumbprint = $signingCertificate.Thumbprint
+        $installerParameters.TimestampUrl = $TimestampUrl
+        if ($SignToolPath.Length -gt 0) {
+            $installerParameters.SignToolPath = $SignToolPath
+        }
     }
     if ($SkipBuild) {
         $installerParameters.SkipBuild = $true
@@ -88,7 +97,8 @@ try {
     if ($ValidateOnly) {
         $installerParameters.ValidateOnly = $true
         & (Join-Path $PSScriptRoot "package-installer.ps1") @installerParameters
-        Write-Host "GitHub release signing prerequisites are valid."
+        $mode = if ($RequireSignature) { "signed" } else { "unsigned" }
+        Write-Host "GitHub release packaging prerequisites are valid for $mode assets."
         return
     }
 
@@ -120,7 +130,7 @@ finally {
             Remove-Item -LiteralPath $certificatePath -Force
         }
     }
-    if (Test-Path -LiteralPath $pfxPath -PathType Leaf) {
+    if ($null -ne $pfxPath -and (Test-Path -LiteralPath $pfxPath -PathType Leaf)) {
         [IO.File]::Delete($pfxPath)
     }
 }

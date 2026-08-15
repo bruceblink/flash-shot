@@ -133,32 +133,30 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-Before triggering a release, configure these repository Actions secrets:
+No signing secrets are required for the current GitHub workflow. Flash Shot is open source, so the
+default release deliberately publishes unsigned Windows assets and accepts the normal SmartScreen and
+publisher-trust warning as an explicit project risk. Users can inspect the source, SHA-256 sidecars, and
+release manifest before running an asset.
 
-- `WINDOWS_SIGNING_CERTIFICATE_BASE64`: the complete base64 encoding of the production PFX;
-- `WINDOWS_SIGNING_CERTIFICATE_PASSWORD`: the PFX password.
+`package-github-release.ps1` packages unsigned assets by default. The optional `-RequireSignature` mode
+still supports a future operator who has a production PFX: it imports the PFX only into the workflow
+user's `CurrentUser\My` store, selects a valid private Code Signing certificate, and removes every new
+certificate plus the temporary PFX in `finally`. That mode is not used by the GitHub workflow and does
+not require repository secrets for ordinary releases.
 
-`package-github-release.ps1` imports the PFX only into the workflow user's `CurrentUser\My` store,
-selects a valid private Code Signing certificate, and removes every new certificate imported there plus the
-temporary PFX in `finally`. Missing, malformed, expired, or wrong-usage credentials fail before
-packaging. The workflow does not provide an unsigned fallback.
-
-The workflow runs the Rust gates and completes the Release build before importing the PFX. It then
-signs `flash-shot.exe` plus the installer, creates the
-portable ZIP from that same signed executable, then performs portable startup and real
-current-user install/start/uninstall smoke tests on the fresh GitHub runner. It verifies both release
-signatures, exact asset inventory, SHA-256 sidecars, and `release-manifest.json` before creating a
-**draft** GitHub Release. Publishing the draft remains a deliberate operator action after downloading
-and verifying the uploaded assets. The already published `v0.1.0` predates this required-signing gate
-and remains an explicitly unsigned historical release.
+The workflow runs the Rust gates and completes the Release build, creates the portable ZIP and installer,
+then performs portable startup and real current-user install/start/uninstall smoke tests on the fresh
+GitHub runner. It verifies exact asset inventory, SHA-256 sidecars, and `release-manifest.json` before
+creating a **draft** GitHub Release. Publishing the draft remains a deliberate operator action after
+downloading and verifying the uploaded assets.
 
 ## Release checks
 
 Before publishing a draft, download and verify every uploaded asset, its SHA-256 sidecar, and `release-manifest.json`; the command also performs the portable startup preflight:
 
 ```powershell
-$tag = "v0.1.1" # Replace with the actual new signed draft tag.
-.\scripts\verify-github-release.ps1 -Tag $tag -RequireDraft -RequireSignature
+$tag = "v0.1.1" # Replace with the actual new draft tag.
+.\scripts\verify-github-release.ps1 -Tag $tag -RequireDraft
 ```
 
-With `-RequireDraft`, it also rejects a release that has already been published, keeping this check as an explicit pre-publish gate. It deletes its temporary download directory after a successful or failed check. Pass `-OutputDirectory target\release-v0.1.1` to retain the downloaded assets for manual inspection. The GitHub runner proves signed setup, install, startup, and uninstall on its fresh account; the operator still manually checks screenshot capture, annotation, save/copy, and the FFmpeg recording path before publishing the draft.
+With `-RequireDraft`, it also rejects a release that has already been published, keeping this check as an explicit pre-publish gate. It deletes its temporary download directory after a successful or failed check. Pass `-OutputDirectory target\release-v0.1.1` to retain the downloaded assets for manual inspection. The GitHub runner proves the unsigned setup, install, startup, and uninstall path on its fresh account; the operator still manually checks screenshot capture, annotation, save/copy, and the FFmpeg recording path before publishing the draft.

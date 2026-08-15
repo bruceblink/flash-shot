@@ -43,11 +43,8 @@ jobs:
       - name: Build release executable
         shell: pwsh
         run: cargo build --release --bin flash-shot --target x86_64-pc-windows-msvc
-      - name: Build signed release assets
+      - name: Build unsigned release assets
         shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
-          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
         run: .\scripts\package-github-release.ps1 -SkipBuild
       - name: Smoke test portable startup
         shell: pwsh
@@ -64,13 +61,13 @@ jobs:
           if ($installer.Count -ne 1) {
             throw "Expected exactly one installer, found $($installer.Count)."
           }
-          .\scripts\smoke-installer.ps1 -InstallerPath $installer.FullName -RequireSignature
+          .\scripts\smoke-installer.ps1 -InstallerPath $installer.FullName
       - name: Generate release manifest
         shell: pwsh
         run: |
           .\scripts\release-manifest.ps1 -AssetDirectory dist
           .\scripts\release-manifest.ps1 -AssetDirectory dist -VerifyOnly
-          .\scripts\verify-release-assets.ps1 -AssetDirectory dist -SkipStartupSmoke -RequireSignature
+          .\scripts\verify-release-assets.ps1 -AssetDirectory dist -SkipStartupSmoke
       - name: Create draft GitHub release
         uses: softprops/action-gh-release@v2
         with:

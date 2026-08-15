@@ -10,7 +10,7 @@ $passwordText = "FlashShot-" + [guid]::NewGuid()
 $certificate = $null
 $fixtureThumbprint = $null
 
-# Requires GitHub secret validation to reject malformed credentials before packaging starts.
+# Requires the optional signed mode to reject malformed credentials before packaging starts.
 function Assert-GithubPackagingFails([string]$ExpectedMessage, [hashtable]$Parameters = @{}) {
     $failed = $false
     $failureMessage = ""
@@ -29,22 +29,33 @@ function Assert-GithubPackagingFails([string]$ExpectedMessage, [hashtable]$Param
     }
 }
 
+# Confirms that the default unsigned GitHub path is usable without certificate secrets.
+function Assert-GithubPackagingSucceeds([hashtable]$Parameters = @{}) {
+    try {
+        & $packageGithubRelease -ValidateOnly @Parameters
+    }
+    catch {
+        throw "GitHub release packaging unexpectedly failed: $($_.Exception.Message)"
+    }
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $fixture | Out-Null
 
     $env:WINDOWS_SIGNING_CERTIFICATE_BASE64 = $null
     $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $null
-    Assert-GithubPackagingFails "WINDOWS_SIGNING_CERTIFICATE_BASE64"
+    Assert-GithubPackagingSucceeds
+    Assert-GithubPackagingFails "WINDOWS_SIGNING_CERTIFICATE_BASE64" @{ RequireSignature = $true }
 
     $env:WINDOWS_SIGNING_CERTIFICATE_BASE64 = "not-base64"
     $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $passwordText
-    Assert-GithubPackagingFails "not valid base64"
+    Assert-GithubPackagingFails "not valid base64" @{ RequireSignature = $true }
 
     $env:WINDOWS_SIGNING_CERTIFICATE_BASE64 = [Convert]::ToBase64String(
         [Text.Encoding]::ASCII.GetBytes("fixture")
     )
     $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $null
-    Assert-GithubPackagingFails "WINDOWS_SIGNING_CERTIFICATE_PASSWORD"
+    Assert-GithubPackagingFails "WINDOWS_SIGNING_CERTIFICATE_PASSWORD" @{ RequireSignature = $true }
 
     $certificate = New-SelfSignedCertificate `
         -Subject "CN=Flash Shot GitHub release fixture" `
@@ -64,8 +75,9 @@ try {
     $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $passwordText
     Assert-GithubPackagingFails "must stay inside the repository" @{
         OutputDirectory = "..\outside-release"
+        RequireSignature = $true
     }
-    & $packageGithubRelease -ValidateOnly
+    & $packageGithubRelease -ValidateOnly -RequireSignature
 
     if (Test-Path -LiteralPath "Cert:\CurrentUser\My\$fixtureThumbprint") {
         throw "GitHub release packaging left the imported signing certificate in CurrentUser storage."

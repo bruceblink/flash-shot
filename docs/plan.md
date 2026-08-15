@@ -416,33 +416,33 @@ Copy、Save、滚动截图和像素契约不变。它不改变截图采集、标
 - [x] Windows 安装包构建与签名校验脚本。
 - [x] 发布资产清单与 SHA-256 验证。
 - [x] 更新发布策略与本地预发布验收（便携包、隔离 profile 启动冒烟、manifest、SHA-256、fixture 和安装器配置门禁均已通过）。
-- [ ] 发布时真实验收（受信签名、真实安装/卸载和干净 Windows 用户账户仍需在发布环境执行）。
+- [ ] 发布时真实验收（GitHub draft 的未签名资产、真实安装/卸载和干净 Windows 用户账户仍需在发布环境执行；项目明确接受未签名 Windows 资产的 SmartScreen/发布者信任风险）。
 
-当前发布预检会在 `-ValidateOnly -RequireSignature` 下同时要求可执行的 SignTool 和当前用户证书库中
-带私钥、未过期且含代码签名用途的证书；实际签名固定使用该次预检选中的证书。2026-08-13 本机已
-验证版本化 Windows SDK SignTool、用户级 Inno Setup 路径、RFC 3161 时间戳参数和签名预检回归；短期
-自签名证书只用于脚本闭环并已清理。2026-08-14 又将官方简体中文消息固定到 Inno Setup 源提交
+`package-github-release.ps1 -RequireSignature` 仍提供可选的 Authenticode 签名路径；它会在
+`-ValidateOnly` 时要求可执行的 SignTool 和当前用户证书库中带私钥、未过期且含代码签名用途的证书。
+该路径不是当前 GitHub workflow 的发布条件。2026-08-13 本机已验证版本化 Windows SDK SignTool、用户级
+Inno Setup 路径、RFC 3161 时间戳参数和签名预检回归；短期自签名证书只用于脚本闭环并已清理。2026-08-14
+又将官方简体中文消息固定到 Inno Setup 源提交
 `3cfb0e5` 和 SHA-256 `e0b0b350...b3fc9a8d`，获取器只从该 Git blob 导出并在交给打包器前验证
 `LanguageID=$0804`。隔离的当前源码 Release 构建随后由 Inno Setup 6.7.3 生成未签名安装器
 `target/installer-acceptance-20260814/dist/FlashShot-0.1.0-windows-setup.exe`，大小 `6,593,265` bytes，
 SHA-256 `48515393bc660d8b0442f87301ab494517e7531a66dd2656c4c61b6387a79772`，sidecar 匹配且
-Authenticode 状态明确为 `NotSigned`。这关闭了本机语言资源和安装器编译阻塞，但生产信任证书、实际
-安装/卸载和干净 Windows 用户账户仍必须在发布环境执行，不将发布时真实验收标记为完成。
+Authenticode 状态明确为 `NotSigned`。这关闭了本机语言资源和安装器编译阻塞；未签名状态是当前开源
+发布策略的明确取舍，实际安装/卸载和干净 Windows 用户账户仍必须在发布环境执行。
 
 2026-08-15 新增 `smoke-installer.ps1`，以 Inno 明确的 current-user 命令行覆盖安装到唯一临时目录，
 真实验证安装文件、Start 菜单快捷方式、卸载注册、隔离 profile 启动和卸载后零残留。本机当前源码
 安装器 `target/installer-smoke-current-20260815/FlashShot-0.1.0-windows-setup.exe` 已完成该生命周期，
-SHA-256 为 `c04504be...f8fc87b`，但仍明确为 `NotSigned`。GitHub Release 工作流现在不再提供未签名
-回退：它要求生产 PFX secrets，在导入证书前完成 Release 构建，随后签名 EXE/安装器、从同一已签名
-EXE 生成便携包，并在新的 GitHub runner 上执行签名回读和真实安装/启动/卸载。当前仓库尚未配置生产
-PFX secrets，也没有新的受信签名 workflow 报告，因此本项继续保持未完成。
+SHA-256 为 `c04504be...f8fc87b`，但仍明确为 `NotSigned`。GitHub Release 工作流默认不读取生产
+PFX secrets，也不把签名作为门禁；它会在新的 GitHub runner 上执行未签名资产的真实安装/启动/卸载，
+并生成 draft release。当前仍需该 GitHub draft 和干净 Windows 用户验收，本项继续保持未完成。
 
 2026-08-15 又以当前 `372f9da` 在隔离 `CARGO_TARGET_DIR` 下完成 `0.1.1` Release 发布前预检，证据目录为
 `target/release-preflight-v0.1.1-20260815/`，机器报告为 `preflight-report.json`。便携包启动 5 秒、
 current-user 安装、隔离 `config/data/cache/history` 启动、静默卸载和零残留均通过；安装器和便携包的
 manifest/sidecar 也通过，安装器 SHA-256 为 `864bde2f...5aeaf566`，便携包 SHA-256 为
 `de3b6ba8...14e4046`。该构建的 Authenticode 仍为 `NotSigned`，所以它加强了版本与生命周期证据，
-但不能替代生产 PFX、受信签名和 GitHub runner 的发布时真实验收；本项仍保持未完成。
+但不能替代 GitHub draft 和干净 Windows 用户的发布时真实验收；本项仍保持未完成。
 - macOS 截图与平台实现，以及权限交互。
 - 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 
