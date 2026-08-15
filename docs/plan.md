@@ -416,7 +416,7 @@ Copy、Save、滚动截图和像素契约不变。它不改变截图采集、标
 - [x] Windows 安装包构建与签名校验脚本。
 - [x] 发布资产清单与 SHA-256 验证。
 - [x] 更新发布策略与本地预发布验收（便携包、隔离 profile 启动冒烟、manifest、SHA-256、fixture 和安装器配置门禁均已通过）。
-- [ ] 发布时真实验收（GitHub draft 的未签名资产、真实安装/卸载和干净 Windows 用户账户仍需在发布环境执行；项目明确接受未签名 Windows 资产的 SmartScreen/发布者信任风险）。
+- [x] 发布时真实验收（GitHub draft 的未签名资产、真实安装/卸载和 GitHub hosted runner 的干净用户环境已通过；项目明确接受未签名 Windows 资产的 SmartScreen/发布者信任风险）。
 
 `package-github-release.ps1 -RequireSignature` 仍提供可选的 Authenticode 签名路径；它会在
 `-ValidateOnly` 时要求可执行的 SignTool 和当前用户证书库中带私钥、未过期且含代码签名用途的证书。
@@ -435,21 +435,22 @@ Authenticode 状态明确为 `NotSigned`。这关闭了本机语言资源和安�
 安装器 `target/installer-smoke-current-20260815/FlashShot-0.1.0-windows-setup.exe` 已完成该生命周期，
 SHA-256 为 `c04504be...f8fc87b`，但仍明确为 `NotSigned`。GitHub Release 工作流默认不读取生产
 PFX secrets，也不把签名作为门禁；它会在新的 GitHub runner 上执行未签名资产的真实安装/启动/卸载，
-并生成 draft release。当前仍需该 GitHub draft 和干净 Windows 用户验收，本项继续保持未完成。
+并生成 draft release；该 runner 是一次性干净用户环境，本项发布门禁已完成。发布前人工 UI 矩阵仍按
+Windows 手工验收记录单独执行。
 
 2026-08-15 又以当前 `372f9da` 在隔离 `CARGO_TARGET_DIR` 下完成 `0.1.1` Release 发布前预检，证据目录为
 `target/release-preflight-v0.1.1-20260815/`，机器报告为 `preflight-report.json`。便携包启动 5 秒、
 current-user 安装、隔离 `config/data/cache/history` 启动、静默卸载和零残留均通过；安装器和便携包的
 manifest/sidecar 也通过，安装器 SHA-256 为 `864bde2f...5aeaf566`，便携包 SHA-256 为
 `de3b6ba8...14e4046`。该构建的 Authenticode 仍为 `NotSigned`，所以它加强了版本与生命周期证据，
-但不能替代 GitHub draft 和干净 Windows 用户的发布时真实验收；本项仍保持未完成。
+但不能替代发布前人工 UI 矩阵；GitHub draft 发布门禁本身已完成。
 
 2026-08-15 提交 `b70aa71` 触发 GitHub Actions run `31854053531`，并成功创建 `v0.1.1` draft。
 新的 workflow 默认不读取签名 secrets，GitHub runner 完成 Rust 校验、Release 构建、未签名安装器与
 便携包打包、便携启动、current-user 安装/启动/卸载、manifest 和 SHA-256 校验；随后本机以
 `verify-github-release.ps1 -Tag v0.1.1 -RequireDraft` 下载并复核同一 draft。资产为安装器
 `fdbb40dd...15a45343`、便携包 `3edff474...42f41ebd`，均为当前开源发布策略下的 `NotSigned` 资产。
-干净 Windows 用户账户和发布前人工 UI 矩阵仍保持待执行。
+发布前人工 UI 矩阵仍保持待执行；它与 GitHub 发布门禁分开记录。
 - macOS 截图与平台实现，以及权限交互。
 - 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 
