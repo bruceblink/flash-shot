@@ -443,6 +443,13 @@ current-user 安装、隔离 `config/data/cache/history` 启动、静默卸载�
 manifest/sidecar 也通过，安装器 SHA-256 为 `864bde2f...5aeaf566`，便携包 SHA-256 为
 `de3b6ba8...14e4046`。该构建的 Authenticode 仍为 `NotSigned`，所以它加强了版本与生命周期证据，
 但不能替代 GitHub draft 和干净 Windows 用户的发布时真实验收；本项仍保持未完成。
+
+2026-08-15 提交 `b70aa71` 触发 GitHub Actions run `31854053531`，并成功创建 `v0.1.1` draft。
+新的 workflow 默认不读取签名 secrets，GitHub runner 完成 Rust 校验、Release 构建、未签名安装器与
+便携包打包、便携启动、current-user 安装/启动/卸载、manifest 和 SHA-256 校验；随后本机以
+`verify-github-release.ps1 -Tag v0.1.1 -RequireDraft` 下载并复核同一 draft。资产为安装器
+`fdbb40dd...15a45343`、便携包 `3edff474...42f41ebd`，均为当前开源发布策略下的 `NotSigned` 资产。
+干净 Windows 用户账户和发布前人工 UI 矩阵仍保持待执行。
 - macOS 截图与平台实现，以及权限交互。
 - 在承诺 Linux 功能对等前验证 Wayland portal 和 X11 可行性。
 
