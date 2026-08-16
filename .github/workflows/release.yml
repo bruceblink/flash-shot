@@ -72,6 +72,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      - name: Test release notes generator
+        shell: pwsh
+        run: python .github/scripts/test_generate_release_notes.py
       - name: Generate release notes
         shell: pwsh
         run: |
