@@ -227,11 +227,11 @@ mod platform {
             WindowsAndMessaging::{
                 AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
                 DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW,
-                GetWindowLongPtrW, IDI_APPLICATION, LoadIconW, MF_CHECKED, MF_GRAYED, MF_POPUP,
-                MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostThreadMessageW, RegisterClassW,
-                SetForegroundWindow, SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-                TrackPopupMenu, TranslateMessage, WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL,
-                WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
+                GetWindowLongPtrW, HMENU, IDI_APPLICATION, LoadIconW, MF_CHECKED, MF_GRAYED,
+                MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostThreadMessageW,
+                RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, TPM_RETURNCMD,
+                TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP, WM_CONTEXTMENU,
+                WM_LBUTTONUP, WM_NULL, WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
             },
         },
     };
@@ -261,6 +261,33 @@ mod platform {
     const MENU_TOGGLE_CAPTURE_SHORTCUT: usize = 20;
     const MENU_FULL_SCREEN_PIN: usize = 21;
     const WINDOW_CLASS: &str = "FlashShot.TrayWindow";
+
+    /// Keeps the native root popup ordered around the single high-frequency Capture action.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) enum TrayRootMenuEntry {
+        Capture,
+        MoreCaptureOptions,
+        Separator,
+        Recording,
+        Files,
+        System,
+        Quit,
+    }
+
+    /// Lists root-level tray entries so Capture cannot accidentally move behind a submenu.
+    pub(super) const fn tray_root_menu_layout() -> &'static [TrayRootMenuEntry] {
+        &[
+            TrayRootMenuEntry::Capture,
+            TrayRootMenuEntry::MoreCaptureOptions,
+            TrayRootMenuEntry::Separator,
+            TrayRootMenuEntry::Recording,
+            TrayRootMenuEntry::Files,
+            TrayRootMenuEntry::Separator,
+            TrayRootMenuEntry::System,
+            TrayRootMenuEntry::Separator,
+            TrayRootMenuEntry::Quit,
+        ]
+    }
 
     pub struct TrayListener {
         thread_id: u32,
@@ -610,17 +637,57 @@ mod platform {
         capture_cursor_enabled: bool,
         capture_shortcut_enabled: bool,
     ) -> Option<TrayEvent> {
+        let menu = build_menu(
+            recording_state,
+            recording_target,
+            auto_start_state,
+            capture_cursor_enabled,
+            capture_shortcut_enabled,
+        )?;
+        // The popup must own foreground before Windows reports the selected root command.
+        unsafe { SetForegroundWindow(window) };
+        let mut cursor = POINT::default();
+        let command = if unsafe { GetCursorPos(&mut cursor) } != 0 {
+            unsafe {
+                TrackPopupMenu(
+                    menu,
+                    TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                    cursor.x,
+                    cursor.y,
+                    0,
+                    window,
+                    ptr::null(),
+                )
+            }
+        } else {
+            0
+        };
+        // Windows otherwise keeps the popup associated with this foreground window and can
+        // suppress the next taskbar interaction after a dismissal.
+        unsafe { PostMessageW(window, WM_NULL, 0, 0) };
+        unsafe { DestroyMenu(menu) };
+        tray_event_for_command(command as usize)
+    }
+
+    /// Builds the native popup separately so its root order can be verified without a shell click.
+    pub(super) fn build_menu(
+        recording_state: TrayRecordingState,
+        recording_target: TrayRecordingTarget,
+        auto_start_state: TrayAutoStartState,
+        capture_cursor_enabled: bool,
+        capture_shortcut_enabled: bool,
+    ) -> Option<HMENU> {
         // SAFETY: menu is owned here and destroyed before return.
         let menu = unsafe { CreatePopupMenu() };
         if menu.is_null() {
             return None;
         }
         // The root owns its submenus, so destroying it below releases the entire menu tree.
-        let capture_menu = unsafe { CreatePopupMenu() };
+        let more_capture_menu = unsafe { CreatePopupMenu() };
         let recording_menu = unsafe { CreatePopupMenu() };
         let files_menu = unsafe { CreatePopupMenu() };
         let system_menu = unsafe { CreatePopupMenu() };
-        if capture_menu.is_null()
+        if more_capture_menu.is_null()
             || recording_menu.is_null()
             || files_menu.is_null()
             || system_menu.is_null()
@@ -628,7 +695,7 @@ mod platform {
             unsafe { DestroyMenu(menu) };
             return None;
         }
-        let capture_group = wide("Capture");
+        let more_capture_options = wide("More capture options");
         let recording_group = wide("Recording");
         let files_group = wide("Files");
         let system_group = wide("System");
@@ -659,45 +726,44 @@ mod platform {
         let check_updates = wide("Check for updates");
         let quit = wide("Quit Flash Shot");
         unsafe {
-            AppendMenuW(capture_menu, MF_STRING, MENU_CAPTURE, capture.as_ptr());
             AppendMenuW(
-                capture_menu,
+                more_capture_menu,
                 MF_STRING,
                 MENU_FULL_SCREEN_CAPTURE,
                 full_screen_capture.as_ptr(),
             );
             AppendMenuW(
-                capture_menu,
+                more_capture_menu,
                 MF_STRING,
                 MENU_FULL_SCREEN_COPY,
                 full_screen_copy.as_ptr(),
             );
             AppendMenuW(
-                capture_menu,
+                more_capture_menu,
                 MF_STRING,
                 MENU_FULL_SCREEN_SAVE,
                 full_screen_save.as_ptr(),
             );
             AppendMenuW(
-                capture_menu,
+                more_capture_menu,
                 MF_STRING,
                 MENU_FULL_SCREEN_PIN,
                 full_screen_pin.as_ptr(),
             );
             AppendMenuW(
-                capture_menu,
+                more_capture_menu,
                 MF_STRING,
                 MENU_DELAYED_CAPTURE_3_SECONDS,
                 delayed_capture_3_seconds.as_ptr(),
             );
             AppendMenuW(
-                capture_menu,
+                more_capture_menu,
                 MF_STRING,
                 MENU_DELAYED_CAPTURE_5_SECONDS,
                 delayed_capture_5_seconds.as_ptr(),
             );
             AppendMenuW(
-                capture_menu,
+                more_capture_menu,
                 MF_STRING,
                 MENU_DELAYED_CAPTURE_10_SECONDS,
                 delayed_capture_10_seconds.as_ptr(),
@@ -741,20 +807,6 @@ mod platform {
             );
             AppendMenuW(files_menu, MF_STRING, MENU_HISTORY, history.as_ptr());
             AppendMenuW(
-                menu,
-                MF_POPUP,
-                capture_menu as usize,
-                capture_group.as_ptr(),
-            );
-            AppendMenuW(
-                menu,
-                MF_POPUP,
-                recording_menu as usize,
-                recording_group.as_ptr(),
-            );
-            AppendMenuW(menu, MF_POPUP, files_menu as usize, files_group.as_ptr());
-            AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
-            AppendMenuW(
                 system_menu,
                 MF_STRING
                     | if capture_shortcut_enabled {
@@ -793,32 +845,43 @@ mod platform {
                 MENU_CHECK_UPDATES,
                 check_updates.as_ptr(),
             );
-            AppendMenuW(menu, MF_POPUP, system_menu as usize, system_group.as_ptr());
-            AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
-            AppendMenuW(menu, MF_STRING, MENU_QUIT, quit.as_ptr());
-            SetForegroundWindow(window);
-        }
-        let mut cursor = POINT::default();
-        let command = if unsafe { GetCursorPos(&mut cursor) } != 0 {
-            unsafe {
-                TrackPopupMenu(
-                    menu,
-                    TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                    cursor.x,
-                    cursor.y,
-                    0,
-                    window,
-                    ptr::null(),
-                )
+            for entry in tray_root_menu_layout() {
+                match entry {
+                    TrayRootMenuEntry::Capture => {
+                        AppendMenuW(menu, MF_STRING, MENU_CAPTURE, capture.as_ptr());
+                    }
+                    TrayRootMenuEntry::MoreCaptureOptions => {
+                        AppendMenuW(
+                            menu,
+                            MF_POPUP,
+                            more_capture_menu as usize,
+                            more_capture_options.as_ptr(),
+                        );
+                    }
+                    TrayRootMenuEntry::Separator => {
+                        AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
+                    }
+                    TrayRootMenuEntry::Recording => {
+                        AppendMenuW(
+                            menu,
+                            MF_POPUP,
+                            recording_menu as usize,
+                            recording_group.as_ptr(),
+                        );
+                    }
+                    TrayRootMenuEntry::Files => {
+                        AppendMenuW(menu, MF_POPUP, files_menu as usize, files_group.as_ptr());
+                    }
+                    TrayRootMenuEntry::System => {
+                        AppendMenuW(menu, MF_POPUP, system_menu as usize, system_group.as_ptr());
+                    }
+                    TrayRootMenuEntry::Quit => {
+                        AppendMenuW(menu, MF_STRING, MENU_QUIT, quit.as_ptr());
+                    }
+                }
             }
-        } else {
-            0
-        };
-        // Windows otherwise keeps the popup associated with this foreground window and can
-        // suppress the next taskbar interaction after a dismissal.
-        unsafe { PostMessageW(window, WM_NULL, 0, 0) };
-        unsafe { DestroyMenu(menu) };
-        tray_event_for_command(command as usize)
+        }
+        Some(menu)
     }
 
     pub(super) fn tray_event_for_command(command: usize) -> Option<TrayEvent> {
@@ -981,6 +1044,52 @@ mod tests {
         assert!(tray_menu_requested(WM_RBUTTONUP));
         assert!(tray_menu_requested(WM_CONTEXTMENU));
         assert!(!tray_menu_requested(0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tray_root_keeps_capture_as_the_first_direct_action() {
+        use super::platform::{TrayRootMenuEntry, tray_root_menu_layout};
+
+        assert_eq!(
+            tray_root_menu_layout(),
+            &[
+                TrayRootMenuEntry::Capture,
+                TrayRootMenuEntry::MoreCaptureOptions,
+                TrayRootMenuEntry::Separator,
+                TrayRootMenuEntry::Recording,
+                TrayRootMenuEntry::Files,
+                TrayRootMenuEntry::Separator,
+                TrayRootMenuEntry::System,
+                TrayRootMenuEntry::Separator,
+                TrayRootMenuEntry::Quit,
+            ]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_tray_menu_places_capture_before_all_submenus() {
+        use super::platform::build_menu;
+        use super::{TrayAutoStartState, TrayRecordingState, TrayRecordingTarget};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            DestroyMenu, GetMenuItemCount, GetMenuItemID, GetSubMenu,
+        };
+
+        let menu = build_menu(
+            TrayRecordingState::Idle,
+            TrayRecordingTarget::Display,
+            TrayAutoStartState::Disabled,
+            false,
+            true,
+        )
+        .expect("native tray popup should allocate");
+        // The direct Capture command uses the stable command id 1 and must precede the More
+        // submenu so a taskbar click reaches it without a second hover or click.
+        assert_eq!(unsafe { GetMenuItemID(menu, 0) }, 1);
+        assert!(!unsafe { GetSubMenu(menu, 1) }.is_null());
+        assert_eq!(unsafe { GetMenuItemCount(menu) }, 9);
+        unsafe { DestroyMenu(menu) };
     }
 
     #[cfg(windows)]
