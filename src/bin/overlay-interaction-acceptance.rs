@@ -80,8 +80,8 @@ use windows_sys::Win32::{
             GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
             KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
             MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
-            VK_A, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_RETURN, VK_RIGHT, VK_S,
-            VK_SHIFT, VK_SPACE,
+            VK_A, VK_C, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_RETURN, VK_RIGHT,
+            VK_S, VK_SHIFT, VK_SPACE,
         },
         WindowsAndMessaging::{
             BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
@@ -117,6 +117,7 @@ const FOCUS_FOREGROUND_ASSIST_DELAY: Duration = Duration::from_millis(250);
 const CAPTURE_SHORTCUT_FOCUS_ATTEMPTS: usize = 3;
 const FOREGROUND_CHANGED_INPUT_ERROR: &str =
     "foreground window changed; input injection was aborted";
+const NO_FOREGROUND_INPUT_ERROR: &str = "no foreground window owns the next input action";
 const COPY_TRIGGER_ATTEMPTS: usize = 2;
 const COPY_TRIGGER_ACK_TIMEOUT: Duration = Duration::from_secs(1);
 const COPY_STATUS_PROBE_INTERVAL: Duration = Duration::from_millis(50);
@@ -427,11 +428,16 @@ impl Options {
         let standard_system_copy = options.capture_scenario == CaptureScenarioOption::Standard
             && options.record_target.is_none()
             && !scroll_export_seen;
+        let pins_system_copy = options.capture_scenario == CaptureScenarioOption::PinsCoexist;
         let scroll_system_copy = options.capture_scenario == CaptureScenarioOption::ScrollRoundtrip
             && options.scroll_export == ScrollExportOption::Copy;
-        if options.allow_system_clipboard && !standard_system_copy && !scroll_system_copy {
+        if options.allow_system_clipboard
+            && !standard_system_copy
+            && !pins_system_copy
+            && !scroll_system_copy
+        {
             return Err(
-                "--allow-system-clipboard is only valid with standard capture or scroll-roundtrip Copy"
+                "--allow-system-clipboard is only valid with standard capture, pins-coexist, or scroll-roundtrip Copy"
                     .to_owned(),
             );
         }
@@ -800,6 +806,7 @@ fn scroll_roundtrip_cleanup_complete(state: &OverlayInteractionCaptureState) -> 
         && !state.manual_scroll_finish_in_flight
         && !state.manual_scroll_auto_capture_pending
         && state.manual_scroll_selection.is_none()
+        && !state.clipboard_write_active
         && !state.capture_teardown_pending
         && state.capture_preflight_ready
         && matches!(
@@ -1411,7 +1418,34 @@ struct PinsCoexistReport {
     pins_during_capture: usize,
     pins_after_cancel: usize,
     closed_with_escape: usize,
+    system_clipboard_copy: Option<PinSystemClipboardCopyReport>,
     cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct PinSystemClipboardCopyReport {
+    source_bounds: PhysicalRect,
+    copied_bounds: PhysicalRect,
+    width: u32,
+    height: u32,
+    clipboard_sequence_before: u32,
+    clipboard_sequence_after: u32,
+    clipboard_sequence_changed: bool,
+    png_format_available: bool,
+    dib_format_available: bool,
+    png_bytes: usize,
+    dib_bytes: usize,
+    png_content: ExactPixelMatchReport,
+    dib_content: ExactPixelMatchReport,
+    consumer_image_content: Box<ExactPixelMatchReport>,
+    timing_clock: &'static str,
+    timing_boundary: &'static str,
+    input_to_consumer_readable_ms: f64,
+    consumer_result_path: String,
+    consumer_ready_before_click: bool,
+    consumer_observing_before_click: bool,
+    consumer_cleaned_up: bool,
+    shared_clipboard_lease_released: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -1966,9 +2000,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 14 proves Copy keeps
-        // the editor alive, then records the explicit Escape that reaches fully quiescent state.
-        schema_version: 14,
+        // Increment when the machine-readable report shape changes. Schema 15 adds optional
+        // production system-clipboard evidence for a Pin while preserving the no-clipboard path.
+        schema_version: 15,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -3888,6 +3922,20 @@ fn execute_pins_coexist_interactions(
         actual_delta_y: drag_after.top - drag_before.top,
     };
 
+    // The default Pins coexistence probe uses an injected sink and never touches user data.
+    // An explicit system-clipboard flag opts into one real Ctrl+C on the first Pin so the
+    // production asynchronous Pin copy worker and shared clipboard lease are exercised too.
+    let system_clipboard_copy = if context.use_system_clipboard {
+        Some(execute_pin_system_clipboard_copy(
+            context,
+            report,
+            owned_window(handles[0])?,
+            &sources[0],
+        )?)
+    } else {
+        None
+    };
+
     validate_pin_sources(context, &sources, "Pins before coexistence capture")?;
     let baseline_windows = owned_windows(&handles)?;
     focus_owned_window(baseline_windows[0], context.timeout)?;
@@ -4039,6 +4087,7 @@ fn execute_pins_coexist_interactions(
         pins_during_capture: active.pinned_count,
         pins_after_cancel: after_cancel.pinned_count,
         closed_with_escape: PIN_COEXIST_COUNT,
+        system_clipboard_copy,
         cleanup: CleanupReport {
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
@@ -4049,6 +4098,135 @@ fn execute_pins_coexist_interactions(
         },
     });
     write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Exercises one real Pin Ctrl+C and verifies PNG, CF_DIB, and consumer pixels without hiding
+/// the clipboard side effect behind the in-memory acceptance sink.
+fn execute_pin_system_clipboard_copy(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    pin: NativeWindow,
+    source: &CaptureFrame,
+) -> io::Result<PinSystemClipboardCopyReport> {
+    if context.copy_results.is_some() {
+        return Err(io::Error::other(
+            "Pin system clipboard copy requires the real clipboard path",
+        ));
+    }
+    let mut consumer = ClipboardConsumer::launch(&context.session_root, context.timeout)?;
+    let consumer_ready_before_click = consumer.ready_path.is_file();
+    let clipboard_sequence_before = consumer.arm()?;
+    let consumer_observing_before_click = wait_for_path(
+        &consumer.observing_path,
+        context.timeout,
+        "Pin clipboard consumer observing marker",
+    )?;
+    // SAFETY: this call only reads the monotonic Windows clipboard change counter.
+    let before_input_sequence = unsafe { GetClipboardSequenceNumber() };
+    if before_input_sequence != clipboard_sequence_before {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "system clipboard changed before Pin Copy input ({clipboard_sequence_before} -> {before_input_sequence})"
+            ),
+        ));
+    }
+    let copy_started_qpc = qpc_ticks()?;
+    let foreground = inject_ctrl_c(pin.handle)?;
+    let consumer_result = consumer.wait_result(context.timeout)?;
+    if consumer_result.previous_sequence != clipboard_sequence_before {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Pin clipboard consumer observed a mismatched launch sequence",
+        ));
+    }
+    for path in [
+        Path::new(&consumer_result.png_path),
+        Path::new(&consumer_result.dib_path),
+        Path::new(&consumer_result.consumer_image_path),
+    ] {
+        ensure_path_within(path, &context.session_root)?;
+    }
+
+    let copied = CaptureFrame::open_png(&consumer_result.consumer_image_path)?;
+    let clipboard_png = fs::read(&consumer_result.png_path)?;
+    let clipboard_dib = fs::read(&consumer_result.dib_path)?;
+    let copy_state = wait_for_capture_state(context, "Pin clipboard lease release", |state| {
+        !state.clipboard_write_active
+    })?;
+    thread::sleep(context.settle_delay);
+    let evidence = capture_evidence(context, "04a-pin-system-copy.png", pin)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_system_clipboard_copy",
+        foreground,
+        Some(&evidence),
+    )?;
+
+    // SAFETY: this call only reads the monotonic Windows clipboard change counter.
+    let clipboard_sequence_after = unsafe { GetClipboardSequenceNumber() };
+    if clipboard_sequence_after != consumer_result.observed_sequence {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "system clipboard changed after Pin Copy ({:?} -> {clipboard_sequence_after})",
+                consumer_result.observed_sequence
+            ),
+        ));
+    }
+    validate_frame_dimensions(&copied, source.bounds, "Pin system clipboard image")?;
+    let consumer_image_content =
+        validate_same_pixel_content(source, &copied, "Pin system clipboard image")?;
+    let png_path = PathBuf::from(&consumer_result.png_path);
+    let decoded_png = CaptureFrame::open_png(&png_path)?;
+    validate_frame_dimensions(&decoded_png, source.bounds, "Pin clipboard PNG format")?;
+    let png_content = validate_same_pixel_content(source, &decoded_png, "Pin clipboard PNG")?;
+    let decoded_dib = decode_clipboard_dib(&clipboard_dib)?;
+    validate_frame_dimensions(&decoded_dib, source.bounds, "Pin clipboard CF_DIB format")?;
+    let dib_content = validate_same_pixel_content(source, &decoded_dib, "Pin clipboard CF_DIB")?;
+    if clipboard_sequence_after == clipboard_sequence_before
+        || !consumer_ready_before_click
+        || !consumer_observing_before_click
+        || !consumer.stopped
+    {
+        return Err(io::Error::other(
+            "Pin clipboard consumer was not ready, did not observe a sequence change, or was not reaped",
+        ));
+    }
+    Ok(PinSystemClipboardCopyReport {
+        source_bounds: source.bounds,
+        copied_bounds: copied.bounds,
+        width: copied.width,
+        height: copied.height,
+        clipboard_sequence_before,
+        clipboard_sequence_after,
+        clipboard_sequence_changed: clipboard_sequence_after != clipboard_sequence_before,
+        png_format_available: true,
+        dib_format_available: true,
+        png_bytes: clipboard_png.len(),
+        dib_bytes: clipboard_dib.len(),
+        png_content,
+        dib_content,
+        consumer_image_content: Box::new(consumer_image_content),
+        timing_clock: "windows_qpc",
+        timing_boundary: "ctrl_c_batch_to_consumer_decoded_image",
+        input_to_consumer_readable_ms: qpc_elapsed_ms(
+            copy_started_qpc,
+            consumer_result.consumer_read_qpc_ticks,
+        )?,
+        consumer_result_path: consumer
+            .result_path
+            .strip_prefix(&context.session_root)
+            .unwrap_or(&consumer.result_path)
+            .to_string_lossy()
+            .into_owned(),
+        consumer_ready_before_click,
+        consumer_observing_before_click,
+        consumer_cleaned_up: consumer.stopped,
+        shared_clipboard_lease_released: !copy_state.clipboard_write_active,
+    })
 }
 
 #[cfg(windows)]
@@ -5270,6 +5448,13 @@ fn execute_capture_interactions(
         context.display.physical_bounds,
         context.timeout,
     )?;
+    // GPUI hides Settings asynchronously after opening the popup. Wait for the native HWND to
+    // disappear before dragging so the controller cannot intercept a path crossing its bounds.
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "capture overlay hides Settings",
+    )?;
     focus_owned_window(first_overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
     let plan = interaction_plan_for_window(first_overlay.handle)?;
@@ -5361,6 +5546,11 @@ fn execute_capture_interactions(
         controller.handle,
         context.display.physical_bounds,
         context.timeout,
+    )?;
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "recapture overlay hides Settings",
     )?;
     focus_owned_window(second_overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
@@ -8843,8 +9033,9 @@ fn guard_foreground(expected: *mut c_void) -> io::Result<NativeWindow> {
     // SAFETY: GetForegroundWindow returns a borrowed HWND that is only queried below.
     let foreground = unsafe { GetForegroundWindow() };
     if foreground.is_null() {
-        return Err(io::Error::other(
-            "no foreground window owns the next input action",
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            NO_FOREGROUND_INPUT_ERROR,
         ));
     }
     let mut process_id = 0;
@@ -9004,6 +9195,34 @@ fn find_visible_titlebar_point(
 #[cfg(windows)]
 fn left_button_held() -> bool {
     (unsafe { GetAsyncKeyState(VK_LBUTTON as i32) } as u16 & 0x8000) != 0
+}
+
+#[cfg(windows)]
+/// Releases the runner-owned left button with a short bounded retry, so a transient focus loss
+/// cannot leave global mouse state held when a guarded drag aborts.
+fn release_mouse_button_unchecked() -> io::Result<()> {
+    let mut last_error = None;
+    for attempt in 0..3 {
+        if let Err(error) = send_input_unchecked(&[mouse_button_input(MOUSEEVENTF_LEFTUP)]) {
+            last_error = Some(error);
+        }
+        if !left_button_held() {
+            return Ok(());
+        }
+        if attempt < 2 {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    if let Some(error) = last_error {
+        Err(io::Error::other(format!(
+            "left mouse button remained held after defensive release: {error}"
+        )))
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "left mouse button remained held after defensive release",
+        ))
+    }
 }
 
 #[cfg(windows)]
@@ -9246,9 +9465,9 @@ fn inject_capture_shortcut(expected: *mut c_void) -> io::Result<NativeWindow> {
 #[cfg(windows)]
 /// Retries only the safe gap between verified focus and the production capture shortcut.
 ///
-/// A shell notification can take foreground ownership after `focus_owned_window` returns but
-/// before `inject_capture_shortcut` performs its final guard. Each retry revalidates and refocuses
-/// the same process-owned HWND; every other error still fails closed without further input.
+/// A shell notification can take foreground ownership, or Windows can briefly report no owner,
+/// after `focus_owned_window` returns but before the shortcut guard. Each retry revalidates and
+/// refocuses the same process-owned HWND; every other error still fails closed without input.
 fn focus_and_inject_capture_shortcut(
     window: NativeWindow,
     timeout: Duration,
@@ -9272,7 +9491,10 @@ fn focus_and_inject_capture_shortcut(
 #[cfg(windows)]
 fn is_foreground_change_abort(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::PermissionDenied
-        && error.to_string() == FOREGROUND_CHANGED_INPUT_ERROR
+        && matches!(
+            error.to_string().as_str(),
+            FOREGROUND_CHANGED_INPUT_ERROR | NO_FOREGROUND_INPUT_ERROR
+        )
 }
 
 #[cfg(windows)]
@@ -9303,6 +9525,26 @@ fn inject_ctrl_s(expected: *mut c_void) -> io::Result<NativeWindow> {
     send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
     wait_for_input_keys_released(
         &[(VK_S, "S"), (VK_CONTROL, "Control")],
+        Duration::from_millis(250),
+    )?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Sends the Pin's production Ctrl+C shortcut from a neutral key state and releases both keys.
+fn inject_ctrl_c(expected: *mut c_void) -> io::Result<NativeWindow> {
+    let foreground = guard_foreground(expected)?;
+    ensure_input_keys_released(&[(VK_C, "C"), (VK_CONTROL, "Control")])?;
+    let inputs = [
+        keyboard_input(VK_CONTROL, false),
+        keyboard_input(VK_C, false),
+        keyboard_input(VK_C, true),
+        keyboard_input(VK_CONTROL, true),
+    ];
+    let cleanup = [keyboard_input(VK_C, true), keyboard_input(VK_CONTROL, true)];
+    send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    wait_for_input_keys_released(
+        &[(VK_C, "C"), (VK_CONTROL, "Control")],
         Duration::from_millis(250),
     )?;
     Ok(foreground)
@@ -9729,6 +9971,12 @@ fn inject_mouse_drag(
     capture_bounds: PhysicalRect,
 ) -> io::Result<InjectedDrag> {
     let foreground = guard_foreground(expected)?;
+    if left_button_held() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "left mouse button is already held; selection drag was aborted",
+        ));
+    }
     let desktop = virtual_desktop()?;
     send_input_batch(
         expected,
@@ -9756,10 +10004,15 @@ fn inject_mouse_drag(
         guard_current_pointer_target(expected)
     })();
     // Button-up is cleanup as well as the intended action, so it must not depend on foreground.
-    let release_result = send_input_unchecked(&[mouse_button_input(MOUSEEVENTF_LEFTUP)]);
+    let release_result = release_mouse_button_unchecked();
     let actual_end = match (movement_result, release_result) {
         (Ok(point), Ok(())) => point,
-        (Err(error), _) => return Err(error),
+        (Err(error), Ok(())) => return Err(error),
+        (Err(error), Err(release_error)) => {
+            return Err(io::Error::other(format!(
+                "selection drag failed: {error}; mouse cleanup failed: {release_error}"
+            )));
+        }
         (Ok(_), Err(error)) => return Err(error),
     };
     let screen_selection = PhysicalRect::new(actual_start, actual_end);
@@ -9781,6 +10034,12 @@ fn inject_native_window_drag(
     end: PhysicalPoint,
 ) -> io::Result<InjectedPointerDrag> {
     let foreground = guard_foreground(expected)?;
+    if left_button_held() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "left mouse button is already held; Pin drag was aborted",
+        ));
+    }
     let desktop = virtual_desktop()?;
     send_input_batch(
         expected,
@@ -9810,10 +10069,15 @@ fn inject_native_window_drag(
         }
         guard_current_pointer_target(expected)
     })();
-    let release_result = send_input_unchecked(&[mouse_button_input(MOUSEEVENTF_LEFTUP)]);
+    let release_result = release_mouse_button_unchecked();
     let actual_end = match (movement_result, release_result) {
         (Ok(point), Ok(())) => point,
-        (Err(error), _) => return Err(error),
+        (Err(error), Ok(())) => return Err(error),
+        (Err(error), Err(release_error)) => {
+            return Err(io::Error::other(format!(
+                "Pin drag failed: {error}; mouse cleanup failed: {release_error}"
+            )));
+        }
         (Ok(_), Err(error)) => return Err(error),
     };
     Ok(InjectedPointerDrag {
@@ -10138,6 +10402,12 @@ mod tests {
         );
         assert!(is_foreground_change_abort(&foreground_race));
 
+        let no_foreground = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            super::NO_FOREGROUND_INPUT_ERROR,
+        );
+        assert!(is_foreground_change_abort(&no_foreground));
+
         let different_permission_error = std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "acceptance window belongs to another process",
@@ -10334,15 +10604,20 @@ mod tests {
                 .unwrap();
         assert_eq!(toolbar.copy_trigger, CopyTriggerOption::Toolbar);
 
+        let pins = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "pins-coexist",
+            "--allow-system-clipboard",
+        ]))
+        .unwrap();
+        assert_eq!(pins.capture_scenario, CaptureScenarioOption::PinsCoexist);
+        assert!(pins.allow_system_clipboard);
+
         for forbidden in [
             vec![
                 "--capture-scenario",
                 "narrow-edge",
-                "--allow-system-clipboard",
-            ],
-            vec![
-                "--capture-scenario",
-                "pins-coexist",
                 "--allow-system-clipboard",
             ],
             vec![
@@ -10448,6 +10723,7 @@ mod tests {
             session_state: "completed".to_owned(),
             selection: Some(selection),
             selection_copy_active: false,
+            clipboard_write_active: false,
             manual_scroll_state: "idle".to_owned(),
             manual_scroll_frame_count: 0,
             manual_scroll_can_finish: false,
@@ -10480,6 +10756,10 @@ mod tests {
             &copy_complete,
             selection
         ));
+
+        let mut clipboard_pending = clean.clone();
+        clipboard_pending.clipboard_write_active = true;
+        assert!(!scroll_roundtrip_cleanup_complete(&clipboard_pending));
         copy_complete.selection_copy_active = false;
         copy_complete.overlay_count = 0;
         assert!(!copy_trigger_acknowledged(&copy_complete, selection));

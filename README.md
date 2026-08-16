@@ -339,6 +339,15 @@ clipboard:
 cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --output-dir target/overlay-interaction-pins-coexist-acceptance
 ```
 
+如需在三 Pin 共存流程中验收真实的 Pin 系统剪贴板出口，额外显式加入
+`--allow-system-clipboard`。这会用首张 Pin 的 `Ctrl+C` 替换当前系统剪贴板，只应在可丢弃的
+Windows 会话中运行；报告会在 `pins_coexist.system_clipboard_copy` 下记录剪贴板序号、PNG/CF_DIB
+格式、消费者读回结果和逐像素校验。省略该参数时仍使用隔离的进程内路径，不改写用户剪贴板：
+
+```powershell
+cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --allow-system-clipboard --output-dir target/overlay-interaction-pins-system-clipboard-acceptance
+```
+
 Use the opt-in selection-transform scenario to perform real committed-selection gestures in one
 overlay: move from the selection interior, resize the bottom-right corner, resize with Shift to
 preserve the aspect ratio, and resize with Alt around the original center. It requires one

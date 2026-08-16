@@ -991,6 +991,7 @@ impl FlashShotApp {
                                 // Copy, never an in-flight mouse-move preview awaiting mouse-up.
                                 selection: this.session.selection(),
                                 selection_copy_active: this.selection_copy_is_active(),
+                                clipboard_write_active: this.clipboard_write_lease.is_some(),
                                 manual_scroll_state: manual_scroll_state_label(
                                     this.manual_scroll.state(),
                                 )
