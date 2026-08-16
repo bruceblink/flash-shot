@@ -12,6 +12,7 @@ name = "flash_shot_infra_windows"
 path = "src/lib.rs"
 
 [dependencies]
+async-channel.workspace = true
 flash-shot-domain.workspace = true
 flash-shot-image.workspace = true
 log.workspace = true
