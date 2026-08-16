@@ -20,3 +20,4 @@ log.workspace = true
 [target.'cfg(windows)'.dependencies]
 arboard.workspace = true
 windows-sys.workspace = true
+winreg.workspace = true

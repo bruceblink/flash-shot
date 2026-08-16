@@ -1658,6 +1658,7 @@ dependencies = [
  "flash-shot-image",
  "log",
  "windows-sys 0.61.2",
+ "winreg",
 ]
 
 [[package]]
