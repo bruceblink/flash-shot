@@ -2,9 +2,9 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $fixture = Join-Path $root "target\verify-github-release-fixture"
-$packageRoot = Join-Path $fixture "FlashShot-0.1.1-windows-x86_64"
-$archive = Join-Path $fixture "FlashShot-0.1.1-windows-x86_64.zip"
-$installer = Join-Path $fixture "FlashShot-0.1.1-windows-setup.exe"
+$packageRoot = Join-Path $fixture "FlashShot-0.1.2-windows-x86_64"
+$archive = Join-Path $fixture "FlashShot-0.1.2-windows-x86_64.zip"
+$installer = Join-Path $fixture "FlashShot-0.1.2-windows-setup.exe"
 $mockDirectory = Join-Path $fixture "mock-bin"
 $mockGh = Join-Path $mockDirectory "gh.cmd"
 $verify = Join-Path $PSScriptRoot "verify-github-release.ps1"
@@ -25,7 +25,7 @@ function Assert-GithubVerificationFails([string[]]$AssetNames, [string]$Expected
     $failed = $false
     $failureMessage = ""
     try {
-        & $verify -Tag "v0.1.1" -Repository "fixture/flash-shot" -RequireDraft -SkipStartupSmoke
+        & $verify -Tag "v0.1.2" -Repository "fixture/flash-shot" -RequireDraft -SkipStartupSmoke
         $failed = $LASTEXITCODE -ne 0
     }
     catch {
@@ -46,7 +46,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $packageRoot "LICENSE.txt"), "fixture license")
     [IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), "fixture readme")
     [IO.File]::WriteAllText((Join-Path $packageRoot "README_EN.md"), "fixture English readme")
-    [IO.File]::WriteAllText((Join-Path $packageRoot "PORTABLE.txt"), "Version: 0.1.1")
+    [IO.File]::WriteAllText((Join-Path $packageRoot "PORTABLE.txt"), "Version: 0.1.2")
     Compress-Archive -LiteralPath $packageRoot -DestinationPath $archive
     [IO.File]::WriteAllText($installer, "fixture installer")
 
@@ -60,7 +60,7 @@ try {
     [ordered]@{
         schema_version = 1
         product = "Flash Shot"
-        version = "0.1.1"
+        version = "0.1.2"
         platform = "windows"
         assets = $records
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $fixture "release-manifest.json") -Encoding ascii
@@ -90,8 +90,8 @@ exit /b 1
 
     $env:PATH = "$mockDirectory;$originalPath"
     $env:FLASH_SHOT_TEST_RELEASE_ASSETS = $fixture
-    $portableName = "FlashShot-0.1.1-windows-x86_64.zip"
-    $installerName = "FlashShot-0.1.1-windows-setup.exe"
+    $portableName = "FlashShot-0.1.2-windows-x86_64.zip"
+    $installerName = "FlashShot-0.1.2-windows-setup.exe"
     $manifestName = "release-manifest.json"
     $validAssets = @(
         $portableName,
@@ -101,7 +101,7 @@ exit /b 1
         $manifestName
     )
     $env:FLASH_SHOT_TEST_RELEASE_VIEW = New-ReleaseViewJson $true $validAssets
-    & $verify -Tag "v0.1.1" -Repository "fixture/flash-shot" -RequireDraft -SkipStartupSmoke
+    & $verify -Tag "v0.1.2" -Repository "fixture/flash-shot" -RequireDraft -SkipStartupSmoke
     if ($LASTEXITCODE -ne 0) {
         throw "Draft GitHub release verification fixture was rejected."
     }
@@ -109,7 +109,7 @@ exit /b 1
     $failed = $false
     $failureMessage = ""
     try {
-        & $verify -Tag "v0.1.1" -Repository "fixture/flash-shot" `
+        & $verify -Tag "v0.1.2" -Repository "fixture/flash-shot" `
             -RequireDraft -SkipStartupSmoke -RequireSignature
     }
     catch {
@@ -133,8 +133,8 @@ exit /b 1
     Assert-GithubVerificationFails @(
         $portableName,
         "$portableName.sha256",
-        "FlashShot-0.1.1-windows-arm64.zip",
-        "FlashShot-0.1.1-windows-arm64.zip.sha256",
+        "FlashShot-0.1.2-windows-arm64.zip",
+        "FlashShot-0.1.2-windows-arm64.zip.sha256",
         $installerName,
         "$installerName.sha256",
         $manifestName
@@ -143,7 +143,7 @@ exit /b 1
     $env:FLASH_SHOT_TEST_RELEASE_VIEW = New-ReleaseViewJson $false $validAssets
     $failed = $false
     try {
-        & $verify -Tag "v0.1.1" -Repository "fixture/flash-shot" -RequireDraft -SkipStartupSmoke
+        & $verify -Tag "v0.1.2" -Repository "fixture/flash-shot" -RequireDraft -SkipStartupSmoke
         $failed = $LASTEXITCODE -ne 0
     }
     catch {
@@ -153,7 +153,7 @@ exit /b 1
         throw "GitHub release verification accepted a published release when a draft was required."
     }
 
-    & $verify -Tag "v0.1.1" -Repository "fixture/flash-shot" -SkipStartupSmoke
+    & $verify -Tag "v0.1.2" -Repository "fixture/flash-shot" -SkipStartupSmoke
     if ($LASTEXITCODE -ne 0) {
         throw "Published GitHub release verification was rejected without -RequireDraft."
     }

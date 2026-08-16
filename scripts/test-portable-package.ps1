@@ -2,8 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $fixture = Join-Path $root "target\portable-package-fixture"
-$archive = Join-Path $fixture "FlashShot-0.1.1-windows-x86_64.zip"
-$staging = Join-Path $fixture "FlashShot-0.1.1-windows-x86_64"
+$archive = Join-Path $fixture "FlashShot-0.1.2-windows-x86_64.zip"
+$staging = Join-Path $fixture "FlashShot-0.1.2-windows-x86_64"
 $verify = Join-Path $PSScriptRoot "verify-portable-package.ps1"
 try {
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
@@ -11,7 +11,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $staging "LICENSE.txt"), "fixture license")
     [IO.File]::WriteAllText((Join-Path $staging "README.md"), "fixture readme")
     [IO.File]::WriteAllText((Join-Path $staging "README_EN.md"), "fixture English readme")
-    [IO.File]::WriteAllText((Join-Path $staging "PORTABLE.txt"), "Version: 0.1.1")
+    [IO.File]::WriteAllText((Join-Path $staging "PORTABLE.txt"), "Version: 0.1.2")
     Compress-Archive -LiteralPath $staging -DestinationPath $archive
     $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii

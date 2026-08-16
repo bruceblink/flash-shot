@@ -12,13 +12,13 @@ The output is written to `dist\FlashShot-<version>-windows-<architecture>.zip` w
 The packaging script verifies the SHA-256 sidecar and this exact archive layout before reporting success. Re-check an existing archive independently with:
 
 ```powershell
-.\scripts\verify-portable-package.ps1 -ArchivePath "dist\FlashShot-0.1.1-windows-x86_64.zip"
+.\scripts\verify-portable-package.ps1 -ArchivePath "dist\FlashShot-0.1.2-windows-x86_64.zip"
 ```
 
 Before distributing a portable ZIP, run its release executable from a fresh temporary extraction and require it to stay alive for five seconds:
 
 ```powershell
-.\scripts\smoke-portable-startup.ps1 -ArchivePath "dist\FlashShot-0.1.1-windows-x86_64.zip"
+.\scripts\smoke-portable-startup.ps1 -ArchivePath "dist\FlashShot-0.1.2-windows-x86_64.zip"
 ```
 
 The smoke script sets `FLASH_SHOT_PROFILE_DIR` to a disposable directory and verifies that config,
@@ -54,7 +54,7 @@ the default per-machine installation policy. The smoke script uses Inno Setup's 
 current-user command-line override and installs only into a unique temporary directory:
 
 ```powershell
-.\scripts\smoke-installer.ps1 -InstallerPath "dist\FlashShot-0.1.1-windows-setup.exe"
+.\scripts\smoke-installer.ps1 -InstallerPath "dist\FlashShot-0.1.2-windows-setup.exe"
 ```
 
 Pass `-RequireSignature` on a release machine so the setup and the executable read back from the
@@ -126,11 +126,11 @@ The application makes no update network request until the user clicks the button
 
 ## GitHub release workflow
 
-The repository packages a Windows release when a `v<major>.<minor>.<patch>` tag is pushed, or when the `Release` workflow is manually run for an existing tag. The tag must exactly match the Cargo package version; for example, `Cargo.toml` version `0.1.1` requires tag `v0.1.1`:
+The repository packages a Windows release when a `v<major>.<minor>.<patch>` tag is pushed, or when the `Release` workflow is manually run for an existing tag. The tag must exactly match the Cargo package version; for example, `Cargo.toml` version `0.1.2` requires tag `v0.1.2`:
 
 ```powershell
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 No signing secrets are required for the current GitHub workflow. Flash Shot is open source, so the
@@ -155,8 +155,19 @@ downloading and verifying the uploaded assets.
 Before publishing a draft, download and verify every uploaded asset, its SHA-256 sidecar, and `release-manifest.json`; the command also performs the portable startup preflight:
 
 ```powershell
-$tag = "v0.1.1" # Replace with the actual new draft tag.
+$tag = "v0.1.2" # Replace with the actual new draft tag.
 .\scripts\verify-github-release.ps1 -Tag $tag -RequireDraft
 ```
 
-With `-RequireDraft`, it also rejects a release that has already been published, keeping this check as an explicit pre-publish gate. It deletes its temporary download directory after a successful or failed check. Pass `-OutputDirectory target\release-v0.1.1` to retain the downloaded assets for manual inspection. The GitHub runner proves the unsigned setup, install, startup, and uninstall path on its fresh account; the operator still manually checks screenshot capture, annotation, save/copy, and the FFmpeg recording path before publishing the draft.
+With `-RequireDraft`, it also rejects a release that has already been published, keeping this check as an explicit pre-publish gate. It deletes its temporary download directory after a successful or failed check. Pass `-OutputDirectory target\release-v0.1.2` to retain the downloaded assets for manual inspection. The GitHub runner proves the unsigned setup, install, startup, and uninstall path on its fresh account; the operator still manually checks screenshot capture, annotation, save/copy, and the FFmpeg recording path before publishing the draft.
+
+After those checks pass, publish the verified draft, explicitly make it the latest release, and then
+repeat the downloaded-asset verification without the draft guard:
+
+```powershell
+gh release edit $tag --draft=false --latest
+.\scripts\verify-github-release.ps1 -Tag $tag
+```
+
+Publishing changes only the GitHub Release state. It must not move the existing tag or regenerate assets
+from a different commit.

@@ -1590,7 +1590,7 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flash-shot"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flash-shot-app",
  "log",
@@ -1600,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "flash-shot-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-channel",
  "directories",
@@ -1625,7 +1625,7 @@ dependencies = [
 
 [[package]]
 name = "flash-shot-domain"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "flash-shot-image"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flash-shot-domain",
  "image",
@@ -1647,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "flash-shot-infra-windows"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arboard",
  "async-channel",
