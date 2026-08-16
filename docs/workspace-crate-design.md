@@ -10,7 +10,7 @@ Updated: 2026-08-16
 | Domain crate | `flash-shot-domain` | Owns screenshot product value types, geometry, selection, capture-session state, and annotation documents. | A GPUI view, a Windows API wrapper, or an image capture implementation. |
 | Image crate | `flash-shot-image` | Owns immutable capture frames, physical-pixel sampling, annotation composition, cropping, QR decoding, and image encoding. | A Windows capture backend, a GPUI view, or a second application entry point. |
 | Application crate | `flash-shot-app` | Owns use cases, persistent product policy, and interfaces consumed by UI and infrastructure. | A Windows service implementation or a GPUI entity. |
-| Windows infrastructure crate | `flash-shot-infra-windows` | Implements Windows capture, clipboard, shortcuts, tray, inspection, process, and file-system boundaries. | The application composition root or a reusable domain model. |
+| Windows infrastructure crate | `flash-shot-infra-windows` | Implements Windows capture, clipboard, shortcuts, tray, inspection, process, file-system, cursor, and assisted wheel-input boundaries. | The application composition root or a reusable domain model. |
 | UI crate | `flash-shot-ui` | Owns GPUI state, overlays, Pin windows, settings views, and presentation-only interaction code. | The place where Windows services are constructed. |
 | Acceptance crate | `flash-shot-acceptance` | Provides opt-in native acceptance and stress runners as library code called by the main executable. | An independently published or user-facing executable. |
 | Binary crate | `flash-shot` package in `crates/flash-shot-bin` | Composes concrete services, starts the application, and embeds Windows resources. | A home for domain rules, use cases, or alternate command-line programs. |
@@ -94,10 +94,11 @@ Validation: existing unit and golden-image tests remain in their owning crate; s
 
 The first infrastructure slices are complete: display enumeration, virtual desktop bounds, capture backends,
 virtual desktop composition, global shortcut registration, tray event/menu handling, clipboard image/text
-ownership, per-user auto-start state, directory opening, and process-tree pause/cleanup now live in
-`flash-shot-infra-windows`. `flash-shot-app::platform` keeps compatibility exports while remaining file-system
-implementations stay in the application crate until their contracts are isolated. Keep shared traits and product errors in
-`flash-shot-app` or `flash-shot-domain`, depending on whether they represent a use-case contract or a value type.
+ownership, per-user auto-start state, directory opening, process-tree pause/cleanup, window inspection and
+visibility, cursor positioning, and assisted wheel input now live in `flash-shot-infra-windows`. Every module in
+`flash-shot-app::platform` is now a compatibility export. System integrations that remain embedded in application
+use cases stay there until their contracts are isolated. Keep shared traits and product errors in `flash-shot-app` or
+`flash-shot-domain`, depending on whether they represent a use-case contract or a value type.
 
 Validation: infrastructure contract tests, existing Windows-only tests, and release acceptance scripts must remain green. No test may use a production process merely because a trait moved packages.
 

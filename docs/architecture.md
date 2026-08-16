@@ -7,8 +7,8 @@
 | 工作区根目录 | Workspace Root | 虚拟 Cargo workspace，统一锁定依赖、默认成员和仓库级检查 | 不是可运行包或第二个二进制入口 |
 | 领域库 | Domain Crate / `flash-shot-domain` | 几何、选区、会话和标注文档等纯产品值与状态机 | 不是 GPUI 界面或 Windows API 实现 |
 | 图像库 | Image Crate / `flash-shot-image` | 不可变截图帧、像素坐标、标注合成、裁切、二维码识别和图像编码 | 不是 Windows 捕获设备或 GPUI 视图 |
-| Windows 基础设施库 | Windows Infrastructure Crate / `flash-shot-infra-windows` | 显示器枚举、虚拟桌面边界、Windows 屏幕捕获、全局快捷键、托盘事件、剪贴板、自启动、目录打开、进程生命周期和窗口控制实现；后续承载其他原生服务 | 不是应用用例、GPUI 界面或第二个程序入口 |
-| 应用库 | Application Crate / `flash-shot-app` | 当前承载 GPUI 应用、用例、平台适配与验收库模块；后续再按已批准设计细分 | 不是 Cargo 应用入口 |
+| Windows 基础设施库 | Windows Infrastructure Crate / `flash-shot-infra-windows` | 显示器枚举、虚拟桌面边界、Windows 屏幕捕获、全局快捷键、托盘事件、剪贴板、自启动、目录打开、进程生命周期、窗口控制、光标定位和辅助滚轮输入实现 | 不是应用用例、GPUI 界面或第二个程序入口 |
+| 应用库 | Application Crate / `flash-shot-app` | 当前承载 GPUI 应用、用例、基础设施装配、兼容导出与验收库模块；后续再按已批准设计细分 | 不是 Cargo 应用入口或 Windows 服务实现库 |
 | 应用入口 | Application Entry | Cargo 唯一的 `flash-shot` 二进制目标，负责启动桌面应用 | 不是压力测试或验收命令集合 |
 | 开发工具模块 | Development Tool Modules / `dev-tools` | 仅在显式启用特性时编译的库内压力测试与验收模块 | 不是发布包中的独立 EXE，也不是普通用户入口 |
 | 开发工具调度脚本 | Development Tool Runner | `scripts/run-dev-tool.ps1`，在隔离构建目录中选择并运行一个开发工具模块 | 不改变普通 `cargo run`，也不加入生产启动参数 |
@@ -56,11 +56,11 @@ Cargo.toml                                  虚拟 workspace；默认只选择 f
 crates/flash-shot-domain/src/domain/        几何、选区、会话、标注和路线模型
 crates/flash-shot-image/src/frame.rs        不可变 BGRA 帧、像素格式和物理坐标采样
 crates/flash-shot-image/src/image.rs        裁切、滤镜、标注合成、二维码和 PNG/JPEG/WebP 编码
-crates/flash-shot-infra-windows/src/        显示器枚举、屏幕捕获、全局快捷键、托盘、剪贴板、自启动、目录、进程和窗口控制
+crates/flash-shot-infra-windows/src/        显示器、捕获、快捷键、托盘、剪贴板、自启动、目录、进程、窗口、光标和滚轮输入
 crates/flash-shot-app/src/app.rs            GPUI 应用装配、托盘入口与生命周期
 crates/flash-shot-app/src/app/              覆盖层、Pin、历史、设置和交互状态
 crates/flash-shot-app/src/app/workflow/     截图、导出、滚动、识别、录屏和设置用例
-crates/flash-shot-app/src/platform/         剪贴板、快捷键、托盘和窗口服务的兼容导出与剩余平台边界
+crates/flash-shot-app/src/platform/         Windows 基础设施库的兼容导出，不承载原生实现
 crates/flash-shot-app/src/image.rs          `flash-shot-image` 的兼容导出，不承载图像实现
 crates/flash-shot-app/src/dev_tools/        可选的 Release 验收、资源压力和报告库模块
 crates/flash-shot-bin/src/main.rs           唯一 `flash-shot` 应用入口
@@ -76,8 +76,8 @@ flash-shot-bin -> flash-shot-app
                        -> flash-shot-domain
 ```
 
-领域库不得依赖 GPUI、HWND、COM 对象、FFmpeg 进程或具体 OCR 运行时。应用库内尚未提取的
-平台适配继续由现有测试和原生验收保护，不能被误称为独立的 Windows 基础设施 crate。
+领域库不得依赖 GPUI、HWND、COM 对象、FFmpeg 进程或具体 OCR 运行时。应用库内仍与具体用例绑定的
+系统集成继续由现有测试和原生验收保护；只有形成稳定服务边界后才迁移到 Windows 基础设施库。
 
 ## 4. 截图管线
 
@@ -103,8 +103,8 @@ flash-shot-bin -> flash-shot-app
 
 ## 6. 平台边界
 
-平台职责由下列接口概念表达，当前具体实现位于 `crates/flash-shot-app/src/platform/`；它们会在接口
-边界稳定后迁移到 Windows 基础设施 crate，而不是按单个 API 拆出 crate：
+平台职责由下列接口概念表达。稳定的原生实现统一位于 `flash-shot-infra-windows`，
+`flash-shot-app::platform` 只提供迁移期兼容导出；接口仍由使用它的应用用例或领域模型定义：
 
 - `CaptureBackend`
 - `DisplayProvider`

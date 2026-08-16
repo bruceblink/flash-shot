@@ -56,8 +56,8 @@ workspace 根目录将 `crates/flash-shot-bin` 中的 `flash-shot` 包设为唯�
 额外 EXE，也不会改变普通 `cargo run` 的启动行为。
 
 源码按职责拆成小型 workspace crate：`flash-shot-domain` 保存纯领域模型，`flash-shot-image` 保存不可变
-截图帧与图像处理，`flash-shot-infra-windows` 负责显示器枚举、Windows 屏幕捕获、全局快捷键、托盘、剪贴板、自启动、目录打开、进程生命周期和窗口控制，`flash-shot-app` 负责
-应用用例和 GPUI/剩余平台装配，`crates/flash-shot-bin` 是唯一启动入口。
+截图帧与图像处理，`flash-shot-infra-windows` 负责显示器枚举、Windows 屏幕捕获、全局快捷键、托盘、剪贴板、自启动、目录打开、进程生命周期、窗口控制、光标定位和辅助滚轮输入，`flash-shot-app` 负责
+应用用例、GPUI 和基础设施装配，`crates/flash-shot-bin` 是唯一启动入口。
 除该入口外，其余 crate 都是库，不会被 `cargo run` 当作额外程序启动。
 
 首次启动时，界面语言会读取 Windows 的首选 UI 语言；目前支持的简体中文区域会自动使用简体中文，
