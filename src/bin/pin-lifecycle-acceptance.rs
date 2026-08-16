@@ -19,16 +19,21 @@ use flash_shot::{
 const DEFAULT_OUTPUT_DIR: &str = "target/pin-lifecycle-acceptance";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_SETTLE_DELAY: Duration = Duration::from_millis(350);
+const DEFAULT_SOAK_DURATION: Duration = Duration::ZERO;
 const MIN_TIMEOUT: Duration = Duration::from_secs(3);
-const MAX_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(3);
+const MIN_SOAK_DURATION: Duration = Duration::from_secs(10);
+const MAX_SOAK_DURATION: Duration = Duration::from_secs(10 * 60);
+const SOAK_WATCHDOG_OVERHEAD: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Eq, PartialEq)]
 struct Options {
     output_dir: PathBuf,
     timeout: Duration,
     settle_delay: Duration,
+    soak_duration: Duration,
 }
 
 impl Options {
@@ -42,11 +47,13 @@ impl Options {
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             timeout: DEFAULT_TIMEOUT,
             settle_delay: DEFAULT_SETTLE_DELAY,
+            soak_duration: DEFAULT_SOAK_DURATION,
         };
         let mut arguments = arguments.into_iter();
         let mut output_seen = false;
         let mut timeout_seen = false;
         let mut settle_seen = false;
+        let mut soak_seen = false;
         while let Some(argument) = arguments.next() {
             let argument = argument
                 .into_string()
@@ -76,7 +83,16 @@ impl Options {
                     )?;
                     settle_seen = true;
                 }
-                "--output-dir" | "--timeout-ms" | "--settle-ms" => {
+                "--soak-ms" if !soak_seen => {
+                    options.soak_duration = parse_duration(
+                        arguments.next(),
+                        "soak duration",
+                        MIN_SOAK_DURATION,
+                        MAX_SOAK_DURATION,
+                    )?;
+                    soak_seen = true;
+                }
+                "--output-dir" | "--timeout-ms" | "--settle-ms" | "--soak-ms" => {
                     return Err(format!("{argument} may only be supplied once"));
                 }
                 _ => return Err(usage()),
@@ -84,6 +100,14 @@ impl Options {
         }
         if options.output_dir.as_os_str().is_empty() {
             return Err("output directory must not be empty".to_owned());
+        }
+        if options.soak_duration > Duration::ZERO
+            && options.timeout < options.soak_duration + SOAK_WATCHDOG_OVERHEAD
+        {
+            return Err(format!(
+                "timeout must allow at least {} milliseconds beyond the soak duration",
+                SOAK_WATCHDOG_OVERHEAD.as_millis()
+            ));
         }
         Ok(options)
     }
@@ -112,7 +136,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: pin-lifecycle-acceptance [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-3000>]".to_owned()
+    "usage: pin-lifecycle-acceptance [--output-dir <path>] [--timeout-ms <3000-900000>] [--settle-ms <100-3000>] [--soak-ms <10000-600000>]".to_owned()
 }
 
 fn main() {
@@ -185,6 +209,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 display,
                 timeout: options.timeout,
                 settle_delay: options.settle_delay,
+                soak_duration: options.soak_duration,
             },
         )
     }
@@ -204,19 +229,23 @@ mod tests {
         let defaults = Options::parse_from(arguments(&[])).unwrap();
         assert_eq!(defaults.output_dir, PathBuf::from(DEFAULT_OUTPUT_DIR));
         assert_eq!(defaults.timeout, Duration::from_secs(15));
+        assert_eq!(defaults.soak_duration, Duration::ZERO);
 
         let options = Options::parse_from(arguments(&[
             "--output-dir",
             "evidence",
             "--timeout-ms",
-            "12000",
+            "20000",
             "--settle-ms",
             "500",
+            "--soak-ms",
+            "10000",
         ]))
         .unwrap();
         assert_eq!(options.output_dir, PathBuf::from("evidence"));
-        assert_eq!(options.timeout, Duration::from_secs(12));
+        assert_eq!(options.timeout, Duration::from_secs(20));
         assert_eq!(options.settle_delay, Duration::from_millis(500));
+        assert_eq!(options.soak_duration, Duration::from_secs(10));
     }
 
     #[test]
@@ -226,5 +255,10 @@ mod tests {
         );
         assert!(Options::parse_from(arguments(&["--timeout-ms", "2999"])).is_err());
         assert!(Options::parse_from(arguments(&["--settle-ms", "3001"])).is_err());
+        assert!(Options::parse_from(arguments(&["--soak-ms", "9999"])).is_err());
+        assert!(
+            Options::parse_from(arguments(&["--timeout-ms", "19000", "--soak-ms", "10000",]))
+                .is_err()
+        );
     }
 }

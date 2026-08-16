@@ -116,6 +116,14 @@ cargo run --release --bin windows-acceptance-probe -- --output target/windows-ac
 .\scripts\check-pin-lifecycle-acceptance.ps1
 ```
 
+需要持续观察同一组三个 Pin 时，可显式运行 60 秒 soak。它会轮流执行生产 Solo/Show all，
+持续校验窗口注册表、不可变源帧、原生边界、前台焦点和 Capture preflight，并记录工作集与私有
+提交量；该模式仍不注入全局输入或写入系统剪贴板：
+
+```powershell
+.\scripts\check-pin-lifecycle-acceptance.ps1 -SoakMilliseconds 60000 -TimeoutMilliseconds 90000 -SettleMilliseconds 500 -OutputDirectory target\pin-lifecycle-soak-60s
+```
+
 ### 文档
 
 - [产品需求](docs/requirements.md)
@@ -377,6 +385,15 @@ bounds the complete native lifecycle with a watchdog:
 
 ```powershell
 .\scripts\check-pin-lifecycle-acceptance.ps1
+```
+
+For a sustained three-Pin observation, opt into a 60-second soak. It rotates the production Solo
+and Show all paths while continuously checking the registry, immutable source frames, native
+bounds, foreground focus, and Capture preflight, and records working-set/private-commit samples.
+It still injects no global input and does not write the system clipboard:
+
+```powershell
+.\scripts\check-pin-lifecycle-acceptance.ps1 -SoakMilliseconds 60000 -TimeoutMilliseconds 90000 -SettleMilliseconds 500 -OutputDirectory target\pin-lifecycle-soak-60s
 ```
 
 ### Documentation

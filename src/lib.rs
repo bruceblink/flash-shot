@@ -417,6 +417,7 @@ pub struct PinLifecycleAcceptanceOptions {
     pub display: crate::platform::display::DisplayInfo,
     pub timeout: Duration,
     pub settle_delay: Duration,
+    pub soak_duration: Duration,
 }
 
 /// Runs three real Pin windows without the production tray, hotkeys, or single-instance mutex.

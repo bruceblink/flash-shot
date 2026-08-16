@@ -5,6 +5,7 @@ mod windows {
     use std::{
         ffi::c_void,
         fs, io,
+        mem::size_of,
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
         time::{Duration, Instant},
@@ -16,12 +17,14 @@ mod windows {
     };
     use windows_sys::Win32::{
         Foundation::RECT,
-        System::Threading::GetCurrentProcessId,
+        System::{
+            ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS},
+            Threading::{GetCurrentProcess, GetCurrentProcessId},
+        },
         UI::WindowsAndMessaging::{
             GWL_EXSTYLE, GetForegroundWindow, GetLayeredWindowAttributes, GetWindowLongPtrW,
             GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible, LWA_ALPHA,
-            SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowPos,
-            WS_EX_LAYERED,
+            SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos, WS_EX_LAYERED,
         },
     };
 
@@ -71,6 +74,7 @@ mod windows {
         registered_windows_after_show_all: Option<usize>,
         live_windows_after_close: Option<usize>,
         capture_preflight_ready: Option<bool>,
+        soak: Option<PinSoakReport>,
         screenshots: Vec<String>,
         error: Option<String>,
     }
@@ -125,6 +129,49 @@ mod windows {
     struct VisibilityReport {
         visible: Vec<bool>,
         visible_count: usize,
+    }
+
+    #[derive(serde::Serialize)]
+    struct PinSoakReport {
+        requested_duration_ms: u128,
+        elapsed_ms: u128,
+        cycles_completed: usize,
+        registry_min: usize,
+        registry_max: usize,
+        frame_checks: usize,
+        preflight_checks: usize,
+        focus_preserved: bool,
+        working_set_start_bytes: u64,
+        working_set_end_bytes: u64,
+        working_set_peak_bytes: u64,
+        working_set_growth_bytes: i128,
+        private_commit_start_bytes: u64,
+        private_commit_end_bytes: u64,
+        private_commit_peak_bytes: u64,
+        private_commit_growth_bytes: i128,
+        samples: Vec<PinSoakSampleReport>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct PinSoakSampleReport {
+        cycle: usize,
+        elapsed_ms: u128,
+        invoking_pin_index: usize,
+        registered_windows: usize,
+        solo_visible_count: usize,
+        show_all_visible_count: usize,
+        source_frames_equal: bool,
+        bounds_valid: bool,
+        capture_preflight_ready: bool,
+        focus_preserved: bool,
+        working_set_bytes: u64,
+        private_commit_bytes: u64,
+        native_bounds: Vec<PhysicalRect>,
+    }
+
+    struct ProcessMemorySample {
+        working_set_bytes: u64,
+        private_commit_bytes: u64,
     }
 
     #[derive(Default)]
@@ -272,7 +319,7 @@ mod windows {
     impl PinLifecycleReport {
         fn new(acceptance: &PinLifecycleAcceptanceOptions) -> Self {
             Self {
-                schema_version: 3,
+                schema_version: 4,
                 test: "pin_lifecycle_acceptance",
                 status: "running".to_owned(),
                 process_id: unsafe { GetCurrentProcessId() },
@@ -297,6 +344,7 @@ mod windows {
                 registered_windows_after_show_all: None,
                 live_windows_after_close: None,
                 capture_preflight_ready: None,
+                soak: None,
                 screenshots: Vec::new(),
                 error: None,
             }
@@ -499,17 +547,7 @@ mod windows {
         }
         report.registered_windows_after_solo = Some(registered_after_solo);
 
-        focus_owned_window(native_handles[0])?;
-        cx.background_executor()
-            .timer(acceptance.settle_delay)
-            .await;
         let foreground_before_show_all = foreground_window_handle()?;
-        if foreground_before_show_all != native_handles[0] {
-            return Err(io::Error::other(format!(
-                "could not focus the invoking Pin before Show all: expected {}, found {}",
-                native_handles[0], foreground_before_show_all
-            )));
-        }
 
         handles[0]
             .update(cx, |pin, window, cx| pin.show_all_pinned_images(window, cx))
@@ -542,6 +580,37 @@ mod windows {
             )));
         }
         report.registered_windows_after_show_all = Some(registered_after_show_all);
+
+        if acceptance.soak_duration > Duration::ZERO {
+            report.soak =
+                Some(run_pin_soak(&app, &handles, &native_handles, &frames, acceptance, cx).await?);
+            for handle in &handles {
+                handle
+                    .update(cx, |pin, _, cx| pin.show_controls_for_acceptance(cx))
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+            }
+            cx.background_executor()
+                .timer(acceptance.settle_delay)
+                .await;
+            let soak_bounds = native_handles
+                .iter()
+                .map(|handle| owned_window_bounds(*handle))
+                .collect::<io::Result<Vec<_>>>()?;
+            validate_window_layout(&soak_bounds, acceptance.display.physical_bounds)?;
+            let soak_path = acceptance
+                .session_root
+                .join("screenshots/pins-soak-final.png");
+            capture_windows(
+                &soak_bounds,
+                acceptance.display.physical_bounds,
+                &soak_path,
+                cx,
+            )
+            .await?;
+            report
+                .screenshots
+                .push("screenshots/pins-soak-final.png".to_owned());
+        }
 
         handles[1]
             .update(cx, |pin, window, cx| pin.close(window, cx))
@@ -597,6 +666,188 @@ mod windows {
             .screenshots
             .push("screenshots/pins-final.png".to_owned());
         Ok(())
+    }
+
+    /// Repeats production Solo/Show all transitions while proving every Pin remains registered,
+    /// content-stable, in bounds, focus-preserving, and compatible with a new Capture request.
+    async fn run_pin_soak(
+        app: &Entity<FlashShotApp>,
+        handles: &[WindowHandle<PinnedImage>],
+        native_handles: &[isize],
+        frames: &[CaptureFrame],
+        acceptance: &PinLifecycleAcceptanceOptions,
+        cx: &mut AsyncApp,
+    ) -> io::Result<PinSoakReport> {
+        let started = Instant::now();
+        let mut samples = Vec::new();
+        let mut registry_min = PIN_COUNT;
+        let mut registry_max = PIN_COUNT;
+        let mut frame_checks = 0;
+        let mut preflight_checks = 0;
+        let baseline_memory = process_memory_sample()?;
+        let mut last_memory = ProcessMemorySample {
+            working_set_bytes: baseline_memory.working_set_bytes,
+            private_commit_bytes: baseline_memory.private_commit_bytes,
+        };
+        let mut working_set_peak_bytes = baseline_memory.working_set_bytes;
+        let mut private_commit_peak_bytes = baseline_memory.private_commit_bytes;
+
+        while started.elapsed() < acceptance.soak_duration {
+            let cycle = samples.len() + 1;
+            let invoking_pin_index = (cycle - 1) % PIN_COUNT;
+            handles[invoking_pin_index]
+                .update(cx, |pin, window, cx| {
+                    pin.hide_other_pinned_images(window, cx)
+                })
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            cx.background_executor()
+                .timer(acceptance.settle_delay)
+                .await;
+            let solo_visibility = native_handles
+                .iter()
+                .map(|handle| owned_window_visible(*handle))
+                .collect::<io::Result<Vec<_>>>()?;
+            let solo_visible_count = solo_visibility.iter().filter(|visible| **visible).count();
+            if solo_visible_count != 1 || !solo_visibility[invoking_pin_index] {
+                return Err(io::Error::other(format!(
+                    "Pin soak cycle {cycle} Solo visibility was {solo_visibility:?}"
+                )));
+            }
+            let registered_after_solo = app.update(cx, |app, _| app.pinned_windows.len());
+            if registered_after_solo != PIN_COUNT {
+                return Err(io::Error::other(format!(
+                    "Pin soak cycle {cycle} Solo left {registered_after_solo} registered windows"
+                )));
+            }
+            let foreground_before = foreground_window_handle()?;
+
+            handles[invoking_pin_index]
+                .update(cx, |pin, window, cx| pin.show_all_pinned_images(window, cx))
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            cx.background_executor()
+                .timer(acceptance.settle_delay)
+                .await;
+            let shown_visibility = native_handles
+                .iter()
+                .map(|handle| owned_window_visible(*handle))
+                .collect::<io::Result<Vec<_>>>()?;
+            let show_all_visible_count =
+                shown_visibility.iter().filter(|visible| **visible).count();
+            if show_all_visible_count != PIN_COUNT {
+                return Err(io::Error::other(format!(
+                    "Pin soak cycle {cycle} Show all visibility was {shown_visibility:?}"
+                )));
+            }
+
+            let registered_windows = app.update(cx, |app, _| app.pinned_windows.len());
+            registry_min = registry_min.min(registered_windows);
+            registry_max = registry_max.max(registered_windows);
+            if registered_windows != PIN_COUNT {
+                return Err(io::Error::other(format!(
+                    "Pin soak cycle {cycle} left {registered_windows} registered windows"
+                )));
+            }
+            let foreground_after = foreground_window_handle()?;
+            let focus_preserved = foreground_after == foreground_before;
+            if !focus_preserved {
+                return Err(io::Error::other(format!(
+                    "Pin soak cycle {cycle} changed foreground HWND from {foreground_before} to {foreground_after}"
+                )));
+            }
+
+            let current_frames = handles
+                .iter()
+                .map(|handle| {
+                    handle
+                        .update(cx, |pin, _, _| pin.frame_for_acceptance())
+                        .map_err(|error| io::Error::other(error.to_string()))
+                })
+                .collect::<io::Result<Vec<_>>>()?;
+            let source_frames_equal = current_frames
+                .iter()
+                .zip(frames)
+                .all(|(current, expected)| frames_equal(current, expected));
+            if !source_frames_equal {
+                return Err(io::Error::other(format!(
+                    "Pin soak cycle {cycle} changed an immutable source frame"
+                )));
+            }
+            frame_checks += current_frames.len();
+
+            let native_bounds = native_handles
+                .iter()
+                .map(|handle| owned_window_bounds(*handle))
+                .collect::<io::Result<Vec<_>>>()?;
+            validate_window_layout(&native_bounds, acceptance.display.physical_bounds)?;
+            let capture_preflight_ready = app.update(cx, |app, _| app.capture_preflight_ready());
+            if !capture_preflight_ready {
+                return Err(io::Error::other(format!(
+                    "Pin soak cycle {cycle} blocked Capture preflight"
+                )));
+            }
+            preflight_checks += 1;
+            last_memory = process_memory_sample()?;
+            working_set_peak_bytes = working_set_peak_bytes.max(last_memory.working_set_bytes);
+            private_commit_peak_bytes =
+                private_commit_peak_bytes.max(last_memory.private_commit_bytes);
+            samples.push(PinSoakSampleReport {
+                cycle,
+                elapsed_ms: started.elapsed().as_millis(),
+                invoking_pin_index,
+                registered_windows,
+                solo_visible_count,
+                show_all_visible_count,
+                source_frames_equal,
+                bounds_valid: true,
+                capture_preflight_ready,
+                focus_preserved,
+                working_set_bytes: last_memory.working_set_bytes,
+                private_commit_bytes: last_memory.private_commit_bytes,
+                native_bounds,
+            });
+        }
+
+        if samples.is_empty() {
+            return Err(io::Error::other(
+                "Pin soak duration completed without a lifecycle sample",
+            ));
+        }
+        Ok(PinSoakReport {
+            requested_duration_ms: acceptance.soak_duration.as_millis(),
+            elapsed_ms: started.elapsed().as_millis(),
+            cycles_completed: samples.len(),
+            registry_min,
+            registry_max,
+            frame_checks,
+            preflight_checks,
+            focus_preserved: samples.iter().all(|sample| sample.focus_preserved),
+            working_set_start_bytes: baseline_memory.working_set_bytes,
+            working_set_end_bytes: last_memory.working_set_bytes,
+            working_set_peak_bytes,
+            working_set_growth_bytes: i128::from(last_memory.working_set_bytes)
+                - i128::from(baseline_memory.working_set_bytes),
+            private_commit_start_bytes: baseline_memory.private_commit_bytes,
+            private_commit_end_bytes: last_memory.private_commit_bytes,
+            private_commit_peak_bytes,
+            private_commit_growth_bytes: i128::from(last_memory.private_commit_bytes)
+                - i128::from(baseline_memory.private_commit_bytes),
+            samples,
+        })
+    }
+
+    /// Reads process resource counters without imposing a machine-specific pass/fail threshold.
+    fn process_memory_sample() -> io::Result<ProcessMemorySample> {
+        let mut counters = PROCESS_MEMORY_COUNTERS {
+            cb: size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            ..Default::default()
+        };
+        if unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(ProcessMemorySample {
+            working_set_bytes: counters.WorkingSetSize as u64,
+            private_commit_bytes: counters.PagefileUsage as u64,
+        })
     }
 
     struct SavedPin {
@@ -908,16 +1159,6 @@ mod windows {
             ));
         }
         Ok(window)
-    }
-
-    /// Requests focus only for a verified process-owned Pin before checking Show all behavior.
-    fn focus_owned_window(handle: isize) -> io::Result<()> {
-        let window = owned_window(handle)?;
-        if unsafe { GetForegroundWindow() } != window {
-            // SAFETY: window is a visible top-level HWND owned by this acceptance process.
-            unsafe { SetForegroundWindow(window) };
-        }
-        Ok(())
     }
 
     fn foreground_window_handle() -> io::Result<isize> {
