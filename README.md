@@ -214,27 +214,33 @@ For the required real Windows UI batch, build the Release binaries first and run
 batch wrapper in a disposable desktop session. It starts one `overlay-interaction-acceptance`
 process per warmup/sample, authorizes the production system clipboard explicitly, and stops the
 batch after any session whose cleanup cannot be proven. The default is two warmups plus 30 real
-toolbar Copy samples; `batch-report.json` contains every child report path, sample list, p50/p95,
-failures, display DPI, build path/profile, and QPC timing boundary. This command changes the
-current Windows clipboard and injects global input:
+toolbar Copy samples. Each child uses the focused `copy-only` scenario, which still opens a real
+overlay, commits a real mouse selection, invokes the requested production Copy gesture, validates
+an external consumer, and closes the editor with Escape without spending the batch on unrelated
+Save or Pin setup. `batch-report.json` contains every child report path, sample list, p50/p95,
+failures, display DPI, build path/profile, and QPC timing boundary. These commands change the
+current Windows clipboard and inject global input:
 
 ```powershell
 cargo build --release --bin overlay-interaction-acceptance --bin overlay-copy-batch
-target\release\overlay-copy-batch.exe --allow-input --allow-system-clipboard --output-dir target\overlay-copy-batch
+target\release\overlay-copy-batch.exe --allow-input --allow-system-clipboard --copy-trigger toolbar --warmup 1 --copy-iterations 30 --output-dir target\overlay-copy-batch\toolbar
+target\release\overlay-copy-batch.exe --allow-input --allow-system-clipboard --copy-trigger enter --warmup 1 --copy-iterations 30 --output-dir target\overlay-copy-batch\enter
 ```
 
 The batch report is `measurement_mode=real_ui` and `real_ui=true`. Current-source Release evidence
 contains 1 warmup plus 30/30 valid samples for both toolbar and Enter Copy, with zero failures on a
 96-DPI display:
 
-- toolbar: `target/overlay-copy-batch/current-source-toolbar-naming-20260815/session-1786734049398-20680/batch-report.json`
-  (p50 `51.077 ms`, p95 `52.3159 ms`);
-- Enter: `target/overlay-copy-batch/current-source-enter-naming-20260815/session-1786734503147-32644/batch-report.json`
-  (p50 `26.8764 ms`, p95 `28.5772 ms`).
+- toolbar: `target/overlay-copy-batch/final-58a93df-toolbar-20260816/session-1786847742458-11292/batch-report.json`
+  (p50 `27.0499 ms`, p95 `27.901 ms`, maximum `28.3013 ms`);
+- Enter: `target/overlay-copy-batch/final-58a93df-enter-20260816/session-1786847841195-14420/batch-report.json`
+  (p50 `27.4856 ms`, p95 `28.8618 ms`, maximum `29.6429 ms`).
 
 All 62 warmup/sample iterations passed the production clipboard, PNG/CF_DIB/normal-consumer pixel,
-editor-retention, explicit-Escape, and cleanup checks. Re-run both batches after source or binary
-changes; historical artifacts are not substitutes for current-source evidence. The synthetic
+editor-retention, explicit-Escape, and cleanup checks. Both reports use runner SHA-256
+`5d33d90d5f395555240d409829df5896a4eb85fa29820b179f68da03ccc22014`, matching the rebuilt
+Release executable for commit `58a93df`. Re-run both batches after source or binary changes;
+historical artifacts are not substitutes for current-source evidence. The synthetic
 `copy-performance` report must not be used as a substitute for this evidence. Use
 `--copy-trigger enter` to measure the keyboard route, or `--copy-iterations 30` to make the minimum
 sample count explicit.

@@ -164,6 +164,26 @@ toolbar 报告位于
 当前源码的 toolbar/Enter 真实 UI 30 次门禁已完成；任何 `copy-performance` 结果仍不能替代这两份真实
 键鼠端到端 p50/p95。
 
+2026-08-16 在生产批次中定位并修复了一个只会在连续发布多种 Windows 剪贴板格式时出现的问题：
+使用空 HWND 打开剪贴板后，`EmptyClipboard` 无法建立稳定 owner，某次样本的第二个
+`SetClipboardData(CF_DIB)` 因此返回 Windows 1418。生产 `SystemClipboard` 现在为每次事务创建一个
+不可见的 message-only owner HWND，在同一线程持有到 `CloseClipboard` 完成，再销毁该窗口；PNG、CF_DIB
+和文本路径共用这一所有权规则。批量 wrapper 同时改用专门的 `copy-only` 场景，只省略无关的 Save/Pin
+准备，仍保留真实全局快捷键、鼠标拖选、toolbar/Enter 输入、生产剪贴板、独立消费者、Copy 后编辑器保留、
+Escape 和零残留门禁。
+
+最终提交 `58a93df` 的 Release runner SHA-256 为
+`5d33d90d5f395555240d409829df5896a4eb85fa29820b179f68da03ccc22014`，与两份报告记录及当前磁盘
+二进制一致。toolbar 报告位于
+`target/overlay-copy-batch/final-58a93df-toolbar-20260816/session-1786847742458-11292/batch-report.json`：
+1 次预热 + 30/30 有效样本、失败 `0`、p50 `27.0499 ms`、p95 `27.901 ms`、最大值 `28.3013 ms`。
+Enter 报告位于
+`target/overlay-copy-batch/final-58a93df-enter-20260816/session-1786847841195-14420/batch-report.json`：
+1 次预热 + 30/30 有效样本、失败 `0`、p50 `27.4856 ms`、p95 `28.8618 ms`、最大值
+`29.6429 ms`。两份报告共 62 条迭代，全部为 `production_clipboard=true`、`exact_match=true`、
+`cleanup_safe=true`，显示器为 DPI 96/scale 1.0；代表性的 Copy 后原生截图也已目视确认选区、工具栏、
+成功状态和通知无重叠或残留。
+
 2026-08-12 的 Release UI 验收又通过真实输入执行了 `Ctrl+S -> Save 对话框 -> Escape -> 原选区恢复 ->
 Ctrl+S -> 保存`。报告位于
 `target/overlay-interaction-acceptance/ctrl-s-release-verified-retry/session-1786504134708-26760/report.json`；
