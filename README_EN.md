@@ -57,6 +57,11 @@ Stress and native acceptance programs remain available as opt-in `dev-tools` lib
 `scripts\run-dev-tool.ps1`; they do not add executables to release packages or alter normal
 `cargo run` startup.
 
+On first launch, the interface follows Windows' preferred UI language: supported Simplified
+Chinese regional tags use the Simplified Chinese catalog and all other languages fall back to
+English. A language selected later in Settings is persisted as the user's preference and is not
+replaced by a subsequent system-language change.
+
 Recording uses a local or bundled FFmpeg. Videos go to `Videos\Flash Shot` by default and fall back to Flash Shot's application-data directory when that folder is unavailable. Set `FLASH_SHOT_FFMPEG` and optionally `FLASH_SHOT_RECORDING_DIRECTORY` to override the executable and output directory. The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
 
 The Record page's `Video folder` control shows the active MP4 destination and lets users choose, reset, verify, or open it. A chosen folder is persisted; `FLASH_SHOT_RECORDING_DIRECTORY` remains the authoritative override for managed or portable environments. When timestamped names collide, Flash Shot appends a suffix and FFmpeg refuses to overwrite an existing MP4.

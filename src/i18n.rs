@@ -138,7 +138,7 @@ fn windows_preferred_ui_language() -> Option<String> {
     String::from_utf16(&buffer[..end]).ok()
 }
 
-/// Stable keys for the settings shell; workflow-specific strings will migrate in later slices.
+/// Stable keys for application-owned interface text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiText {
     AppName,
@@ -179,6 +179,48 @@ pub enum UiText {
     ReadySystemServicesDisabledForAcceptance,
     ReadyGlobalShortcutUnavailable,
     ReadyGlobalShortcutDisabled,
+    OverlayMark,
+    OverlayPin,
+    OverlayCopy,
+    OverlaySave,
+    OverlayMore,
+    OverlayLess,
+    OverlayCancel,
+    OverlayMarkTooltip,
+    OverlayPinTooltip,
+    OverlayCopyTooltip,
+    OverlayCopyingTooltip,
+    OverlaySaveTooltip,
+    OverlayCancelTooltip,
+    OverlayShowMoreTooltip,
+    OverlayHideMoreTooltip,
+    OverlaySaveAnnotations,
+    OverlaySaveEditable,
+    OverlayOpenAnnotations,
+    OverlayQuickSave,
+    OverlayQuickSaveTooltip,
+    OverlayScrollShot,
+    OverlayScrollShotTooltip,
+    OverlayQr,
+    OverlayQrTooltip,
+    OverlayOcr,
+    OverlayOcrTooltip,
+    OverlayCopyColor,
+    OverlayCopyColorTooltip,
+    OverlayTranslate,
+    OverlayTranslateTooltip,
+    OverlayRecordArea,
+    OverlayRecordAreaTooltip,
+    OverlayRecordWindow,
+    OverlayRecordWindowTooltip,
+    OverlayRecognizingSelection,
+    OverlayRetryOcr,
+    OverlayRetryTranslation,
+    OverlayRetryRecognitionTooltip,
+    OverlayCopyText,
+    OverlayCopyTextTooltip,
+    OverlayClearResult,
+    OverlayClearResultTooltip,
 }
 
 impl UiText {
@@ -230,6 +272,54 @@ impl UiText {
             }
             Self::ReadyGlobalShortcutUnavailable => "Ready - global shortcut unavailable",
             Self::ReadyGlobalShortcutDisabled => "Ready - global shortcut disabled",
+            Self::OverlayMark => "Mark",
+            Self::OverlayPin => "Pin",
+            Self::OverlayCopy => "Copy",
+            Self::OverlaySave => "Save",
+            Self::OverlayMore => "More",
+            Self::OverlayLess => "Less",
+            Self::OverlayCancel => "Cancel",
+            Self::OverlayMarkTooltip => "Show marking tools for this selection",
+            Self::OverlayPinTooltip => "Pin selection",
+            Self::OverlayCopyTooltip => "Copy selection to clipboard (Enter)",
+            Self::OverlayCopyingTooltip => "Copying selection in the background",
+            Self::OverlaySaveTooltip => "Save selection as a PNG (Ctrl+S)",
+            Self::OverlayCancelTooltip => "Cancel capture (Escape)",
+            Self::OverlayShowMoreTooltip => "Show more actions (Alt+M)",
+            Self::OverlayHideMoreTooltip => "Hide more actions",
+            Self::OverlaySaveAnnotations => "Save annotations",
+            Self::OverlaySaveEditable => "Save editable",
+            Self::OverlayOpenAnnotations => "Open annotations",
+            Self::OverlayQuickSave => "Quick save",
+            Self::OverlayQuickSaveTooltip => "Save the selection to the configured library",
+            Self::OverlayScrollShot => "Scroll shot",
+            Self::OverlayScrollShotTooltip => {
+                "Capture a long page by scrolling and stitching viewports"
+            }
+            Self::OverlayQr => "QR",
+            Self::OverlayQrTooltip => "Read QR codes from the selection",
+            Self::OverlayOcr => "OCR",
+            Self::OverlayOcrTooltip => "Recognize text locally with Tesseract",
+            Self::OverlayCopyColor => "Copy color",
+            Self::OverlayCopyColorTooltip => "Copy the color beneath the pointer",
+            Self::OverlayTranslate => "Translate",
+            Self::OverlayTranslateTooltip => {
+                "Recognize text, then use the configured translation service"
+            }
+            Self::OverlayRecordArea => "Record area",
+            Self::OverlayRecordAreaTooltip => "Start recording the selected area",
+            Self::OverlayRecordWindow => "Record window",
+            Self::OverlayRecordWindowTooltip => {
+                "Record the visible desktop pixels of the top-level window under this selection"
+            }
+            Self::OverlayRecognizingSelection => "Recognizing selection...",
+            Self::OverlayRetryOcr => "Retry OCR",
+            Self::OverlayRetryTranslation => "Retry translation",
+            Self::OverlayRetryRecognitionTooltip => "Try recognition again",
+            Self::OverlayCopyText => "Copy text",
+            Self::OverlayCopyTextTooltip => "Copy recognized text to the clipboard",
+            Self::OverlayClearResult => "Clear result",
+            Self::OverlayClearResultTooltip => "Clear the recognized result",
         }
     }
 
@@ -273,6 +363,48 @@ impl UiText {
             Self::ReadySystemServicesDisabledForAcceptance => "就绪 - 验收模式已禁用系统服务",
             Self::ReadyGlobalShortcutUnavailable => "就绪 - 全局快捷键不可用",
             Self::ReadyGlobalShortcutDisabled => "就绪 - 全局快捷键已禁用",
+            Self::OverlayMark => "标注",
+            Self::OverlayPin => "贴图",
+            Self::OverlayCopy => "复制",
+            Self::OverlaySave => "保存",
+            Self::OverlayMore => "更多",
+            Self::OverlayLess => "收起",
+            Self::OverlayCancel => "取消",
+            Self::OverlayMarkTooltip => "显示此选区的标注工具",
+            Self::OverlayPinTooltip => "将选区固定为贴图",
+            Self::OverlayCopyTooltip => "复制选区到剪贴板（Enter）",
+            Self::OverlayCopyingTooltip => "正在后台复制选区",
+            Self::OverlaySaveTooltip => "将选区保存为 PNG（Ctrl+S）",
+            Self::OverlayCancelTooltip => "取消截图（Escape）",
+            Self::OverlayShowMoreTooltip => "显示更多操作（Alt+M）",
+            Self::OverlayHideMoreTooltip => "隐藏更多操作",
+            Self::OverlaySaveAnnotations => "保存标注",
+            Self::OverlaySaveEditable => "保存可编辑项目",
+            Self::OverlayOpenAnnotations => "打开标注",
+            Self::OverlayQuickSave => "快速保存",
+            Self::OverlayQuickSaveTooltip => "将选区保存到已配置的图库",
+            Self::OverlayScrollShot => "长截图",
+            Self::OverlayScrollShotTooltip => "滚动并拼接多个视口以截取长页面",
+            Self::OverlayQr => "二维码",
+            Self::OverlayQrTooltip => "读取选区中的二维码",
+            Self::OverlayOcr => "文字识别",
+            Self::OverlayOcrTooltip => "使用 Tesseract 在本地识别文字",
+            Self::OverlayCopyColor => "复制颜色",
+            Self::OverlayCopyColorTooltip => "复制指针下方的颜色",
+            Self::OverlayTranslate => "翻译",
+            Self::OverlayTranslateTooltip => "识别文字后使用已配置的翻译服务",
+            Self::OverlayRecordArea => "区域录屏",
+            Self::OverlayRecordAreaTooltip => "开始录制所选区域",
+            Self::OverlayRecordWindow => "窗口录屏",
+            Self::OverlayRecordWindowTooltip => "录制选区内顶层窗口的可见桌面像素",
+            Self::OverlayRecognizingSelection => "正在识别选区...",
+            Self::OverlayRetryOcr => "重试文字识别",
+            Self::OverlayRetryTranslation => "重试翻译",
+            Self::OverlayRetryRecognitionTooltip => "再次尝试识别",
+            Self::OverlayCopyText => "复制文字",
+            Self::OverlayCopyTextTooltip => "将识别出的文字复制到剪贴板",
+            Self::OverlayClearResult => "清除结果",
+            Self::OverlayClearResultTooltip => "清除识别结果",
         }
     }
 }
@@ -313,6 +445,19 @@ mod tests {
         assert_eq!(
             Locale::SimplifiedChinese.text(UiText::CapturePageDescription),
             "开始截图或调整截图偏好。"
+        );
+        assert_eq!(Locale::SimplifiedChinese.text(UiText::OverlayMark), "标注");
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::OverlayScrollShot),
+            "长截图"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::OverlayRecordWindow),
+            "窗口录屏"
+        );
+        assert_eq!(
+            Locale::English.text(UiText::OverlayCopyTooltip),
+            "Copy selection to clipboard (Enter)"
         );
     }
 

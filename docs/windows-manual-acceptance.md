@@ -118,8 +118,9 @@ cargo test --lib
 ```
 
 `settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含 UI 语言、物理窗口边界、Windows DPI
-和缩放比例。提供 `en` 或 `zh-CN` 作为最后一个参数时，探针使用对应 UI 资源目录；省略时保持
-英文。提供最后一个 `expected-scale` 参数时，命令只有在 `scale_match` 为 `true`
+和缩放比例。提供 `en` 或 `zh-CN` 作为最后一个参数时，探针使用对应 UI 资源目录；为保持证据可
+重复，探针省略该参数时固定为英文，生产应用首次启动时则读取 Windows 首选 UI 语言。提供最后一个
+`expected-scale` 参数时，命令只有在 `scale_match` 为 `true`
 时才成功；150%/200% 验收必须保留 `scale_factor` 为 `1.5` 或 `2.0` 的对应证据。
 `windows-acceptance-probe --single-display` 会在报告中写入 `single_display_required: true`
 并在检测到多块显示器时失败；这是当前单屏开发范围的保护，不代表双屏功能已经通过验收。

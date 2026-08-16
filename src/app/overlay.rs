@@ -25,6 +25,7 @@ use crate::{
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     },
     history::ScreenshotHistory,
+    i18n::{Locale, UiText},
     performance::PerformanceRecorder,
     platform::{
         capture::{CaptureFrame, PixelFormat},
@@ -93,16 +94,14 @@ const MAGNIFIER_CELL_SIZE: f32 = 12.0;
 const MAGNIFIER_GAP: f32 = 18.0;
 
 /// Names the less-frequent actions at the exact point where users discover them.
-fn secondary_action_tooltip(action_id: &str) -> &'static str {
+fn secondary_action_tooltip(locale: Locale, action_id: &str) -> &'static str {
     match action_id {
-        "scroll" => "Capture a long page by scrolling and stitching viewports",
-        "qr" => "Read QR codes from the selection",
-        "ocr" => "Recognize text locally with Tesseract",
-        "translate" => "Recognize text, then use the configured translation service",
-        "record-area" => "Start recording the selected area",
-        "record-window" => {
-            "Record the visible desktop pixels of the top-level window under this selection"
-        }
+        "scroll" => locale.text(UiText::OverlayScrollShotTooltip),
+        "qr" => locale.text(UiText::OverlayQrTooltip),
+        "ocr" => locale.text(UiText::OverlayOcrTooltip),
+        "translate" => locale.text(UiText::OverlayTranslateTooltip),
+        "record-area" => locale.text(UiText::OverlayRecordAreaTooltip),
+        "record-window" => locale.text(UiText::OverlayRecordWindowTooltip),
         _ => "",
     }
 }
@@ -272,20 +271,24 @@ fn secondary_action_button(
 }
 
 /// Keeps the primary capture commands and their keyboard equivalents discoverable.
-fn primary_action_tooltip(action_id: &str) -> &'static str {
+fn primary_action_tooltip(locale: Locale, action_id: &str) -> &'static str {
     match action_id {
-        "draw" => "Show marking tools for this selection",
-        "copy" => "Copy selection to clipboard (Enter)",
-        "save" => "Save selection as a PNG (Ctrl+S)",
-        "cancel" => "Cancel capture (Escape)",
+        "draw" => locale.text(UiText::OverlayMarkTooltip),
+        "copy" => locale.text(UiText::OverlayCopyTooltip),
+        "save" => locale.text(UiText::OverlaySaveTooltip),
+        "cancel" => locale.text(UiText::OverlayCancelTooltip),
         _ => "",
     }
 }
 
 /// Keeps the More/Less control's element identity stable while its label follows menu state, so
 /// GPUI can retain keyboard focus when the secondary action menu is expanded or collapsed.
-fn more_actions_button_label(show_more_actions: bool) -> &'static str {
-    if show_more_actions { "Less" } else { "More" }
+fn more_actions_button_label(locale: Locale, show_more_actions: bool) -> &'static str {
+    locale.text(if show_more_actions {
+        UiText::OverlayLess
+    } else {
+        UiText::OverlayMore
+    })
 }
 
 /// Keeps a focused action from also invoking an overlay-wide command.
@@ -1119,6 +1122,7 @@ impl Render for CaptureOverlay {
         let display_bounds = self.display.physical_bounds;
         let app = self.app.read(cx);
         let colors = app.colors;
+        let locale = app.settings.locale;
         // The session owns the committed selection. Keep rendering it after the
         // drag has ended, even if a late pointer event clears transient UI state.
         let selection = visible_selection(app.selection_drag, app.session.selection());
@@ -2378,7 +2382,10 @@ impl Render for CaptureOverlay {
                                     })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
-                                            OverlayTooltip(primary_action_tooltip("draw"), colors)
+                                            OverlayTooltip(
+                                                primary_action_tooltip(locale, "draw"),
+                                                colors,
+                                            )
                                         })
                                         .into()
                                     })
@@ -2391,7 +2398,7 @@ impl Render for CaptureOverlay {
                                         });
                                     }))
                                     .on_key_down(stop_overlay_action_key_propagation)
-                                    .child("Mark"),
+                                    .child(locale.text(UiText::OverlayMark)),
                             )
                             .child(
                                 div()
@@ -2412,7 +2419,13 @@ impl Render for CaptureOverlay {
                                     .cursor_pointer()
                                     .hover(|style| style.bg(colors.background))
                                     .tooltip(move |_, cx| {
-                                        cx.new(|_| OverlayTooltip("Pin selection", colors)).into()
+                                        cx.new(|_| {
+                                            OverlayTooltip(
+                                                locale.text(UiText::OverlayPinTooltip),
+                                                colors,
+                                            )
+                                        })
+                                        .into()
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let app = this.app.clone();
@@ -2421,7 +2434,7 @@ impl Render for CaptureOverlay {
                                         });
                                     }))
                                     .on_key_down(stop_overlay_action_key_propagation)
-                                    .child("Pin"),
+                                    .child(locale.text(UiText::OverlayPin)),
                             )
                             .child(
                                 div()
@@ -2462,9 +2475,9 @@ impl Render for CaptureOverlay {
                                         cx.new(|_| {
                                             OverlayTooltip(
                                                 if selection_copy_in_progress {
-                                                    "Copying selection in the background"
+                                                    locale.text(UiText::OverlayCopyingTooltip)
                                                 } else {
-                                                    primary_action_tooltip("copy")
+                                                    primary_action_tooltip(locale, "copy")
                                                 },
                                                 colors,
                                             )
@@ -2480,7 +2493,7 @@ impl Render for CaptureOverlay {
                                         }))
                                     })
                                     .on_key_down(stop_overlay_action_key_propagation)
-                                    .child("Copy"),
+                                    .child(locale.text(UiText::OverlayCopy)),
                             )
                             .child(
                                 div()
@@ -2502,7 +2515,10 @@ impl Render for CaptureOverlay {
                                     .hover(|style| style.bg(colors.background))
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
-                                            OverlayTooltip(primary_action_tooltip("save"), colors)
+                                            OverlayTooltip(
+                                                primary_action_tooltip(locale, "save"),
+                                                colors,
+                                            )
                                         })
                                         .into()
                                     })
@@ -2513,7 +2529,7 @@ impl Render for CaptureOverlay {
                                         });
                                     }))
                                     .on_key_down(stop_overlay_action_key_propagation)
-                                    .child("Save"),
+                                    .child(locale.text(UiText::OverlaySave)),
                             )
                             .child(
                                 div()
@@ -2543,9 +2559,9 @@ impl Render for CaptureOverlay {
                                         cx.new(|_| {
                                             OverlayTooltip(
                                                 if show_more_actions {
-                                                    "Hide more actions"
+                                                    locale.text(UiText::OverlayHideMoreTooltip)
                                                 } else {
-                                                    "Show more actions (Alt+M)"
+                                                    locale.text(UiText::OverlayShowMoreTooltip)
                                                 },
                                                 colors,
                                             )
@@ -2569,7 +2585,7 @@ impl Render for CaptureOverlay {
                                             cx,
                                         );
                                     })
-                                    .child(more_actions_button_label(show_more_actions)),
+                                    .child(more_actions_button_label(locale, show_more_actions)),
                             )
                             .child(
                                 div()
@@ -2591,7 +2607,10 @@ impl Render for CaptureOverlay {
                                     .hover(|style| style.bg(colors.panel).text_color(colors.danger))
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
-                                            OverlayTooltip(primary_action_tooltip("cancel"), colors)
+                                            OverlayTooltip(
+                                                primary_action_tooltip(locale, "cancel"),
+                                                colors,
+                                            )
                                         })
                                         .into()
                                     })
@@ -2600,7 +2619,7 @@ impl Render for CaptureOverlay {
                                         cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
                                     }))
                                     .on_key_down(stop_overlay_action_key_propagation)
-                                    .child("Cancel"),
+                                    .child(locale.text(UiText::OverlayCancel)),
                             )
                             .when(show_more_actions, |actions| {
                                 actions.child(
@@ -2635,7 +2654,7 @@ impl Render for CaptureOverlay {
                                             "overlay-save-annotations",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::SaveAnnotations),
-                                            "Save annotations",
+                                            locale.text(UiText::OverlaySaveAnnotations),
                                             OVERLAY_MORE_ACTION_WIDTHS[0],
                                             colors,
                                             false,
@@ -2653,7 +2672,7 @@ impl Render for CaptureOverlay {
                                             "overlay-save-editable-project",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::SaveEditable),
-                                            "Save editable",
+                                            locale.text(UiText::OverlaySaveEditable),
                                             OVERLAY_MORE_ACTION_WIDTHS[1],
                                             colors,
                                             false,
@@ -2671,7 +2690,7 @@ impl Render for CaptureOverlay {
                                             "overlay-open-annotations",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::OpenAnnotations),
-                                            "Open annotations",
+                                            locale.text(UiText::OverlayOpenAnnotations),
                                             OVERLAY_MORE_ACTION_WIDTHS[2],
                                             colors,
                                             false,
@@ -2689,11 +2708,11 @@ impl Render for CaptureOverlay {
                                             "overlay-quick-save",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::QuickSave),
-                                            "Quick save",
+                                            locale.text(UiText::OverlayQuickSave),
                                             OVERLAY_MORE_ACTION_WIDTHS[3],
                                             colors,
                                             true,
-                                            Some("Save the selection to the configured library"),
+                                            Some(locale.text(UiText::OverlayQuickSaveTooltip)),
                                             cx.listener(|this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2707,11 +2726,11 @@ impl Render for CaptureOverlay {
                                             "overlay-manual-scroll",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::ScrollShot),
-                                            "Scroll shot",
+                                            locale.text(UiText::OverlayScrollShot),
                                             OVERLAY_MORE_ACTION_WIDTHS[4],
                                             colors,
                                             false,
-                                            Some(secondary_action_tooltip("scroll")),
+                                            Some(secondary_action_tooltip(locale, "scroll")),
                                             cx.listener(|this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2724,11 +2743,11 @@ impl Render for CaptureOverlay {
                                         .child(secondary_action_button(
                                             "overlay-qr",
                                             secondary_navigation.for_action(SecondaryAction::Qr),
-                                            "QR",
+                                            locale.text(UiText::OverlayQr),
                                             OVERLAY_MORE_ACTION_WIDTHS[5],
                                             colors,
                                             false,
-                                            Some(secondary_action_tooltip("qr")),
+                                            Some(secondary_action_tooltip(locale, "qr")),
                                             cx.listener(|this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2741,11 +2760,11 @@ impl Render for CaptureOverlay {
                                         .child(secondary_action_button(
                                             "overlay-ocr",
                                             secondary_navigation.for_action(SecondaryAction::Ocr),
-                                            "OCR",
+                                            locale.text(UiText::OverlayOcr),
                                             OVERLAY_MORE_ACTION_WIDTHS[6],
                                             colors,
                                             false,
-                                            Some(secondary_action_tooltip("ocr")),
+                                            Some(secondary_action_tooltip(locale, "ocr")),
                                             cx.listener(|this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2759,11 +2778,11 @@ impl Render for CaptureOverlay {
                                             "overlay-copy-color",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::CopyColor),
-                                            "Copy color",
+                                            locale.text(UiText::OverlayCopyColor),
                                             OVERLAY_MORE_ACTION_WIDTHS[7],
                                             colors,
                                             false,
-                                            Some("Copy the color beneath the pointer"),
+                                            Some(locale.text(UiText::OverlayCopyColorTooltip)),
                                             cx.listener(|this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2777,11 +2796,11 @@ impl Render for CaptureOverlay {
                                             "overlay-translate",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::Translate),
-                                            "Translate",
+                                            locale.text(UiText::OverlayTranslate),
                                             OVERLAY_MORE_ACTION_WIDTHS[8],
                                             colors,
                                             false,
-                                            Some(secondary_action_tooltip("translate")),
+                                            Some(secondary_action_tooltip(locale, "translate")),
                                             cx.listener(|this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2795,11 +2814,11 @@ impl Render for CaptureOverlay {
                                             "overlay-record-area",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::RecordArea),
-                                            "Record area",
+                                            locale.text(UiText::OverlayRecordArea),
                                             OVERLAY_MORE_ACTION_WIDTHS[9],
                                             colors,
                                             false,
-                                            Some(secondary_action_tooltip("record-area")),
+                                            Some(secondary_action_tooltip(locale, "record-area")),
                                             cx.listener(|this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2813,11 +2832,11 @@ impl Render for CaptureOverlay {
                                             "overlay-record-window",
                                             secondary_navigation
                                                 .for_action(SecondaryAction::RecordWindow),
-                                            "Record window",
+                                            locale.text(UiText::OverlayRecordWindow),
                                             OVERLAY_MORE_ACTION_WIDTHS[10],
                                             colors,
                                             false,
-                                            Some(secondary_action_tooltip("record-window")),
+                                            Some(secondary_action_tooltip(locale, "record-window")),
                                             cx.listener(|this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2840,11 +2859,16 @@ impl Render for CaptureOverlay {
                                                     .bg(colors.panel)
                                                     .text_xs()
                                                     .text_color(colors.muted)
-                                                    .child("Recognizing selection..."),
+                                                    .child(
+                                                        locale.text(
+                                                            UiText::OverlayRecognizingSelection,
+                                                        ),
+                                                    ),
                                             )
                                         })
                                         .when_some(recognition_retry, |actions, retry| {
-                                            let retry_label = recognition_retry_label(retry);
+                                            let retry_label =
+                                                recognition_retry_label(locale, retry);
                                             actions.child(secondary_action_button(
                                                 "overlay-retry-recognition",
                                                 secondary_navigation
@@ -2853,7 +2877,11 @@ impl Render for CaptureOverlay {
                                                 OVERLAY_RETRY_ACTION_WIDTHS[0],
                                                 colors,
                                                 true,
-                                                Some("Try recognition again"),
+                                                Some(
+                                                    locale.text(
+                                                        UiText::OverlayRetryRecognitionTooltip,
+                                                    ),
+                                                ),
                                                 cx.listener(move |this, _, window, cx| {
                                                     let app = this.app.clone();
                                                     cx.defer(move |cx| {
@@ -2904,11 +2932,13 @@ impl Render for CaptureOverlay {
                                                     secondary_navigation.for_action(
                                                         SecondaryAction::CopyRecognition,
                                                     ),
-                                                    "Copy text",
+                                                    locale.text(UiText::OverlayCopyText),
                                                     OVERLAY_RECOGNITION_ACTION_WIDTHS[0],
                                                     colors,
                                                     false,
-                                                    Some("Copy recognized text to the clipboard"),
+                                                    Some(
+                                                        locale.text(UiText::OverlayCopyTextTooltip),
+                                                    ),
                                                     cx.listener(|this, _, _, cx| {
                                                         let app = this.app.clone();
                                                         cx.defer(move |cx| {
@@ -2923,11 +2953,15 @@ impl Render for CaptureOverlay {
                                                     secondary_navigation.for_action(
                                                         SecondaryAction::ClearRecognition,
                                                     ),
-                                                    "Clear result",
+                                                    locale.text(UiText::OverlayClearResult),
                                                     OVERLAY_RECOGNITION_ACTION_WIDTHS[1],
                                                     colors,
                                                     false,
-                                                    Some("Clear the recognized result"),
+                                                    Some(
+                                                        locale.text(
+                                                            UiText::OverlayClearResultTooltip,
+                                                        ),
+                                                    ),
                                                     cx.listener(|this, _, window, cx| {
                                                         let app = this.app.clone();
                                                         cx.defer(move |cx| {
@@ -2959,7 +2993,7 @@ impl Render for CaptureOverlay {
                                     let app = this.app.clone();
                                     cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
                                 }))
-                                .child("Cancel"),
+                                .child(locale.text(UiText::OverlayCancel)),
                         )
                     }),
             )
@@ -4258,10 +4292,10 @@ fn secondary_action_menu_height(
 }
 
 /// Gives the retry control a precise action without exposing internal failure categories.
-fn recognition_retry_label(retry: super::RecognitionRetry) -> &'static str {
+fn recognition_retry_label(locale: Locale, retry: super::RecognitionRetry) -> &'static str {
     match retry {
-        super::RecognitionRetry::Ocr => "Retry OCR",
-        super::RecognitionRetry::Translation => "Retry translation",
+        super::RecognitionRetry::Ocr => locale.text(UiText::OverlayRetryOcr),
+        super::RecognitionRetry::Translation => locale.text(UiText::OverlayRetryTranslation),
     }
 }
 
@@ -4408,6 +4442,7 @@ mod tests {
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     };
+    use crate::i18n::Locale;
     use crate::platform::capture::PixelFormat;
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
     use gpui::{Bounds, Keystroke, point, px, size};
@@ -4610,25 +4645,39 @@ mod tests {
             "record-area",
             "record-window",
         ] {
-            assert!(!secondary_action_tooltip(action).is_empty());
+            assert!(!secondary_action_tooltip(Locale::English, action).is_empty());
+            assert!(!secondary_action_tooltip(Locale::SimplifiedChinese, action).is_empty());
         }
-        assert_eq!(secondary_action_tooltip("unknown"), "");
+        assert_eq!(secondary_action_tooltip(Locale::English, "unknown"), "");
+        assert_eq!(
+            secondary_action_tooltip(Locale::SimplifiedChinese, "scroll"),
+            "滚动并拼接多个视口以截取长页面"
+        );
     }
 
     #[test]
     fn primary_action_tooltips_expose_capture_shortcuts_and_intent() {
-        assert!(primary_action_tooltip("copy").contains("Enter"));
-        assert!(primary_action_tooltip("save").contains("Ctrl+S"));
-        assert!(primary_action_tooltip("cancel").contains("Escape"));
-        assert!(!primary_action_tooltip("draw").is_empty());
-        assert_eq!(primary_action_tooltip("unknown"), "");
+        assert!(primary_action_tooltip(Locale::English, "copy").contains("Enter"));
+        assert!(primary_action_tooltip(Locale::English, "save").contains("Ctrl+S"));
+        assert!(primary_action_tooltip(Locale::English, "cancel").contains("Escape"));
+        assert!(primary_action_tooltip(Locale::SimplifiedChinese, "copy").contains("Enter"));
+        assert!(!primary_action_tooltip(Locale::English, "draw").is_empty());
+        assert_eq!(primary_action_tooltip(Locale::English, "unknown"), "");
     }
 
     #[test]
     fn more_actions_control_keeps_focus_identity_when_label_changes() {
         assert_eq!(OVERLAY_MORE_ACTIONS_ID, "overlay-more-actions");
-        assert_eq!(more_actions_button_label(false), "More");
-        assert_eq!(more_actions_button_label(true), "Less");
+        assert_eq!(more_actions_button_label(Locale::English, false), "More");
+        assert_eq!(more_actions_button_label(Locale::English, true), "Less");
+        assert_eq!(
+            more_actions_button_label(Locale::SimplifiedChinese, false),
+            "更多"
+        );
+        assert_eq!(
+            more_actions_button_label(Locale::SimplifiedChinese, true),
+            "收起"
+        );
     }
 
     #[test]
@@ -5687,12 +5736,19 @@ mod tests {
     #[test]
     fn recognition_retry_labels_name_the_failed_action() {
         assert_eq!(
-            recognition_retry_label(super::super::RecognitionRetry::Ocr),
+            recognition_retry_label(Locale::English, super::super::RecognitionRetry::Ocr),
             "Retry OCR"
         );
         assert_eq!(
-            recognition_retry_label(super::super::RecognitionRetry::Translation),
+            recognition_retry_label(Locale::English, super::super::RecognitionRetry::Translation),
             "Retry translation"
+        );
+        assert_eq!(
+            recognition_retry_label(
+                Locale::SimplifiedChinese,
+                super::super::RecognitionRetry::Translation
+            ),
+            "重试翻译"
         );
     }
 
