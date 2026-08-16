@@ -644,6 +644,33 @@ fn overlay_logical_size(bounds: PhysicalRect, scale: f32) -> io::Result<(f32, f3
     Ok((width, height))
 }
 
+/// Returns the physical center of the Pin's persistent top-right close control.
+fn pin_close_button_point(bounds: PhysicalRect, scale: f32) -> io::Result<PhysicalPoint> {
+    const INSET: f32 = 8.0;
+    const BUTTON_WIDTH: f32 = 32.0;
+    const BUTTON_HEIGHT: f32 = 30.0;
+
+    if !scale.is_finite() || !(1.0..=4.0).contains(&scale) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Pin scale must be between 1.0 and 4.0",
+        ));
+    }
+    if bounds.width() as f32 / scale < INSET * 2.0 + BUTTON_WIDTH
+        || bounds.height() as f32 / scale < INSET * 2.0 + BUTTON_HEIGHT
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Pin client is too small for its persistent close control",
+        ));
+    }
+
+    Ok(PhysicalPoint {
+        x: bounds.right - ((INSET + BUTTON_WIDTH / 2.0) * scale).round() as i32,
+        y: bounds.top + ((INSET + BUTTON_HEIGHT / 2.0) * scale).round() as i32,
+    })
+}
+
 /// Maps a committed logical selection and its production toolbar into physical screen points.
 fn interaction_plan_for_logical_selection(
     bounds: PhysicalRect,
@@ -1426,6 +1453,7 @@ struct PinsCoexistReport {
     sources_unchanged_after_cancel: bool,
     pins_during_capture: usize,
     pins_after_cancel: usize,
+    closed_with_pointer: usize,
     closed_with_escape: usize,
     system_clipboard_copy: Option<PinSystemClipboardCopyReport>,
     cleanup: CleanupReport,
@@ -2010,9 +2038,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 16 permits a focused
-        // Copy-only report without fabricating unrelated Save, Pin, or recapture evidence.
-        schema_version: 16,
+        // Increment when the machine-readable report shape changes. Schema 17 records the
+        // persistent Pin close button separately from the existing Escape cleanup route.
+        schema_version: 17,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -4052,13 +4080,40 @@ fn execute_pins_coexist_interactions(
         Some(&after),
     )?;
 
-    let close_actions = ["pin_one_escape", "pin_two_escape", "pin_three_escape"];
-    for (index, (handle, action)) in handles.iter().zip(close_actions).enumerate() {
+    let pointer_pin = owned_window(handles[0])?;
+    focus_owned_window(pointer_pin, context.timeout)?;
+    let foreground = inject_mouse_click(
+        pointer_pin.handle,
+        pin_close_button_point(
+            client_bounds_for_window(pointer_pin.handle)?,
+            pointer_pin.dpi as f32 / WINDOWS_BASE_DPI,
+        )?,
+    )?;
+    wait_for_window_gone(
+        pointer_pin.handle,
+        context.timeout,
+        "Pin persistent Close button",
+    )?;
+    wait_for_capture_state(context, "Pin persistent Close button", |state| {
+        state.overlay_count == 0
+            && state.pinned_count == PIN_COEXIST_COUNT - 1
+            && state.capture_preflight_ready
+    })?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_one_close_button",
+        foreground,
+        None,
+    )?;
+
+    let close_actions = ["pin_two_escape", "pin_three_escape"];
+    for (index, (handle, action)) in handles[1..].iter().zip(close_actions).enumerate() {
         let pin = owned_window(*handle)?;
         focus_owned_window(pin, context.timeout)?;
         let foreground = inject_key(pin.handle, VK_ESCAPE)?;
         wait_for_window_gone(pin.handle, context.timeout, action)?;
-        let remaining = PIN_COEXIST_COUNT - index - 1;
+        let remaining = PIN_COEXIST_COUNT - index - 2;
         wait_for_capture_state(context, action, |state| {
             state.overlay_count == 0
                 && state.pinned_count == remaining
@@ -4097,7 +4152,8 @@ fn execute_pins_coexist_interactions(
         sources_unchanged_after_cancel: true,
         pins_during_capture: active.pinned_count,
         pins_after_cancel: after_cancel.pinned_count,
-        closed_with_escape: PIN_COEXIST_COUNT,
+        closed_with_pointer: 1,
+        closed_with_escape: PIN_COEXIST_COUNT - 1,
         system_clipboard_copy,
         cleanup: CleanupReport {
             session_state: final_state.session_state,
@@ -10445,11 +10501,12 @@ mod tests {
         ensure_input_authorized, expected_selection_transform, first_stable_recording_match,
         interaction_command_channel, interaction_plan, map_capture_point_to_screen,
         map_screen_point_to_capture, map_screen_selection_to_capture, narrow_edge_interaction_plan,
-        normalize_axis, pin_coexist_interaction_plan, recording_control_plan, recording_failed,
-        recording_saved, rect_contains_rect, scroll_roundtrip_cleanup_complete,
-        scroll_roundtrip_interaction_plan, scroll_shot_point_for_logical_selection,
-        selection_aspect_ratio_preserved, selection_center_preserved,
-        selection_copy_completed_in_editor, selection_transform_gesture, translated_rect,
+        normalize_axis, pin_close_button_point, pin_coexist_interaction_plan,
+        recording_control_plan, recording_failed, recording_saved, rect_contains_rect,
+        scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
+        scroll_shot_point_for_logical_selection, selection_aspect_ratio_preserved,
+        selection_center_preserved, selection_copy_completed_in_editor,
+        selection_transform_gesture, translated_rect,
         validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
         window_drag_matches,
@@ -11198,6 +11255,29 @@ mod tests {
         }
         assert!(pin_coexist_interaction_plan(client, 1.5, 0).is_err());
         assert!(pin_coexist_interaction_plan(client, 1.0, 3).is_err());
+    }
+
+    #[test]
+    fn persistent_pin_close_button_stays_inside_the_client_at_supported_scales() {
+        let client = PhysicalRect {
+            left: 120,
+            top: 80,
+            right: 480,
+            bottom: 320,
+        };
+        let point = pin_close_button_point(client, 1.0).unwrap();
+        assert_eq!(point, PhysicalPoint { x: 456, y: 103 });
+        assert!(client.contains(point));
+
+        let scaled_client = PhysicalRect {
+            right: 660,
+            bottom: 440,
+            ..client
+        };
+        let scaled_point = pin_close_button_point(scaled_client, 1.5).unwrap();
+        assert_eq!(scaled_point, PhysicalPoint { x: 624, y: 115 });
+        assert!(scaled_client.contains(scaled_point));
+        assert!(pin_close_button_point(client, 0.75).is_err());
     }
 
     #[cfg(windows)]

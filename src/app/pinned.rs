@@ -13,6 +13,7 @@ use crate::platform::{capture::CaptureFrame, clipboard::ClipboardService};
 
 const PIN_OPACITY_STEPS: [u8; 4] = [255, 191, 128, 64];
 const PIN_FEEDBACK_VISIBLE_FOR: Duration = Duration::from_secs(3);
+const PIN_TOP_CONTROLS_HEIGHT: f32 = 62.0;
 
 struct PinnedTooltip(&'static str, crate::theme::ThemeColors);
 
@@ -499,7 +500,8 @@ impl Render for PinnedImage {
             .absolute()
             .top(px(8.0))
             .left(px(8.0))
-            .right(px(8.0))
+            // Keep the hover toolbar clear of the persistent close button at the top right.
+            .right(px(48.0))
             .p_2()
             .flex()
             .flex_wrap()
@@ -602,22 +604,40 @@ impl Render for PinnedImage {
                         colors,
                         PinnedButtonTone::Primary,
                         cx.listener(|this, _, _, cx| this.copy_image(cx)),
-                    ))
-                    .child(pinned_tool_button(
-                        "pinned-close",
-                        "Close",
-                        "close",
-                        colors,
-                        PinnedButtonTone::Destructive,
-                        cx.listener(|this, _, window, cx| this.close(window, cx)),
                     )),
             );
+        // A Pin has no native title bar, so closing it must never depend on discovering the
+        // hover-only toolbar. This compact control remains reachable whenever input is enabled.
+        let close_button = div().absolute().top(px(8.0)).right(px(8.0)).child(
+            pinned_tool_button(
+                "pinned-close",
+                "X",
+                "close",
+                colors,
+                PinnedButtonTone::Destructive,
+                cx.listener(|this, _, window, cx| this.close(window, cx)),
+            )
+            .w(px(32.0))
+            .px_0()
+            // Expose the client control as native close chrome so borderless Windows delivers
+            // the same close gesture instead of treating it as an unhandled title-bar click.
+            .window_control_area(WindowControlArea::Close),
+        );
         let image = div()
             .id("pinned-image")
             .size_full()
-            .window_control_area(WindowControlArea::Drag)
             .bg(colors.background)
             .child(img(self.image.clone()).size_full());
+        // The top controls are client widgets, not title-bar chrome. Restricting native dragging
+        // below them keeps their clicks reachable while leaving most of the image draggable.
+        let drag_region = div()
+            .id("pinned-drag-region")
+            .absolute()
+            .top(px(PIN_TOP_CONTROLS_HEIGHT))
+            .right(px(0.0))
+            .bottom(px(0.0))
+            .left(px(0.0))
+            .window_control_area(WindowControlArea::Drag);
 
         div()
             .size_full()
@@ -646,7 +666,9 @@ impl Render for PinnedImage {
             .border_1()
             .border_color(colors.border)
             .child(image)
+            .child(drag_region)
             .child(toolbar)
+            .child(close_button)
     }
 }
 
