@@ -32,6 +32,14 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 生成 MP4 需要安装支持 `ddagrab` 或 `gdigrab` 的 FFmpeg；150%/200% 缩放仍保留在真实
 环境矩阵中。
 
+### 下载与安全提示
+
+预编译版本只通过 [GitHub Releases](https://github.com/bruceblink/flash-shot/releases) 发布。
+当前 Windows 安装器和便携版有意保持未签名，因此项目不需要、也不会在 GitHub Release 工作流中
+配置 `WINDOWS_SIGNING_CERTIFICATE_BASE64` 或 `WINDOWS_SIGNING_CERTIFICATE_PASSWORD`。
+Windows 可能显示 SmartScreen 或“未知发布者”警告；请只从上述页面下载，核对随附的 SHA-256
+校验文件和发布清单，并仅在接受该风险后继续运行。
+
 ### 运行
 
 环境要求：
@@ -161,6 +169,15 @@ one 100%-scaled display. Fixed-source desktop-composition semantics after moving
 occluding, and minimizing a recorded window are also covered by a native Release probe. Producing
 an MP4 requires an FFmpeg build that supports `ddagrab` or `gdigrab`; 150%/200% scaling remains in
 the real-environment matrix.
+
+### Download and security notice
+
+Prebuilt binaries are distributed only through [GitHub Releases](https://github.com/bruceblink/flash-shot/releases).
+The Windows installer and portable build are intentionally unsigned, so the GitHub Release workflow
+does not require or use `WINDOWS_SIGNING_CERTIFICATE_BASE64` or
+`WINDOWS_SIGNING_CERTIFICATE_PASSWORD`. Windows may show a SmartScreen or unknown-publisher warning.
+Download only from the page above, verify the accompanying SHA-256 sidecar and release manifest, and
+continue only if you accept that risk.
 
 ### Run
 
