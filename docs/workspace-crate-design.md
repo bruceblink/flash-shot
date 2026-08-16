@@ -108,11 +108,11 @@ Move GPUI rendering, overlay state, Pin windows, settings views, and UI-facing w
 
 Validation: GPUI unit tests, native screenshot fixtures, and all existing command-line argument contracts stay unchanged.
 
-### Stage 6: Create The Single Binary Composition Root
+### Stage 6: Create The Single Binary Composition Root (Complete)
 
-Move `main.rs`, `build.rs`, and Windows resource embedding to `flash-shot-bin`. Keep `flash-shot` as its sole `[[bin]]` target. Set the workspace default member and update packaging, release, and developer scripts only where Cargo package selection requires it.
+`main.rs`, `build.rs`, and Windows resource embedding now live in `flash-shot-bin`. The package keeps `flash-shot` as its sole `[[bin]]` target, and the workspace selects it as the only default member. Packaging, release, and developer scripts resolve that package without introducing another executable entry point.
 
-Validation: `cargo run` from the workspace root, `cargo run --features dev-tools` through the existing dispatcher, Release build, packaging checks, full workspace tests, and strict Clippy.
+Validation: `cargo run` from the workspace root, `cargo run --features dev-tools` through the existing dispatcher, Cargo metadata verification of exactly one binary target, Release build, packaging checks, full workspace tests, and strict Clippy.
 
 ## Non-Goals
 
