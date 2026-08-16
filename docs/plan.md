@@ -150,7 +150,7 @@ cargo test --workspace
   和唯一二进制的职责与迁移顺序见 [Workspace crate 迁移设计](workspace-crate-design.md)。第一阶段已完成
   `flash-shot-domain`、`flash-shot-app` 与 `crates/flash-shot-bin` 中唯一 `flash-shot` 包的工作区落地，
   第二阶段已完成 `flash-shot-image` 的图像核心提取，Windows 基础设施阶段已完成显示器枚举、屏幕捕获、
-  全局快捷键、托盘、剪贴板、自启动、目录打开和进程生命周期首个切片；后续阶段继续按该文档拆分。
+  全局快捷键、托盘、剪贴板、自启动、目录打开、进程生命周期和窗口控制首个切片；后续阶段继续按该文档拆分。
 
 ### C3. 依赖与供应链维护
 

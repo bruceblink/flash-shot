@@ -9,3 +9,5 @@ pub mod process_group;
 pub mod process_pause;
 pub mod shortcut;
 pub mod tray;
+pub mod window_inspector;
+pub mod window_visibility;
