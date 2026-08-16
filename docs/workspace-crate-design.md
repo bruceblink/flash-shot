@@ -94,9 +94,10 @@ Validation: existing unit and golden-image tests remain in their owning crate; s
 
 The first infrastructure slices are complete: display enumeration, virtual desktop bounds, capture backends,
 virtual desktop composition, global shortcut registration, tray event/menu handling, clipboard image/text
-ownership, per-user auto-start state, and directory opening now live in `flash-shot-infra-windows`.
-`flash-shot-app::platform` keeps compatibility exports while inspection, process, and remaining file-system
-implementations remain in the application crate until their contracts are isolated. Keep shared traits and product errors in
+ownership, per-user auto-start state, directory opening, and process-tree pause/cleanup now live in
+`flash-shot-infra-windows`. `flash-shot-app::platform` keeps compatibility exports while window inspection,
+visibility, and remaining file-system implementations remain in the application crate until their contracts
+are isolated. Keep shared traits and product errors in
 `flash-shot-app` or `flash-shot-domain`, depending on whether they represent a use-case contract or a value type.
 
 Validation: infrastructure contract tests, existing Windows-only tests, and release acceptance scripts must remain green. No test may use a production process merely because a trait moved packages.

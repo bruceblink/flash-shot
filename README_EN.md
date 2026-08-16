@@ -60,7 +60,7 @@ Stress and native acceptance programs remain available as opt-in `dev-tools` lib
 
 The source is split into small responsibility-focused workspace crates: `flash-shot-domain` owns pure
 product models, `flash-shot-image` owns immutable capture frames and image processing,
-`flash-shot-infra-windows` owns display enumeration, Windows screen capture, global shortcuts, the tray, the clipboard, auto-start, and directory opening, `flash-shot-app` owns
+`flash-shot-infra-windows` owns display enumeration, Windows screen capture, global shortcuts, the tray, the clipboard, auto-start, directory opening, and process lifecycle, `flash-shot-app` owns
 application workflows plus GPUI and the remaining platform composition, and `crates/flash-shot-bin` is the
 only startup entry point. Every other crate is a library and is never started as an additional program by
 `cargo run`.
