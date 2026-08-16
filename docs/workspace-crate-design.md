@@ -8,6 +8,7 @@ Updated: 2026-08-16
 | --- | --- | --- | --- |
 | Workspace root | Cargo workspace root | Coordinates shared package metadata, locked dependencies, default package selection, and repository-wide checks. | A runnable application package or a second executable entry point. |
 | Domain crate | `flash-shot-domain` | Owns screenshot product value types, geometry, selection, capture-session state, and annotation documents. | A GPUI view, a Windows API wrapper, or an image capture implementation. |
+| Image crate | `flash-shot-image` | Owns immutable capture frames, physical-pixel sampling, annotation composition, cropping, QR decoding, and image encoding. | A Windows capture backend, a GPUI view, or a second application entry point. |
 | Application crate | `flash-shot-app` | Owns use cases, persistent product policy, and interfaces consumed by UI and infrastructure. | A Windows service implementation or a GPUI entity. |
 | Windows infrastructure crate | `flash-shot-infra-windows` | Implements Windows capture, clipboard, shortcuts, tray, inspection, process, and file-system boundaries. | The application composition root or a reusable domain model. |
 | UI crate | `flash-shot-ui` | Owns GPUI state, overlays, Pin windows, settings views, and presentation-only interaction code. | The place where Windows services are constructed. |
@@ -18,7 +19,7 @@ All subsequent diagrams and text use these exact names. Standard Cargo, GPUI, Wi
 
 ## Decision
 
-Adopt a small Cargo workspace modeled on Ramag's composition pattern, not its number of feature crates. Flash Shot now has a stable `flash-shot-domain` boundary, platform-facing service types, and a single desktop startup path. The current largest units (`crates/flash-shot-app/src/app/overlay.rs` and the overlay interaction acceptance runner) are large enough that package-level ownership will make future changes easier to review and test.
+Adopt a small Cargo workspace modeled on Ramag's composition pattern, not its number of feature crates. Flash Shot now has stable `flash-shot-domain` and `flash-shot-image` boundaries, platform-facing service types, and a single desktop startup path. The current largest units (`crates/flash-shot-app/src/app/overlay.rs` and the overlay interaction acceptance runner) are large enough that package-level ownership will make future changes easier to review and test.
 
 The migration must preserve these product contracts:
 
@@ -41,8 +42,18 @@ flash-shot-bin
 flash-shot-acceptance
   -> flash-shot-ui
   -> flash-shot-app
+  -> flash-shot-image
   -> flash-shot-domain
   -> flash-shot-infra-windows
+```
+
+The current implemented graph is intentionally smaller while the later UI and infrastructure moves are
+staged:
+
+```text
+flash-shot-bin -> flash-shot-app
+                  -> flash-shot-image -> flash-shot-domain
+                  -> flash-shot-domain
 ```
 
 The Windows infrastructure crate supplies concrete implementations to the binary crate. The binary crate passes application interfaces into the UI crate; the UI crate must not construct `SystemClipboard`, global shortcuts, the tray, or Windows capture services by itself.
@@ -51,7 +62,7 @@ The Windows infrastructure crate supplies concrete implementations to the binary
 
 The existing architecture documentation already distinguishes domain, platform, application workflow, and GPUI rendering. The domain modules depend only on standard-library and serialization types, which makes them ready for the first crate extraction. Conversely, directly splitting every existing `platform` module would be premature because several files currently mix contracts with Windows implementations. The staged plan below separates those responsibilities before moving them.
 
-Ramag is useful here because its `ramag-domain`, `ramag-app`, infrastructure libraries, UI library, and `ramag-bin` make the composition root explicit. Flash Shot should retain that benefit without introducing one crate for each screenshot feature. Capture, Pin, OCR, recording, and history share one short-lived desktop workflow and should not become separate packages until a real dependency or release boundary appears.
+Ramag is useful here because its `ramag-domain`, `ramag-app`, infrastructure libraries, UI library, and `ramag-bin` make the composition root explicit. Flash Shot should retain that benefit without introducing one crate for each screenshot feature. Capture, Pin, OCR, recording, and history share one short-lived desktop workflow and should not become separate packages until a real dependency or release boundary appears; image pixels and encoders already have a clear dependency and test boundary, so they form one reusable image crate.
 
 ## Migration Stages
 
@@ -61,25 +72,36 @@ The virtual workspace now centralizes compatible dependency versions, and the fo
 
 Validation: domain tests, repository-wide formatting, strict Clippy, full workspace tests, and a root-level development-tool dispatch that proves Cargo selected the only executable without `--bin`.
 
-### Stage 2: Define Application Interfaces
+### Stage 2: Extract The Image Core (Complete)
 
-Move product-policy modules into `flash-shot-app` only after their platform-facing contracts are explicit. Capture-frame data, image composition, persistent settings, history policy, recording state, OCR, translation, update, and scroll workflows must depend on interfaces rather than `System*` implementations.
+The immutable `CaptureFrame`, `PixelFormat`, and `PixelColor` types plus cropping, annotation composition,
+QR decoding, and PNG/JPEG/WebP encoding now live in `flash-shot-image`. The platform capture module keeps a
+compatibility re-export, and `flash-shot-app::image` keeps the existing application-facing export while
+callers migrate incrementally. The image crate depends on `flash-shot-domain` but has no GPUI or Windows
+capture dependency; Windows-only atomic replacement remains a narrowly scoped target dependency.
+
+Validation: image frame and golden-image tests, repository-wide formatting, strict Clippy, full workspace tests,
+and metadata verification of the single binary target.
+
+### Stage 3: Define Application Interfaces
+
+Move product-policy modules within `flash-shot-app` only after their platform-facing contracts are explicit. Persistent settings, history policy, recording state, OCR, translation, update, and scroll workflows must depend on interfaces rather than `System*` implementations. The image core remains in `flash-shot-image` and is consumed through its stable frame and encoding API.
 
 Validation: existing unit and golden-image tests remain in their owning crate; settings compatibility and managed-history behavior receive cross-crate regression coverage.
 
-### Stage 3: Extract Windows Infrastructure
+### Stage 4: Extract Windows Infrastructure
 
 Move concrete Win32, clipboard, shortcut, tray, capture, display, and process implementations into `flash-shot-infra-windows`. Keep shared traits and product errors in `flash-shot-app` or `flash-shot-domain`, depending on whether they represent a use-case contract or a value type.
 
 Validation: platform contract tests, existing Windows-only tests, and release acceptance scripts must remain green. No test may use a production process merely because a trait moved packages.
 
-### Stage 4: Extract UI And Acceptance Libraries
+### Stage 5: Extract UI And Acceptance Libraries
 
 Move GPUI rendering, overlay state, Pin windows, settings views, and UI-facing workflows into `flash-shot-ui`. Move the optional native acceptance and stress runners into `flash-shot-acceptance`; it stays a library enabled by the binary's `dev-tools` feature.
 
 Validation: GPUI unit tests, native screenshot fixtures, and all existing command-line argument contracts stay unchanged.
 
-### Stage 5: Create The Single Binary Composition Root
+### Stage 6: Create The Single Binary Composition Root
 
 Move `main.rs`, `build.rs`, and Windows resource embedding to `flash-shot-bin`. Keep `flash-shot` as its sole `[[bin]]` target. Set the workspace default member and update packaging, release, and developer scripts only where Cargo package selection requires it.
 

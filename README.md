@@ -55,6 +55,10 @@ workspace 根目录将 `crates/flash-shot-bin` 中的 `flash-shot` 包设为唯�
 作为可选的 `dev-tools` 库模块保留，由 `scripts\run-dev-tool.ps1` 调度；它们不会成为发布包中的
 额外 EXE，也不会改变普通 `cargo run` 的启动行为。
 
+源码按职责拆成小型 workspace crate：`flash-shot-domain` 保存纯领域模型，`flash-shot-image` 保存不可变
+截图帧与图像处理，`flash-shot-app` 负责应用用例和 GPUI/平台装配，`crates/flash-shot-bin` 是唯一启动入口。
+除该入口外，其余 crate 都是库，不会被 `cargo run` 当作额外程序启动。
+
 首次启动时，界面语言会读取 Windows 的首选 UI 语言；目前支持的简体中文区域会自动使用简体中文，
 其他语言回退为英文。之后在设置中手动切换的语言会保存为用户偏好，不会再被系统语言覆盖。
 

@@ -1606,15 +1606,14 @@ dependencies = [
  "async-channel",
  "directories",
  "flash-shot-domain",
+ "flash-shot-image",
  "gpui",
  "gpui_platform",
  "image",
  "log",
- "pathfinder_geometry",
  "png 0.18.1",
  "qrcode",
  "raw-window-handle",
- "rqrr",
  "serde",
  "serde_json",
  "sha2",
@@ -1624,7 +1623,6 @@ dependencies = [
  "windows 0.61.3",
  "windows-sys 0.61.2",
  "winreg",
- "zed-font-kit",
 ]
 
 [[package]]
@@ -1633,6 +1631,20 @@ version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "flash-shot-image"
+version = "0.1.1"
+dependencies = [
+ "flash-shot-domain",
+ "image",
+ "pathfinder_geometry",
+ "png 0.18.1",
+ "qrcode",
+ "rqrr",
+ "windows-sys 0.61.2",
+ "zed-font-kit",
 ]
 
 [[package]]

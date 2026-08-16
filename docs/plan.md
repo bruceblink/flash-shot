@@ -148,8 +148,8 @@ cargo test --workspace
 - 为非平凡状态更新和 Windows 生命周期函数补充面向初学者的函数级注释；
 - 模块边界已通过多个切片验证后，采用小型 workspace；领域、应用、Windows 基础设施、GPUI 界面、验收库
   和唯一二进制的职责与迁移顺序见 [Workspace crate 迁移设计](workspace-crate-design.md)。第一阶段已完成
-  `flash-shot-domain`、`flash-shot-app` 与 `crates/flash-shot-bin` 中唯一 `flash-shot` 包的工作区落地；
-  后续阶段继续按该文档拆分。
+  `flash-shot-domain`、`flash-shot-app` 与 `crates/flash-shot-bin` 中唯一 `flash-shot` 包的工作区落地，
+  第二阶段已完成 `flash-shot-image` 的图像核心提取；后续阶段继续按该文档拆分。
 
 ### C3. 依赖与供应链维护
 

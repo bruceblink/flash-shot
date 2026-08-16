@@ -1,0 +1,26 @@
+[package]
+name = "flash-shot-image"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Flash Shot capture frames and image processing"
+repository.workspace = true
+license.workspace = true
+
+[lib]
+name = "flash_shot_image"
+path = "src/lib.rs"
+
+[dependencies]
+flash-shot-domain.workspace = true
+font-kit.workspace = true
+image.workspace = true
+pathfinder_geometry.workspace = true
+png.workspace = true
+rqrr.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+qrcode.workspace = true
