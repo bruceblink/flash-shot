@@ -1,0 +1,20 @@
+[package]
+name = "flash-shot-infra-windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Flash Shot Windows display and capture infrastructure"
+repository.workspace = true
+license.workspace = true
+
+[lib]
+name = "flash_shot_infra_windows"
+path = "src/lib.rs"
+
+[dependencies]
+flash-shot-domain.workspace = true
+flash-shot-image.workspace = true
+log.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

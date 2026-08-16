@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/flash-shot-domain",
     "crates/flash-shot-image",
+    "crates/flash-shot-infra-windows",
     "crates/flash-shot-app",
     "crates/flash-shot-bin",
 ]
@@ -18,6 +19,7 @@ license = "AGPL-3.0-only"
 [workspace.dependencies]
 flash-shot-domain = { path = "crates/flash-shot-domain" }
 flash-shot-image = { path = "crates/flash-shot-image" }
+flash-shot-infra-windows = { path = "crates/flash-shot-infra-windows" }
 flash-shot-app = { path = "crates/flash-shot-app" }
 async-channel = "2.5"
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }

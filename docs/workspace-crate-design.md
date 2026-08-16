@@ -47,13 +47,14 @@ flash-shot-acceptance
   -> flash-shot-infra-windows
 ```
 
-The current implemented graph is intentionally smaller while the later UI and infrastructure moves are
-staged:
+The current implemented graph is intentionally smaller while the later UI and remaining infrastructure moves
+are staged:
 
 ```text
 flash-shot-bin -> flash-shot-app
-                  -> flash-shot-image -> flash-shot-domain
-                  -> flash-shot-domain
+                       -> flash-shot-infra-windows -> flash-shot-image -> flash-shot-domain
+                       -> flash-shot-image
+                       -> flash-shot-domain
 ```
 
 The Windows infrastructure crate supplies concrete implementations to the binary crate. The binary crate passes application interfaces into the UI crate; the UI crate must not construct `SystemClipboard`, global shortcuts, the tray, or Windows capture services by itself.
@@ -89,11 +90,15 @@ Move product-policy modules within `flash-shot-app` only after their platform-fa
 
 Validation: existing unit and golden-image tests remain in their owning crate; settings compatibility and managed-history behavior receive cross-crate regression coverage.
 
-### Stage 4: Extract Windows Infrastructure
+### Stage 4: Extract Windows Infrastructure (In Progress)
 
-Move concrete Win32, clipboard, shortcut, tray, capture, display, and process implementations into `flash-shot-infra-windows`. Keep shared traits and product errors in `flash-shot-app` or `flash-shot-domain`, depending on whether they represent a use-case contract or a value type.
+The first infrastructure slice is complete: display enumeration, virtual desktop bounds, capture backends,
+and virtual desktop composition now live in `flash-shot-infra-windows`. `flash-shot-app::platform` keeps
+compatibility exports while clipboard, shortcut, tray, inspection, process, and file-system implementations
+remain in the application crate until their contracts are isolated. Keep shared traits and product errors in
+`flash-shot-app` or `flash-shot-domain`, depending on whether they represent a use-case contract or a value type.
 
-Validation: platform contract tests, existing Windows-only tests, and release acceptance scripts must remain green. No test may use a production process merely because a trait moved packages.
+Validation: infrastructure contract tests, existing Windows-only tests, and release acceptance scripts must remain green. No test may use a production process merely because a trait moved packages.
 
 ### Stage 5: Extract UI And Acceptance Libraries
 

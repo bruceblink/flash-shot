@@ -22,6 +22,7 @@ dev-tools = []
 [dependencies]
 flash-shot-domain.workspace = true
 flash-shot-image.workspace = true
+flash-shot-infra-windows.workspace = true
 async-channel.workspace = true
 directories.workspace = true
 gpui.workspace = true

@@ -59,9 +59,11 @@ Stress and native acceptance programs remain available as opt-in `dev-tools` lib
 `cargo run` startup.
 
 The source is split into small responsibility-focused workspace crates: `flash-shot-domain` owns pure
-product models, `flash-shot-image` owns immutable capture frames and image processing, `flash-shot-app`
-owns application workflows plus GPUI/platform composition, and `crates/flash-shot-bin` is the only startup
-entry point. Every other crate is a library and is never started as an additional program by `cargo run`.
+product models, `flash-shot-image` owns immutable capture frames and image processing,
+`flash-shot-infra-windows` owns display enumeration and Windows screen capture, `flash-shot-app` owns
+application workflows plus GPUI and the remaining platform composition, and `crates/flash-shot-bin` is the
+only startup entry point. Every other crate is a library and is never started as an additional program by
+`cargo run`.
 
 On first launch, the interface follows Windows' preferred UI language: supported Simplified
 Chinese regional tags use the Simplified Chinese catalog and all other languages fall back to
