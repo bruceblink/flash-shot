@@ -3,6 +3,7 @@
 pub mod autostart;
 pub mod capture;
 pub mod clipboard;
+pub mod directory;
 pub mod display;
 pub mod shortcut;
 pub mod tray;
