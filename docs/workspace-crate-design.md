@@ -93,9 +93,10 @@ Validation: existing unit and golden-image tests remain in their owning crate; s
 ### Stage 4: Extract Windows Infrastructure (In Progress)
 
 The first infrastructure slices are complete: display enumeration, virtual desktop bounds, capture backends,
-virtual desktop composition, and global shortcut registration now live in `flash-shot-infra-windows`.
-`flash-shot-app::platform` keeps compatibility exports while clipboard, tray, inspection, process, and
-file-system implementations remain in the application crate until their contracts are isolated. Keep shared traits and product errors in
+virtual desktop composition, global shortcut registration, and tray event/menu handling now live in
+`flash-shot-infra-windows`. `flash-shot-app::platform` keeps compatibility exports while clipboard,
+inspection, process, and file-system implementations remain in the application crate until their contracts
+are isolated. Keep shared traits and product errors in
 `flash-shot-app` or `flash-shot-domain`, depending on whether they represent a use-case contract or a value type.
 
 Validation: infrastructure contract tests, existing Windows-only tests, and release acceptance scripts must remain green. No test may use a production process merely because a trait moved packages.
