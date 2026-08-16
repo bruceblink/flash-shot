@@ -18,4 +18,5 @@ flash-shot-image.workspace = true
 log.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+arboard.workspace = true
 windows-sys.workspace = true
