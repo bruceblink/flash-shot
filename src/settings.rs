@@ -67,7 +67,9 @@ impl Default for UserSettings {
             recording_directory: None,
             ocr_language: None,
             theme_mode: ThemeMode::Dark,
-            locale: Locale::English,
+            // Only a new or legacy configuration without a saved locale follows Windows. Once
+            // the user selects a language, serde restores that explicit value unchanged.
+            locale: Locale::system_default(),
         }
     }
 }
@@ -296,7 +298,7 @@ mod tests {
         assert_eq!(settings.recording_directory, None);
         assert_eq!(settings.ocr_language, None);
         assert_eq!(settings.theme_mode, ThemeMode::Dark);
-        assert_eq!(settings.locale, Locale::English);
+        assert_eq!(settings.locale, Locale::system_default());
         let _ = std::fs::remove_dir_all(directory);
     }
 
@@ -388,6 +390,22 @@ mod tests {
         let (settings, _) = UserSettings::load(&directory).unwrap();
 
         assert!(settings.capture_shortcut_enabled);
+        assert_eq!(settings.locale, Locale::system_default());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn saved_locale_is_never_replaced_by_the_current_system_default() {
+        let directory = directory("saved-locale");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("settings.json"),
+            r#"{"version":1,"locale":"english"}"#,
+        )
+        .unwrap();
+
+        let (settings, _) = UserSettings::load(&directory).unwrap();
+
         assert_eq!(settings.locale, Locale::English);
         std::fs::remove_dir_all(directory).unwrap();
     }

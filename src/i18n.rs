@@ -15,6 +15,35 @@ pub enum Locale {
 }
 
 impl Locale {
+    /// Chooses a supported first-run language from the operating system without changing saved UI
+    /// preferences. English remains the safe fallback when Windows does not expose a supported tag.
+    pub fn system_default() -> Self {
+        #[cfg(windows)]
+        {
+            windows_preferred_ui_language()
+                .as_deref()
+                .map(Self::from_system_language_tag)
+                .unwrap_or(Self::English)
+        }
+        #[cfg(not(windows))]
+        {
+            Self::English
+        }
+    }
+
+    /// Maps a Windows language tag to one of the application's current UI catalogs.
+    pub fn from_system_language_tag(language_tag: &str) -> Self {
+        let normalized = language_tag.trim().replace('_', "-").to_ascii_lowercase();
+        let mut components = normalized.split('-');
+        if components.next() == Some("zh")
+            && components.any(|component| matches!(component, "cn" | "sg" | "my" | "hans"))
+        {
+            Self::SimplifiedChinese
+        } else {
+            Self::English
+        }
+    }
+
     /// Cycles through the supported locales without changing the user's capture data.
     pub const fn next(self) -> Self {
         match self {
@@ -70,6 +99,43 @@ impl Locale {
         self.text(UiText::ReadyWithShortcut)
             .replace("{shortcut}", shortcut)
     }
+}
+
+#[cfg(windows)]
+/// Reads the first Windows UI-language tag from its NUL-separated preferred-language list.
+fn windows_preferred_ui_language() -> Option<String> {
+    use windows_sys::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+
+    let mut language_count = 0;
+    let mut buffer_length = 0;
+    // Windows fills the required UTF-16 buffer length even though this probe reports false for a
+    // null buffer. A second call below owns the allocated buffer and must report success.
+    unsafe {
+        GetUserPreferredUILanguages(
+            MUI_LANGUAGE_NAME,
+            &mut language_count,
+            std::ptr::null_mut(),
+            &mut buffer_length,
+        );
+    }
+    if language_count == 0 || buffer_length == 0 {
+        return None;
+    }
+
+    let mut buffer = vec![0_u16; buffer_length as usize];
+    if unsafe {
+        GetUserPreferredUILanguages(
+            MUI_LANGUAGE_NAME,
+            &mut language_count,
+            buffer.as_mut_ptr(),
+            &mut buffer_length,
+        )
+    } == 0
+    {
+        return None;
+    }
+    let end = buffer.iter().position(|code_unit| *code_unit == 0)?;
+    String::from_utf16(&buffer[..end]).ok()
 }
 
 /// Stable keys for the settings shell; workflow-specific strings will migrate in later slices.
@@ -216,10 +282,28 @@ mod tests {
     use super::{Locale, UiText};
 
     #[test]
-    fn locale_cycles_without_losing_the_default_language() {
+    fn locale_cycles_without_losing_the_english_fallback_language() {
         assert_eq!(Locale::default(), Locale::English);
         assert_eq!(Locale::English.next(), Locale::SimplifiedChinese);
         assert_eq!(Locale::SimplifiedChinese.next(), Locale::English);
+    }
+
+    #[test]
+    fn system_language_tags_select_only_supported_simplified_chinese_variants() {
+        for language_tag in ["zh-CN", "zh_CN", "zh-Hans", "zh-Hans-CN", "zh-SG", "zh-MY"] {
+            assert_eq!(
+                Locale::from_system_language_tag(language_tag),
+                Locale::SimplifiedChinese,
+                "{language_tag}"
+            );
+        }
+        for language_tag in ["en-US", "zh-TW", "zh-Hant-TW", "ja-JP", "zh"] {
+            assert_eq!(
+                Locale::from_system_language_tag(language_tag),
+                Locale::English,
+                "{language_tag}"
+            );
+        }
     }
 
     #[test]
