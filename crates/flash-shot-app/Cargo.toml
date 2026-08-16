@@ -39,10 +39,7 @@ ureq.workspace = true
 uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-arboard.workspace = true
-windows.workspace = true
 windows-sys.workspace = true
-winreg.workspace = true
 
 [dev-dependencies]
 qrcode.workspace = true

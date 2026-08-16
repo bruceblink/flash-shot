@@ -1602,7 +1602,6 @@ dependencies = [
 name = "flash-shot-app"
 version = "0.1.1"
 dependencies = [
- "arboard",
  "async-channel",
  "directories",
  "flash-shot-domain",
@@ -1621,9 +1620,7 @@ dependencies = [
  "tokio",
  "ureq",
  "uuid",
- "windows 0.61.3",
  "windows-sys 0.61.2",
- "winreg",
 ]
 
 [[package]]
