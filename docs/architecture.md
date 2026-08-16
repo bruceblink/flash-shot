@@ -29,23 +29,23 @@ Flash Shot 不是常驻主窗口应用。进程启动后仅保留全局快捷键
 
 设置使用单独的按需窗口，托盘菜单负责打开它。关闭设置窗口只隐藏窗口并返回后台，不得退出进程、注销快捷键或停止托盘。只有托盘的退出命令和应用级 Quit 操作可以结束整个生命周期。这样截图主路径不会被设置、历史和录屏选项占据，也不会在截图时出现普通应用窗口。
 
-## 3. 目标模块
+## 3. 当前模块边界
 
-初期维持单 crate，只有在实际代码证明边界稳定后才拆分 workspace：
+项目当前保持单 crate。模块边界先通过测试和真实验收稳定，再评估是否拆分 workspace；文档不把尚未
+落地的 crate 名称当成现状：
 
 ```text
-flash-shot-app             GPUI 界面装配与应用生命周期
-flash-shot-core            截图会话与应用用例
-flash-shot-annotation      文档、命令、几何、命中测试、历史
-flash-shot-image           裁剪、滤镜、合成、编码、颜色转换
-flash-shot-platform        平台无关接口
-flash-shot-platform-win    Windows 截图、输入、剪贴板、托盘、UI Automation
-flash-shot-scroll          滚动截图匹配与合成
-flash-shot-ocr             OCR 接口与本地实现
-flash-shot-recording       FFmpeg 进程与录屏状态机
+src/app.rs                 GPUI 应用装配、托盘入口与生命周期
+src/app/                   覆盖层、Pin、历史、设置和交互状态
+src/app/workflow/          截图、导出、滚动、识别、录屏和设置用例
+src/domain/                几何、选区、会话、标注和路线模型
+src/platform/              Windows 捕获、剪贴板、快捷键、托盘和窗口服务
+src/image.rs               像素帧、裁切、滤镜、合成和编码
+src/annotation_stress.rs   标注压力工具与性能报告
+src/bin/                   Release 验收、资源压力和打包辅助工具
 ```
 
-依赖方向从第一天开始执行：
+依赖方向保持如下约束：
 
 ```text
 GPUI 应用 -> 应用用例 -> 领域/核心 <- 平台实现
@@ -67,7 +67,9 @@ GPUI 应用 -> 应用用例 -> 领域/核心 <- 平台实现
   -> 剪贴板 / 文件 / 贴图 / OCR
 ```
 
-第一个技术验证必须统计 CPU 内存复制、GPU 上传次数、分配次数和帧生命周期。单次截图上传一次纹理可以接受；每帧重新上传或解码整张截图不可接受。
+捕获、导出和验收工具分别记录 CPU 复制、编码、资源与窗口生命周期。当前基准和真实 Windows 证据集中
+记录在 [开发计划](plan.md) 与 [Windows 手工验收记录](windows-manual-acceptance.md)；单次通过不能替代
+批量性能或 DPI 矩阵。单次截图上传一次纹理可以接受；交互帧不能重复编码或解码整张截图。
 
 ## 5. 标注文档
 
@@ -77,7 +79,7 @@ GPUI 应用 -> 应用用例 -> 领域/核心 <- 平台实现
 
 ## 6. 平台边界
 
-候选接口包括：
+平台职责由下列接口概念表达，具体实现位于 `src/platform/`，不要求为每个概念立即创建独立 crate：
 
 - `CaptureBackend`
 - `DisplayProvider`
@@ -92,7 +94,7 @@ GPUI 应用 -> 应用用例 -> 领域/核心 <- 平台实现
 
 ## 7. FFmpeg 边界
 
-首个录屏后端启动随应用分发或由用户选择的 FFmpeg 可执行文件，并负责：
+当前录屏后端启动随应用分发或由用户选择的 FFmpeg 可执行文件，并负责：
 
 - 能力和设备探测；
 - 参数构建；

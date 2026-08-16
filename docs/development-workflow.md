@@ -107,17 +107,16 @@ PNG 文件 Save 使用逐行 BGRA 到 RGBA 的流式编码，并通过原子临�
 新的资源探针会在指定输出目录下创建独立的 `session-<timestamp>-<pid>` 目录，并将报告、两张截图、
 设置和指标写入其中；临时 history fixture 同样受该目录约束并在清理阶段删除，避免并行或重试会话覆盖彼此的证据。
 
-本轮视觉切片选择最常用的“拖选 -> Save 取消/保存 -> Pin -> Copy -> 清理”主流程。通过条件是同一
-Release 会话同时具备真实 `--allow-input` 报告、关键步骤原生截图、Save/Pin/Copy 逐像素结果和最终
+常规视觉切片选择“拖选 -> Save 取消/保存 -> Pin -> Copy -> 清理”主流程。通过条件是同一 Release
+会话同时具备真实 `--allow-input` 报告、关键步骤原生截图、Save/Pin/Copy 逐像素结果和最终
 `capture_teardown_pending=false`、overlay/Pin/可见窗口为零；Save 完成后必须经过桌面稳定屏障再开始下一次采集。
-风险是前台抢占、热键冲突、DWM 延迟和非 100% DPI；非目标是多屏、高 DPI、OCR/翻译及录屏。当前源码已有
-历史主流程报告，但在本轮缩略图改动后必须重建 Release 并重跑，旧报告只作历史对照。
+风险包括前台抢占、热键冲突、DWM 延迟和非 100% DPI。每次源码或 runner 变化后都必须重建对应 Release
+证据，旧报告只能作为历史对照，不得归因于新二进制。
 
 Pin 的性能边界单独记录：选区、剪贴板、全屏和历史四个生产入口都先在后台 executor 完成像素合成、
 解码或 `render_image_from_capture`，UI 线程只负责打开已准备的原生窗口。验证必须同时覆盖 generation
-门禁、错误回收、像素恒等和窗口清理；不能只用“窗口出现”推断后台任务已经完成。当前代码门禁已通过，
-但真实 Windows 截图仍受前台桌面状态约束。本轮 runner 在注入前观察到 `ShellExperienceHost`，按 fail-closed
-规则停止并写出失败报告；未取得新的 Pin 截图前，不得把旧 Release 截图归因于当前源码。
+门禁、错误回收、像素恒等和窗口清理；不能只用“窗口出现”推断后台任务已经完成。前台窗口不属于验收进程、
+输入按键未释放或 watchdog 超时，都必须 fail-closed 并保留失败报告。
 
 ## 6. OCR 与后续扩展
 
