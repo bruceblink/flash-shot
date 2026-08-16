@@ -146,7 +146,8 @@ cargo test --workspace
 - 按渲染、输入、选择变换、菜单/工具状态和导出生命周期逐步缩小 `src/app/overlay.rs`；
 - 继续把文件 I/O、识别、录屏和平台调用留在现有 workflow/platform 边界；
 - 为非平凡状态更新和 Windows 生命周期函数补充面向初学者的函数级注释；
-- 只有在模块边界经过多个切片验证后，才评估是否拆分 crate，不为目录整洁提前引入 workspace 复杂度。
+- 模块边界已通过多个切片验证后，采用小型 workspace；领域、应用、Windows 基础设施、GPUI 界面、验收库
+  和唯一二进制的职责与迁移顺序见 [Workspace crate 迁移设计](workspace-crate-design.md)。
 
 ### C3. 依赖与供应链维护
 
