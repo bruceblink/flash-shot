@@ -1,0 +1,16 @@
+[package]
+name = "flash-shot-domain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Flash Shot screenshot domain models and state machines"
+repository.workspace = true
+license.workspace = true
+
+[lib]
+name = "flash_shot_domain"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

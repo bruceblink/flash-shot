@@ -10,7 +10,7 @@ pub mod copy_performance;
 #[cfg(feature = "dev-tools")]
 pub mod dev_tools;
 pub mod diagnostics;
-pub mod domain;
+pub use flash_shot_domain::domain;
 pub mod export_stress;
 pub mod history;
 pub mod i18n;

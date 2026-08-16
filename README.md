@@ -50,7 +50,8 @@ Windows 可能显示 SmartScreen 或“未知发布者”警告；请只从上�
 cargo run
 ```
 
-项目只声明一个可运行程序入口 `flash-shot`，因此无需指定 `--bin`。压力测试和原生验收程序
+workspace 根目录将 `crates/flash-shot-bin` 中的 `flash-shot` 包设为唯一默认成员，且只声明一个可运行程序入口，
+因此无需指定 `--bin`。压力测试和原生验收程序
 作为可选的 `dev-tools` 库模块保留，由 `scripts\run-dev-tool.ps1` 调度；它们不会成为发布包中的
 额外 EXE，也不会改变普通 `cargo run` 的启动行为。
 

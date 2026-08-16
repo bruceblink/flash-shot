@@ -51,9 +51,9 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 自动门禁不能替代上述交互矩阵，但每次手工验收都应在同一提交上附带：
 
 ```powershell
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --lib
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
 .\scripts\run-dev-tool.ps1 -Release capture-stress --output target/capture-stress.json
 .\scripts\run-dev-tool.ps1 -Release annotation-stress --iterations 30
 # 当前单屏开发范围：要求环境恰好只有一块显示器，避免把多屏状态误记为单屏证据。

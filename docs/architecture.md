@@ -4,6 +4,9 @@
 
 | 规范名称 | English / 缩写 | 当前职责边界 | 不代表什么 |
 | --- | --- | --- | --- |
+| 工作区根目录 | Workspace Root | 虚拟 Cargo workspace，统一锁定依赖、默认成员和仓库级检查 | 不是可运行包或第二个二进制入口 |
+| 领域库 | Domain Crate / `flash-shot-domain` | 几何、选区、会话和标注文档等纯产品值与状态机 | 不是 GPUI 界面或 Windows API 实现 |
+| 应用库 | Application Crate / `flash-shot-app` | 当前承载 GPUI 应用、用例、平台适配与验收库模块；后续再按已批准设计细分 | 不是 Cargo 应用入口 |
 | 应用入口 | Application Entry | Cargo 唯一的 `flash-shot` 二进制目标，负责启动桌面应用 | 不是压力测试或验收命令集合 |
 | 开发工具模块 | Development Tool Modules / `dev-tools` | 仅在显式启用特性时编译的库内压力测试与验收模块 | 不是发布包中的独立 EXE，也不是普通用户入口 |
 | 开发工具调度脚本 | Development Tool Runner | `scripts/run-dev-tool.ps1`，在隔离构建目录中选择并运行一个开发工具模块 | 不改变普通 `cargo run`，也不加入生产启动参数 |
@@ -25,8 +28,8 @@
 
 - 使用锁定到具体 Zed 提交的 `gpui` 和官方 `gpui_platform`；
 - 在 GPUI 事件循环启动前进入 Tokio 多线程运行时；
-- 通过 `build.rs` 和 `resources` 目录管理原生图标与打包资源；
-- `main.rs` 保持精简，在 `lib.rs` 完成应用装配，功能状态拆入独立模块；
+- 通过 `crates/flash-shot-bin/build.rs` 和根目录 `resources` 管理原生图标与打包资源；
+- `crates/flash-shot-bin/src/main.rs` 保持精简，在 `flash-shot-app` 库完成应用装配，功能状态拆入独立模块；
 - 使用 `Context`、`Entity`、`WeakEntity`、`spawn` 和 `notify` 组织 UI 状态与异步更新。
 
 Flash Shot 不依赖 `gpui-component` 或 `gpui-component-assets`。截图覆盖层和标注工具需要直接控制布局、输入、绘制、焦点和帧行为；通用组件库会增加不必要的升级和样式边界。可复用控件将以小型、产品专用的 GPUI 模块实现。
@@ -41,30 +44,31 @@ Flash Shot 不是常驻主窗口应用。进程启动后仅保留全局快捷键
 
 ## 3. 当前模块边界
 
-项目当前保持单 crate。模块边界先通过测试和真实验收稳定，再评估是否拆分 workspace；文档不把尚未
-落地的 crate 名称当成现状：
+项目当前是一个小型 workspace。第一阶段已将无 GPUI、无 Windows API 依赖的领域模型提取为
+`flash-shot-domain`；其余应用代码暂保留在 `flash-shot-app`，以避免在同一迁移中混入 Windows 或
+GPUI 行为变化。后续 crate 边界与迁移顺序见 [Workspace crate 迁移设计](workspace-crate-design.md)：
 
 ```text
-src/app.rs                 GPUI 应用装配、托盘入口与生命周期
-src/app/                   覆盖层、Pin、历史、设置和交互状态
-src/app/workflow/          截图、导出、滚动、识别、录屏和设置用例
-src/domain/                几何、选区、会话、标注和路线模型
-src/platform/              Windows 捕获、剪贴板、快捷键、托盘和窗口服务
-src/image.rs               像素帧、裁切、滤镜、合成和编码
-src/annotation_stress.rs   标注压力工具与性能报告
-src/dev_tools/             可选的 Release 验收、资源压力和报告库模块
-scripts/run-dev-tool.ps1   开发工具调度脚本；产物与普通应用构建目录隔离
+Cargo.toml                                  虚拟 workspace；默认只选择 flash-shot-bin
+crates/flash-shot-domain/src/domain/        几何、选区、会话、标注和路线模型
+crates/flash-shot-app/src/app.rs            GPUI 应用装配、托盘入口与生命周期
+crates/flash-shot-app/src/app/              覆盖层、Pin、历史、设置和交互状态
+crates/flash-shot-app/src/app/workflow/     截图、导出、滚动、识别、录屏和设置用例
+crates/flash-shot-app/src/platform/         当前 Windows 捕获、剪贴板、快捷键、托盘和窗口服务
+crates/flash-shot-app/src/image.rs          像素帧、裁切、滤镜、合成和编码
+crates/flash-shot-app/src/dev_tools/        可选的 Release 验收、资源压力和报告库模块
+crates/flash-shot-bin/src/main.rs           唯一 `flash-shot` 应用入口
+scripts/run-dev-tool.ps1                    开发工具调度脚本；产物与普通应用构建目录隔离
 ```
 
-依赖方向保持如下约束：
+当前依赖方向保持如下约束：
 
 ```text
-GPUI 应用 -> 应用用例 -> 领域/核心 <- 平台实现
-                          |
-                          +-> 图像与标注算法
+flash-shot-bin -> flash-shot-app -> flash-shot-domain
 ```
 
-核心模块不得依赖 GPUI、HWND、COM 对象、FFmpeg 进程或具体 OCR 运行时。
+领域库不得依赖 GPUI、HWND、COM 对象、FFmpeg 进程或具体 OCR 运行时。应用库内尚未提取的
+平台适配继续由现有测试和原生验收保护，不能被误称为独立的 Windows 基础设施 crate。
 
 ## 4. 截图管线
 
@@ -90,7 +94,8 @@ GPUI 应用 -> 应用用例 -> 领域/核心 <- 平台实现
 
 ## 6. 平台边界
 
-平台职责由下列接口概念表达，具体实现位于 `src/platform/`，不要求为每个概念立即创建独立 crate：
+平台职责由下列接口概念表达，当前具体实现位于 `crates/flash-shot-app/src/platform/`；它们会在接口
+边界稳定后迁移到 Windows 基础设施 crate，而不是按单个 API 拆出 crate：
 
 - `CaptureBackend`
 - `DisplayProvider`

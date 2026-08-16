@@ -12,18 +12,18 @@ Updated: 2026-08-16
 | Windows infrastructure crate | `flash-shot-infra-windows` | Implements Windows capture, clipboard, shortcuts, tray, inspection, process, and file-system boundaries. | The application composition root or a reusable domain model. |
 | UI crate | `flash-shot-ui` | Owns GPUI state, overlays, Pin windows, settings views, and presentation-only interaction code. | The place where Windows services are constructed. |
 | Acceptance crate | `flash-shot-acceptance` | Provides opt-in native acceptance and stress runners as library code called by the main executable. | An independently published or user-facing executable. |
-| Binary crate | `flash-shot-bin` | Composes concrete services, starts the application, and embeds Windows resources. | A home for domain rules, use cases, or alternate command-line programs. |
+| Binary crate | `flash-shot` package in `crates/flash-shot-bin` | Composes concrete services, starts the application, and embeds Windows resources. | A home for domain rules, use cases, or alternate command-line programs. |
 
 All subsequent diagrams and text use these exact names. Standard Cargo, GPUI, Windows, and FFmpeg names retain their standard capitalization.
 
 ## Decision
 
-Adopt a small Cargo workspace modeled on Ramag's composition pattern, not its number of feature crates. Flash Shot already has a stable `src/domain/` boundary, platform-facing service types, and a single desktop startup path. The current largest units (`src/app/overlay.rs` and the overlay interaction acceptance runner) are large enough that package-level ownership will make future changes easier to review and test.
+Adopt a small Cargo workspace modeled on Ramag's composition pattern, not its number of feature crates. Flash Shot now has a stable `flash-shot-domain` boundary, platform-facing service types, and a single desktop startup path. The current largest units (`crates/flash-shot-app/src/app/overlay.rs` and the overlay interaction acceptance runner) are large enough that package-level ownership will make future changes easier to review and test.
 
 The migration must preserve these product contracts:
 
 1. The workspace contains exactly one binary target, named `flash-shot`.
-2. The virtual workspace root declares `default-members = ["crates/flash-shot-bin"]`, so `cargo run` from the repository root launches that binary without `--bin flash-shot`.
+2. The virtual workspace root declares `default-members = ["crates/flash-shot-bin"]`; that member keeps the historical `flash-shot` package and binary name, so `cargo run` from the repository root launches it without `--bin flash-shot`.
 3. All reusable layers, including native acceptance runners, are library crates. Development tools continue to dispatch through the one binary with the existing opt-in feature and environment selector.
 4. No behavior, persisted settings schema, release asset name, or Windows integration contract changes merely because source files move.
 5. The dependency graph is directional. The binary is the only composition root.
@@ -55,9 +55,9 @@ Ramag is useful here because its `ramag-domain`, `ramag-app`, infrastructure lib
 
 ## Migration Stages
 
-### Stage 1: Establish The Workspace And Domain Crate
+### Stage 1: Establish The Workspace And Domain Crate (Complete)
 
-Create the virtual workspace, centralize compatible dependency versions, extract `src/domain/` into `flash-shot-domain`, and update every caller to use the new library. Keep the existing behavior unchanged. This is the first implementation slice because it has no GPUI or Windows API dependency.
+The virtual workspace now centralizes compatible dependency versions, and the former `src/domain/` modules are extracted into `flash-shot-domain`. `flash-shot-app` keeps a compatibility re-export while callers migrate incrementally, and the historical `flash-shot` package in `crates/flash-shot-bin` is the only default Cargo member with a binary target. Behavior remains unchanged; this first slice has no GPUI or Windows API behavior change.
 
 Validation: domain tests, repository-wide formatting, strict Clippy, full workspace tests, and a root-level development-tool dispatch that proves Cargo selected the only executable without `--bin`.
 

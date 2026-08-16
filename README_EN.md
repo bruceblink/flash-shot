@@ -52,7 +52,8 @@ Requirements:
 cargo run
 ```
 
-The package declares only the `flash-shot` application binary, so no `--bin` argument is needed.
+The workspace root selects the `flash-shot` package in `crates/flash-shot-bin` as its only default
+member, which declares the only application binary, so no `--bin` argument is needed.
 Stress and native acceptance programs remain available as opt-in `dev-tools` library modules via
 `scripts\run-dev-tool.ps1`; they do not add executables to release packages or alter normal
 `cargo run` startup.

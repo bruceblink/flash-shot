@@ -20,7 +20,7 @@ Flash Shot 的功能主线已经完成。Windows 单显示器、100% 缩放环�
 - 负坐标双屏与混合 DPI 双屏仍按既有决定暂缓，不纳入当前承诺；
 - 配置真实 HTTPS 端点后的翻译成功、失败与重试闭环尚未执行，但它不是核心截图发布阻塞项；
 - 4K 标注的真实交互帧时间尚未形成可重复的目标硬件基线；
-- `src/app/overlay.rs` 与原生验收 runner 已经很大，继续堆叠场景会显著提高回归和维护成本。
+- `crates/flash-shot-app/src/app/overlay.rs` 与原生验收 runner 已经很大，继续堆叠场景会显著提高回归和维护成本。
 - 设置页和覆盖层仍以英文硬编码文案为主，缺少应用级国际化资源；现有 `translation.rs` 只是 OCR 文本的
   外部翻译服务边界，不能替代 UI 本地化。
 - 当前 UI 将少量高频动作、低频诊断动作和重复的全屏快捷操作放在同一层，需要重新整理信息架构，
@@ -143,11 +143,13 @@ cargo test --workspace
 
 ### C2. 收敛应用模块边界
 
-- 按渲染、输入、选择变换、菜单/工具状态和导出生命周期逐步缩小 `src/app/overlay.rs`；
+- 按渲染、输入、选择变换、菜单/工具状态和导出生命周期逐步缩小 `crates/flash-shot-app/src/app/overlay.rs`；
 - 继续把文件 I/O、识别、录屏和平台调用留在现有 workflow/platform 边界；
 - 为非平凡状态更新和 Windows 生命周期函数补充面向初学者的函数级注释；
 - 模块边界已通过多个切片验证后，采用小型 workspace；领域、应用、Windows 基础设施、GPUI 界面、验收库
-  和唯一二进制的职责与迁移顺序见 [Workspace crate 迁移设计](workspace-crate-design.md)。
+  和唯一二进制的职责与迁移顺序见 [Workspace crate 迁移设计](workspace-crate-design.md)。第一阶段已完成
+  `flash-shot-domain`、`flash-shot-app` 与 `crates/flash-shot-bin` 中唯一 `flash-shot` 包的工作区落地；
+  后续阶段继续按该文档拆分。
 
 ### C3. 依赖与供应链维护
 

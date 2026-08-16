@@ -5,7 +5,7 @@ Flash Shot 当前是 Windows-first 应用。核心图像、标注、会话和导
 ## 当前证据
 
 - `x86_64-unknown-linux-gnu` Rust 目标已可安装；在当前 Windows 开发机上，`cargo check --target x86_64-unknown-linux-gnu --all-targets` 进入 GPUI 的 Linux 依赖构建后因缺少 `x86_64-linux-gnu-gcc` 停止。这是交叉 C 工具链缺失，不是 Linux 后端已经可用的证据。
-- `src/platform/display.rs`、`capture.rs`、`shortcut.rs`、`clipboard.rs`、`tray.rs` 和 `window_inspector.rs` 的非 Windows 路径会明确返回 `Unsupported`。当前运行时不能在 Linux 上完成截图主链路。
+- `crates/flash-shot-app/src/platform/display.rs`、`capture.rs`、`shortcut.rs`、`clipboard.rs`、`tray.rs` 和 `window_inspector.rs` 的非 Windows 路径会明确返回 `Unsupported`。当前运行时不能在 Linux 上完成截图主链路。
 - 锁定的 GPUI 依赖解析出了 Linux 的 Wayland、X11、AT-SPI、D-Bus 和 portal 相关依赖；这只证明 UI 平台具备候选基础，不能替代 Flash Shot 自己的系统服务实现。
 
 ## 验证前置条件

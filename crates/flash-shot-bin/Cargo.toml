@@ -1,0 +1,26 @@
+[package]
+name = "flash-shot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Flash Shot single executable composition root"
+repository.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "flash-shot"
+path = "src/main.rs"
+
+[features]
+default = []
+dev-tools = ["flash-shot-app/dev-tools"]
+
+[dependencies]
+flash-shot-app.workspace = true
+log.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc.workspace = true
+
+[build-dependencies]
+winres.workspace = true

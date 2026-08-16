@@ -1,0 +1,49 @@
+[package]
+name = "flash-shot-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+autobins = false
+description = "Flash Shot application library and GPUI surfaces"
+repository.workspace = true
+license.workspace = true
+readme = "../../README.md"
+keywords = ["screenshot", "screen-recording", "desktop", "gpui"]
+categories = ["multimedia::images", "gui"]
+
+[lib]
+name = "flash_shot"
+path = "src/lib.rs"
+
+[features]
+default = []
+dev-tools = []
+
+[dependencies]
+flash-shot-domain.workspace = true
+async-channel.workspace = true
+directories.workspace = true
+font-kit.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+image.workspace = true
+log.workspace = true
+pathfinder_geometry.workspace = true
+png.workspace = true
+raw-window-handle.workspace = true
+rqrr.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+ureq.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+arboard.workspace = true
+windows.workspace = true
+windows-sys.workspace = true
+winreg.workspace = true
+
+[dev-dependencies]
+qrcode.workspace = true
