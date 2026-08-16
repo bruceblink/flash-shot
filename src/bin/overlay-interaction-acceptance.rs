@@ -192,6 +192,7 @@ struct Options {
 enum CaptureScenarioOption {
     #[default]
     Standard,
+    CopyOnly,
     NarrowEdge,
     PinsCoexist,
     SelectionTransform,
@@ -202,6 +203,7 @@ impl CaptureScenarioOption {
     const fn workflow(self) -> &'static str {
         match self {
             Self::Standard => "capture",
+            Self::CopyOnly => "capture_copy_only",
             Self::NarrowEdge => "capture_narrow_edge",
             Self::PinsCoexist => "capture_pins_coexist",
             Self::SelectionTransform => "capture_selection_transform",
@@ -347,13 +349,14 @@ impl Options {
                         .into_string()
                         .map_err(|_| "capture scenario must be valid Unicode".to_owned())?;
                     options.capture_scenario = match scenario.as_str() {
+                        "copy-only" => CaptureScenarioOption::CopyOnly,
                         "narrow-edge" => CaptureScenarioOption::NarrowEdge,
                         "pins-coexist" => CaptureScenarioOption::PinsCoexist,
                         "selection-transform" => CaptureScenarioOption::SelectionTransform,
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
                         _ => {
                             return Err(
-                                "capture scenario must be 'narrow-edge', 'pins-coexist', 'selection-transform', or 'scroll-roundtrip'"
+                                "capture scenario must be 'copy-only', 'narrow-edge', 'pins-coexist', 'selection-transform', or 'scroll-roundtrip'"
                                     .to_owned(),
                             );
                         }
@@ -419,14 +422,20 @@ impl Options {
                     .to_owned(),
             );
         }
-        let standard_capture = options.capture_scenario == CaptureScenarioOption::Standard
-            && options.record_target.is_none()
+        let copy_capable_capture = matches!(
+            options.capture_scenario,
+            CaptureScenarioOption::Standard | CaptureScenarioOption::CopyOnly
+        ) && options.record_target.is_none()
             && !scroll_export_seen;
-        if copy_trigger_seen && !standard_capture {
-            return Err("--copy-trigger is only valid with standard capture".to_owned());
+        if copy_trigger_seen && !copy_capable_capture {
+            return Err(
+                "--copy-trigger is only valid with standard or copy-only capture".to_owned(),
+            );
         }
-        let standard_system_copy = options.capture_scenario == CaptureScenarioOption::Standard
-            && options.record_target.is_none()
+        let standard_system_copy = matches!(
+            options.capture_scenario,
+            CaptureScenarioOption::Standard | CaptureScenarioOption::CopyOnly
+        ) && options.record_target.is_none()
             && !scroll_export_seen;
         let pins_system_copy = options.capture_scenario == CaptureScenarioOption::PinsCoexist;
         let scroll_system_copy = options.capture_scenario == CaptureScenarioOption::ScrollRoundtrip
@@ -468,7 +477,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <narrow-edge|pins-coexist|selection-transform|scroll-roundtrip> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1370,11 +1379,11 @@ struct RecordingWindowPhaseReport {
 
 #[derive(serde::Serialize)]
 struct CaptureActionReport {
-    initial_requested_selection: PhysicalRect,
-    recapture_requested_selection: PhysicalRect,
-    nudge: NudgeReport,
-    save: SaveReport,
-    pin: PinReport,
+    initial_requested_selection: Option<PhysicalRect>,
+    recapture_requested_selection: Option<PhysicalRect>,
+    nudge: Option<NudgeReport>,
+    save: Option<SaveReport>,
+    pin: Option<PinReport>,
     copy: CopyReport,
     cleanup: CleanupReport,
 }
@@ -1924,6 +1933,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         (
             None,
             CaptureScenarioOption::Standard
+            | CaptureScenarioOption::CopyOnly
             | CaptureScenarioOption::PinsCoexist
             | CaptureScenarioOption::SelectionTransform
             | CaptureScenarioOption::ScrollRoundtrip,
@@ -2000,9 +2010,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 15 adds optional
-        // production system-clipboard evidence for a Pin while preserving the no-clipboard path.
-        schema_version: 15,
+        // Increment when the machine-readable report shape changes. Schema 16 permits a focused
+        // Copy-only report without fabricating unrelated Save, Pin, or recapture evidence.
+        schema_version: 16,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -3468,6 +3478,7 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::ScrollRoundtrip) => {
             execute_scroll_roundtrip_interactions(context, report)
         }
+        (None, CaptureScenarioOption::CopyOnly) => execute_copy_only_interactions(context, report),
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
     let cursor_result = cursor.restore();
@@ -5617,11 +5628,65 @@ fn execute_capture_interactions(
         )));
     }
     report.capture_actions = Some(CaptureActionReport {
-        initial_requested_selection: first_drag.selection,
-        recapture_requested_selection: second_drag.selection,
-        nudge,
-        save,
-        pin,
+        initial_requested_selection: Some(first_drag.selection),
+        recapture_requested_selection: Some(second_drag.selection),
+        nudge: Some(nudge),
+        save: Some(save),
+        pin: Some(pin),
+        copy,
+        cleanup: CleanupReport {
+            session_state: final_state.session_state,
+            overlay_count: final_state.overlay_count,
+            pinned_count: final_state.pinned_count,
+            capture_teardown_pending: final_state.capture_teardown_pending,
+            visible_process_windows,
+            capture_preflight_ready: final_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Measures the production Copy path without running unrelated Save, Pin, and recapture actions.
+///
+/// This is the batch scenario: it still opens a real overlay, commits a real mouse selection,
+/// drives the requested Copy gesture, validates the external clipboard consumer, and sends Escape.
+fn execute_copy_only_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "controller_ready",
+        controller,
+        None,
+    )?;
+
+    let copy = execute_copy_interaction(context, report, controller)?;
+    let final_state = wait_for_capture_state(context, "Copy-only final cleanup", |state| {
+        state.session_state == "idle"
+            && state.selection.is_none()
+            && state.overlay_count == 0
+            && state.pinned_count == 0
+            && !state.capture_teardown_pending
+            && state.capture_preflight_ready
+    })?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "Copy-only cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.capture_actions = Some(CaptureActionReport {
+        initial_requested_selection: None,
+        recapture_requested_selection: None,
+        nudge: None,
+        save: None,
+        pin: None,
         copy,
         cleanup: CleanupReport {
             session_state: final_state.session_state,
@@ -5687,6 +5752,10 @@ fn begin_selected_overlay_with_plan(
     )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
+    // The settle interval gives shell notifications time to steal focus. Reacquire the same
+    // process-owned overlay immediately before the first guarded mouse action.
+    let overlay = owned_window(overlay.handle)?;
+    focus_owned_window(overlay, context.timeout)?;
     let plan = plan_for_window(overlay.handle)?;
     let drag = inject_mouse_drag(
         overlay.handle,
@@ -5983,6 +6052,7 @@ fn execute_copy_interaction(
     let (overlay, plan, selection, requested_selection, source) =
         begin_selected_overlay(context, controller)?;
     thread::sleep(context.settle_delay);
+    focus_owned_window(overlay, context.timeout)?;
     let selected = capture_evidence(context, "12-copy-selection.png", overlay)?;
     record_step(
         report,
@@ -6244,6 +6314,7 @@ fn execute_copy_interaction(
         None,
     )?;
     thread::sleep(context.settle_delay);
+    focus_owned_window(overlay, context.timeout)?;
     let retained = capture_evidence(context, "13-copy-complete-editor.png", overlay)?;
     record_step(
         report,
@@ -6252,7 +6323,7 @@ fn execute_copy_interaction(
         guard_foreground(overlay.handle)?,
         Some(&retained),
     )?;
-    let cleanup_foreground = inject_key(overlay.handle, VK_ESCAPE)?;
+    let cleanup_foreground = focus_and_inject_key(overlay, VK_ESCAPE, context.timeout)?;
     wait_for_window_gone(overlay.handle, context.timeout, "Copy Escape cleanup")?;
     let cleanup_state = wait_for_capture_state(context, "Copy Escape cleanup", |state| {
         state.session_state == "idle"
@@ -9489,6 +9560,30 @@ fn focus_and_inject_capture_shortcut(
 }
 
 #[cfg(windows)]
+/// Retries the focus-to-key gap only when the key batch was rejected before input began.
+fn focus_and_inject_key(
+    window: NativeWindow,
+    virtual_key: u16,
+    timeout: Duration,
+) -> io::Result<NativeWindow> {
+    for attempt in 0..CAPTURE_SHORTCUT_FOCUS_ATTEMPTS {
+        let window = owned_window(window.handle)?;
+        focus_owned_window(window, timeout)?;
+        match inject_key(window.handle, virtual_key) {
+            Ok(foreground) => return Ok(foreground),
+            Err(error)
+                if is_foreground_change_abort(&error)
+                    && attempt + 1 < CAPTURE_SHORTCUT_FOCUS_ATTEMPTS =>
+            {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("focused key attempts always return on their final iteration")
+}
+
+#[cfg(windows)]
 fn is_foreground_change_abort(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::PermissionDenied
         && matches!(
@@ -9721,13 +9816,27 @@ fn inject_copy_trigger_with_ack(
         if attempt > 0 {
             // SAFETY: this reads the user32 clipboard sequence without opening the clipboard.
             if unsafe { GetClipboardSequenceNumber() } != clipboard_sequence_before {
-                return Ok(previous_input.expect("a retry always follows one Copy input"));
+                return previous_input.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "system clipboard changed before a rejected Copy input could be retried",
+                    )
+                });
             }
-            let overlay = owned_window(overlay.handle)?;
-            focus_owned_window(overlay, context.timeout)?;
         }
 
-        let input = inject_copy_trigger(overlay.handle, toolbar_point, context.copy_trigger)?;
+        let overlay = owned_window(overlay.handle)?;
+        focus_owned_window(overlay, context.timeout)?;
+        let input = match inject_copy_trigger(overlay.handle, toolbar_point, context.copy_trigger) {
+            Ok(input) => input,
+            Err(error)
+                if is_foreground_change_abort(&error) && attempt + 1 < COPY_TRIGGER_ATTEMPTS =>
+            {
+                thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         previous_input = Some(input);
         if wait_for_copy_trigger_ack(
             context,
@@ -10581,7 +10690,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_gates_standard_system_clipboard_and_copy_trigger() {
+    fn parser_gates_copy_capable_system_clipboard_and_copy_trigger() {
         let options =
             Options::parse_from(arguments(&["--allow-input", "--allow-system-clipboard"])).unwrap();
 
@@ -10598,6 +10707,21 @@ mod tests {
         .unwrap();
         assert_eq!(enter.copy_trigger, CopyTriggerOption::Enter);
         assert_eq!(enter.copy_trigger.label(), "enter");
+
+        let copy_only = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "copy-only",
+            "--allow-system-clipboard",
+            "--copy-trigger",
+            "enter",
+        ]))
+        .unwrap();
+        assert_eq!(copy_only.capture_scenario, CaptureScenarioOption::CopyOnly);
+        assert_eq!(copy_only.capture_scenario.workflow(), "capture_copy_only");
+        assert!(!copy_only.capture_scenario.requires_100_percent_display());
+        assert!(copy_only.allow_system_clipboard);
+        assert_eq!(copy_only.copy_trigger, CopyTriggerOption::Enter);
 
         let toolbar =
             Options::parse_from(arguments(&["--allow-input", "--copy-trigger", "toolbar"]))

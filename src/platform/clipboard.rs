@@ -152,11 +152,13 @@ fn write_i32(target: &mut [u8], offset: usize, value: i32) {
 mod platform {
     use super::{CaptureFrame, ClipboardCommitGate, encode_dib, frame_from_rgba};
     use std::{
-        io, ptr, thread,
+        io,
+        marker::PhantomData,
+        ptr, thread,
         time::{Duration, Instant},
     };
     use windows_sys::Win32::{
-        Foundation::{GlobalFree, HANDLE, HGLOBAL},
+        Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND},
         System::{
             DataExchange::{
                 CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW,
@@ -165,6 +167,7 @@ mod platform {
             Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock},
             Ole::{CF_DIB, CF_UNICODETEXT},
         },
+        UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE},
     };
 
     const READ_ATTEMPTS: usize = 8;
@@ -237,7 +240,10 @@ mod platform {
     fn write_image_to_open_clipboard(png: &[u8], dib: &[u8]) -> io::Result<()> {
         // SAFETY: clipboard is open on this thread.
         if unsafe { EmptyClipboard() } == 0 {
-            return Err(io::Error::last_os_error());
+            return Err(io::Error::other(format!(
+                "EmptyClipboard(image) failed: {}",
+                io::Error::last_os_error()
+            )));
         }
 
         let png_name: Vec<u16> = "PNG".encode_utf16().chain(Some(0)).collect();
@@ -247,8 +253,8 @@ mod platform {
             return Err(io::Error::last_os_error());
         }
 
-        set_data(png_format, png)?;
-        set_data(CF_DIB as u32, dib)?;
+        set_data(png_format, png, "PNG")?;
+        set_data(CF_DIB as u32, dib, "CF_DIB")?;
         Ok(())
     }
 
@@ -256,9 +262,12 @@ mod platform {
         let _clipboard = ClipboardGuard::open()?;
         // SAFETY: clipboard is open on this thread.
         if unsafe { EmptyClipboard() } == 0 {
-            return Err(io::Error::last_os_error());
+            return Err(io::Error::other(format!(
+                "EmptyClipboard(text) failed: {}",
+                io::Error::last_os_error()
+            )));
         }
-        set_data(CF_UNICODETEXT as u32, &utf16_bytes(text))
+        set_data(CF_UNICODETEXT as u32, &utf16_bytes(text), "CF_UNICODETEXT")
     }
 
     pub(super) fn utf16_bytes(text: &str) -> Vec<u8> {
@@ -268,17 +277,71 @@ mod platform {
             .collect()
     }
 
-    fn set_data(format: u32, bytes: &[u8]) -> io::Result<()> {
+    fn set_data(format: u32, bytes: &[u8], label: &str) -> io::Result<()> {
         let memory = GlobalMemory::copy_from(bytes)?;
         // SAFETY: clipboard is open, memory is movable and ownership transfers on success.
         if unsafe { SetClipboardData(format, memory.handle as HANDLE) }.is_null() {
-            return Err(io::Error::last_os_error());
+            return Err(io::Error::other(format!(
+                "SetClipboardData({label}) failed: {}",
+                io::Error::last_os_error()
+            )));
         }
         memory.transfer();
         Ok(())
     }
 
-    struct ClipboardGuard;
+    /// Keeps a non-null, thread-owned HWND alive for the complete clipboard transaction.
+    ///
+    /// Windows can lose the open-clipboard association between multiple `SetClipboardData` calls
+    /// when `OpenClipboard` receives a null owner. A message-only `STATIC` window gives
+    /// `EmptyClipboard` a stable owner without adding a visible window or a custom message loop.
+    struct ClipboardOwnerWindow {
+        handle: HWND,
+        _not_send: PhantomData<*const ()>,
+    }
+
+    impl ClipboardOwnerWindow {
+        fn new() -> io::Result<Self> {
+            let class_name = "STATIC".encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+            // SAFETY: the predefined class name is NUL terminated, every optional pointer is
+            // null, and HWND_MESSAGE creates a non-visible window owned by this thread.
+            let handle = unsafe {
+                CreateWindowExW(
+                    0,
+                    class_name.as_ptr(),
+                    ptr::null(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    HWND_MESSAGE,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null(),
+                )
+            };
+            if handle.is_null() {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(Self {
+                    handle,
+                    _not_send: PhantomData,
+                })
+            }
+        }
+    }
+
+    impl Drop for ClipboardOwnerWindow {
+        fn drop(&mut self) {
+            // SAFETY: this HWND was created by `new` on the same thread and remains owned here.
+            unsafe { DestroyWindow(self.handle) };
+        }
+    }
+
+    struct ClipboardGuard {
+        _owner: ClipboardOwnerWindow,
+    }
 
     impl ClipboardGuard {
         fn open() -> io::Result<Self> {
@@ -304,9 +367,10 @@ mod platform {
 
     /// Opens the process-global clipboard once so the retry policy remains independently testable.
     fn open_clipboard_once() -> io::Result<ClipboardGuard> {
-        // SAFETY: a null owner is valid for this short synchronous clipboard operation.
-        if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
-            Ok(ClipboardGuard)
+        let owner = ClipboardOwnerWindow::new()?;
+        // SAFETY: the message-only owner is valid and remains alive inside the returned guard.
+        if unsafe { OpenClipboard(owner.handle) } != 0 {
+            Ok(ClipboardGuard { _owner: owner })
         } else {
             Err(io::Error::last_os_error())
         }
@@ -392,8 +456,23 @@ mod platform {
 
     #[cfg(test)]
     mod tests {
-        use super::retry_clipboard_operation;
+        use super::{ClipboardOwnerWindow, retry_clipboard_operation};
         use std::{cell::Cell, io, time::Duration};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible};
+
+        #[test]
+        fn clipboard_owner_is_a_hidden_thread_window_with_bounded_lifetime() {
+            let owner = ClipboardOwnerWindow::new().unwrap();
+            let handle = owner.handle;
+            // SAFETY: the handle belongs to the owner that is alive in this scope.
+            assert_ne!(unsafe { IsWindow(handle) }, 0);
+            // SAFETY: HWND_MESSAGE windows are never part of the visible desktop hierarchy.
+            assert_eq!(unsafe { IsWindowVisible(handle) }, 0);
+
+            drop(owner);
+            // SAFETY: querying a stale HWND is supported and must report that it is gone.
+            assert_eq!(unsafe { IsWindow(handle) }, 0);
+        }
 
         #[test]
         fn clipboard_retry_recovers_from_transient_contention() {

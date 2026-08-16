@@ -33,9 +33,9 @@ const MIN_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_SETTLE_DELAY: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_P95_MS: f64 = 250.0;
 const REPORT_SCHEMA_VERSION: u32 = 1;
-// The child timeout bounds one workflow wait, while a successful standard Copy session first
-// performs capture, Save, and Pin setup. Reserve that measured setup budget plus a small report
-// tail so a late Copy failure can persist its own diagnostics before the outer watchdog reaps it.
+// The child timeout bounds one workflow wait, while the focused Copy scenario still creates the
+// controller, overlay, and real mouse selection before measured input. Reserve that setup budget
+// plus a small report tail so a late Copy failure can persist diagnostics before the watchdog.
 const COPY_WORKFLOW_SETUP_BUDGET: Duration = Duration::from_secs(20);
 const RUNNER_REPORT_GRACE: Duration = Duration::from_secs(2);
 // Windows releases a process-scoped RegisterHotKey registration during process teardown. Keep
@@ -710,6 +710,8 @@ fn run_iteration(
     command
         .arg("--allow-input")
         .arg("--allow-system-clipboard")
+        .arg("--capture-scenario")
+        .arg("copy-only")
         .arg("--copy-trigger")
         .arg(options.copy_trigger.label())
         .arg("--output-dir")
