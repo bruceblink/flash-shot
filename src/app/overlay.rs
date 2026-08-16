@@ -952,6 +952,7 @@ pub(super) fn open_ui_acceptance(
             crate::OverlayUiAcceptanceScenario::SelectedRegion {
                 placement,
                 show_more_actions,
+                show_annotation_controls,
             } => {
                 let selection = overlay_ui_acceptance_selection(display.physical_bounds, placement);
                 match app.session.select(selection) {
@@ -959,6 +960,9 @@ pub(super) fn open_ui_acceptance(
                         app.selection_drag.select(selection);
                         if show_more_actions {
                             app.toggle_overlay_more_actions(cx);
+                        }
+                        if show_annotation_controls {
+                            app.toggle_overlay_annotation_controls(cx);
                         }
                         app.status = format!(
                             "Selection ready: {} x {} physical pixels",
@@ -1550,7 +1554,12 @@ impl Render for CaptureOverlay {
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .child(div().text_sm().text_color(colors.muted).child("Layers"))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(colors.muted)
+                                .child(locale.text(UiText::OverlayLayers)),
+                        )
                         .children(layer_annotations.iter().rev().enumerate().map(
                             |(reverse_index, annotation)| {
                                 let id = annotation.id;
@@ -1581,7 +1590,7 @@ impl Render for CaptureOverlay {
                                     }))
                                     .child(format!(
                                         "{position}. {}",
-                                        annotation_layer_label(&annotation.kind)
+                                        annotation_layer_label(locale, &annotation.kind)
                                     ))
                             },
                         )),
@@ -1634,7 +1643,7 @@ impl Render for CaptureOverlay {
                                 .gap_2()
                                 .child(annotation_action_button(
                                     "overlay-undo",
-                                    "Undo",
+                                    locale.text(UiText::OverlayUndo),
                                     colors,
                                     AnnotationActionTone::Neutral,
                                     can_undo,
@@ -1647,7 +1656,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-redo",
-                                    "Redo",
+                                    locale.text(UiText::OverlayRedo),
                                     colors,
                                     AnnotationActionTone::Neutral,
                                     can_redo,
@@ -1660,7 +1669,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-watermark",
-                                    "Watermark",
+                                    locale.text(UiText::OverlayWatermark),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Watermark) {
                                         AnnotationActionTone::Primary
@@ -1677,7 +1686,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-text",
-                                    "Text",
+                                    locale.text(UiText::OverlayText),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Text) {
                                         AnnotationActionTone::Primary
@@ -1694,7 +1703,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-number",
-                                    "Number",
+                                    locale.text(UiText::OverlayNumber),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Number) {
                                         AnnotationActionTone::Primary
@@ -1711,7 +1720,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-blur",
-                                    "Blur",
+                                    locale.text(UiText::OverlayBlur),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Blur) {
                                         AnnotationActionTone::Primary
@@ -1728,7 +1737,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-mosaic",
-                                    "Mosaic",
+                                    locale.text(UiText::OverlayMosaic),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Mosaic) {
                                         AnnotationActionTone::Primary
@@ -1745,7 +1754,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-highlight",
-                                    "Highlight",
+                                    locale.text(UiText::OverlayHighlight),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Highlight) {
                                         AnnotationActionTone::Primary
@@ -1762,7 +1771,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-selection",
-                                    "Select",
+                                    locale.text(UiText::OverlaySelect),
                                     colors,
                                     if selected_tool.is_none() {
                                         AnnotationActionTone::Primary
@@ -1779,7 +1788,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-rectangle",
-                                    "Rectangle",
+                                    locale.text(UiText::OverlayRectangle),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Rectangle) {
                                         AnnotationActionTone::Primary
@@ -1796,7 +1805,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-ellipse",
-                                    "Ellipse",
+                                    locale.text(UiText::OverlayEllipse),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Ellipse) {
                                         AnnotationActionTone::Primary
@@ -1813,7 +1822,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-line",
-                                    "Line",
+                                    locale.text(UiText::OverlayLine),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Line) {
                                         AnnotationActionTone::Primary
@@ -1830,7 +1839,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-arrow",
-                                    "Arrow",
+                                    locale.text(UiText::OverlayArrow),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Arrow) {
                                         AnnotationActionTone::Primary
@@ -1847,7 +1856,7 @@ impl Render for CaptureOverlay {
                                 ))
                                 .child(annotation_action_button(
                                     "overlay-tool-freehand",
-                                    "Freehand",
+                                    locale.text(UiText::OverlayFreehand),
                                     colors,
                                     if selected_tool == Some(AnnotationTool::Freehand) {
                                         AnnotationActionTone::Primary
@@ -1883,11 +1892,11 @@ impl Render for CaptureOverlay {
                                             .items_center()
                                             .text_color(colors.muted)
                                             .text_xs()
-                                            .child("Selected"),
+                                            .child(locale.text(UiText::OverlaySelected)),
                                     )
                                     .child(annotation_action_button(
                                         "overlay-delete",
-                                        "Delete",
+                                        locale.text(UiText::OverlayDelete),
                                         colors,
                                         AnnotationActionTone::Destructive,
                                         true,
@@ -1903,7 +1912,7 @@ impl Render for CaptureOverlay {
                                     .when(can_edit_text, |actions| {
                                         actions.child(annotation_action_button(
                                             "overlay-edit-text",
-                                            "Edit text",
+                                            locale.text(UiText::OverlayEditText),
                                             colors,
                                             AnnotationActionTone::Primary,
                                             true,
@@ -1964,7 +1973,7 @@ impl Render for CaptureOverlay {
                                     })
                                     .child(annotation_action_button(
                                         "overlay-duplicate",
-                                        "Duplicate",
+                                        locale.text(UiText::OverlayDuplicate),
                                         colors,
                                         AnnotationActionTone::Neutral,
                                         true,
@@ -1979,7 +1988,7 @@ impl Render for CaptureOverlay {
                                     ))
                                     .child(annotation_action_button(
                                         "overlay-selection-arrange-toggle",
-                                        "Arrange",
+                                        locale.text(UiText::OverlayArrange),
                                         colors,
                                         if show_annotation_arrange_actions {
                                             AnnotationActionTone::Primary
@@ -2021,12 +2030,12 @@ impl Render for CaptureOverlay {
                                             .items_center()
                                             .text_color(colors.muted)
                                             .text_xs()
-                                            .child("Arrange"),
+                                            .child(locale.text(UiText::OverlayArrange)),
                                     )
                                     .when(can_rotate, |actions| {
                                         actions.child(annotation_action_button(
                                             "overlay-rotate-clockwise",
-                                            "Rotate 90",
+                                            locale.text(UiText::OverlayRotate90),
                                             colors,
                                             AnnotationActionTone::Neutral,
                                             true,
@@ -2044,7 +2053,7 @@ impl Render for CaptureOverlay {
                                     })
                                     .child(annotation_action_button(
                                         "overlay-bring-forward",
-                                        "Forward",
+                                        locale.text(UiText::OverlayBringForward),
                                         colors,
                                         AnnotationActionTone::Neutral,
                                         true,
@@ -2059,7 +2068,7 @@ impl Render for CaptureOverlay {
                                     ))
                                     .child(annotation_action_button(
                                         "overlay-send-backward",
-                                        "Backward",
+                                        locale.text(UiText::OverlaySendBackward),
                                         colors,
                                         AnnotationActionTone::Neutral,
                                         true,
@@ -2074,7 +2083,7 @@ impl Render for CaptureOverlay {
                                     ))
                                     .child(annotation_action_button(
                                         "overlay-bring-to-front",
-                                        "Front",
+                                        locale.text(UiText::OverlayBringToFront),
                                         colors,
                                         AnnotationActionTone::Neutral,
                                         true,
@@ -2089,7 +2098,7 @@ impl Render for CaptureOverlay {
                                     ))
                                     .child(annotation_action_button(
                                         "overlay-send-to-back",
-                                        "Back",
+                                        locale.text(UiText::OverlaySendToBack),
                                         colors,
                                         AnnotationActionTone::Neutral,
                                         true,
@@ -2205,7 +2214,7 @@ impl Render for CaptureOverlay {
                                 app.update(cx, |app, cx| app.toggle_annotation_fill(cx));
                             });
                         }))
-                        .child("Fill"),
+                        .child(locale.text(UiText::OverlayFill)),
                 )
             })
             .when(show_annotation_controls, |overlay| {
@@ -3284,19 +3293,19 @@ fn paint_annotations(
     }
 }
 
-fn annotation_layer_label(kind: &AnnotationKind) -> &'static str {
+fn annotation_layer_label(locale: Locale, kind: &AnnotationKind) -> &'static str {
     match kind {
-        AnnotationKind::Watermark { .. } => "Watermark",
-        AnnotationKind::Text { .. } => "Text",
-        AnnotationKind::Number { .. } => "Number",
-        AnnotationKind::Blur { .. } => "Blur",
-        AnnotationKind::Mosaic { .. } => "Mosaic",
-        AnnotationKind::Highlight { .. } => "Highlight",
-        AnnotationKind::Rectangle { .. } => "Rectangle",
-        AnnotationKind::Ellipse { .. } => "Ellipse",
-        AnnotationKind::Line { .. } => "Line",
-        AnnotationKind::Arrow { .. } => "Arrow",
-        AnnotationKind::Freehand { .. } => "Freehand",
+        AnnotationKind::Watermark { .. } => locale.text(UiText::OverlayWatermark),
+        AnnotationKind::Text { .. } => locale.text(UiText::OverlayText),
+        AnnotationKind::Number { .. } => locale.text(UiText::OverlayNumber),
+        AnnotationKind::Blur { .. } => locale.text(UiText::OverlayBlur),
+        AnnotationKind::Mosaic { .. } => locale.text(UiText::OverlayMosaic),
+        AnnotationKind::Highlight { .. } => locale.text(UiText::OverlayHighlight),
+        AnnotationKind::Rectangle { .. } => locale.text(UiText::OverlayRectangle),
+        AnnotationKind::Ellipse { .. } => locale.text(UiText::OverlayEllipse),
+        AnnotationKind::Line { .. } => locale.text(UiText::OverlayLine),
+        AnnotationKind::Arrow { .. } => locale.text(UiText::OverlayArrow),
+        AnnotationKind::Freehand { .. } => locale.text(UiText::OverlayFreehand),
     }
 }
 
@@ -4884,17 +4893,32 @@ mod tests {
     #[test]
     fn annotation_layer_labels_cover_every_drawable_kind() {
         assert_eq!(
-            annotation_layer_label(&AnnotationKind::Text {
-                origin: PhysicalPoint { x: 0, y: 0 },
-                content: "Note".to_owned(),
-            }),
+            annotation_layer_label(
+                Locale::English,
+                &AnnotationKind::Text {
+                    origin: PhysicalPoint { x: 0, y: 0 },
+                    content: "Note".to_owned(),
+                }
+            ),
             "Text"
         );
         assert_eq!(
-            annotation_layer_label(&AnnotationKind::Freehand {
-                points: vec![PhysicalPoint { x: 0, y: 0 }, PhysicalPoint { x: 1, y: 1 }],
-            }),
+            annotation_layer_label(
+                Locale::English,
+                &AnnotationKind::Freehand {
+                    points: vec![PhysicalPoint { x: 0, y: 0 }, PhysicalPoint { x: 1, y: 1 }],
+                }
+            ),
             "Freehand"
+        );
+        assert_eq!(
+            annotation_layer_label(
+                Locale::SimplifiedChinese,
+                &AnnotationKind::Freehand {
+                    points: vec![PhysicalPoint { x: 0, y: 0 }, PhysicalPoint { x: 1, y: 1 }],
+                }
+            ),
+            "画笔"
         );
     }
 

@@ -487,10 +487,11 @@ pub enum OverlayUiAcceptanceScenario {
     SmartTarget {
         kind: platform::window_inspector::InspectionKind,
     },
-    /// Shows a committed region and optionally opens the progressive action menu.
+    /// Shows a committed region and optionally opens its progressive action or marking controls.
     SelectedRegion {
         placement: OverlayUiAcceptanceSelectionPlacement,
         show_more_actions: bool,
+        show_annotation_controls: bool,
     },
 }
 

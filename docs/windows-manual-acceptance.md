@@ -92,6 +92,8 @@ cargo test --lib
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/overlay-selection.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/overlay-selection-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-more
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/overlay-selection-bottom-right-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-bottom-right-more
+# 覆盖层标注面板：使用简体中文目录复核图层、工具和操作标签的换行与边界。
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 1100 760 target/ui-acceptance/overlay-marking-zh-CN.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-marking zh-CN
 # 显式输入验收：会短暂取得焦点并移动全局鼠标，仅在可丢弃的单屏桌面会话中运行。
 .\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --output-dir target/overlay-interaction-acceptance
 # 可选窄边场景：要求单屏 100% 缩放，验证真实最小设置窗、右下选区和 More/Mark 命中。
@@ -144,6 +146,9 @@ cargo test --lib
 `overlay-selection-bottom-right-more` 会把 160x96 物理像素选区放在右下边缘，并通过生产
 的 More 状态切换路径展开菜单；用它复核工具栏上翻、菜单避边和状态栏共存。这仍不注入
 鼠标输入，真实拖动与命中测试继续保留在手工矩阵。
+`overlay-marking` 会在固定选区中通过生产状态切换打开标注面板；它用于复核图层、工具、
+选中对象操作和颜色/线宽控件的本地化标签、换行与安全边距。该路径只证明原生渲染与布局，
+不替代真实标注输入、命中或导出矩阵。
 `overlay-interaction-acceptance` 默认拒绝运行；只有显式提供 `--allow-input` 后才会创建隔离
 profile，注册 `Ctrl+Alt+F24`，并在每批输入前确认前台 HWND 属于探针进程。默认模式执行真实
 拖选、右移一个物理像素、More/Less、覆盖层仍打开时再次 Capture、第二次拖选和 Cancel；随后

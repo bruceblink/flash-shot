@@ -221,6 +221,32 @@ pub enum UiText {
     OverlayCopyTextTooltip,
     OverlayClearResult,
     OverlayClearResultTooltip,
+    OverlayLayers,
+    OverlayUndo,
+    OverlayRedo,
+    OverlayWatermark,
+    OverlayText,
+    OverlayNumber,
+    OverlayBlur,
+    OverlayMosaic,
+    OverlayHighlight,
+    OverlaySelect,
+    OverlayRectangle,
+    OverlayEllipse,
+    OverlayLine,
+    OverlayArrow,
+    OverlayFreehand,
+    OverlaySelected,
+    OverlayDelete,
+    OverlayEditText,
+    OverlayDuplicate,
+    OverlayArrange,
+    OverlayRotate90,
+    OverlayBringForward,
+    OverlaySendBackward,
+    OverlayBringToFront,
+    OverlaySendToBack,
+    OverlayFill,
 }
 
 impl UiText {
@@ -320,6 +346,32 @@ impl UiText {
             Self::OverlayCopyTextTooltip => "Copy recognized text to the clipboard",
             Self::OverlayClearResult => "Clear result",
             Self::OverlayClearResultTooltip => "Clear the recognized result",
+            Self::OverlayLayers => "Layers",
+            Self::OverlayUndo => "Undo",
+            Self::OverlayRedo => "Redo",
+            Self::OverlayWatermark => "Watermark",
+            Self::OverlayText => "Text",
+            Self::OverlayNumber => "Number",
+            Self::OverlayBlur => "Blur",
+            Self::OverlayMosaic => "Mosaic",
+            Self::OverlayHighlight => "Highlight",
+            Self::OverlaySelect => "Select",
+            Self::OverlayRectangle => "Rectangle",
+            Self::OverlayEllipse => "Ellipse",
+            Self::OverlayLine => "Line",
+            Self::OverlayArrow => "Arrow",
+            Self::OverlayFreehand => "Freehand",
+            Self::OverlaySelected => "Selected",
+            Self::OverlayDelete => "Delete",
+            Self::OverlayEditText => "Edit text",
+            Self::OverlayDuplicate => "Duplicate",
+            Self::OverlayArrange => "Arrange",
+            Self::OverlayRotate90 => "Rotate 90",
+            Self::OverlayBringForward => "Forward",
+            Self::OverlaySendBackward => "Backward",
+            Self::OverlayBringToFront => "Front",
+            Self::OverlaySendToBack => "Back",
+            Self::OverlayFill => "Fill",
         }
     }
 
@@ -405,6 +457,32 @@ impl UiText {
             Self::OverlayCopyTextTooltip => "将识别出的文字复制到剪贴板",
             Self::OverlayClearResult => "清除结果",
             Self::OverlayClearResultTooltip => "清除识别结果",
+            Self::OverlayLayers => "图层",
+            Self::OverlayUndo => "撤销",
+            Self::OverlayRedo => "重做",
+            Self::OverlayWatermark => "水印",
+            Self::OverlayText => "文字",
+            Self::OverlayNumber => "序号",
+            Self::OverlayBlur => "模糊",
+            Self::OverlayMosaic => "马赛克",
+            Self::OverlayHighlight => "高亮",
+            Self::OverlaySelect => "选择",
+            Self::OverlayRectangle => "矩形",
+            Self::OverlayEllipse => "椭圆",
+            Self::OverlayLine => "直线",
+            Self::OverlayArrow => "箭头",
+            Self::OverlayFreehand => "画笔",
+            Self::OverlaySelected => "已选中",
+            Self::OverlayDelete => "删除",
+            Self::OverlayEditText => "编辑文字",
+            Self::OverlayDuplicate => "复制",
+            Self::OverlayArrange => "排列",
+            Self::OverlayRotate90 => "旋转 90°",
+            Self::OverlayBringForward => "上移",
+            Self::OverlaySendBackward => "下移",
+            Self::OverlayBringToFront => "置顶",
+            Self::OverlaySendToBack => "置底",
+            Self::OverlayFill => "填充",
         }
     }
 }
@@ -458,6 +536,14 @@ mod tests {
         assert_eq!(
             Locale::English.text(UiText::OverlayCopyTooltip),
             "Copy selection to clipboard (Enter)"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::OverlayFreehand),
+            "画笔"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::OverlayArrange),
+            "排列"
         );
     }
 

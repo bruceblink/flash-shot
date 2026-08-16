@@ -77,6 +77,7 @@ enum AcceptanceSurface {
     OverlaySelection,
     OverlaySelectionMore,
     OverlaySelectionBottomRightMore,
+    OverlayMarking,
 }
 
 #[derive(Debug)]
@@ -192,7 +193,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback|overlay-control|overlay-window|overlay-selection|overlay-selection-more|overlay-selection-bottom-right-more] [en|zh-CN]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback|overlay-control|overlay-window|overlay-selection|overlay-selection-more|overlay-selection-bottom-right-more|overlay-marking] [en|zh-CN]"
         .to_owned()
 }
 
@@ -370,7 +371,7 @@ fn parse_surface(value: std::ffi::OsString) -> Result<AcceptanceSurface, String>
     match value
         .into_string()
         .map_err(|_| {
-            "surface must be settings, pin-saved-feedback, overlay-control, overlay-window, overlay-selection, overlay-selection-more, or overlay-selection-bottom-right-more".to_owned()
+            "surface must be settings, pin-saved-feedback, overlay-control, overlay-window, overlay-selection, overlay-selection-more, overlay-selection-bottom-right-more, or overlay-marking".to_owned()
         })?
         .as_str()
     {
@@ -383,8 +384,9 @@ fn parse_surface(value: std::ffi::OsString) -> Result<AcceptanceSurface, String>
         "overlay-selection-bottom-right-more" => {
             Ok(AcceptanceSurface::OverlaySelectionBottomRightMore)
         }
+        "overlay-marking" => Ok(AcceptanceSurface::OverlayMarking),
         _ => Err(
-            "surface must be settings, pin-saved-feedback, overlay-control, overlay-window, overlay-selection, overlay-selection-more, or overlay-selection-bottom-right-more".to_owned(),
+            "surface must be settings, pin-saved-feedback, overlay-control, overlay-window, overlay-selection, overlay-selection-more, overlay-selection-bottom-right-more, or overlay-marking".to_owned(),
         ),
     }
 }
@@ -441,7 +443,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         | AcceptanceSurface::OverlayWindow
         | AcceptanceSurface::OverlaySelection
         | AcceptanceSurface::OverlaySelectionMore
-        | AcceptanceSurface::OverlaySelectionBottomRightMore => {
+        | AcceptanceSurface::OverlaySelectionBottomRightMore
+        | AcceptanceSurface::OverlayMarking => {
             let scenario = match options.surface {
                 AcceptanceSurface::OverlayControl => OverlayUiAcceptanceScenario::SmartTarget {
                     kind: flash_shot::platform::window_inspector::InspectionKind::Control,
@@ -453,20 +456,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     OverlayUiAcceptanceScenario::SelectedRegion {
                         placement: OverlayUiAcceptanceSelectionPlacement::Centered,
                         show_more_actions: false,
+                        show_annotation_controls: false,
                     }
                 }
                 AcceptanceSurface::OverlaySelectionMore => {
                     OverlayUiAcceptanceScenario::SelectedRegion {
                         placement: OverlayUiAcceptanceSelectionPlacement::Centered,
                         show_more_actions: true,
+                        show_annotation_controls: false,
                     }
                 }
                 AcceptanceSurface::OverlaySelectionBottomRightMore => {
                     OverlayUiAcceptanceScenario::SelectedRegion {
                         placement: OverlayUiAcceptanceSelectionPlacement::BottomRight,
                         show_more_actions: true,
+                        show_annotation_controls: false,
                     }
                 }
+                AcceptanceSurface::OverlayMarking => OverlayUiAcceptanceScenario::SelectedRegion {
+                    placement: OverlayUiAcceptanceSelectionPlacement::Centered,
+                    show_more_actions: false,
+                    show_annotation_controls: true,
+                },
                 AcceptanceSurface::Settings | AcceptanceSurface::PinnedSavedFeedback => {
                     unreachable!("settings surfaces do not create overlay scenarios")
                 }
@@ -814,6 +825,10 @@ mod tests {
         assert_eq!(
             parse_surface(OsString::from("overlay-selection-bottom-right-more")).unwrap(),
             AcceptanceSurface::OverlaySelectionBottomRightMore
+        );
+        assert_eq!(
+            parse_surface(OsString::from("overlay-marking")).unwrap(),
+            AcceptanceSurface::OverlayMarking
         );
         assert!(parse_surface(OsString::from("pin")).is_err());
     }
