@@ -72,7 +72,7 @@ struct WorkerShutdown {
     result: io::Result<()>,
 }
 
-fn main() {
+pub(super) fn entrypoint() {
     match run() {
         Ok(report) => {
             println!(

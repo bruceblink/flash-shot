@@ -66,7 +66,7 @@ struct AcceptanceReport {
     passed: bool,
 }
 
-fn main() {
+pub(super) fn entrypoint() {
     if let Err(error) = execute(std::env::args().skip(1)) {
         eprintln!("recognition acceptance failed: {error}");
         std::process::exit(1);

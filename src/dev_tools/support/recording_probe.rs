@@ -1,4 +1,4 @@
-//! Shared FFprobe validation used by native recording acceptance executables.
+//! Shared FFprobe validation used by native recording acceptance modules.
 
 use std::{
     ffi::OsString,
@@ -79,7 +79,6 @@ fn run_ffprobe(ffprobe: &Path, output: &Path) -> io::Result<Output> {
 }
 
 /// Decodes one bounded video frame into PNG for native recording content verification.
-#[allow(dead_code)] // This shared module's metadata-only runner does not extract frames.
 pub(crate) fn extract_video_frame(
     ffmpeg: &Path,
     input: &Path,
@@ -111,7 +110,6 @@ pub(crate) fn extract_video_frame(
 }
 
 /// Decodes a low-rate PNG timeline so dynamic recording phases can be matched in order.
-#[allow(dead_code)] // The metadata-only runner does not need frame timelines.
 pub(crate) fn extract_video_frame_series(
     ffmpeg: &Path,
     input: &Path,
@@ -141,7 +139,6 @@ pub(crate) fn extract_video_frame_series(
 }
 
 /// Builds the bounded timeline command independently for focused argument tests.
-#[allow(dead_code)] // The metadata-only runner does not need frame timelines.
 pub(crate) fn video_frame_series_arguments(
     input: &Path,
     frames_per_second: u16,
@@ -174,7 +171,6 @@ pub(crate) fn video_frame_series_arguments(
 }
 
 /// Builds the one-frame decode contract separately so tests do not need to launch FFmpeg.
-#[allow(dead_code)] // This shared module's metadata-only runner does not extract frames.
 pub(crate) fn video_frame_arguments(
     input: &Path,
     timestamp_seconds: f64,

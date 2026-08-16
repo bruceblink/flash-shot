@@ -139,7 +139,7 @@ fn usage() -> String {
     "usage: pin-lifecycle-acceptance [--output-dir <path>] [--timeout-ms <3000-900000>] [--settle-ms <100-3000>] [--soak-ms <10000-600000>]".to_owned()
 }
 
-fn main() {
+pub(super) fn entrypoint() {
     if let Err(error) = run() {
         eprintln!("pin lifecycle acceptance failed: {error}");
         process::exit(1);

@@ -50,6 +50,10 @@ Windows 可能显示 SmartScreen 或“未知发布者”警告；请只从上�
 cargo run
 ```
 
+项目只声明一个可运行程序入口 `flash-shot`，因此无需指定 `--bin`。压力测试和原生验收程序
+作为可选的 `dev-tools` 库模块保留，由 `scripts\run-dev-tool.ps1` 调度；它们不会成为发布包中的
+额外 EXE，也不会改变普通 `cargo run` 的启动行为。
+
 应用启动后默认只驻留在通知区域，不显示常驻操作窗口。使用全局快捷键即可进入截图选区；只有在选区出现后才会显示标注和导出工具。单击或右键点击托盘图标都会打开菜单，可开始自由区域截图、全屏截图、3/5/10 秒延时截图，或直接将全屏复制到剪贴板，也可开始或停止显示器录制；菜单还可切换截图是否包含鼠标指针、打开截图目录、本地图片、可编辑项目、历史记录和按需设置窗口，并在用户明确点击时检查更新。关闭设置窗口只会将其隐藏，应用会继续在后台运行。
 
 `Capture preferences` 可为区域截图、全屏截图和焦点窗口截图分别配置全局快捷键。三个
@@ -81,36 +85,36 @@ Record 页的 `Video folder` 会显示当前 MP4 目录，并提供选择、恢�
 
 ```powershell
 cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo check --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 ```
 
 连续截图资源与延迟门禁会真实捕获并编码虚拟桌面 100 次，输出机器可读 JSON；性能基线应使用 release 构建：
 
 ```powershell
-cargo run --release --bin capture-stress -- --output target/capture-stress.json
+.\scripts\run-dev-tool.ps1 -Release capture-stress --output target/capture-stress.json
 ```
 
 开发时可使用较小轮数快速验证工具链：
 
 ```powershell
-cargo run --bin capture-stress -- --iterations 5
+.\scripts\run-dev-tool.ps1 capture-stress --iterations 5
 ```
 
 使用固定 4K 场景测量 CPU 导出合成器。该指标衡量导出性能，不是 GPUI 交互帧门禁；
 只有在建立具有代表性的 Release 基线后，才应显式设置上限：
 
 ```powershell
-cargo run --release --bin annotation-stress -- --iterations 30
-cargo run --release --bin annotation-stress -- --iterations 30 --max-p95-ms 80
+.\scripts\run-dev-tool.ps1 -Release annotation-stress --iterations 30
+.\scripts\run-dev-tool.ps1 -Release annotation-stress --iterations 30 --max-p95-ms 80
 ```
 
 在不打开截图或录屏会话的情况下，采集 Windows 手工验收记录所需的显示器几何、DPI 和
 FFmpeg 能力快照：
 
 ```powershell
-cargo run --release --bin windows-acceptance-probe -- --output target/windows-acceptance-environment.json
+.\scripts\run-dev-tool.ps1 -Release windows-acceptance-probe --output target/windows-acceptance-environment.json
 ```
 
 在单显示器交互桌面上，可运行隔离的三 Pin 生命周期门禁。它不会注册托盘或全局快捷键，

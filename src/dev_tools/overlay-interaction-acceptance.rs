@@ -30,9 +30,7 @@ use flash_shot::{
     recording::discover,
 };
 
-#[path = "support/recording_probe.rs"]
-mod recording_probe;
-
+use super::support::recording_probe;
 use recording_probe::MediaMetadata;
 #[cfg(windows)]
 use recording_probe::{extract_video_frame, extract_video_frame_series, probe_media};
@@ -1837,7 +1835,7 @@ struct ClipboardConsumerResult {
     consumer_read_qpc_ticks: u64,
 }
 
-fn main() {
+pub(super) fn entrypoint() {
     #[cfg(windows)]
     if std::env::args_os().nth(1).as_deref()
         == Some(std::ffi::OsStr::new(CLIPBOARD_CONSUMER_CHILD_MODE))

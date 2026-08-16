@@ -4,7 +4,7 @@ use std::{io, path::PathBuf};
 
 use flash_shot::copy_performance::{CopyPerformanceConfig, run};
 
-fn main() {
+pub(super) fn entrypoint() {
     match execute() {
         Ok(true) => {}
         Ok(false) => std::process::exit(2),

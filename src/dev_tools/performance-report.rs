@@ -6,7 +6,7 @@ use flash_shot::performance_report::{PerformanceThresholds, summarize_file};
 
 const PERFORMANCE_REPORT_PROTOCOL_VERSION: &str = "performance-report-v4";
 
-fn main() {
+pub(super) fn entrypoint() {
     match execute() {
         Ok(true) => {}
         Ok(false) => std::process::exit(2),

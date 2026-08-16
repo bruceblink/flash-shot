@@ -33,21 +33,19 @@ if ($null -eq $package) {
 }
 $releaseDirectory = Join-Path $metadata.target_directory "release"
 $application = Join-Path $releaseDirectory "flash-shot.exe"
-$reporter = Join-Path $releaseDirectory "performance-report.exe"
+$devToolRunner = Join-Path $PSScriptRoot "run-dev-tool.ps1"
 if (-not $SkipBuild) {
-    & cargo build --release --bin flash-shot --bin performance-report --manifest-path $package.manifest_path
+    & cargo build --release --locked --manifest-path $package.manifest_path
     if ($LASTEXITCODE -ne 0) {
-        throw "Release performance binaries failed to build with exit code $LASTEXITCODE."
+        throw "Release application failed to build with exit code $LASTEXITCODE."
     }
 }
-foreach ($path in @($application, $reporter)) {
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Release performance binary was not found: $path"
-    }
+if (-not (Test-Path -LiteralPath $application -PathType Leaf)) {
+    throw "Release application was not found: $application"
 }
-$protocol = & $reporter --protocol-version
+$protocol = & $devToolRunner -Release performance-report --protocol-version
 if ($LASTEXITCODE -ne 0 -or $protocol -ne "performance-report-v4") {
-    throw "Release performance-report binary does not support capture sampling. Run without -SkipBuild after source changes."
+    throw "The development-tool performance reporter does not support capture sampling."
 }
 
 $existing = @(Get-Process -Name "flash-shot" -ErrorAction SilentlyContinue)
@@ -110,7 +108,7 @@ else {
     [IO.Path]::GetFullPath((Join-Path $root $OutputPath))
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
-& $reporter --input $metrics --since-ms $startedAtMs --minimum-samples $Iterations --capture-only --output $output
+& $devToolRunner -Release performance-report --input $metrics --since-ms $startedAtMs --minimum-samples $Iterations --capture-only --output $output
 if ($LASTEXITCODE -eq 1) {
     throw "Release capture performance report was malformed or did not include all current samples."
 }

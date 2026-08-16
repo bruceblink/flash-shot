@@ -24,7 +24,7 @@ struct AcceptanceReport {
     passed: bool,
 }
 
-fn main() {
+pub(super) fn entrypoint() {
     if let Err(error) = execute() {
         eprintln!("scroll acceptance failed: {error}");
         std::process::exit(1);

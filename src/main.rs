@@ -1,6 +1,9 @@
 //! Flash Shot desktop entry point.
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), not(feature = "dev-tools")),
+    windows_subsystem = "windows"
+)]
 
 use std::{io, path::PathBuf};
 
@@ -8,6 +11,16 @@ use std::{io, path::PathBuf};
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
+    #[cfg(feature = "dev-tools")]
+    match flash_shot::dev_tools::run_from_environment() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("Flash Shot development tool dispatch failed: {error}");
+            std::process::exit(64);
+        }
+    }
+
     let started_at = std::time::Instant::now();
     let _single_instance = match flash_shot::single_instance::SingleInstance::acquire() {
         Ok(Some(instance)) => instance,

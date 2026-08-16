@@ -9,7 +9,7 @@ use std::{
 use flash_shot::platform::display::{DisplayProvider, DisplayRotation, SystemDisplayProvider};
 use serde_json::json;
 
-fn main() {
+pub(super) fn entrypoint() {
     if let Err(error) = execute(std::env::args().skip(1)) {
         eprintln!("windows acceptance probe failed: {error}");
         std::process::exit(1);

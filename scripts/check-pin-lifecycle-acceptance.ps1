@@ -26,23 +26,22 @@ $outputPath = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
     [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $OutputDirectory))
 }
 $startedAt = (Get-Date).AddSeconds(-1)
-$cargoArguments = @("run")
+$runnerArguments = @("pin-lifecycle-acceptance")
 if (-not $DebugBuild) {
-    $cargoArguments += "--release"
+    $runnerArguments += "-Release"
 }
-$cargoArguments += @(
-    "--bin", "pin-lifecycle-acceptance", "--",
+$runnerArguments += @(
     "--output-dir", $outputPath,
     "--timeout-ms", $TimeoutMilliseconds,
     "--settle-ms", $SettleMilliseconds
 )
 if ($SoakMilliseconds -gt 0) {
-    $cargoArguments += @("--soak-ms", $SoakMilliseconds)
+    $runnerArguments += @("--soak-ms", $SoakMilliseconds)
 }
 
 Push-Location $repositoryRoot
 try {
-    & cargo @cargoArguments
+    & (Join-Path $PSScriptRoot "run-dev-tool.ps1") @runnerArguments
     if ($LASTEXITCODE -ne 0) {
         throw "Pin lifecycle acceptance exited with code $LASTEXITCODE"
     }

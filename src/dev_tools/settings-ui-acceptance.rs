@@ -402,7 +402,7 @@ fn parse_locale(value: std::ffi::OsString) -> Result<Locale, String> {
     }
 }
 
-fn main() {
+pub(super) fn entrypoint() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
         process::exit(1);

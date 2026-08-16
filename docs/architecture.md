@@ -1,5 +1,15 @@
 # 架构设计
 
+## 术语表与命名约定
+
+| 规范名称 | English / 缩写 | 当前职责边界 | 不代表什么 |
+| --- | --- | --- | --- |
+| 应用入口 | Application Entry | Cargo 唯一的 `flash-shot` 二进制目标，负责启动桌面应用 | 不是压力测试或验收命令集合 |
+| 开发工具模块 | Development Tool Modules / `dev-tools` | 仅在显式启用特性时编译的库内压力测试与验收模块 | 不是发布包中的独立 EXE，也不是普通用户入口 |
+| 开发工具调度脚本 | Development Tool Runner | `scripts/run-dev-tool.ps1`，在隔离构建目录中选择并运行一个开发工具模块 | 不改变普通 `cargo run`，也不加入生产启动参数 |
+
+正文、目录示例和命令统一使用上述名称；`flash-shot` 专指应用入口，具体开发工具使用其稳定模块名。
+
 ## 1. 设计原则
 
 1. GPUI 是界面与交互层，不是业务数据模型。
@@ -42,7 +52,8 @@ src/domain/                几何、选区、会话、标注和路线模型
 src/platform/              Windows 捕获、剪贴板、快捷键、托盘和窗口服务
 src/image.rs               像素帧、裁切、滤镜、合成和编码
 src/annotation_stress.rs   标注压力工具与性能报告
-src/bin/                   Release 验收、资源压力和打包辅助工具
+src/dev_tools/             可选的 Release 验收、资源压力和报告库模块
+scripts/run-dev-tool.ps1   开发工具调度脚本；产物与普通应用构建目录隔离
 ```
 
 依赖方向保持如下约束：

@@ -520,7 +520,7 @@ struct IterationOutcome {
     safe_to_continue: bool,
 }
 
-fn main() {
+pub(super) fn entrypoint() {
     let result = Options::parse()
         .map_err(io::Error::other)
         .and_then(|options| ensure_authorized(&options).and_then(|()| run_batch(options)));
@@ -706,7 +706,7 @@ fn run_iteration(
     let iteration_dir = output_root.join(format!("{phase}-{iteration:03}"));
     fs::create_dir_all(&iteration_dir)?;
     let started = Instant::now();
-    let mut command = Command::new(runner);
+    let mut command = acceptance_command(runner);
     command
         .arg("--allow-input")
         .arg("--allow-system-clipboard")
@@ -825,6 +825,14 @@ fn run_iteration(
     })
 }
 
+#[cfg(windows)]
+/// Creates a child command for the shared executable and selects its single-session module.
+fn acceptance_command(runner: &Path) -> Command {
+    let mut command = Command::new(runner);
+    command.env(super::DEV_TOOL_ENV, "overlay-interaction-acceptance");
+    command
+}
+
 /// Extends only the wrapper's kill deadline for normal setup and final report persistence.
 fn runner_timeout(timeout: Duration) -> Duration {
     timeout
@@ -923,12 +931,7 @@ fn resolve_runner(explicit: Option<&Path>) -> io::Result<PathBuf> {
     if let Some(path) = explicit {
         return Ok(path.to_path_buf());
     }
-    let mut path = env::current_exe()?;
-    path.set_file_name(format!(
-        "overlay-interaction-acceptance{}",
-        env::consts::EXE_SUFFIX
-    ));
-    Ok(path)
+    env::current_exe()
 }
 
 #[cfg(windows)]
@@ -1056,7 +1059,11 @@ fn write_json(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::acceptance_command;
     use super::{CopyTrigger, DEFAULT_ITERATIONS, Options, percentile, usage, with_cleanup_error};
+    #[cfg(windows)]
+    use std::{ffi::OsStr, path::Path};
     use std::{ffi::OsString, path::PathBuf, time::Duration};
 
     fn arguments(values: &[&str]) -> Vec<OsString> {
@@ -1082,7 +1089,7 @@ mod tests {
             "--warmup",
             "3",
             "--runner",
-            "target/release/overlay-interaction-acceptance.exe",
+            "target/dev-tools/release/flash-shot.exe",
             "--output-dir",
             "evidence",
             "--copy-trigger",
@@ -1100,9 +1107,7 @@ mod tests {
         assert_eq!(options.copy_trigger, CopyTrigger::Enter);
         assert_eq!(
             options.runner,
-            Some(PathBuf::from(
-                "target/release/overlay-interaction-acceptance.exe"
-            ))
+            Some(PathBuf::from("target/dev-tools/release/flash-shot.exe"))
         );
         assert_eq!(options.timeout, Duration::from_secs(12));
         assert_eq!(options.settle_delay, Duration::from_millis(350));
@@ -1116,6 +1121,18 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(alias.iterations, 30);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn child_process_dispatches_to_the_interaction_module() {
+        let command = acceptance_command(Path::new("flash-shot.exe"));
+        let selected = command
+            .get_envs()
+            .find(|(name, _)| *name == OsStr::new(super::super::DEV_TOOL_ENV))
+            .and_then(|(_, value)| value);
+
+        assert_eq!(selected, Some(OsStr::new("overlay-interaction-acceptance")));
     }
 
     #[test]

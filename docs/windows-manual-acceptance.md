@@ -54,67 +54,67 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --lib
-cargo run --release --bin capture-stress -- --output target/capture-stress.json
-cargo run --release --bin annotation-stress -- --iterations 30
+.\scripts\run-dev-tool.ps1 -Release capture-stress --output target/capture-stress.json
+.\scripts\run-dev-tool.ps1 -Release annotation-stress --iterations 30
 # 当前单屏开发范围：要求环境恰好只有一块显示器，避免把多屏状态误记为单屏证据。
-cargo run --release --bin windows-acceptance-probe -- --single-display --output target/windows-acceptance-environment.json
-cargo run --release --bin recognition-acceptance -- --output target/ui-acceptance/recognition-acceptance.json
+.\scripts\run-dev-tool.ps1 -Release windows-acceptance-probe --single-display --output target/windows-acceptance-environment.json
+.\scripts\run-dev-tool.ps1 -Release recognition-acceptance --output target/ui-acceptance/recognition-acceptance.json
 # 可选依赖门禁：只有在本机明确要求 OCR/翻译就绪时才使用；未安装或未配置会以非零退出。
-cargo run --release --bin recognition-acceptance -- --require-ocr --output target/ui-acceptance/recognition-acceptance-required-ocr.json
-cargo run --release --bin recognition-acceptance -- --require-translation --output target/ui-acceptance/recognition-acceptance-required-translation.json
+.\scripts\run-dev-tool.ps1 -Release recognition-acceptance --require-ocr --output target/ui-acceptance/recognition-acceptance-required-ocr.json
+.\scripts\run-dev-tool.ps1 -Release recognition-acceptance --require-translation --output target/ui-acceptance/recognition-acceptance-required-translation.json
 # 可选真实链路门禁：对含文字的项目截图执行完整 PNG -> Tesseract OCR，只写入文本长度等元数据。
-cargo run --release --bin recognition-acceptance -- --require-ocr --ocr-image target/ui-acceptance/settings-current-dark-520x640.png --output target/ui-acceptance/recognition-acceptance-ocr-fixture.json
+.\scripts\run-dev-tool.ps1 -Release recognition-acceptance --require-ocr --ocr-image target/ui-acceptance/settings-current-dark-520x640.png --output target/ui-acceptance/recognition-acceptance-ocr-fixture.json
 # 可选真实翻译链路：只有配置 HTTPS 端点时执行；只写入翻译结果长度等元数据，不保存原文或译文。
-cargo run --release --bin recognition-acceptance -- --require-translation --translation-text "Flash Shot" --output target/ui-acceptance/recognition-acceptance-translation-exercise.json
-cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acceptance/settings-light-980x760.png
-cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
-cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
-cargo run --release --bin settings-ui-acceptance -- dark 520 640 target/ui-acceptance/recording-settings-520x640.png 1500 1000 1.0 record
+.\scripts\run-dev-tool.ps1 -Release recognition-acceptance --require-translation --translation-text "Flash Shot" --output target/ui-acceptance/recognition-acceptance-translation-exercise.json
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 980 760 target/ui-acceptance/settings-light-980x760.png
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-light-520x640.png
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 980 760 target/ui-acceptance/settings-dark-980x760.png
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 520 640 target/ui-acceptance/recording-settings-520x640.png 1500 1000 1.0 record
 # UI language evidence: retain the existing positional defaults, then pass the final catalog code.
-cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-app-zh-CN.png 1500 0 1.0 app 0 idle translation-idle ocr-idle recording-support-idle update-idle settings zh-CN
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-app-zh-CN.png 1500 0 1.0 app 0 idle translation-idle ocr-idle recording-support-idle update-idle settings zh-CN
 # Record 页生命周期视觉复核：最后的 state 参数只注入 UI 状态，不会启动 FFmpeg。
-cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/recording-ui-paused.png 3000 0 1.0 record 0 paused
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/recording-ui-paused.png 3000 0 1.0 record 0 paused
 # FFmpeg 支持检查忙状态：不启动录屏进程，仅检查 Cancel check、冲突禁用和状态栏布局。
-cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/recording-support-checking.png 3000 0 1.0 record 0 idle translation-idle ocr-idle recording-support-checking
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/recording-support-checking.png 3000 0 1.0 record 0 idle translation-idle ocr-idle recording-support-checking
 # 翻译服务测试忙状态：不发起网络请求，仅检查按钮与状态栏的可读性。
-cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acceptance/translation-service-testing.png 3000 0 1.0 capture 0 idle translation-testing
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 1200 target/ui-acceptance/translation-service-testing.png 3000 0 1.0 capture 0 idle translation-testing
 # 翻译服务就绪状态：不发起网络请求，仅检查成功反馈不会泄露服务返回文本。
-cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acceptance/translation-service-ready.png 3000 0 1.0 capture 0 idle translation-ready ocr-idle
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 1200 target/ui-acceptance/translation-service-ready.png 3000 0 1.0 capture 0 idle translation-ready ocr-idle
 # OCR 支持检查忙状态：不探测本机 Tesseract，仅检查按钮、语言选择与状态栏的可读性。
-cargo run --release --bin settings-ui-acceptance -- light 520 1200 target/ui-acceptance/ocr-support-checking.png 3000 0 1.0 capture 0 idle translation-idle ocr-checking
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 1200 target/ui-acceptance/ocr-support-checking.png 3000 0 1.0 capture 0 idle translation-idle ocr-checking
 # 更新检查忙状态：不请求发布端点，仅检查 Cancel check 和状态栏的可读性。
-cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/update-checking-single-100.png 3000 0 1.0 app 0 idle translation-idle ocr-idle recording-support-idle update-checking
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/update-checking-single-100.png 3000 0 1.0 app 0 idle translation-idle ocr-idle recording-support-idle update-checking
 # Pin 保存完成状态：使用隔离预览帧，不写入用户截图历史；检查状态与工具栏在键盘操作后仍可见。
-cargo run --release --bin settings-ui-acceptance -- dark 760 480 target/ui-acceptance/pinned-saved-feedback.png 2000 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle pin-saved-feedback
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 760 480 target/ui-acceptance/pinned-saved-feedback.png 2000 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle pin-saved-feedback
 # 覆盖层智能候选提示：使用隔离 BGRA 预览和真实 GPUI CaptureOverlay，不启动生产主程序。
-cargo run --release --bin settings-ui-acceptance -- dark 1280 720 target/ui-acceptance/overlay-control.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-control
-cargo run --release --bin settings-ui-acceptance -- dark 1280 720 target/ui-acceptance/overlay-window.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-window
-cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection
-cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-more
-cargo run --release --bin settings-ui-acceptance -- dark 420 420 target/ui-acceptance/overlay-selection-bottom-right-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-bottom-right-more
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 1280 720 target/ui-acceptance/overlay-control.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-control
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 1280 720 target/ui-acceptance/overlay-window.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-window
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/overlay-selection.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/overlay-selection-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-more
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/overlay-selection-bottom-right-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-bottom-right-more
 # 显式输入验收：会短暂取得焦点并移动全局鼠标，仅在可丢弃的单屏桌面会话中运行。
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --output-dir target/overlay-interaction-acceptance
 # 可选窄边场景：要求单屏 100% 缩放，验证真实最小设置窗、右下选区和 More/Mark 命中。
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
 # 可选多 Pin 共存场景：三次真实点击 Pin，真实拖动一张 Pin，并在三张 Pin 存活时截图和取消。
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --output-dir target/overlay-interaction-pins-coexist-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario pins-coexist --output-dir target/overlay-interaction-pins-coexist-acceptance
 # 显式破坏性 Pin 剪贴板验收：首张 Pin 发送 Ctrl+C，替换系统剪贴板并校验 PNG/CF_DIB/消费者像素。
 # 仅在可丢弃的 Windows 会话运行；省略 --allow-system-clipboard 的默认 Pin 场景不会写系统剪贴板。
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --allow-system-clipboard --output-dir target/overlay-interaction-pins-system-clipboard-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario pins-coexist --allow-system-clipboard --output-dir target/overlay-interaction-pins-system-clipboard-acceptance
 # 可选真实录屏闭环：通过 More 菜单点击入口，再点击 Record 页的 Pause、Resume 和 Stop；
 # 每次运行只接受一个隔离 MP4，并通过 FFprobe 校验编码、物理尺寸和时长。
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --record-target area --output-dir target/overlay-recording-interaction-acceptance
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --record-target window --output-dir target/overlay-recording-interaction-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --record-target area --output-dir target/overlay-recording-interaction-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --record-target window --output-dir target/overlay-recording-interaction-acceptance
 # 无全局输入验收：打开三个真实 Pin，复制使用内存实现，所有保存和截图写入隔离 profile。
 .\scripts\check-pin-lifecycle-acceptance.ps1
 # 可选 60 秒长时间 Pin 验收：循环 Solo/Show all，并采样 HWND、源帧、焦点、Capture preflight 与内存。
 .\scripts\check-pin-lifecycle-acceptance.ps1 -SoakMilliseconds 60000 -TimeoutMilliseconds 90000 -SettleMilliseconds 500 -OutputDirectory target\pin-lifecycle-soak-60s
-cargo run --release --bin scroll-acceptance -- --output target/ui-acceptance/scroll-acceptance.json
+.\scripts\run-dev-tool.ps1 -Release scroll-acceptance --output target/ui-acceptance/scroll-acceptance.json
 # 在实际 150%/200% Windows 缩放环境执行，最后一个参数会校验窗口 DPI
-cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
-cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-scale-200.png 1500 0 2.0
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-scale-150.png 1500 0 1.5
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-scale-200.png 1500 0 2.0
 # 双屏范围恢复后可选择零基显示器索引；这会把窗口放到指定显示器并保留其 DPI 证据
-cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-display-1-scale.png 1500 0 1.5 capture 1
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-display-1-scale.png 1500 0 1.5 capture 1
 ```
 
 `settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含 UI 语言、物理窗口边界、Windows DPI

@@ -4,7 +4,7 @@ use std::io;
 
 use flash_shot::annotation_stress::{AnnotationStressConfig, run};
 
-fn main() {
+pub(super) fn entrypoint() {
     match execute() {
         Ok(true) => {}
         Ok(false) => std::process::exit(2),

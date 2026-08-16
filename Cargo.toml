@@ -3,12 +3,21 @@ name = "flash-shot"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.95"
+autobins = false
 description = "A fast, native screenshot and screen recording tool built with Rust and GPUI"
 repository = "ssh://git@github.com/bruceblink/flash-shot.git"
 license = "AGPL-3.0-only"
 readme = "README.md"
 keywords = ["screenshot", "screen-recording", "desktop", "gpui"]
 categories = ["multimedia::images", "gui"]
+
+[features]
+default = []
+dev-tools = []
+
+[[bin]]
+name = "flash-shot"
+path = "src/main.rs"
 
 [dependencies]
 async-channel = "2.5"

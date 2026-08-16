@@ -1,20 +1,21 @@
-//! CLI entry point for repeatable long-image PNG encoding measurements.
+//! CLI entry point for repeatable full-frame long-image export preparation measurements.
 
 use std::{io, path::PathBuf};
 
-use flash_shot::png_stress::{PngStressConfig, run};
+use flash_shot::export_stress::{ExportStressConfig, run};
 
-fn main() {
+pub(super) fn entrypoint() {
     match execute() {
         Ok(true) => {}
         Ok(false) => std::process::exit(2),
         Err(error) => {
-            eprintln!("PNG stress failed: {error}");
+            eprintln!("export stress failed: {error}");
             std::process::exit(1);
         }
     }
 }
 
+/// Runs the benchmark, prints its JSON, optionally writes it to disk, and returns its gate result.
 fn execute() -> io::Result<bool> {
     let config = parse_args(std::env::args().skip(1))?;
     let report = run(&config)?;
@@ -25,9 +26,9 @@ fn execute() -> io::Result<bool> {
     Ok(report.passed())
 }
 
-/// Parses explicit benchmark dimensions and an optional fixed-machine p95 gate.
-fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<PngStressConfig> {
-    let mut config = PngStressConfig::default();
+/// Parses explicit benchmark sizes and gates without hiding platform-specific defaults.
+fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<ExportStressConfig> {
+    let mut config = ExportStressConfig::default();
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
         let mut value = || {
@@ -44,7 +45,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<PngStressCon
             "--width" => config.width = parse_value(value()?, &argument)?,
             "--height" => config.height = parse_value(value()?, &argument)?,
             "--max-p95-ms" => config.max_p95_ms = Some(parse_value(value()?, &argument)?),
-            "--no-gate" => config.max_p95_ms = None,
+            "--max-additional-copies" => {
+                config.max_additional_copies = parse_value(value()?, &argument)?
+            }
+            "--require-pixel-reuse" => config.require_pixel_reuse = true,
+            "--no-latency-gate" => config.max_p95_ms = None,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -73,10 +78,10 @@ mod tests {
     use super::parse_args;
 
     #[test]
-    fn parses_dimensions_output_and_latency_gate() {
+    fn parses_dimensions_output_and_export_gates() {
         let config = parse_args([
             "--output".to_owned(),
-            "target/png-stress.json".to_owned(),
+            "target/export-stress.json".to_owned(),
             "--iterations".to_owned(),
             "5".to_owned(),
             "--width".to_owned(),
@@ -85,25 +90,30 @@ mod tests {
             "900".to_owned(),
             "--max-p95-ms".to_owned(),
             "80".to_owned(),
+            "--max-additional-copies".to_owned(),
+            "1".to_owned(),
+            "--require-pixel-reuse".to_owned(),
         ])
         .unwrap();
 
         assert_eq!(
             config.output.unwrap(),
-            std::path::PathBuf::from("target/png-stress.json")
+            std::path::PathBuf::from("target/export-stress.json")
         );
         assert_eq!(config.iterations, 5);
         assert_eq!(config.width, 320);
         assert_eq!(config.height, 900);
         assert_eq!(config.max_p95_ms, Some(80));
+        assert_eq!(config.max_additional_copies, 1);
+        assert!(config.require_pixel_reuse);
     }
 
     #[test]
-    fn no_gate_clears_an_explicit_limit() {
+    fn no_latency_gate_clears_an_explicit_limit() {
         let config = parse_args([
             "--max-p95-ms".to_owned(),
             "1".to_owned(),
-            "--no-gate".to_owned(),
+            "--no-latency-gate".to_owned(),
         ])
         .unwrap();
 

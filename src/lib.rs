@@ -1,9 +1,14 @@
 //! Flash Shot application library.
 
+#[cfg(feature = "dev-tools")]
+extern crate self as flash_shot;
+
 pub mod annotation_stress;
 pub mod app;
 pub mod capture_stress;
 pub mod copy_performance;
+#[cfg(feature = "dev-tools")]
+pub mod dev_tools;
 pub mod diagnostics;
 pub mod domain;
 pub mod export_stress;

@@ -52,6 +52,11 @@ Requirements:
 cargo run
 ```
 
+The package declares only the `flash-shot` application binary, so no `--bin` argument is needed.
+Stress and native acceptance programs remain available as opt-in `dev-tools` library modules via
+`scripts\run-dev-tool.ps1`; they do not add executables to release packages or alter normal
+`cargo run` startup.
+
 Recording uses a local or bundled FFmpeg. Videos go to `Videos\Flash Shot` by default and fall back to Flash Shot's application-data directory when that folder is unavailable. Set `FLASH_SHOT_FFMPEG` and optionally `FLASH_SHOT_RECORDING_DIRECTORY` to override the executable and output directory. The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
 
 The Record page's `Video folder` control shows the active MP4 destination and lets users choose, reset, verify, or open it. A chosen folder is persisted; `FLASH_SHOT_RECORDING_DIRECTORY` remains the authoritative override for managed or portable environments. When timestamped names collide, Flash Shot appends a suffix and FFmpeg refuses to overwrite an existing MP4.
@@ -67,13 +72,13 @@ inject real UI input or qualify the required external-consumer benchmark; use th
 separate evidence:
 
 ```powershell
-cargo run --release --bin copy-performance -- --allow-system-clipboard --output target/copy-performance/release.json --metrics-dir target/copy-performance/metrics
-target\release\performance-report.exe --input target\copy-performance\metrics\performance.jsonl --minimum-samples 30 --copy-only --output target\copy-performance\summary.json
+.\scripts\run-dev-tool.ps1 -Release copy-performance --allow-system-clipboard --output target/copy-performance/release.json --metrics-dir target/copy-performance/metrics
+.\scripts\run-dev-tool.ps1 -Release performance-report --input target\copy-performance\metrics\performance.jsonl --minimum-samples 30 --copy-only --output target\copy-performance\summary.json
 ```
 
-For the required real Windows UI batch, build the Release binaries first and run the isolated
-batch wrapper in a disposable desktop session. It starts one `overlay-interaction-acceptance`
-process per warmup/sample, authorizes the production system clipboard explicitly, and stops the
+For the required real Windows UI batch, run the isolated development-tool module in a disposable
+desktop session. It starts one `flash-shot` child per warmup/sample and dispatches that child to
+the `overlay-interaction-acceptance` module, authorizes the production system clipboard explicitly, and stops the
 batch after any session whose cleanup cannot be proven. The default is two warmups plus 30 real
 toolbar Copy samples. Each child uses the focused `copy-only` scenario, which still opens a real
 overlay, commits a real mouse selection, invokes the requested production Copy gesture, validates
@@ -83,9 +88,8 @@ failures, display DPI, build path/profile, and QPC timing boundary. These comman
 current Windows clipboard and inject global input:
 
 ```powershell
-cargo build --release --bin overlay-interaction-acceptance --bin overlay-copy-batch
-target\release\overlay-copy-batch.exe --allow-input --allow-system-clipboard --copy-trigger toolbar --warmup 1 --copy-iterations 30 --output-dir target\overlay-copy-batch\toolbar
-target\release\overlay-copy-batch.exe --allow-input --allow-system-clipboard --copy-trigger enter --warmup 1 --copy-iterations 30 --output-dir target\overlay-copy-batch\enter
+.\scripts\run-dev-tool.ps1 -Release overlay-copy-batch --allow-input --allow-system-clipboard --copy-trigger toolbar --warmup 1 --copy-iterations 30 --output-dir target\overlay-copy-batch\toolbar
+.\scripts\run-dev-tool.ps1 -Release overlay-copy-batch --allow-input --allow-system-clipboard --copy-trigger enter --warmup 1 --copy-iterations 30 --output-dir target\overlay-copy-batch\enter
 ```
 
 The batch report is `measurement_mode=real_ui` and `real_ui=true`. Current-source Release evidence
@@ -126,21 +130,21 @@ Set `FLASH_SHOT_UPDATE_ENDPOINT` to an HTTPS URL serving a verified `release-man
 
 ```powershell
 cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo check --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 ```
 
 The repeat-capture resource and latency gate captures and encodes the virtual desktop 100 times and emits machine-readable JSON. Use a release build for performance baselines:
 
 ```powershell
-cargo run --release --bin capture-stress -- --output target/capture-stress.json
+.\scripts\run-dev-tool.ps1 -Release capture-stress --output target/capture-stress.json
 ```
 
 Use fewer iterations for a quick development smoke test:
 
 ```powershell
-cargo run --bin capture-stress -- --iterations 5
+.\scripts\run-dev-tool.ps1 capture-stress --iterations 5
 ```
 
 The app also retains the latest 500 startup and shortcut-to-overlay samples at
@@ -148,7 +152,7 @@ The app also retains the latest 500 startup and shortcut-to-overlay samples at
 run and enforce the default p95 thresholds with:
 
 ```powershell
-cargo run --release --bin performance-report -- --input "<application data directory>\metrics\performance.jsonl" --output target/performance-summary.json
+.\scripts\run-dev-tool.ps1 -Release performance-report --input "<application data directory>\metrics\performance.jsonl" --output target/performance-summary.json
 ```
 
 The command accepts only Release-profile samples by default, so Debug runs and legacy unmarked
@@ -169,8 +173,8 @@ This starts the Release executable twenty times, writes a time-windowed startup-
 or a startup p95 above 500 ms. It deliberately does not claim full release qualification because
 the shortcut-to-overlay metrics need their own real interaction sampling.
 
-Use `-SkipBuild` only when both Release binaries were built from the current source; the script
-checks the reporter protocol before it starts sampling.
+Use `-SkipBuild` only when the production Release application was built from the current source;
+the script always checks the isolated development-tool reporter protocol before it starts sampling.
 
 Collect an isolated shortcut-to-overlay baseline with the dedicated `Ctrl+Alt+F12` hotkey:
 
@@ -190,14 +194,14 @@ physical selection, compares Save/Pin/Copy pixels with their pre-click source fr
 the Windows clipboard sequence did not change:
 
 ```powershell
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --output-dir target/overlay-interaction-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --output-dir target/overlay-interaction-acceptance
 ```
 
 To exercise the production system-clipboard export for the same ordinary selection Copy path,
 authorize it explicitly in a disposable Windows desktop session:
 
 ```powershell
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --allow-system-clipboard --output-dir target/overlay-interaction-system-clipboard-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --allow-system-clipboard --output-dir target/overlay-interaction-system-clipboard-acceptance
 ```
 
 This mode replaces the current system clipboard and is intended only for a disposable acceptance
@@ -214,7 +218,7 @@ follow-up acceptance items in the [delivery plan](docs/plan.md).
 To validate the keyboard export in the same standard scenario, switch the trigger to `Enter`:
 
 ```powershell
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --allow-system-clipboard --copy-trigger enter --output-dir target/overlay-interaction-system-clipboard-enter-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --allow-system-clipboard --copy-trigger enter --output-dir target/overlay-interaction-system-clipboard-enter-acceptance
 ```
 
 Use the opt-in narrow-edge scenario to open the real 420x420 minimum Settings client, drag a
@@ -223,7 +227,7 @@ It requires one 100%-scaled display, records the exact selection pixels and UI s
 mutually exclusive with recording modes:
 
 ```powershell
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
 ```
 
 Use the opt-in Pin coexistence scenario to create three 360x240 Pins through real toolbar clicks,
@@ -233,7 +237,7 @@ bounds survive the overlay and Cancel, then closes every Pin with Escape without
 clipboard:
 
 ```powershell
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --output-dir target/overlay-interaction-pins-coexist-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario pins-coexist --output-dir target/overlay-interaction-pins-coexist-acceptance
 ```
 
 To exercise the real Pin system-clipboard export in the three-Pin coexistence workflow, add
@@ -244,7 +248,7 @@ under `pins_coexist.system_clipboard_copy`. Omitting the flag keeps the isolated
 does not modify the user clipboard:
 
 ```powershell
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario pins-coexist --allow-system-clipboard --output-dir target/overlay-interaction-pins-system-clipboard-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario pins-coexist --allow-system-clipboard --output-dir target/overlay-interaction-pins-system-clipboard-acceptance
 ```
 
 Use the opt-in selection-transform scenario to perform real committed-selection gestures in one
@@ -254,7 +258,7 @@ preserve the aspect ratio, and resize with Alt around the original center. It re
 cleans up the overlay and Settings controller without touching the system clipboard:
 
 ```powershell
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --capture-scenario selection-transform --output-dir target/overlay-interaction-selection-transform-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario selection-transform --output-dir target/overlay-interaction-selection-transform-acceptance
 ```
 
 The recording modes click `Record area` or `Record window`, then the real Pause, Resume, and Stop
@@ -265,8 +269,8 @@ area/window oracle, and decodes a video frame for content comparison with a desk
 forces output into its disposable session and clears inherited recording-audio overrides:
 
 ```powershell
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --record-target area --output-dir target/overlay-recording-interaction-acceptance
-cargo run --release --bin overlay-interaction-acceptance -- --allow-input --record-target window --output-dir target/overlay-recording-interaction-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --record-target area --output-dir target/overlay-recording-interaction-acceptance
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --record-target window --output-dir target/overlay-recording-interaction-acceptance
 ```
 
 On a single-display interactive desktop, run the isolated three-Pin lifecycle gate without

@@ -15,9 +15,7 @@ use flash_shot::{
 };
 use serde::Serialize;
 
-#[path = "support/recording_probe.rs"]
-mod recording_probe;
-
+use super::support::recording_probe;
 use recording_probe::probe_media;
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -100,7 +98,7 @@ fn usage() -> String {
         .to_owned()
 }
 
-fn main() {
+pub(super) fn entrypoint() {
     if let Err(error) = run() {
         eprintln!("recording acceptance failed: {error}");
         std::process::exit(1);
