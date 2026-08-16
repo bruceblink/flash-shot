@@ -730,9 +730,14 @@ impl FlashShotApp {
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
         self.status = if self.capture_shortcut_enabled {
-            format!("Ready - {}", self.capture_shortcut)
+            self.settings
+                .locale
+                .ready_with_shortcut(&self.capture_shortcut)
         } else {
-            "Ready - global shortcut disabled".to_owned()
+            self.settings
+                .locale
+                .text(crate::i18n::UiText::ReadyGlobalShortcutDisabled)
+                .to_owned()
         };
         self.close_capture_overlays(cx);
         self.close_manual_scroll_window(cx);

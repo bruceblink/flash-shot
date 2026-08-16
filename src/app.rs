@@ -36,6 +36,7 @@ use crate::{
         session::CaptureSession,
     },
     history::ScreenshotHistory,
+    i18n::UiText,
     performance::PerformanceRecorder,
     platform::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
@@ -736,14 +737,19 @@ impl FlashShotApp {
             None
         };
         let capture_shortcut_enabled = shortcut.is_some();
+        let locale = settings.locale;
         let status = if !production_services {
-            "Ready - system services disabled for acceptance".to_owned()
+            locale
+                .text(UiText::ReadySystemServicesDisabledForAcceptance)
+                .to_owned()
         } else if capture_shortcut_enabled {
-            format!("Ready - {capture_shortcut_label}")
+            locale.ready_with_shortcut(&capture_shortcut_label)
         } else if settings.capture_shortcut_enabled {
-            "Ready - global shortcut unavailable".to_owned()
+            locale
+                .text(UiText::ReadyGlobalShortcutUnavailable)
+                .to_owned()
         } else {
-            "Ready - global shortcut disabled".to_owned()
+            locale.text(UiText::ReadyGlobalShortcutDisabled).to_owned()
         };
         let tray = if production_services {
             match TrayService::start() {

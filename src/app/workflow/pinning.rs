@@ -470,10 +470,13 @@ impl FlashShotApp {
                 }
             }
         });
+        let locale = self.settings.locale;
         self.status = if restored == 0 {
-            "No pinned windows needed input recovery".to_owned()
+            locale
+                .text(crate::i18n::UiText::NoPinnedWindowsNeededInputRecovery)
+                .to_owned()
         } else {
-            format!("Restored mouse input for {restored} pinned window(s)")
+            locale.pinned_window_input_restored(restored)
         };
         cx.notify();
     }

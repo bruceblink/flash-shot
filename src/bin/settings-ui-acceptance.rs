@@ -12,6 +12,7 @@ use flash_shot::{
     OverlayUiAcceptanceSelectionPlacement, RecordingSupportUiAcceptanceState,
     RecordingUiAcceptanceState, TranslationServiceUiAcceptanceState, UpdateUiAcceptanceState,
     history::ScreenshotHistory,
+    i18n::Locale,
     performance::PerformanceRecorder,
     platform::capture::{CaptureBackend, SystemCaptureBackend},
     settings::UserSettings,
@@ -43,6 +44,7 @@ const SCALE_TOLERANCE: f32 = 0.01;
 #[derive(serde::Serialize)]
 struct ScreenshotMetadata {
     screenshot: String,
+    locale: &'static str,
     physical_bounds: ScreenshotBounds,
     dpi: u32,
     scale_factor: f32,
@@ -94,6 +96,7 @@ struct Options {
     ocr_support_check_state: OcrSupportUiAcceptanceState,
     update_check_state: UpdateUiAcceptanceState,
     surface: AcceptanceSurface,
+    locale: Locale,
 }
 
 impl Options {
@@ -154,6 +157,11 @@ impl Options {
             .map(parse_surface)
             .transpose()?
             .unwrap_or_default();
+        let locale = arguments
+            .next()
+            .map(parse_locale)
+            .transpose()?
+            .unwrap_or_default();
         if arguments.next().is_some() {
             return Err(usage());
         }
@@ -178,12 +186,13 @@ impl Options {
             ocr_support_check_state,
             update_check_state,
             surface,
+            locale,
         })
     }
 }
 
 fn usage() -> String {
-    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback|overlay-control|overlay-window|overlay-selection|overlay-selection-more|overlay-selection-bottom-right-more]"
+    "usage: settings-ui-acceptance <dark|light> <width> <height> <output.png> [settle-ms] [linger-ms] [expected-scale] [capture|library|record|app] [display-index] [idle|starting|recording|paused|stopping|cancelled|failed] [translation-idle|translation-testing|translation-ready] [ocr-idle|ocr-checking] [recording-support-idle|recording-support-checking] [update-idle|update-checking] [settings|pin-saved-feedback|overlay-control|overlay-window|overlay-selection|overlay-selection-more|overlay-selection-bottom-right-more] [en|zh-CN]"
         .to_owned()
 }
 
@@ -380,6 +389,19 @@ fn parse_surface(value: std::ffi::OsString) -> Result<AcceptanceSurface, String>
     }
 }
 
+/// Parses the optional UI catalog rendered by the isolated settings screenshot process.
+fn parse_locale(value: std::ffi::OsString) -> Result<Locale, String> {
+    match value
+        .into_string()
+        .map_err(|_| "locale must be en or zh-CN".to_owned())?
+        .as_str()
+    {
+        "en" => Ok(Locale::English),
+        "zh-CN" => Ok(Locale::SimplifiedChinese),
+        _ => Err("locale must be en or zh-CN".to_owned()),
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("settings UI acceptance failed: {error}");
@@ -403,6 +425,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let performance = PerformanceRecorder::new(session_root.join("metrics"))?;
     let mut settings = UserSettings::default();
     settings.theme_mode = options.theme;
+    settings.locale = options.locale;
     settings.recording_directory = Some(session_root.join("recordings"));
 
     spawn_screenshot_worker(
@@ -410,6 +433,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         options.settle_delay,
         options.linger_delay,
         options.expected_scale,
+        options.locale,
     );
     let settings_path = session_root.join("settings.json");
     match options.surface {
@@ -493,6 +517,7 @@ fn spawn_screenshot_worker(
     settle_delay: Duration,
     linger_delay: Duration,
     expected_scale: Option<f32>,
+    locale: Locale,
 ) {
     thread::spawn(move || {
         thread::sleep(settle_delay);
@@ -501,7 +526,7 @@ fn spawn_screenshot_worker(
             thread::sleep(Duration::from_millis(100));
             let frame = SystemCaptureBackend.capture(window.bounds)?;
             frame.save_png(&output)?;
-            write_screenshot_metadata(&output, &window, expected_scale)?;
+            write_screenshot_metadata(&output, &window, expected_scale, locale)?;
             if let Some(expected_scale) = expected_scale {
                 let actual_scale = scale_factor_for_dpi(window.dpi);
                 if !scale_matches(actual_scale, expected_scale) {
@@ -609,6 +634,7 @@ fn write_screenshot_metadata(
     output: &Path,
     window: &VisibleProcessWindow,
     expected_scale: Option<f32>,
+    locale: Locale,
 ) -> io::Result<()> {
     let scale_factor = scale_factor_for_dpi(window.dpi);
     let metadata = ScreenshotMetadata {
@@ -617,6 +643,7 @@ fn write_screenshot_metadata(
             .and_then(|name| name.to_str())
             .unwrap_or("settings-ui.png")
             .to_owned(),
+        locale: locale.code(),
         physical_bounds: ScreenshotBounds {
             left: window.bounds.left,
             top: window.bounds.top,
@@ -651,13 +678,14 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 mod tests {
     use super::{
         AcceptanceSurface, parse_display_index, parse_expected_scale, parse_linger_delay,
-        parse_ocr_support_check_state, parse_recording_state, parse_recording_support_check_state,
-        parse_section, parse_settle_delay, parse_surface, parse_translation_service_test_state,
-        parse_update_check_state, scale_factor_for_dpi, scale_matches, screenshot_metadata_path,
+        parse_locale, parse_ocr_support_check_state, parse_recording_state,
+        parse_recording_support_check_state, parse_section, parse_settle_delay, parse_surface,
+        parse_translation_service_test_state, parse_update_check_state, scale_factor_for_dpi,
+        scale_matches, screenshot_metadata_path,
     };
     use flash_shot::{
         OcrSupportUiAcceptanceState, RecordingSupportUiAcceptanceState, RecordingUiAcceptanceState,
-        TranslationServiceUiAcceptanceState, UpdateUiAcceptanceState,
+        TranslationServiceUiAcceptanceState, UpdateUiAcceptanceState, i18n::Locale,
     };
     use std::{ffi::OsString, path::Path, time::Duration};
 
@@ -796,6 +824,16 @@ mod tests {
             assert_eq!(parse_section(section.into()).unwrap(), section);
         }
         assert!(parse_section("unknown".into()).is_err());
+    }
+
+    #[test]
+    fn locale_parser_keeps_english_default_and_accepts_chinese_evidence() {
+        assert_eq!(parse_locale(OsString::from("en")).unwrap(), Locale::English);
+        assert_eq!(
+            parse_locale(OsString::from("zh-CN")).unwrap(),
+            Locale::SimplifiedChinese
+        );
+        assert!(parse_locale(OsString::from("Chinese")).is_err());
     }
 
     #[test]

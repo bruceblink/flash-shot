@@ -70,6 +70,8 @@ cargo run --release --bin settings-ui-acceptance -- light 980 760 target/ui-acce
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-light-520x640.png
 cargo run --release --bin settings-ui-acceptance -- dark 980 760 target/ui-acceptance/settings-dark-980x760.png
 cargo run --release --bin settings-ui-acceptance -- dark 520 640 target/ui-acceptance/recording-settings-520x640.png 1500 1000 1.0 record
+# UI language evidence: retain the existing positional defaults, then pass the final catalog code.
+cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-app-zh-CN.png 1500 0 1.0 app 0 idle translation-idle ocr-idle recording-support-idle update-idle settings zh-CN
 # Record 页生命周期视觉复核：最后的 state 参数只注入 UI 状态，不会启动 FFmpeg。
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/recording-ui-paused.png 3000 0 1.0 record 0 paused
 # FFmpeg 支持检查忙状态：不启动录屏进程，仅检查 Cancel check、冲突禁用和状态栏布局。
@@ -115,8 +117,9 @@ cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acce
 cargo run --release --bin settings-ui-acceptance -- light 520 640 target/ui-acceptance/settings-display-1-scale.png 1500 0 1.5 capture 1
 ```
 
-`settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含物理窗口边界、Windows DPI
-和缩放比例。提供最后一个 `expected-scale` 参数时，命令只有在 `scale_match` 为 `true`
+`settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含 UI 语言、物理窗口边界、Windows DPI
+和缩放比例。提供 `en` 或 `zh-CN` 作为最后一个参数时，探针使用对应 UI 资源目录；省略时保持
+英文。提供最后一个 `expected-scale` 参数时，命令只有在 `scale_match` 为 `true`
 时才成功；150%/200% 验收必须保留 `scale_factor` 为 `1.5` 或 `2.0` 的对应证据。
 `windows-acceptance-probe --single-display` 会在报告中写入 `single_display_required: true`
 并在检测到多块显示器时失败；这是当前单屏开发范围的保护，不代表双屏功能已经通过验收。

@@ -24,6 +24,7 @@ impl FlashShotApp {
         &mut self,
         state: crate::RecordingUiAcceptanceState,
     ) {
+        let idle = state == crate::RecordingUiAcceptanceState::Idle;
         let (active, starting, stopping, paused, progress, status) =
             acceptance_recording_state(state);
         self.recording_acceptance_active = active;
@@ -31,7 +32,13 @@ impl FlashShotApp {
         self.recording_stopping = stopping;
         self.recording_paused = paused;
         self.recording_progress = progress;
-        self.status = status.to_owned();
+        self.status = if idle {
+            self.settings
+                .locale
+                .ready_with_shortcut(&self.capture_shortcut)
+        } else {
+            status.to_owned()
+        };
     }
 
     /// Seeds the FFmpeg support-check button for screenshots without launching local probes.
@@ -798,6 +805,21 @@ impl FlashShotApp {
         }
         self.colors = crate::theme::ThemeColors::for_mode(next);
         self.status = format!("Appearance changed to {}", next.label());
+        cx.notify();
+    }
+
+    /// Switches the persisted UI language and lets every visible surface render the new catalog.
+    pub(in crate::app) fn cycle_locale(&mut self, cx: &mut Context<Self>) {
+        let previous = self.settings.locale;
+        let next = previous.next();
+        self.settings.locale = next;
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.settings.locale = previous;
+            self.status = previous.language_preference_save_failed(&error);
+            cx.notify();
+            return;
+        }
+        self.status = next.language_changed(next.label());
         cx.notify();
     }
 

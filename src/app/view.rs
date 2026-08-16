@@ -10,7 +10,11 @@ use gpui::{
 use super::{
     FlashShotApp, HistoryClearScope, HistoryFilter, SettingsSection, history_entry_matches,
 };
-use crate::{domain::session::CaptureSessionState, platform::shortcut::CaptureShortcut};
+use crate::{
+    domain::session::CaptureSessionState,
+    i18n::{Locale, UiText},
+    platform::shortcut::CaptureShortcut,
+};
 
 const HISTORY_PREVIEW_LIMIT: usize = 5;
 const SETTINGS_CONTENT_MAX_WIDTH: f32 = 960.0;
@@ -48,6 +52,7 @@ impl gpui::Render for FlashShotApp {
     /// Keeping the column bounded prevents wide windows from separating a preference label from its control.
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let colors = self.colors;
+        let locale = self.settings.locale;
         let compact_navigation =
             uses_compact_settings_navigation(f32::from(window.bounds().size.width));
         let recording_state = RecordingViewState {
@@ -128,6 +133,7 @@ impl gpui::Render for FlashShotApp {
                 colors,
                 is_idle,
                 self.delayed_capture_remaining_seconds,
+                locale,
                 cx,
             ))
             .child(
@@ -143,6 +149,7 @@ impl gpui::Render for FlashShotApp {
                         app.clone(),
                         compact_navigation,
                         &self.settings_navigation_focus,
+                        locale,
                     ))
                     .child(
                         div()
@@ -162,7 +169,11 @@ impl gpui::Render for FlashShotApp {
                                     .flex()
                                     .flex_col()
                                     .gap_5()
-                                    .child(settings_page_intro(self.settings_section, colors))
+                                    .child(settings_page_intro(
+                                        self.settings_section,
+                                        colors,
+                                        locale,
+                                    ))
                                     .when(
                                         self.settings_section == SettingsSection::Capture,
                                         |content| {
@@ -171,6 +182,7 @@ impl gpui::Render for FlashShotApp {
                                                 colors,
                                                 is_idle,
                                                 app.clone(),
+                                                locale,
                                             ))
                                         },
                                     )
@@ -354,11 +366,11 @@ fn ocr_support_check_label(in_flight: bool) -> &'static str {
 }
 
 /// Switches the update action to cancellation while a manifest request is outstanding.
-fn update_check_label(in_flight: bool) -> &'static str {
+fn update_check_label_for_locale(locale: Locale, in_flight: bool) -> &'static str {
     if in_flight {
-        "Cancel check"
+        locale.text(UiText::CancelCheck)
     } else {
-        "Check now"
+        locale.text(UiText::CheckNow)
     }
 }
 
@@ -366,6 +378,7 @@ fn settings_header(
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     delayed_capture_remaining_seconds: Option<u8>,
+    locale: Locale,
     cx: &mut gpui::Context<FlashShotApp>,
 ) -> gpui::Div {
     div()
@@ -403,13 +416,13 @@ fn settings_header(
                             div()
                                 .text_lg()
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .child("Flash Shot"),
+                                .child(locale.text(UiText::AppName)),
                         )
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(colors.muted)
-                                .child("Capture workspace"),
+                                .child(locale.text(UiText::WorkspaceSubtitle)),
                         ),
                 ),
         )
@@ -444,17 +457,23 @@ fn settings_header(
                             .hover(|style| style.bg(colors.panel).text_color(colors.text))
                             .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx)))
                     })
-                    .child(capture_command_label(delayed_capture_remaining_seconds)),
+                    .child(capture_command_label(
+                        locale,
+                        delayed_capture_remaining_seconds,
+                    )),
             ),
         )
 }
 
 /// Labels the header command so a queued delayed capture can be cancelled in place.
-fn capture_command_label(delayed_capture_remaining_seconds: Option<u8>) -> &'static str {
+fn capture_command_label(
+    locale: Locale,
+    delayed_capture_remaining_seconds: Option<u8>,
+) -> &'static str {
     if delayed_capture_remaining_seconds.is_some() {
-        "Cancel delay"
+        locale.text(UiText::CancelDelay)
     } else {
-        "Capture"
+        locale.text(UiText::Capture)
     }
 }
 
@@ -480,6 +499,7 @@ fn capture_settings(
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
+    locale: Locale,
 ) -> gpui::Div {
     // History readers and managed saves own files that capture actions may otherwise replace.
     // Clipboard encoding owns only a frozen image snapshot, so it must not block a new capture.
@@ -487,7 +507,7 @@ fn capture_settings(
         && app_state.history_reader.is_none()
         && app_state.history_write_generation.is_none()
         && !app_state.history_root_change_in_flight;
-    let quick_actions = settings_section("Screenshot", colors).child(
+    let quick_actions = settings_section(locale.text(UiText::Screenshot), colors).child(
         div()
             .w_full()
             .flex()
@@ -495,7 +515,7 @@ fn capture_settings(
             .gap_2()
             .child(quick_action_button(
                 "settings-capture-region",
-                "Region capture",
+                locale.text(UiText::RegionCapture),
                 colors,
                 capture_actions_enabled,
                 true,
@@ -506,7 +526,7 @@ fn capture_settings(
             ))
             .child(quick_action_button(
                 "settings-capture-full-screen",
-                "Full screen",
+                locale.text(UiText::FullScreen),
                 colors,
                 capture_actions_enabled,
                 false,
@@ -517,7 +537,7 @@ fn capture_settings(
             ))
             .child(quick_action_button(
                 "settings-capture-focused-window",
-                "Focused window",
+                locale.text(UiText::FocusedWindow),
                 colors,
                 capture_actions_enabled,
                 false,
@@ -525,64 +545,10 @@ fn capture_settings(
                     let app = app.clone();
                     move |_, _, cx| app.update(cx, |this, cx| this.start_focused_window_capture(cx))
                 },
-            ))
-            .child(quick_action_button(
-                "settings-copy-full-screen",
-                "Copy full screen",
-                colors,
-                capture_actions_enabled,
-                false,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.copy_full_screen(cx))
-                },
-            ))
-            .child(quick_action_button(
-                "settings-save-full-screen",
-                "Save full screen",
-                colors,
-                capture_actions_enabled,
-                false,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.quick_save_full_screen(cx))
-                },
-            ))
-            .child(quick_action_button(
-                "settings-pin-full-screen",
-                "Pin full screen",
-                colors,
-                capture_actions_enabled,
-                false,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.pin_full_screen(cx))
-                },
-            ))
-            .child(quick_action_button(
-                "settings-pin-clipboard",
-                "Pin clipboard",
-                colors,
-                capture_actions_enabled,
-                false,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.pin_clipboard_image(cx))
-                },
-            ))
-            .child(quick_action_button(
-                "settings-restore-pin-input",
-                "Restore pin input",
-                colors,
-                is_idle,
-                false,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.restore_pinned_window_input(cx))
-                },
             )),
     );
 
+    let recovery_app = app.clone();
     let preferences = settings_section("Capture preferences", colors)
         .child(
             div()
@@ -746,12 +712,24 @@ fn capture_settings(
             },
         )));
 
+    let pin_recovery =
+        settings_section(locale.text(UiText::PinRecovery), colors).child(settings_button(
+            "settings-restore-pin-input",
+            locale.text(UiText::RestorePinInput),
+            colors,
+            is_idle,
+            move |_, _, cx| {
+                recovery_app.update(cx, |this, cx| this.restore_pinned_window_input(cx))
+            },
+        ));
+
     div()
         .flex()
         .flex_col()
         .gap_5()
         .child(quick_actions)
         .child(preferences)
+        .child(pin_recovery)
 }
 
 fn file_settings(
@@ -1174,19 +1152,38 @@ fn system_settings(
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
-    settings_section("System", colors)
-        .child(settings_row("Appearance", colors).child(settings_button(
-            "settings-theme-mode",
-            app_state.settings.theme_mode.label(),
-            colors,
-            true,
-            {
-                let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.toggle_theme_mode(cx))
-            },
-        )))
+    let locale = app_state.settings.locale;
+    let theme_label = match app_state.settings.theme_mode {
+        crate::theme::ThemeMode::Dark => locale.text(UiText::Dark),
+        crate::theme::ThemeMode::Light => locale.text(UiText::Light),
+    };
+    settings_section(locale.text(UiText::App), colors)
         .child(
-            settings_row("Start with Windows", colors).child(settings_toggle(
+            settings_row(locale.text(UiText::Appearance), colors).child(settings_button(
+                "settings-theme-mode",
+                theme_label,
+                colors,
+                true,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.toggle_theme_mode(cx))
+                },
+            )),
+        )
+        .child(
+            settings_row(locale.text(UiText::Language), colors).child(settings_button(
+                "settings-locale",
+                locale.label(),
+                colors,
+                true,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_locale(cx))
+                },
+            )),
+        )
+        .child(
+            settings_row(locale.text(UiText::StartWithWindows), colors).child(settings_toggle(
                 "settings-auto-start",
                 app_state.auto_start_enabled,
                 colors,
@@ -1197,21 +1194,23 @@ fn system_settings(
                 },
             )),
         )
-        .child(settings_row("Updates", colors).child(settings_button(
-            "settings-check-updates",
-            update_check_label(app_state.update_check_in_flight),
-            colors,
-            true,
-            move |_, _, cx| {
-                app.update(cx, |this, cx| {
-                    if this.update_check_in_flight {
-                        this.cancel_update_check(cx);
-                    } else {
-                        this.check_for_updates(cx);
-                    }
-                })
-            },
-        )))
+        .child(
+            settings_row(locale.text(UiText::Updates), colors).child(settings_button(
+                "settings-check-updates",
+                update_check_label_for_locale(locale, app_state.update_check_in_flight),
+                colors,
+                true,
+                move |_, _, cx| {
+                    app.update(cx, |this, cx| {
+                        if this.update_check_in_flight {
+                            this.cancel_update_check(cx);
+                        } else {
+                            this.check_for_updates(cx);
+                        }
+                    })
+                },
+            )),
+        )
 }
 
 struct HistoryViewState {
@@ -1927,6 +1926,7 @@ fn settings_navigation(
     app: gpui::Entity<FlashShotApp>,
     compact: bool,
     focus_handles: &[FocusHandle; 4],
+    locale: Locale,
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id("settings-navigation")
@@ -1959,19 +1959,23 @@ fn settings_navigation(
                         .text_xs()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(colors.muted)
-                        .child("WORKFLOW"),
+                        .child(locale.text(UiText::Workflow)),
                 )
         })
-        .children(settings_navigation_items().into_iter().map(|item| {
-            settings_navigation_item(
-                item,
-                selected,
-                colors,
-                app.clone(),
-                compact,
-                (*focus_handles).clone(),
-            )
-        }))
+        .children(
+            settings_navigation_items_for_locale(locale)
+                .into_iter()
+                .map(|item| {
+                    settings_navigation_item(
+                        item,
+                        selected,
+                        colors,
+                        app.clone(),
+                        compact,
+                        (*focus_handles).clone(),
+                    )
+                }),
+        )
 }
 
 #[derive(Clone, Copy)]
@@ -1983,30 +1987,30 @@ struct SettingsNavigationItem {
 }
 
 /// Keeps the navigation vocabulary task-oriented so the compact and wide layouts tell the same story.
-fn settings_navigation_items() -> [SettingsNavigationItem; 4] {
+fn settings_navigation_items_for_locale(locale: Locale) -> [SettingsNavigationItem; 4] {
     [
         SettingsNavigationItem {
             id: "settings-nav-capture",
-            label: "Capture",
-            description: "Screenshot, annotate, export",
+            label: locale.text(UiText::Capture),
+            description: locale.text(UiText::CaptureDescription),
             section: SettingsSection::Capture,
         },
         SettingsNavigationItem {
             id: "settings-nav-files",
-            label: "Library",
-            description: "Saved images and history",
+            label: locale.text(UiText::Library),
+            description: locale.text(UiText::LibraryDescription),
             section: SettingsSection::Files,
         },
         SettingsNavigationItem {
             id: "settings-nav-recording",
-            label: "Record",
-            description: "Screen and audio",
+            label: locale.text(UiText::Record),
+            description: locale.text(UiText::RecordDescription),
             section: SettingsSection::Recording,
         },
         SettingsNavigationItem {
             id: "settings-nav-system",
-            label: "App",
-            description: "Theme, startup, updates",
+            label: locale.text(UiText::App),
+            description: locale.text(UiText::AppDescription),
             section: SettingsSection::System,
         },
     ]
@@ -2114,8 +2118,12 @@ fn settings_navigation_item(
 }
 
 /// Gives every section a stable task-oriented title.
-fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColors) -> gpui::Div {
-    let (title, description) = settings_page_copy(section);
+fn settings_page_intro(
+    section: SettingsSection,
+    colors: crate::theme::ThemeColors,
+    locale: Locale,
+) -> gpui::Div {
+    let (title, description) = settings_page_copy_for_locale(section, locale);
     div()
         .pb_4()
         .border_b_1()
@@ -2133,21 +2141,27 @@ fn settings_page_intro(section: SettingsSection, colors: crate::theme::ThemeColo
 }
 
 /// Returns the short heading and purpose statement shown before each settings task group.
-fn settings_page_copy(section: SettingsSection) -> (&'static str, &'static str) {
+fn settings_page_copy_for_locale(
+    section: SettingsSection,
+    locale: Locale,
+) -> (&'static str, &'static str) {
     match section {
         SettingsSection::Capture => (
-            "Capture",
-            "Start a screenshot or adjust capture preferences.",
+            locale.text(UiText::Capture),
+            locale.text(UiText::CapturePageDescription),
         ),
         SettingsSection::Files => (
-            "Library",
-            "Find saved captures, change output, and manage history.",
+            locale.text(UiText::Library),
+            locale.text(UiText::LibraryPageDescription),
         ),
         SettingsSection::Recording => (
-            "Record",
-            "Choose capture sources, an output folder, and recording controls.",
+            locale.text(UiText::Record),
+            locale.text(UiText::RecordPageDescription),
         ),
-        SettingsSection::System => ("App", "Set appearance, startup, and update preferences."),
+        SettingsSection::System => (
+            locale.text(UiText::App),
+            locale.text(UiText::AppPageDescription),
+        ),
     }
 }
 
@@ -2456,12 +2470,13 @@ mod tests {
         recording_source_discovery_busy, recording_status_visible, recording_support_check_label,
         recording_toggle_enabled, recording_toggle_label, relative_timestamp_label,
         settings_actions_available, settings_navigation_activation, settings_navigation_direction,
-        settings_navigation_items, settings_page_copy, settings_page_intro, settings_path_label,
-        status_indicator_color, translation_service_test_label, update_check_label,
-        uses_compact_settings_navigation, visible_history_entries,
+        settings_navigation_items_for_locale, settings_page_copy_for_locale, settings_page_intro,
+        settings_path_label, status_indicator_color, translation_service_test_label,
+        update_check_label_for_locale, uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
+    use crate::i18n::Locale;
     use crate::recording::RecordingProgress;
     use crate::theme::ThemeColors;
     use std::collections::VecDeque;
@@ -2469,8 +2484,11 @@ mod tests {
 
     #[test]
     fn capture_header_turns_into_a_delay_cancellation_command() {
-        assert_eq!(capture_command_label(None), "Capture");
-        assert_eq!(capture_command_label(Some(3)), "Cancel delay");
+        assert_eq!(capture_command_label(Locale::English, None), "Capture");
+        assert_eq!(
+            capture_command_label(Locale::English, Some(3)),
+            "Cancel delay"
+        );
     }
 
     #[test]
@@ -2510,13 +2528,13 @@ mod tests {
             SettingsSection::Recording,
             SettingsSection::System,
         ] {
-            let _ = settings_page_intro(section, colors);
+            let _ = settings_page_intro(section, colors, Locale::English);
         }
     }
 
     #[test]
     fn settings_navigation_uses_task_oriented_labels() {
-        let items = settings_navigation_items();
+        let items = settings_navigation_items_for_locale(Locale::English);
         assert_eq!(
             items.map(|item| item.label),
             ["Capture", "Library", "Record", "App"]
@@ -2527,7 +2545,7 @@ mod tests {
                 "Screenshot, annotate, export",
                 "Saved images and history",
                 "Screen and audio",
-                "Theme, startup, updates",
+                "Theme, language, startup, updates",
             ]
         );
     }
@@ -2585,29 +2603,32 @@ mod tests {
     #[test]
     fn settings_page_copy_matches_navigation_purposes() {
         assert_eq!(
-            settings_page_copy(SettingsSection::Capture),
+            settings_page_copy_for_locale(SettingsSection::Capture, Locale::English),
             (
                 "Capture",
                 "Start a screenshot or adjust capture preferences."
             )
         );
         assert_eq!(
-            settings_page_copy(SettingsSection::Files),
+            settings_page_copy_for_locale(SettingsSection::Files, Locale::English),
             (
                 "Library",
                 "Find saved captures, change output, and manage history."
             )
         );
         assert_eq!(
-            settings_page_copy(SettingsSection::Recording),
+            settings_page_copy_for_locale(SettingsSection::Recording, Locale::English),
             (
                 "Record",
                 "Choose capture sources, an output folder, and recording controls."
             )
         );
         assert_eq!(
-            settings_page_copy(SettingsSection::System),
-            ("App", "Set appearance, startup, and update preferences.")
+            settings_page_copy_for_locale(SettingsSection::System, Locale::English),
+            (
+                "App",
+                "Set appearance, language, startup, and update preferences."
+            )
         );
     }
 
@@ -2843,8 +2864,14 @@ mod tests {
 
     #[test]
     fn update_check_label_explains_the_cancel_action() {
-        assert_eq!(update_check_label(false), "Check now");
-        assert_eq!(update_check_label(true), "Cancel check");
+        assert_eq!(
+            update_check_label_for_locale(Locale::English, false),
+            "Check now"
+        );
+        assert_eq!(
+            update_check_label_for_locale(Locale::English, true),
+            "Cancel check"
+        );
     }
 
     #[test]

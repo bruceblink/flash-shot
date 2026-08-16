@@ -8,6 +8,7 @@ pub mod diagnostics;
 pub mod domain;
 pub mod export_stress;
 pub mod history;
+pub mod i18n;
 pub mod image;
 pub mod ocr;
 pub mod performance;

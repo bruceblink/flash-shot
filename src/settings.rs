@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::theme::ThemeMode;
+use crate::{i18n::Locale, theme::ThemeMode};
 
 const SETTINGS_FILE: &str = "settings.json";
 const SETTINGS_VERSION: u8 = 1;
@@ -45,6 +45,8 @@ pub struct UserSettings {
     /// A standard Tesseract language selected in Settings; `None` preserves the environment fallback.
     pub ocr_language: Option<String>,
     pub theme_mode: ThemeMode,
+    /// Language used by the application UI; captured text translation remains a separate feature.
+    pub locale: Locale,
 }
 
 impl Default for UserSettings {
@@ -65,6 +67,7 @@ impl Default for UserSettings {
             recording_directory: None,
             ocr_language: None,
             theme_mode: ThemeMode::Dark,
+            locale: Locale::English,
         }
     }
 }
@@ -265,7 +268,7 @@ impl UserSettings {
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_COLOR_FORMAT, DEFAULT_HISTORY_LIMIT, DEFAULT_SAVE_PREFIX, UserSettings};
-    use crate::theme::ThemeMode;
+    use crate::{i18n::Locale, theme::ThemeMode};
 
     fn directory(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -293,6 +296,7 @@ mod tests {
         assert_eq!(settings.recording_directory, None);
         assert_eq!(settings.ocr_language, None);
         assert_eq!(settings.theme_mode, ThemeMode::Dark);
+        assert_eq!(settings.locale, Locale::English);
         let _ = std::fs::remove_dir_all(directory);
     }
 
@@ -313,6 +317,7 @@ mod tests {
         settings.recording_directory = Some(directory.join("recordings"));
         settings.ocr_language = Some("eng+chi_sim".to_owned());
         settings.theme_mode = ThemeMode::Light;
+        settings.locale = Locale::SimplifiedChinese;
         settings.save(&path).unwrap();
 
         let (reopened, _) = UserSettings::load(&directory).unwrap();
@@ -341,6 +346,7 @@ mod tests {
         );
         assert_eq!(reopened.ocr_language.as_deref(), Some("eng+chi_sim"));
         assert_eq!(reopened.theme_mode, ThemeMode::Light);
+        assert_eq!(reopened.locale, Locale::SimplifiedChinese);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -382,6 +388,7 @@ mod tests {
         let (settings, _) = UserSettings::load(&directory).unwrap();
 
         assert!(settings.capture_shortcut_enabled);
+        assert_eq!(settings.locale, Locale::English);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
