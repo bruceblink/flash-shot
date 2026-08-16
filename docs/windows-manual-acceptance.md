@@ -167,7 +167,8 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 报告还会实测系统服务确已禁用、Show all 未改变前台 HWND、关闭一个 Pin 后仍保留两个可响应句柄，
 并通过生产 Capture 启动谓词确认截图 preflight 无阻塞。`--timeout-ms` 的 watchdog 覆盖完整原生
 生命周期，而不只覆盖 Save 等待。真实鼠标拖动和 Pin 共存时再次进入覆盖层由上述
-`pins-coexist` 场景补充；系统剪贴板写入及 150%/200% 仍需在对应可丢弃 Windows 环境复核。
+`pins-coexist` 场景补充；显式加入 `--allow-system-clipboard` 时还会用首张 Pin 的真实 `Ctrl+C`
+验证 PNG、CF_DIB 和普通消费者像素。150%/200% 与长时间多窗口观察仍需在对应环境复核。
 
 将 `capture-stress.json`、标注压力输出以及手工截图/视频放入记录中的证据目录。不要提交
 机器专属的 `target` 输出；在问题或发布验收单中引用它们即可。
