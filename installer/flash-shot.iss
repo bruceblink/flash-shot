@@ -46,6 +46,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#MySourceDir}\flash-shot.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MySourceDir}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MySourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MySourceDir}\README_EN.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MySourceDir}\PORTABLE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

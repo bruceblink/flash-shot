@@ -124,7 +124,8 @@ $installer = Join-Path $root "installer\flash-shot.iss"
 $icon = Join-Path $root "resources\icons\icon.ico"
 $license = Join-Path $root "LICENSE"
 $readme = Join-Path $root "README.md"
-$required = @($manifest, $installer, $icon, $license, $readme)
+$readmeEnglish = Join-Path $root "README_EN.md"
+$required = @($manifest, $installer, $icon, $license, $readme, $readmeEnglish)
 foreach ($path in $required) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required installer input is missing: $path"
@@ -262,6 +263,7 @@ try {
     Copy-Item -LiteralPath $executable -Destination (Join-Path $staging "flash-shot.exe")
     Copy-Item -LiteralPath $license -Destination (Join-Path $staging "LICENSE.txt")
     Copy-Item -LiteralPath $readme -Destination (Join-Path $staging "README.md")
+    Copy-Item -LiteralPath $readmeEnglish -Destination (Join-Path $staging "README_EN.md")
     @(
         "Flash Shot installer package",
         "FFmpeg is intentionally not bundled. Install a compatible build or set FLASH_SHOT_FFMPEG before recording.",

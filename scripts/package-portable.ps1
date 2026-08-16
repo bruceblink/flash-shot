@@ -42,6 +42,7 @@ try {
     Copy-Item -LiteralPath $executable -Destination (Join-Path $packageRoot "flash-shot.exe")
     Copy-Item -LiteralPath (Join-Path $root "LICENSE") -Destination (Join-Path $packageRoot "LICENSE.txt")
     Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination (Join-Path $packageRoot "README.md")
+    Copy-Item -LiteralPath (Join-Path $root "README_EN.md") -Destination (Join-Path $packageRoot "README_EN.md")
 
     @(
         "Flash Shot portable package",

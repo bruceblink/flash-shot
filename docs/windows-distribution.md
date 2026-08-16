@@ -8,7 +8,7 @@ Build a versioned, unsigned portable ZIP from a Windows MSVC Rust host:
 .\scripts\package-portable.ps1
 ```
 
-The output is written to `dist\FlashShot-<version>-windows-<architecture>.zip` with a matching `.sha256` file. The archive contains `flash-shot.exe`, `LICENSE.txt`, `README.md`, and `PORTABLE.txt`.
+The output is written to `dist\FlashShot-<version>-windows-<architecture>.zip` with a matching `.sha256` file. The archive contains `flash-shot.exe`, `LICENSE.txt`, `README.md`, `README_EN.md`, and `PORTABLE.txt`.
 The packaging script verifies the SHA-256 sidecar and this exact archive layout before reporting success. Re-check an existing archive independently with:
 
 ```powershell

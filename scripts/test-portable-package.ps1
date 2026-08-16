@@ -10,6 +10,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $staging "flash-shot.exe"), "fixture executable")
     [IO.File]::WriteAllText((Join-Path $staging "LICENSE.txt"), "fixture license")
     [IO.File]::WriteAllText((Join-Path $staging "README.md"), "fixture readme")
+    [IO.File]::WriteAllText((Join-Path $staging "README_EN.md"), "fixture English readme")
     [IO.File]::WriteAllText((Join-Path $staging "PORTABLE.txt"), "Version: 0.1.1")
     Compress-Archive -LiteralPath $staging -DestinationPath $archive
     $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()

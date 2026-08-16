@@ -46,7 +46,7 @@ if ($actualHash -ne $expectedHash) {
 $staging = Join-Path ([IO.Path]::GetTempPath()) ("flash-shot-portable-verify-" + [guid]::NewGuid())
 try {
     Expand-Archive -LiteralPath $archive -DestinationPath $staging
-    $expectedFiles = @("flash-shot.exe", "LICENSE.txt", "README.md", "PORTABLE.txt")
+    $expectedFiles = @("flash-shot.exe", "LICENSE.txt", "README.md", "README_EN.md", "PORTABLE.txt")
     $actualFiles = Get-ChildItem -LiteralPath (Join-Path $staging $packageRoot) -File |
         ForEach-Object Name |
         Sort-Object

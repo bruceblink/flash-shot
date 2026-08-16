@@ -45,6 +45,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $packageRoot "flash-shot.exe"), "fixture executable")
     [IO.File]::WriteAllText((Join-Path $packageRoot "LICENSE.txt"), "fixture license")
     [IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), "fixture readme")
+    [IO.File]::WriteAllText((Join-Path $packageRoot "README_EN.md"), "fixture English readme")
     [IO.File]::WriteAllText((Join-Path $packageRoot "PORTABLE.txt"), "Version: 0.1.1")
     Compress-Archive -LiteralPath $packageRoot -DestinationPath $archive
     [IO.File]::WriteAllText($installer, "fixture installer")
