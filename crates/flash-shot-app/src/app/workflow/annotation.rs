@@ -325,13 +325,34 @@ impl FlashShotApp {
         let Some(document) = self.annotation_document.as_mut() else {
             return false;
         };
+        let content = crate::domain::annotation::normalized_text_annotation_content(&edit.content);
+        if content.is_empty() {
+            // An empty edit must never leave an invisible hit-test target behind. Existing text
+            // is removed through history; a new, still-empty edit simply remains cancelled.
+            if let Some(id) = target {
+                match self
+                    .annotation_history
+                    .apply(document, AnnotationCommand::Delete(id))
+                {
+                    Ok(()) => {
+                        self.selected_annotation = None;
+                        self.status = "Text annotation deleted".to_owned();
+                    }
+                    Err(error) => self.status = error.to_string(),
+                }
+            } else {
+                self.status = "Text cancelled".to_owned();
+            }
+            cx.notify();
+            return true;
+        }
         if let Some(id) = target {
             let Some(existing) = document.annotation(id).cloned() else {
                 self.status = "Text annotation no longer exists".to_owned();
                 cx.notify();
                 return true;
             };
-            let Some(replacement) = text_annotation_with_content(existing, edit.content) else {
+            let Some(replacement) = text_annotation_with_content(existing, content) else {
                 self.status = "Selected annotation cannot be edited as text".to_owned();
                 cx.notify();
                 return true;
@@ -353,7 +374,7 @@ impl FlashShotApp {
                 id,
                 self.annotation_style,
                 edit.origin,
-                edit.content,
+                content,
             )
         } else {
             self.annotation_editor.begin_text(
@@ -361,7 +382,7 @@ impl FlashShotApp {
                 id,
                 self.annotation_style,
                 edit.origin,
-                edit.content,
+                content,
             )
         };
         if let Err(error) = started {

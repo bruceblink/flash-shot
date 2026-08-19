@@ -162,7 +162,7 @@ impl CaptureFrame {
 fn draw_annotation(pixels: &mut [u8], frame: &CaptureFrame, annotation: &Annotation) {
     let color = rgba_bytes(annotation.style.stroke_rgba);
     let fill = annotation.style.fill_rgba.map(rgba_bytes);
-    let radius = annotation.style.stroke_width.max(1).div_ceil(2) as i32;
+    let radius = annotation.stroke_width().div_ceil(2) as i32;
     match annotation.kind {
         AnnotationKind::Watermark {
             origin,

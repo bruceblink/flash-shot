@@ -15,6 +15,8 @@ pub const TEXT_ANNOTATION_ADVANCE: i32 = 16;
 pub const WATERMARK_CONTENT: &str = "Flash Shot";
 /// Keeps text annotation layout bounded for every renderer and serialized document.
 pub const MAX_TEXT_ANNOTATION_CHARACTERS: usize = 256;
+pub const MAX_ANNOTATION_STROKE_WIDTH: u32 = 64;
+pub const MAX_TEXT_FONT_SIZE: u32 = 96;
 
 pub const DEFAULT_TEXT_FONT_SIZE: u32 = 24;
 
@@ -275,30 +277,49 @@ impl Annotation {
         )
     }
 
+    /// Returns the bounded font size shared by hit testing and every renderer.
     pub const fn text_font_size(&self) -> u32 {
         if self.style.text_font_size == 0 {
             1
+        } else if self.style.text_font_size > MAX_TEXT_FONT_SIZE {
+            MAX_TEXT_FONT_SIZE
         } else {
             self.style.text_font_size
+        }
+    }
+
+    /// Returns the bounded stroke width shared by hit testing and every renderer.
+    pub const fn stroke_width(&self) -> u32 {
+        if self.style.stroke_width == 0 {
+            1
+        } else if self.style.stroke_width > MAX_ANNOTATION_STROKE_WIDTH {
+            MAX_ANNOTATION_STROKE_WIDTH
+        } else {
+            self.style.stroke_width
         }
     }
 
     /// Tests a physical image coordinate against this annotation's visible geometry.
     pub fn hit_test(&self, point: PhysicalPoint, tolerance: u32) -> bool {
         let threshold = self
-            .style
-            .stroke_width
+            .stroke_width()
             .saturating_add(tolerance.saturating_mul(2));
         match self.kind {
             AnnotationKind::Watermark {
                 origin,
                 ref content,
-            } => text_bounds(origin, content, self.text_font_size()).contains(point),
+            } => {
+                !normalized_text_annotation_content(content).is_empty()
+                    && text_bounds(origin, content, self.text_font_size()).contains(point)
+            }
             AnnotationKind::Text {
                 origin,
                 ref content,
                 ..
-            } => text_bounds(origin, content, self.text_font_size()).contains(point),
+            } => {
+                !normalized_text_annotation_content(content).is_empty()
+                    && text_bounds(origin, content, self.text_font_size()).contains(point)
+            }
             AnnotationKind::Number { center, .. } => {
                 let radius = SEQUENCE_MARKER_RADIUS;
                 PhysicalRect {
@@ -1403,8 +1424,9 @@ mod tests {
     use super::{
         ANNOTATION_DOCUMENT_VERSION, Annotation, AnnotationCommand, AnnotationDocument,
         AnnotationEditor, AnnotationError, AnnotationId, AnnotationKind, AnnotationStyle,
-        AnnotationTool, CommandHistory, DEFAULT_TEXT_FONT_SIZE, MAX_TEXT_ANNOTATION_CHARACTERS,
-        WATERMARK_CONTENT, normalized_text_annotation_content,
+        AnnotationTool, CommandHistory, DEFAULT_TEXT_FONT_SIZE, MAX_ANNOTATION_STROKE_WIDTH,
+        MAX_TEXT_ANNOTATION_CHARACTERS, MAX_TEXT_FONT_SIZE, WATERMARK_CONTENT,
+        normalized_text_annotation_content,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     use crate::domain::selection::ResizeHandle;
@@ -1482,6 +1504,20 @@ mod tests {
                 .count(),
             MAX_TEXT_ANNOTATION_CHARACTERS
         );
+    }
+
+    #[test]
+    fn empty_text_annotations_do_not_capture_pointer_hits() {
+        let text = Annotation {
+            id: AnnotationId::new(82),
+            kind: AnnotationKind::Text {
+                origin: PhysicalPoint { x: 10, y: 20 },
+                content: "\n".to_owned(),
+            },
+            style: AnnotationStyle::default(),
+        };
+
+        assert!(!text.hit_test(PhysicalPoint { x: 10, y: 20 }, 0));
     }
 
     #[test]
@@ -1632,6 +1668,26 @@ mod tests {
                 bottom: 56,
             }
         );
+    }
+
+    #[test]
+    fn renderer_sizes_are_bounded_for_imported_styles() {
+        let annotation = Annotation {
+            id: AnnotationId::new(93),
+            kind: AnnotationKind::Text {
+                origin: PhysicalPoint { x: 10, y: 20 },
+                content: "Hi".to_owned(),
+            },
+            style: AnnotationStyle {
+                stroke_width: u32::MAX,
+                text_font_size: u32::MAX,
+                ..AnnotationStyle::default()
+            },
+        };
+
+        assert_eq!(annotation.stroke_width(), MAX_ANNOTATION_STROKE_WIDTH);
+        assert_eq!(annotation.text_font_size(), MAX_TEXT_FONT_SIZE);
+        assert!(annotation.hit_test(PhysicalPoint { x: 10, y: 20 }, 0));
     }
 
     #[test]

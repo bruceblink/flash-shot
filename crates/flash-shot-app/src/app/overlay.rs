@@ -1326,13 +1326,8 @@ impl Render for CaptureOverlay {
             selected_tool.is_some(),
             app.selection_drag.is_moving(),
         );
-        if text_edit.is_some() {
-            window.handle_input(
-                &self.focus_handle,
-                ElementInputHandler::new(viewport, self.app.clone()),
-                cx,
-            );
-        }
+        let text_input_focus = self.focus_handle.clone();
+        let text_input_app = self.app.clone();
 
         div()
             .size_full()
@@ -1406,7 +1401,7 @@ impl Render for CaptureOverlay {
                             text_edit,
                         )
                     },
-                    move |_bounds,
+                    move |bounds,
                           (
                         _,
                         transform,
@@ -1418,6 +1413,16 @@ impl Render for CaptureOverlay {
                     ),
                           window,
                           cx| {
+                        // GPUI only accepts native IME registration during paint. Keeping it in
+                        // this canvas lets text and watermark edits receive input without
+                        // triggering a paint-phase assertion from the Windows backend.
+                        if text_edit.is_some() {
+                            window.handle_input(
+                                &text_input_focus,
+                                ElementInputHandler::new(bounds, text_input_app.clone()),
+                                cx,
+                            );
+                        }
                         paint_annotations(
                             window,
                             transform,
@@ -3249,20 +3254,14 @@ fn paint_annotations(
                 if let Some(fill_color) = annotation.style.fill_rgba {
                     paint_rect_fill(window, transform, bounds, rgba(fill_color));
                 }
-                paint_outline(
-                    window,
-                    transform,
-                    bounds,
-                    color,
-                    annotation.style.stroke_width,
-                )
+                paint_outline(window, transform, bounds, color, annotation.stroke_width())
             }
             AnnotationKind::Ellipse { bounds } => paint_ellipse_outline(
                 window,
                 transform,
                 bounds,
                 color,
-                annotation.style.stroke_width,
+                annotation.stroke_width(),
                 annotation.style.fill_rgba.map(rgba),
             ),
             AnnotationKind::Line { start, end } => paint_line(
@@ -3271,7 +3270,7 @@ fn paint_annotations(
                 start,
                 end,
                 color,
-                annotation.style.stroke_width,
+                annotation.stroke_width(),
             ),
             AnnotationKind::Arrow { start, end } => paint_arrow(
                 window,
@@ -3279,15 +3278,11 @@ fn paint_annotations(
                 start,
                 end,
                 color,
-                annotation.style.stroke_width,
+                annotation.stroke_width(),
             ),
-            AnnotationKind::Freehand { ref points } => paint_freehand(
-                window,
-                transform,
-                points,
-                color,
-                annotation.style.stroke_width,
-            ),
+            AnnotationKind::Freehand { ref points } => {
+                paint_freehand(window, transform, points, color, annotation.stroke_width())
+            }
         }
         if Some(annotation.id) == state.selected {
             paint_outline(window, transform, annotation.bounds(), colors.success, 1);
