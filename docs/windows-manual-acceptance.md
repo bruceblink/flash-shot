@@ -42,7 +42,7 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | 多 Pin 生命周期 | 部分通过 | 在单屏 100% 环境连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 单屏 100% 子集中的各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | `current-pin-lifecycle-single-100` 覆盖缩放、透明度、内存复制、保存与可见性生命周期；`current-pins-coexist-capture-single-100` 通过三次真实 Pin 点击、真实鼠标拖动和 Pin 共存下的 Capture/Cancel 补齐单屏主链；`current-pins-system-clipboard-single-100` 又以首张 Pin 的真实 `Ctrl+C` 验证 PNG、CF_DIB 和普通消费者逐像素一致；`current-pin-lifecycle-soak-60s-single-100` 完成 60 秒持续生命周期复核。150%/200% 实机仍待执行，不由本行通过结论覆盖。 |
 | 滚动截图 | 通过 | 真实打开 More 与 Scroll shot，自动捕获第二帧并 Finish；分别重新运行完整流程，从编辑器执行系统 Copy 和原生 Save。 | 自动滚动等待目标重绘后只追加一帧；拼接源、剪贴板 PNG/CF_DIB/消费者图像与保存 PNG 的尺寸和像素一致；控制条不遮挡选区，文字与按钮完整；结束后无残留状态或窗口。 | `current-scroll-export-roundtrip-single-100` 使用两个独立 Release 会话完成双出口，详见本表 2026-08-12 记录。 |
 | 本地 OCR | 通过 | 在单屏 100% 含文字选区运行本地 Tesseract OCR；覆盖依赖缺失时保留原选区、显示重试并在依赖恢复后重试成功。 | OCR 结果可复制；失败时保留原选区并显示匹配的重试操作；可选依赖不阻塞截图主流程启动和空闲性能。 | `current-ocr-ui-single-100` 已完成真实 `More -> OCR`、失败保留选区、重试和 Copy text；`current-ocr-auto-discovery` 报告 `target/ui-acceptance/recognition-acceptance-ocr-current-2e07cdc.json` 由 Release 探针生成，Tesseract 5.5.3、OCR exercise 和 `--require-ocr` 均通过；`417cd02` 又将 Retry/Copy text/Clear result 与 More 菜单统一为固定尺寸控件。该证据覆盖单屏 100%，不覆盖翻译服务或多屏/高 DPI。 |
-| 翻译服务 | 待执行 | 在配置 HTTPS 翻译端点的可丢弃环境运行翻译，模拟一次失败后重试，并确认设置页忙态、成功态和取消路径。 | 翻译结果可复制；失败保留原选区并显示匹配的重试操作；请求只发送固定探测短语，不发送截图原文。 | `current-translation-service-test`、`current-translation-test-busy-single-100` 和 `current-translation-test-ready-single-100` 已覆盖未联网的边界与布局状态；当前机器 `translation.configured: false`，真实 HTTPS 成功/失败重试仍待配置端点后执行。 |
+| 翻译服务 | 暂缓 | 在产品范围恢复后，于配置 HTTPS 翻译端点的可丢弃环境运行翻译，模拟一次失败后重试，并确认设置页忙态、成功态和取消路径。 | 翻译结果可复制；失败保留原选区并显示匹配的重试操作；请求只发送固定探测短语，不发送截图原文。 | `current-translation-service-test`、`current-translation-test-busy-single-100` 和 `current-translation-test-ready-single-100` 已覆盖未联网的边界与布局状态；当前机器 `translation.configured: false`。真实 HTTPS 成功/失败重试不属于当前阶段，恢复范围后重新验收。 |
 | FFmpeg 静态目标录屏生命周期 | 通过 | 使用支持 `ddagrab` 或 `gdigrab` 的 FFmpeg，在单屏 100% 环境分别启动显示器、静态窗口和静态区域录制，暂停、恢复并停止。 | 三种目标均产生可播放 H.264 MP4；目标类型、物理尺寸、状态、时长和隔离保存路径正确。 | 显示器入口见 `current-recording-ui-single-100`；静态区域和静态窗口入口见 `current-overlay-recording-ui-single-100`。 |
 | 窗口录制动态桌面语义 | 通过 | 窗口录制开始后移动、缩放、遮挡并最小化目标窗口。 | 录制边界固定为开始时选中窗口的可见桌面物理矩形，不跟随移动或缩放；遮挡或最小化时记录该矩形中的桌面合成像素。 | `current-overlay-recording-window-dynamics-single-100` 以独立原生 fixture 执行全部状态，并逐阶段比对 MP4 时间线像素。 |
 
@@ -323,4 +323,5 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
 `target\\release-capture-performance-20260802.json`。这些文件可用于复核本表中的数值，
-滚动双出口已由上面的独立 Release 会话关闭；OCR/翻译属于未来扩展，双屏与混合 DPI 按当前范围暂缓。
+滚动双出口已由上面的独立 Release 会话关闭；OCR 已通过单屏验收并作为可选能力保留，翻译服务、双屏与混合 DPI
+按当前范围暂缓。
