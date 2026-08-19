@@ -194,6 +194,7 @@ impl gpui::Render for FlashShotApp {
                                                 colors,
                                                 is_idle,
                                                 app.clone(),
+                                                locale,
                                             ))
                                         },
                                     )
@@ -264,6 +265,7 @@ impl gpui::Render for FlashShotApp {
                                                 colors,
                                                 is_idle,
                                                 app.clone(),
+                                                locale,
                                             ))
                                         },
                                     ),
@@ -737,8 +739,9 @@ fn file_settings(
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
+    locale: Locale,
 ) -> gpui::Div {
-    settings_section("Quick save", colors)
+    settings_section(locale.text(UiText::LibraryQuickSave), colors)
         .child(
             div()
                 .w_full()
@@ -748,49 +751,55 @@ fn file_settings(
                 .text_color(colors.muted)
                 .child(settings_path_label(app_state.history.root())),
         )
-        .child(settings_row("Folder access", colors).child(settings_button(
-            "settings-check-quick-save-folder",
-            if app_state.quick_save_directory_check_in_flight {
-                "Checking..."
-            } else {
-                "Check folder"
-            },
-            colors,
-            is_idle
-                && !app_state.quick_save_directory_check_in_flight
-                && !app_state.history_root_change_in_flight
-                && app_state.history_write_generation.is_none(),
-            {
-                let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.check_quick_save_directory(cx))
-            },
-        )))
-        .child(settings_row("Save folder", colors).child(settings_button(
-            "settings-quick-save-folder",
-            "Choose folder",
-            colors,
-            is_idle
-                && !app_state.history_root_change_in_flight
-                && app_state.history_write_generation.is_none()
-                && !app_state.history_file_read_in_flight()
-                && !app_state.history_mutation_pending(),
-            {
-                let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.choose_quick_save_directory(cx))
-            },
-        )))
-        .child(settings_row("File name", colors).child(settings_button(
-            "settings-quick-save-prefix",
-            &format!("{}+time+UUIDv7", app_state.settings.quick_save_prefix),
-            colors,
-            is_idle,
-            {
-                let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.cycle_quick_save_prefix(cx))
-            },
-        )))
         .child(
-            settings_section("Open and history", colors).child(
+            settings_row(locale.text(UiText::LibraryFolderAccess), colors).child(settings_button(
+                "settings-check-quick-save-folder",
+                if app_state.quick_save_directory_check_in_flight {
+                    locale.text(UiText::LibraryChecking)
+                } else {
+                    locale.text(UiText::LibraryCheckFolder)
+                },
+                colors,
+                is_idle
+                    && !app_state.quick_save_directory_check_in_flight
+                    && !app_state.history_root_change_in_flight
+                    && app_state.history_write_generation.is_none(),
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.check_quick_save_directory(cx))
+                },
+            )),
+        )
+        .child(
+            settings_row(locale.text(UiText::LibrarySaveFolder), colors).child(settings_button(
+                "settings-quick-save-folder",
+                locale.text(UiText::LibraryChooseFolder),
+                colors,
+                is_idle
+                    && !app_state.history_root_change_in_flight
+                    && app_state.history_write_generation.is_none()
+                    && !app_state.history_file_read_in_flight()
+                    && !app_state.history_mutation_pending(),
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.choose_quick_save_directory(cx))
+                },
+            )),
+        )
+        .child(
+            settings_row(locale.text(UiText::LibraryFileName), colors).child(settings_button(
+                "settings-quick-save-prefix",
+                &format!("{}+time+UUIDv7", app_state.settings.quick_save_prefix),
+                colors,
+                is_idle,
+                {
+                    let app = app.clone();
+                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_quick_save_prefix(cx))
+                },
+            )),
+        )
+        .child(
+            settings_section(locale.text(UiText::LibraryOpenAndHistory), colors).child(
                 // Own the available width so narrow windows wrap actions instead of clipping them.
                 div()
                     .w_full()
@@ -799,7 +808,7 @@ fn file_settings(
                     .gap_2()
                     .child(settings_button(
                         "settings-open-image",
-                        "Open PNG",
+                        locale.text(UiText::LibraryOpenPng),
                         colors,
                         is_idle,
                         {
@@ -809,7 +818,7 @@ fn file_settings(
                     ))
                     .child(settings_button(
                         "settings-open-project",
-                        "Open Project",
+                        locale.text(UiText::LibraryOpenProject),
                         colors,
                         is_idle,
                         {
@@ -821,7 +830,7 @@ fn file_settings(
                     ))
                     .child(settings_button(
                         "settings-open-screenshot-folder",
-                        "Open folder",
+                        locale.text(UiText::LibraryOpenFolder),
                         colors,
                         is_idle,
                         {
@@ -833,7 +842,10 @@ fn file_settings(
                     ))
                     .child(settings_button(
                         "settings-export-format",
-                        &format!("Save as {}", app_state.export_format_label()),
+                        &locale.format_template(
+                            UiText::LibrarySaveAs,
+                            &[("format", app_state.export_format_label())],
+                        ),
                         colors,
                         is_idle,
                         {
@@ -844,6 +856,7 @@ fn file_settings(
                     .child(settings_button(
                         "settings-history-retention",
                         &history_retention_label(
+                            locale,
                             app_state.settings.history_limit,
                             app_state.history_retention_target,
                         ),
@@ -870,10 +883,14 @@ fn settings_path_label(path: &std::path::Path) -> String {
 }
 
 /// Makes the retention action explicit so a user knows the number refers to saved captures.
-fn history_retention_label(current_limit: u16, target: Option<u16>) -> String {
+fn history_retention_label(locale: Locale, current_limit: u16, target: Option<u16>) -> String {
+    let count = current_limit.to_string();
     target.map_or_else(
-        || format!("Keep {current_limit} captures"),
-        |limit| format!("Updating to {limit} captures..."),
+        || locale.format_template(UiText::LibraryKeepCaptures, &[("count", &count)]),
+        |limit| {
+            let count = limit.to_string();
+            locale.format_template(UiText::LibraryUpdatingCaptures, &[("count", &count)])
+        },
     )
 }
 
@@ -1242,6 +1259,7 @@ fn history_settings(
     colors: crate::theme::ThemeColors,
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
+    locale: Locale,
 ) -> gpui::Div {
     let HistoryViewState {
         entries,
@@ -1265,13 +1283,14 @@ fn history_settings(
     } = state;
     let now_ms = current_timestamp_ms();
     let is_empty = entries.is_empty();
-    settings_section("Recent captures", colors)
+    settings_section(locale.text(UiText::LibraryRecentCaptures), colors)
         .child(history_search_box(
             &search_query,
             search_active,
             search_focus,
             colors,
             app.clone(),
+            locale,
         ))
         .child(
             div()
@@ -1284,7 +1303,7 @@ fn history_settings(
                     let filter_app = app.clone();
                     settings_segment_button(
                         format!("settings-history-filter-{}", candidate.label()),
-                        candidate.label(),
+                        history_filter_label(locale, candidate),
                         selected,
                         colors,
                         move |_, _, cx| {
@@ -1299,6 +1318,7 @@ fn history_settings(
                 .text_xs()
                 .text_color(colors.muted)
                 .child(history_result_summary(
+                    locale,
                     total_entries,
                     filtered_entries,
                     filter,
@@ -1328,12 +1348,12 @@ fn history_settings(
                             .min_w(px(100.0))
                             .text_xs()
                             .text_color(colors.muted)
-                            .child(format!("{selected_entries} selected")),
+                            .child(history_selected_count_label(locale, selected_entries)),
                     )
                     .when(filtered_entries > 0, |bar| {
                         bar.child(settings_button(
                             "settings-select-filtered-history",
-                            "Select all filtered",
+                            locale.text(UiText::LibrarySelectAllFiltered),
                             colors,
                             selection_actions_enabled,
                             move |_, _, cx| {
@@ -1344,7 +1364,7 @@ fn history_settings(
                     .when(selected_entries > 0, |bar| {
                         bar.child(settings_button(
                             "settings-clear-history-selection",
-                            "Clear selection",
+                            locale.text(UiText::LibraryClearSelection),
                             colors,
                             selection_actions_enabled,
                             move |_, _, cx| {
@@ -1354,7 +1374,7 @@ fn history_settings(
                         ))
                         .child(settings_danger_button(
                             "settings-delete-selected-history",
-                            "Delete selected",
+                            locale.text(UiText::LibraryDeleteSelected),
                             colors,
                             destructive_actions_enabled,
                             move |_, _, cx| {
@@ -1375,15 +1395,12 @@ fn history_settings(
                     .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(colors.muted)
-                            .child(history_clear_confirmation_label(clear_count, clear_scope)),
-                    )
+                    .child(div().text_sm().text_color(colors.muted).child(
+                        history_clear_confirmation_label(locale, clear_count, clear_scope),
+                    ))
                     .child(settings_danger_button(
                         "settings-confirm-clear-history",
-                        "Delete captures",
+                        locale.text(UiText::LibraryDeleteCaptures),
                         colors,
                         is_idle
                             && !file_read_in_flight
@@ -1394,7 +1411,7 @@ fn history_settings(
                     ))
                     .child(settings_button(
                         "settings-cancel-clear-history",
-                        "Cancel",
+                        locale.text(UiText::OverlayCancel),
                         colors,
                         true,
                         move |_, _, cx| {
@@ -1407,9 +1424,10 @@ fn history_settings(
             let remaining = filtered_entries.saturating_sub(HISTORY_PREVIEW_LIMIT);
             let toggle_app = app.clone();
             let toggle_label = if expanded {
-                "Show recent".to_owned()
+                locale.text(UiText::LibraryShowRecent).to_owned()
             } else {
-                format!("Show {remaining} more")
+                let count = remaining.to_string();
+                locale.format_template(UiText::LibraryShowMore, &[("count", &count)])
             };
             section.child(
                 div()
@@ -1422,7 +1440,7 @@ fn history_settings(
                         div()
                             .text_sm()
                             .text_color(colors.muted)
-                            .child(history_visibility_label(filtered_entries, expanded)),
+                            .child(history_visibility_label(locale, filtered_entries, expanded)),
                     )
                     .child(settings_button(
                         "settings-toggle-history-list",
@@ -1440,7 +1458,9 @@ fn history_settings(
                 && (filter != HistoryFilter::All || !search_query.trim().is_empty()),
             |section| {
                 let filtered_app = app.clone();
-                let filtered_label = format!("Delete {filtered_entries} filtered");
+                let count = filtered_entries.to_string();
+                let filtered_label =
+                    locale.format_template(UiText::LibraryDeleteFiltered, &[("count", &count)]);
                 section.child(settings_danger_button(
                     "settings-clear-filtered-history",
                     &filtered_label,
@@ -1460,7 +1480,7 @@ fn history_settings(
         )
         .when(is_empty, |section| {
             section.child(empty_history_state(
-                empty_history_message(total_entries, filter, &search_query),
+                empty_history_message(locale, total_entries, filter, &search_query),
                 colors,
             ))
         })
@@ -1468,7 +1488,7 @@ fn history_settings(
             entries
                 .into_iter()
                 .map(|(entry, thumbnail, deleting, selected, focused)| {
-                    let label = history_entry_label(&entry, now_ms);
+                    let label = history_entry_label(locale, &entry, now_ms);
                     let selection_enabled = is_idle
                         && !deleting
                         && !clear_confirmation
@@ -1492,7 +1512,11 @@ fn history_settings(
                             .gap_2()
                             .child(history_selection_button(
                                 format!("settings-select-history-{}", entry.created_at_ms),
-                                if selected { "Selected" } else { "Select" },
+                                if selected {
+                                    locale.text(UiText::OverlaySelected)
+                                } else {
+                                    locale.text(UiText::OverlaySelect)
+                                },
                                 selected,
                                 colors,
                                 selection_enabled,
@@ -1508,7 +1532,7 @@ fn history_settings(
                             ))
                             .child(settings_button(
                                 format!("settings-open-history-{}", entry.created_at_ms),
-                                "Open",
+                                locale.text(UiText::LibraryOpen),
                                 colors,
                                 reader_enabled,
                                 {
@@ -1524,9 +1548,9 @@ fn history_settings(
                             .child(settings_button(
                                 format!("settings-copy-history-{}", entry.created_at_ms),
                                 if reader_in_flight {
-                                    "Working..."
+                                    locale.text(UiText::LibraryWorking)
                                 } else {
-                                    "Copy"
+                                    locale.text(UiText::OverlayCopy)
                                 },
                                 colors,
                                 reader_enabled,
@@ -1542,7 +1566,7 @@ fn history_settings(
                             ))
                             .child(settings_button(
                                 format!("settings-pin-history-{}", entry.created_at_ms),
-                                "Pin",
+                                locale.text(UiText::OverlayPin),
                                 colors,
                                 reader_enabled,
                                 {
@@ -1557,7 +1581,11 @@ fn history_settings(
                             ))
                             .child(settings_danger_button(
                                 format!("settings-remove-history-{}", entry.created_at_ms),
-                                if deleting { "Removing..." } else { "Remove" },
+                                if deleting {
+                                    locale.text(UiText::LibraryRemoving)
+                                } else {
+                                    locale.text(UiText::LibraryRemove)
+                                },
                                 colors,
                                 is_idle
                                     && !file_read_in_flight
@@ -1584,9 +1612,9 @@ fn history_settings(
             section.child(settings_danger_button(
                 "settings-clear-history",
                 if clear_in_flight {
-                    "Clearing..."
+                    locale.text(UiText::LibraryClearing)
                 } else {
-                    "Clear history"
+                    locale.text(UiText::LibraryClearHistory)
                 },
                 colors,
                 is_idle
@@ -1607,6 +1635,7 @@ fn history_search_box(
     focus_handle: FocusHandle,
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
+    locale: Locale,
 ) -> gpui::Stateful<gpui::Div> {
     let input_app = app.clone();
     let input_focus = focus_handle.clone();
@@ -1661,7 +1690,7 @@ fn history_search_box(
                     colors.text
                 })
                 .child(if query.is_empty() {
-                    "Search captures".to_owned()
+                    locale.text(UiText::LibrarySearchCaptures).to_owned()
                 } else {
                     query.to_owned()
                 }),
@@ -1691,13 +1720,51 @@ fn history_search_box(
         })
 }
 
-/// Makes the destructive confirmation name its exact scope instead of relying on a generic warning.
-fn history_clear_confirmation_label(count: usize, scope: HistoryClearScope) -> String {
-    match scope {
-        HistoryClearScope::All => format!("Delete all {count} saved capture(s)?"),
-        HistoryClearScope::Filtered => format!("Delete {count} filtered saved capture(s)?"),
-        HistoryClearScope::Selected => format!("Delete {count} selected saved capture(s)?"),
+/// Maps internal history filters to the active language without changing their stable IDs.
+fn history_filter_label(locale: Locale, filter: HistoryFilter) -> &'static str {
+    match filter {
+        HistoryFilter::All => locale.text(UiText::LibraryFilterAll),
+        HistoryFilter::Selection => locale.text(UiText::LibraryFilterSelections),
+        HistoryFilter::Scrolling => locale.text(UiText::LibraryFilterScrolling),
+        HistoryFilter::FullScreen => locale.text(UiText::LibraryFilterFullScreen),
+        HistoryFilter::Pinned => locale.text(UiText::LibraryFilterPinned),
     }
+}
+
+/// Keeps English filter names grammatical in sentences while Chinese keeps its display wording.
+fn history_filter_summary_label(locale: Locale, filter: HistoryFilter) -> String {
+    let label = history_filter_label(locale, filter);
+    match locale {
+        Locale::English => label.to_ascii_lowercase(),
+        Locale::SimplifiedChinese => label.to_owned(),
+    }
+}
+
+/// Makes the destructive confirmation name its exact scope instead of relying on a generic warning.
+fn history_clear_confirmation_label(
+    locale: Locale,
+    count: usize,
+    scope: HistoryClearScope,
+) -> String {
+    let count = count.to_string();
+    match scope {
+        HistoryClearScope::All => {
+            locale.format_template(UiText::LibraryClearAllConfirmation, &[("count", &count)])
+        }
+        HistoryClearScope::Filtered => locale.format_template(
+            UiText::LibraryClearFilteredConfirmation,
+            &[("count", &count)],
+        ),
+        HistoryClearScope::Selected => locale.format_template(
+            UiText::LibraryClearSelectedConfirmation,
+            &[("count", &count)],
+        ),
+    }
+}
+
+fn history_selected_count_label(locale: Locale, count: usize) -> String {
+    let count = count.to_string();
+    locale.format_template(UiText::LibrarySelectedCount, &[("count", &count)])
 }
 
 /// Separates preview metadata from its commands so narrow settings windows wrap actions safely.
@@ -1765,13 +1832,21 @@ fn current_timestamp_ms() -> u128 {
 }
 
 /// Explains where the first managed screenshot will appear before history has any entries.
-fn empty_history_message(total_entries: usize, filter: HistoryFilter, query: &str) -> String {
+fn empty_history_message(
+    locale: Locale,
+    total_entries: usize,
+    filter: HistoryFilter,
+    query: &str,
+) -> String {
     if total_entries == 0 {
-        "Saved screenshots will appear here.".to_owned()
+        locale.text(UiText::LibraryEmpty).to_owned()
     } else if !query.trim().is_empty() {
-        format!("No captures match \"{}\".", query.trim())
+        locale.format_template(UiText::LibraryNoMatches, &[("query", query.trim())])
     } else {
-        format!("No {} captures yet.", filter.label().to_lowercase())
+        locale.format_template(
+            UiText::LibraryNoFiltered,
+            &[("filter", &history_filter_summary_label(locale, filter))],
+        )
     }
 }
 
@@ -1812,16 +1887,22 @@ fn visible_history_entries(
 }
 
 /// Describes whether the history settings page is showing its bounded preview or every retained item.
-fn history_visibility_label(total_entries: usize, expanded: bool) -> String {
+fn history_visibility_label(locale: Locale, total_entries: usize, expanded: bool) -> String {
+    let count = total_entries.to_string();
     if expanded {
-        format!("Showing all {total_entries} captures")
+        locale.format_template(UiText::LibraryShowingAll, &[("count", &count)])
     } else {
-        format!("Showing {HISTORY_PREVIEW_LIMIT} of {total_entries} captures")
+        let shown = HISTORY_PREVIEW_LIMIT.to_string();
+        locale.format_template(
+            UiText::LibraryShowingPreview,
+            &[("shown", &shown), ("count", &count)],
+        )
     }
 }
 
 /// Keeps search and source-filter feedback visible even when the preview list is short or empty.
 fn history_result_summary(
+    locale: Locale,
     total_entries: usize,
     filtered_entries: usize,
     filter: HistoryFilter,
@@ -1829,40 +1910,71 @@ fn history_result_summary(
 ) -> String {
     let query = query.trim();
     if !query.is_empty() {
-        return format!("{} match(es) for \"{query}\"", filtered_entries);
+        let count = filtered_entries.to_string();
+        return locale.format_template(
+            UiText::LibraryMatches,
+            &[("count", &count), ("query", query)],
+        );
     }
     if filter == HistoryFilter::All {
-        format!("{total_entries} capture(s)")
+        let count = total_entries.to_string();
+        locale.format_template(UiText::LibraryCaptureCount, &[("count", &count)])
     } else {
-        format!(
-            "{} {} capture(s)",
-            filtered_entries,
-            filter.label().to_ascii_lowercase()
+        let count = filtered_entries.to_string();
+        locale.format_template(
+            UiText::LibraryFilteredCaptureCount,
+            &[
+                ("count", &count),
+                ("filter", &history_filter_summary_label(locale, filter)),
+            ],
         )
     }
 }
 
 /// Adds a concise age to a history item so users can scan recent captures quickly.
-fn history_entry_label(entry: &crate::history::HistoryEntry, now_ms: u128) -> String {
+fn history_entry_label(
+    locale: Locale,
+    entry: &crate::history::HistoryEntry,
+    now_ms: u128,
+) -> String {
     let name = entry
         .path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("Capture");
+        .unwrap_or(locale.text(UiText::LibraryEntryFallback));
     format!(
         "{name} - {} - {}",
-        entry.source.label(),
-        relative_timestamp_label(entry.created_at_ms, now_ms),
+        history_source_label(locale, entry.source),
+        relative_timestamp_label(locale, entry.created_at_ms, now_ms),
     )
 }
 
-fn relative_timestamp_label(created_at_ms: u128, now_ms: u128) -> String {
+fn history_source_label(locale: Locale, source: crate::history::HistorySource) -> &'static str {
+    match source {
+        crate::history::HistorySource::Unknown => locale.text(UiText::LibrarySourceSavedCapture),
+        crate::history::HistorySource::Selection => locale.text(UiText::LibrarySourceSelection),
+        crate::history::HistorySource::Scrolling => locale.text(UiText::LibrarySourceScrolling),
+        crate::history::HistorySource::FullScreen => locale.text(UiText::LibrarySourceFullScreen),
+        crate::history::HistorySource::Pinned => locale.text(UiText::LibrarySourcePinned),
+    }
+}
+
+fn relative_timestamp_label(locale: Locale, created_at_ms: u128, now_ms: u128) -> String {
     let elapsed_seconds = now_ms.saturating_sub(created_at_ms) / 1_000;
     match elapsed_seconds {
-        0..=59 => "Just now".to_owned(),
-        60..=3_599 => format!("{}m ago", elapsed_seconds / 60),
-        3_600..=86_399 => format!("{}h ago", elapsed_seconds / 3_600),
-        _ => format!("{}d ago", elapsed_seconds / 86_400),
+        0..=59 => locale.text(UiText::LibraryJustNow).to_owned(),
+        60..=3_599 => {
+            let count = (elapsed_seconds / 60).to_string();
+            locale.format_template(UiText::LibraryMinutesAgo, &[("count", &count)])
+        }
+        3_600..=86_399 => {
+            let count = (elapsed_seconds / 3_600).to_string();
+            locale.format_template(UiText::LibraryHoursAgo, &[("count", &count)])
+        }
+        _ => {
+            let count = (elapsed_seconds / 86_400).to_string();
+            locale.format_template(UiText::LibraryDaysAgo, &[("count", &count)])
+        }
     }
 }
 
@@ -2506,16 +2618,24 @@ mod tests {
     #[test]
     fn history_clear_confirmation_names_the_exact_number_of_captures() {
         assert_eq!(
-            history_clear_confirmation_label(12, HistoryClearScope::All),
-            "Delete all 12 saved capture(s)?"
+            history_clear_confirmation_label(Locale::English, 12, HistoryClearScope::All),
+            "Delete all 12 saved captures?"
         );
         assert_eq!(
-            history_clear_confirmation_label(3, HistoryClearScope::Filtered),
-            "Delete 3 filtered saved capture(s)?"
+            history_clear_confirmation_label(Locale::English, 3, HistoryClearScope::Filtered),
+            "Delete 3 filtered saved captures?"
         );
         assert_eq!(
-            history_clear_confirmation_label(2, HistoryClearScope::Selected),
-            "Delete 2 selected saved capture(s)?"
+            history_clear_confirmation_label(Locale::English, 2, HistoryClearScope::Selected),
+            "Delete 2 selected saved captures?"
+        );
+        assert_eq!(
+            history_clear_confirmation_label(
+                Locale::SimplifiedChinese,
+                2,
+                HistoryClearScope::Selected
+            ),
+            "删除 2 张已选择的已保存截图？"
         );
     }
 
@@ -2673,16 +2793,25 @@ mod tests {
     #[test]
     fn empty_history_section_explains_when_saved_captures_appear() {
         assert_eq!(
-            super::empty_history_message(0, HistoryFilter::All, ""),
+            super::empty_history_message(Locale::English, 0, HistoryFilter::All, ""),
             "Saved screenshots will appear here."
         );
         assert_eq!(
-            super::empty_history_message(3, HistoryFilter::Pinned, ""),
+            super::empty_history_message(Locale::English, 3, HistoryFilter::Pinned, ""),
             "No pinned captures yet."
         );
         assert_eq!(
-            super::empty_history_message(3, HistoryFilter::All, "invoice"),
+            super::empty_history_message(Locale::English, 3, HistoryFilter::All, "invoice"),
             "No captures match \"invoice\"."
+        );
+        assert_eq!(
+            super::empty_history_message(
+                Locale::SimplifiedChinese,
+                3,
+                HistoryFilter::All,
+                "invoice"
+            ),
+            "没有与“invoice”匹配的截图。"
         );
     }
 
@@ -2817,10 +2946,17 @@ mod tests {
 
     #[test]
     fn file_settings_labels_explain_retention_and_hide_internal_path_prefixes() {
-        assert_eq!(history_retention_label(30, None), "Keep 30 captures");
         assert_eq!(
-            history_retention_label(30, Some(100)),
+            history_retention_label(Locale::English, 30, None),
+            "Keep 30 captures"
+        );
+        assert_eq!(
+            history_retention_label(Locale::English, 30, Some(100)),
             "Updating to 100 captures..."
+        );
+        assert_eq!(
+            history_retention_label(Locale::SimplifiedChinese, 30, Some(100)),
+            "正在更新为保留 100 张截图..."
         );
         assert_eq!(
             settings_path_label(Path::new(r"\\?\C:\captures")),
@@ -2877,16 +3013,20 @@ mod tests {
     #[test]
     fn history_result_summary_explains_filters_and_queries() {
         assert_eq!(
-            history_result_summary(12, 12, HistoryFilter::All, ""),
+            history_result_summary(Locale::English, 12, 12, HistoryFilter::All, ""),
             "12 capture(s)"
         );
         assert_eq!(
-            history_result_summary(12, 3, HistoryFilter::Pinned, ""),
+            history_result_summary(Locale::English, 12, 3, HistoryFilter::Pinned, ""),
             "3 pinned capture(s)"
         );
         assert_eq!(
-            history_result_summary(12, 2, HistoryFilter::All, "invoice"),
+            history_result_summary(Locale::English, 12, 2, HistoryFilter::All, "invoice"),
             "2 match(es) for \"invoice\""
+        );
+        assert_eq!(
+            history_result_summary(Locale::SimplifiedChinese, 12, 3, HistoryFilter::Pinned, ""),
+            "贴图 3 张"
         );
     }
 
@@ -2899,12 +3039,25 @@ mod tests {
         };
 
         assert_eq!(
-            history_entry_label(&entry, 1_000_000),
+            history_entry_label(Locale::English, &entry, 1_000_000),
             "example.png - Selection - Just now"
         );
-        assert_eq!(relative_timestamp_label(1_000_000, 1_065_000), "1m ago");
-        assert_eq!(relative_timestamp_label(1_000_000, 4_600_000), "1h ago");
-        assert_eq!(relative_timestamp_label(1_000_000, 173_800_000), "2d ago");
+        assert_eq!(
+            history_entry_label(Locale::SimplifiedChinese, &entry, 1_000_000),
+            "example.png - 选区截图 - 刚刚"
+        );
+        assert_eq!(
+            relative_timestamp_label(Locale::English, 1_000_000, 1_065_000),
+            "1m ago"
+        );
+        assert_eq!(
+            relative_timestamp_label(Locale::English, 1_000_000, 4_600_000),
+            "1h ago"
+        );
+        assert_eq!(
+            relative_timestamp_label(Locale::SimplifiedChinese, 1_000_000, 173_800_000),
+            "2 天前"
+        );
     }
 
     #[test]
@@ -2926,10 +3079,17 @@ mod tests {
             7
         );
         assert_eq!(
-            history_visibility_label(7, false),
+            history_visibility_label(Locale::English, 7, false),
             "Showing 5 of 7 captures"
         );
-        assert_eq!(history_visibility_label(7, true), "Showing all 7 captures");
+        assert_eq!(
+            history_visibility_label(Locale::English, 7, true),
+            "Showing all 7 captures"
+        );
+        assert_eq!(
+            history_visibility_label(Locale::SimplifiedChinese, 7, false),
+            "正在显示 7 张截图中的 5 张"
+        );
     }
 
     #[test]

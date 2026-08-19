@@ -72,6 +72,10 @@ cargo test --workspace --all-features --locked
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 520 640 target/ui-acceptance/recording-settings-520x640.png 1500 1000 1.0 record
 # UI language evidence: retain the existing positional defaults, then pass the final catalog code.
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-app-zh-CN.png 1500 0 1.0 app 0 idle translation-idle ocr-idle recording-support-idle update-idle settings zh-CN
+# Library 简中原生复核：检查窄窗、宽窗与深色主题下的目录、历史筛选和空状态文案。
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/library-zh-CN.png 1500 0 1.0 library 0 idle translation-idle ocr-idle recording-support-idle update-idle settings zh-CN
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 980 760 target/ui-acceptance/library-zh-CN-wide.png 1500 0 1.0 library 0 idle translation-idle ocr-idle recording-support-idle update-idle settings zh-CN
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 520 640 target/ui-acceptance/library-zh-CN-dark.png 1500 0 1.0 library 0 idle translation-idle ocr-idle recording-support-idle update-idle settings zh-CN
 # Record 页生命周期视觉复核：最后的 state 参数只注入 UI 状态，不会启动 FFmpeg。
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/recording-ui-paused.png 3000 0 1.0 record 0 paused
 # FFmpeg 支持检查忙状态：不启动录屏进程，仅检查 Cancel check、冲突禁用和状态栏布局。
