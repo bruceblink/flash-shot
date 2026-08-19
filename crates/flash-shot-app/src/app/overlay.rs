@@ -20,6 +20,7 @@ use crate::{
     domain::{
         annotation::{
             Annotation, AnnotationId, AnnotationKind, AnnotationTool, SEQUENCE_MARKER_RADIUS,
+            normalized_text_annotation_content,
         },
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
@@ -92,6 +93,8 @@ const ANNOTATION_OPACITIES: [u8; 4] = [255, 192, 128, 64];
 const MAGNIFIER_RADIUS: i32 = 4;
 const MAGNIFIER_CELL_SIZE: f32 = 12.0;
 const MAGNIFIER_GAP: f32 = 18.0;
+const MIN_ANNOTATION_VIEW_FONT_SIZE: f32 = 8.0;
+const MAX_ANNOTATION_VIEW_FONT_SIZE: f32 = 96.0;
 
 /// Names the less-frequent actions at the exact point where users discover them.
 fn secondary_action_tooltip(locale: Locale, action_id: &str) -> &'static str {
@@ -3326,17 +3329,17 @@ fn paint_text_annotation(
     cx: &mut gpui::App,
 ) {
     let view_origin = transform.physical_to_view(origin);
-    let glyph_width = (transform
+    let physical_font_size = i32::try_from(font_size.clamp(1, 96)).unwrap_or(96);
+    let view_font_size = (transform
         .physical_to_view(PhysicalPoint {
-            x: origin.x.saturating_add(
-                i32::try_from(font_size.saturating_mul(2).div_ceil(3)).unwrap_or(i32::MAX),
-            ),
-            y: origin.y,
+            x: origin.x,
+            y: origin.y.saturating_add(physical_font_size),
         })
-        .x
-        - view_origin.x)
+        .y
+        - view_origin.y)
         .abs()
-        .max(8.0);
+        .clamp(MIN_ANNOTATION_VIEW_FONT_SIZE, MAX_ANNOTATION_VIEW_FONT_SIZE);
+    let content = normalized_text_annotation_content(content);
     if content.is_empty() {
         return;
     }
@@ -3351,10 +3354,10 @@ fn paint_text_annotation(
     };
     let line = window
         .text_system()
-        .shape_line(content.into(), px(glyph_width), &[run], None);
+        .shape_line(content.into(), px(view_font_size), &[run], None);
     let _ = line.paint(
         point(px(view_origin.x), px(view_origin.y)),
-        px(glyph_width * (font_size as f32 / 24.0).max(0.5)),
+        px(view_font_size * 1.25),
         TextAlign::Left,
         None,
         window,
@@ -3654,8 +3657,8 @@ fn arrow_head_points(
     let unit_x = dx / length;
     let unit_y = dy / length;
     let point_for = |angle: f32| PhysicalPoint {
-        x: (end.x as f32 + (-unit_x * angle.cos() - unit_y * angle.sin()) * size).round() as i32,
-        y: (end.y as f32 + (-unit_x * angle.sin() + unit_y * angle.cos()) * size).round() as i32,
+        x: (end.x as f32 + (-unit_x * angle.cos() + unit_y * angle.sin()) * size).round() as i32,
+        y: (end.y as f32 + (-unit_x * angle.sin() - unit_y * angle.cos()) * size).round() as i32,
     };
     (Some(point_for(angle)), Some(point_for(-angle)))
 }
@@ -4954,6 +4957,16 @@ mod tests {
         assert_eq!(left, Some(PhysicalPoint { x: 20, y: 14 }));
         assert_eq!(right, Some(PhysicalPoint { x: 20, y: 26 }));
         assert_eq!(arrow_head_points(end, end, 12.0, 0.55), (None, None));
+    }
+
+    #[test]
+    fn vertical_arrow_heads_stay_behind_the_endpoint() {
+        let start = PhysicalPoint { x: 10, y: 10 };
+        let end = PhysicalPoint { x: 10, y: 30 };
+        let (left, right) = arrow_head_points(start, end, 12.0, 0.55);
+
+        assert_eq!(left, Some(PhysicalPoint { x: 16, y: 20 }));
+        assert_eq!(right, Some(PhysicalPoint { x: 4, y: 20 }));
     }
 
     #[test]

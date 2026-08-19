@@ -17,7 +17,10 @@ use font_kit::{
 use pathfinder_geometry::transform2d::Transform2F;
 
 use flash_shot_domain::domain::{
-    annotation::{Annotation, AnnotationDocument, AnnotationKind, SEQUENCE_MARKER_RADIUS},
+    annotation::{
+        Annotation, AnnotationDocument, AnnotationKind, SEQUENCE_MARKER_RADIUS,
+        normalized_text_annotation_content,
+    },
     geometry::{PhysicalPoint, PhysicalRect},
 };
 
@@ -219,7 +222,11 @@ fn draw_text_annotation(
     color: [u8; 4],
     font_size: u32,
 ) {
-    let font_size = font_size as f32;
+    let content = normalized_text_annotation_content(content);
+    if content.is_empty() {
+        return;
+    }
+    let font_size = font_size.clamp(1, 96) as f32;
     let Ok(handle) =
         SystemSource::new().select_best_match(&[FamilyName::SansSerif], &Properties::new())
     else {
@@ -580,8 +587,8 @@ fn draw_arrow_head(
     for angle in [0.55_f64, -0.55_f64] {
         let cosine = angle.cos();
         let sine = angle.sin();
-        let backward_x = -unit_x * cosine - unit_y * sine;
-        let backward_y = -unit_x * sine + unit_y * cosine;
+        let backward_x = -unit_x * cosine + unit_y * sine;
+        let backward_y = -unit_x * sine - unit_y * cosine;
         let point = PhysicalPoint {
             x: (f64::from(end.x) + backward_x * size).round() as i32,
             y: (f64::from(end.y) + backward_y * size).round() as i32,
@@ -1611,6 +1618,57 @@ mod tests {
     }
 
     #[test]
+    fn composite_places_vertical_arrowheads_behind_the_endpoint() {
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: 64,
+                bottom: 64,
+            },
+            width: 64,
+            height: 64,
+            stride: 256,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(vec![0; 64 * 64 * 4]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        history
+            .apply(
+                &mut document,
+                AnnotationCommand::Insert(Annotation {
+                    id: AnnotationId::new(6),
+                    kind: AnnotationKind::Arrow {
+                        start: PhysicalPoint { x: 32, y: 10 },
+                        end: PhysicalPoint { x: 32, y: 42 },
+                    },
+                    style: AnnotationStyle::default(),
+                }),
+            )
+            .unwrap();
+
+        let composited = frame.composite_annotations(&document).unwrap();
+
+        assert_ne!(
+            composited
+                .pixel_at(PhysicalPoint { x: 38, y: 32 })
+                .unwrap()
+                .alpha,
+            0
+        );
+        assert_eq!(
+            composited
+                .pixel_at(PhysicalPoint { x: 38, y: 52 })
+                .unwrap()
+                .alpha,
+            0
+        );
+    }
+
+    #[test]
     fn composite_renders_sequence_markers_in_original_image_pixels() {
         let frame = CaptureFrame {
             bounds: PhysicalRect {
@@ -2068,7 +2126,7 @@ mod tests {
         }
 
         let composited = frame.composite_annotations(&document).unwrap();
-        assert_eq!(fnv1a64(&composited.pixels), 15_232_202_040_409_263_755);
+        assert_eq!(fnv1a64(&composited.pixels), 338_323_085_988_053_068);
     }
 
     fn fnv1a64(bytes: &[u8]) -> u64 {

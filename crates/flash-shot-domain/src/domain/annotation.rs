@@ -13,6 +13,8 @@ pub const SEQUENCE_MARKER_RADIUS: i32 = 14;
 pub const TEXT_ANNOTATION_HEIGHT: i32 = 28;
 pub const TEXT_ANNOTATION_ADVANCE: i32 = 16;
 pub const WATERMARK_CONTENT: &str = "Flash Shot";
+/// Keeps text annotation layout bounded for every renderer and serialized document.
+pub const MAX_TEXT_ANNOTATION_CHARACTERS: usize = 256;
 
 pub const DEFAULT_TEXT_FONT_SIZE: u32 = 24;
 
@@ -22,6 +24,21 @@ fn default_watermark_content() -> String {
 
 const fn default_text_font_size() -> u32 {
     DEFAULT_TEXT_FONT_SIZE
+}
+
+/// Produces the one-line text format supported by annotation preview and export.
+///
+/// Newlines and other control characters cannot be represented by the annotation editor, and a
+/// bounded string prevents imported documents from requesting unbounded native text layout work.
+pub fn normalized_text_annotation_content(content: &str) -> String {
+    content
+        .split(['\r', '\n'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_TEXT_ANNOTATION_CHARACTERS)
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -640,7 +657,7 @@ impl AnnotationDraft {
     }
 
     fn with_text(mut self, text: String) -> Self {
-        self.text = Some(text);
+        self.text = Some(normalized_text_annotation_content(&text));
         self
     }
 
@@ -1145,7 +1162,10 @@ fn marker_bounds(center: PhysicalPoint) -> PhysicalRect {
 }
 
 fn text_bounds(origin: PhysicalPoint, content: &str, font_size: u32) -> PhysicalRect {
-    let glyphs = content.chars().count().max(1) as i32;
+    let glyphs = normalized_text_annotation_content(content)
+        .chars()
+        .count()
+        .max(1) as i32;
     let advance = i32::try_from(font_size.saturating_mul(2).div_ceil(3)).unwrap_or(i32::MAX);
     let height = i32::try_from(font_size.saturating_add(4)).unwrap_or(i32::MAX);
     PhysicalRect {
@@ -1383,7 +1403,8 @@ mod tests {
     use super::{
         ANNOTATION_DOCUMENT_VERSION, Annotation, AnnotationCommand, AnnotationDocument,
         AnnotationEditor, AnnotationError, AnnotationId, AnnotationKind, AnnotationStyle,
-        AnnotationTool, CommandHistory, DEFAULT_TEXT_FONT_SIZE, WATERMARK_CONTENT,
+        AnnotationTool, CommandHistory, DEFAULT_TEXT_FONT_SIZE, MAX_TEXT_ANNOTATION_CHARACTERS,
+        WATERMARK_CONTENT, normalized_text_annotation_content,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
     use crate::domain::selection::ResizeHandle;
@@ -1447,6 +1468,20 @@ mod tests {
         assert!(document.annotations().is_empty());
         assert!(history.redo(&mut document).unwrap());
         assert_eq!(document.annotation(AnnotationId::new(80)), Some(&text));
+    }
+
+    #[test]
+    fn text_annotation_content_is_single_line_and_bounded() {
+        assert_eq!(
+            normalized_text_annotation_content("Hello\t, 中文\r\nignored"),
+            "Hello, 中文"
+        );
+        assert_eq!(
+            normalized_text_annotation_content(&"x".repeat(MAX_TEXT_ANNOTATION_CHARACTERS + 1))
+                .chars()
+                .count(),
+            MAX_TEXT_ANNOTATION_CHARACTERS
+        );
     }
 
     #[test]

@@ -213,6 +213,7 @@ pub(in crate::app) fn text_annotation_with_content(
     annotation: Annotation,
     content: String,
 ) -> Option<Annotation> {
+    let content = crate::domain::annotation::normalized_text_annotation_content(&content);
     let kind = match annotation.kind {
         AnnotationKind::Text { origin, .. } => AnnotationKind::Text { origin, content },
         AnnotationKind::Watermark { origin, .. } => AnnotationKind::Watermark { origin, content },
