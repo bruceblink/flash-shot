@@ -630,7 +630,7 @@ impl UiText {
             Self::FocusedWindow => "焦点窗口",
             Self::PinRecovery => "Pin 恢复",
             Self::RestorePinInput => "恢复 Pin 输入",
-            Self::PinCapture => "贴图截图",
+            Self::PinCapture => "已固定截图",
             Self::PinSave => "保存",
             Self::PinCopy => "复制",
             Self::PinMouseThrough => "穿透",
@@ -896,6 +896,10 @@ mod tests {
         assert_eq!(
             Locale::SimplifiedChinese.text(UiText::PinMouseThrough),
             "穿透"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::PinCapture),
+            "已固定截图"
         );
         assert_eq!(
             Locale::SimplifiedChinese.text(UiText::PinCopyingImage),
