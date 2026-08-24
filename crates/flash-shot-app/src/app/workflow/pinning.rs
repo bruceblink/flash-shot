@@ -1,6 +1,7 @@
 //! Clipboard and pinned-capture workflows.
 
 use super::*;
+use crate::i18n::UiText;
 
 /// Immutable pixels prepared before a Pin window is opened.
 pub(in crate::app) struct PreparedPinnedFrame {
@@ -160,13 +161,17 @@ impl FlashShotApp {
                         match prepared {
                             Ok(prepared) => app.open_prepared_pinned_frame(
                                 prepared,
-                                "Selection pinned in an always-on-top window",
+                                UiText::PinSelectionOpened,
                                 None,
                                 false,
                                 cx,
                             ),
                             Err(error) => {
-                                app.status = format!("Could not pin selection: {error}");
+                                let error_detail = error.to_string();
+                                app.status = app.settings.locale.format_template(
+                                    UiText::PinSelectionError,
+                                    &[("error", &error_detail)],
+                                );
                                 app.return_to_background();
                                 cx.notify();
                             }
@@ -243,15 +248,22 @@ impl FlashShotApp {
         match result {
             Ok(prepared) => self.open_prepared_pinned_frame(
                 prepared,
-                "Clipboard image pinned in an always-on-top window",
-                Some("Could not pin clipboard image"),
+                UiText::PinClipboardOpened,
+                Some(UiText::PinClipboardFailed),
                 false,
                 cx,
             ),
             Err(error) => {
-                self.status = format!("Could not pin clipboard image: {error}");
+                let error_detail = error.to_string();
+                self.status = self
+                    .settings
+                    .locale
+                    .format_template(UiText::PinClipboardError, &[("error", &error_detail)]);
                 log::warn!(target: "flash_shot::pinned", "clipboard_pin_failed error={error}");
-                self.notify_user("Flash Shot", "Could not pin clipboard image");
+                self.notify_user(
+                    self.settings.locale.text(UiText::AppName),
+                    self.settings.locale.text(UiText::PinClipboardFailed),
+                );
                 cx.notify();
             }
         }
@@ -261,17 +273,24 @@ impl FlashShotApp {
     pub(in crate::app) fn open_pinned_frame(
         &mut self,
         pinned_frame: CaptureFrame,
-        success_status: &'static str,
-        failure_notification: Option<&'static str>,
+        success_status: UiText,
+        failure_notification: Option<UiText>,
         show_saved_feedback: bool,
         cx: &mut Context<Self>,
     ) {
         let pinned = match render_image_from_capture(&pinned_frame) {
             Ok(image) => image,
             Err(error) => {
-                self.status = format!("Could not render pinned image: {error}");
+                let error_detail = error.to_string();
+                self.status = self
+                    .settings
+                    .locale
+                    .format_template(UiText::PinRenderFailed, &[("error", &error_detail)]);
                 if let Some(message) = failure_notification {
-                    self.notify_user("Flash Shot", message);
+                    self.notify_user(
+                        self.settings.locale.text(UiText::AppName),
+                        self.settings.locale.text(message),
+                    );
                 }
                 cx.notify();
                 return;
@@ -293,8 +312,8 @@ impl FlashShotApp {
     pub(super) fn open_prepared_pinned_frame(
         &mut self,
         prepared: PreparedPinnedFrame,
-        success_status: &'static str,
-        failure_notification: Option<&'static str>,
+        success_status: UiText,
+        failure_notification: Option<UiText>,
         show_saved_feedback: bool,
         cx: &mut Context<Self>,
     ) {
@@ -303,6 +322,7 @@ impl FlashShotApp {
         let window_bounds = WindowBounds::centered(window_size, cx);
         let pinned_app = cx.entity();
         let pinned_colors = self.colors;
+        let pinned_locale = self.settings.locale;
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(window_bounds),
@@ -318,8 +338,9 @@ impl FlashShotApp {
                 ..Default::default()
             },
             move |window, cx| {
-                let pinned =
-                    cx.new(|cx| PinnedImage::new(image, frame, pinned_app, pinned_colors, cx));
+                let pinned = cx.new(|cx| {
+                    PinnedImage::new(image, frame, pinned_app, pinned_colors, pinned_locale, cx)
+                });
                 if show_saved_feedback {
                     pinned.update(cx, |pinned, cx| pinned.finish_save_status(true, cx));
                 }
@@ -329,13 +350,20 @@ impl FlashShotApp {
         ) {
             Ok(window) => {
                 self.pinned_windows.push(window);
-                self.status = success_status.to_owned();
+                self.status = self.settings.locale.text(success_status).to_owned();
             }
             Err(error) => {
-                self.status = format!("Could not open pinned window: {error}");
+                let error_detail = error.to_string();
+                self.status = self
+                    .settings
+                    .locale
+                    .format_template(UiText::PinWindowOpenFailed, &[("error", &error_detail)]);
                 log::warn!(target: "flash_shot::pinned", "pinned_window_open_failed error={error}");
                 if let Some(message) = failure_notification {
-                    self.notify_user("Flash Shot", message);
+                    self.notify_user(
+                        self.settings.locale.text(UiText::AppName),
+                        self.settings.locale.text(message),
+                    );
                 }
             }
         }
@@ -346,7 +374,7 @@ impl FlashShotApp {
     pub(crate) fn open_pinned_saved_feedback_preview(&mut self, cx: &mut Context<Self>) {
         self.open_pinned_frame(
             pinned_saved_feedback_preview_frame(),
-            "Pinned saved-feedback preview opened",
+            UiText::PinSavedPreviewOpened,
             None,
             true,
             cx,

@@ -423,15 +423,24 @@ impl FlashShotApp {
         match result {
             Ok(prepared) => self.open_prepared_pinned_frame(
                 prepared,
-                "History image pinned in an always-on-top window",
-                Some("Could not pin history image"),
+                crate::i18n::UiText::PinHistoryOpened,
+                Some(crate::i18n::UiText::PinHistoryFailed),
                 false,
                 cx,
             ),
             Err(error) => {
-                self.status = format!("Could not pin history image: {error}");
+                let error_detail = error.to_string();
+                self.status = self.settings.locale.format_template(
+                    crate::i18n::UiText::PinHistoryError,
+                    &[("error", &error_detail)],
+                );
                 log::warn!(target: "flash_shot::pinned", "history_pin_failed error={error}");
-                self.notify_user("Flash Shot", "Could not pin history image");
+                self.notify_user(
+                    self.settings.locale.text(crate::i18n::UiText::AppName),
+                    self.settings
+                        .locale
+                        .text(crate::i18n::UiText::PinHistoryFailed),
+                );
                 cx.notify();
             }
         }

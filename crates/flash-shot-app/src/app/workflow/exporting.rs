@@ -912,15 +912,24 @@ impl FlashShotApp {
         match result {
             Ok(prepared) => self.open_prepared_pinned_frame(
                 prepared,
-                "Full screen pinned in an always-on-top window",
-                Some("Could not pin full screen"),
+                crate::i18n::UiText::PinFullScreenOpened,
+                Some(crate::i18n::UiText::PinFullScreenFailed),
                 false,
                 cx,
             ),
             Err(error) => {
-                self.status = format!("Could not pin full screen: {error}");
+                let error_detail = error.to_string();
+                self.status = self.settings.locale.format_template(
+                    crate::i18n::UiText::PinFullScreenError,
+                    &[("error", &error_detail)],
+                );
                 log::warn!(target: "flash_shot::pinned", "full_screen_pin_failed error={error}");
-                self.notify_user("Flash Shot", "Could not pin full screen");
+                self.notify_user(
+                    self.settings.locale.text(crate::i18n::UiText::AppName),
+                    self.settings
+                        .locale
+                        .text(crate::i18n::UiText::PinFullScreenFailed),
+                );
                 cx.notify();
             }
         }

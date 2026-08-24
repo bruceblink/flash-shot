@@ -9,7 +9,10 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::FlashShotApp;
-use crate::platform::{capture::CaptureFrame, clipboard::ClipboardService};
+use crate::{
+    i18n::{Locale, UiText},
+    platform::{capture::CaptureFrame, clipboard::ClipboardService},
+};
 
 const PIN_OPACITY_STEPS: [u8; 4] = [255, 191, 128, 64];
 const PIN_FEEDBACK_VISIBLE_FOR: Duration = Duration::from_secs(3);
@@ -34,17 +37,17 @@ impl Render for PinnedTooltip {
 }
 
 /// Describes each compact pin control without requiring the image window to stay large.
-fn pinned_control_tooltip(control: &str) -> &'static str {
+fn pinned_control_tooltip(locale: Locale, control: &str) -> &'static str {
     match control {
-        "zoom-out" => "Zoom out (Ctrl+-)",
-        "zoom-in" => "Zoom in (Ctrl++)",
-        "opacity" => "Cycle opacity (Ctrl+O)",
-        "mouse-through" => "Toggle mouse-through (Ctrl+M; restore from Actions)",
-        "solo" => "Hide other pinned images (Ctrl+H)",
-        "show-all" => "Show all pinned images (Ctrl+Shift+H)",
-        "copy" => "Copy image (Ctrl+C)",
-        "save" => "Save image (Ctrl+S)",
-        "close" => "Close pinned image (Escape)",
+        "zoom-out" => locale.text(UiText::PinZoomOutTooltip),
+        "zoom-in" => locale.text(UiText::PinZoomInTooltip),
+        "opacity" => locale.text(UiText::PinOpacityTooltip),
+        "mouse-through" => locale.text(UiText::PinMouseThroughTooltip),
+        "solo" => locale.text(UiText::PinSoloTooltip),
+        "show-all" => locale.text(UiText::PinShowAllTooltip),
+        "copy" => locale.text(UiText::PinCopyTooltip),
+        "save" => locale.text(UiText::PinSaveTooltip),
+        "close" => locale.text(UiText::PinCloseTooltip),
         _ => "",
     }
 }
@@ -54,6 +57,7 @@ pub(super) struct PinnedImage {
     frame: CaptureFrame,
     app: Entity<FlashShotApp>,
     colors: crate::theme::ThemeColors,
+    locale: Locale,
     focus_handle: FocusHandle,
     topmost_requested: bool,
     opacity: u8,
@@ -66,11 +70,13 @@ pub(super) struct PinnedImage {
 }
 
 impl PinnedImage {
+    /// Creates a Pin with an immutable image snapshot and the locale active when its window opens.
     pub(super) fn new(
         image: Arc<gpui::RenderImage>,
         frame: CaptureFrame,
         app: Entity<FlashShotApp>,
         colors: crate::theme::ThemeColors,
+        locale: Locale,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -78,11 +84,12 @@ impl PinnedImage {
             frame,
             app,
             colors,
+            locale,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
             opacity: 255,
             mouse_through: false,
-            status: "Pinned capture",
+            status: locale.text(UiText::PinCapture),
             feedback_visible: false,
             feedback_generation: 0,
             copy_in_flight: false,
@@ -92,21 +99,21 @@ impl PinnedImage {
 
     pub(super) fn copy_image(&mut self, cx: &mut Context<Self>) {
         if !pinned_copy_can_start(self.copy_in_flight) {
-            self.show_operation_feedback("Copying image...", cx);
+            self.show_operation_feedback(self.locale.text(UiText::PinCopyingImage), cx);
             return;
         }
         let Some((write_id, clipboard)) = self.app.update(cx, |app, cx| {
             app.try_begin_clipboard_write("copying a pinned image", cx)
                 .map(|write_id| (write_id, app.image_clipboard.clone()))
         }) else {
-            self.show_operation_feedback("Waiting for clipboard copy", cx);
+            self.show_operation_feedback(self.locale.text(UiText::PinWaitingClipboard), cx);
             return;
         };
 
         // Keep native clipboard encoding and retries off GPUI's event thread. The shared lease
         // prevents another screen surface from replacing the system clipboard while this Pin runs.
         self.copy_in_flight = true;
-        self.show_operation_feedback("Copying image...", cx);
+        self.show_operation_feedback(self.locale.text(UiText::PinCopyingImage), cx);
         let frame = self.frame.clone();
         let app = self.app.clone();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -133,10 +140,10 @@ impl PinnedImage {
     fn finish_copy_status(&mut self, result: std::io::Result<()>, cx: &mut Context<Self>) {
         self.copy_in_flight = false;
         let feedback = match result {
-            Ok(()) => "Copied image",
+            Ok(()) => self.locale.text(UiText::PinCopiedImage),
             Err(error) => {
                 log::warn!(target: "flash_shot::pinned", "pinned_window_copy_failed error={error}");
-                "Could not copy image"
+                self.locale.text(UiText::PinCopyFailed)
             }
         };
         self.show_operation_feedback(feedback, cx);
@@ -150,16 +157,16 @@ impl PinnedImage {
             .app
             .update(cx, |app, cx| app.quick_save_pinned_frame(frame, pin, cx));
         let feedback = if accepted {
-            "Saving image..."
+            self.locale.text(UiText::PinSavingImage)
         } else {
-            "Another pin is already saving"
+            self.locale.text(UiText::PinSaveBusy)
         };
         self.show_operation_feedback(feedback, cx);
     }
 
     /// Keeps controls visible while a no-input acceptance runner exercises native Pin actions.
     pub(super) fn show_controls_for_acceptance(&mut self, cx: &mut Context<Self>) {
-        self.show_operation_feedback("Pinned capture", cx);
+        self.show_operation_feedback(self.locale.text(UiText::PinCapture), cx);
     }
 
     /// Exposes only task completion to the no-input Pin lifecycle probe.
@@ -181,7 +188,7 @@ impl PinnedImage {
 
     /// Applies the async save result to the originating pin while ignoring a closed window.
     pub(super) fn finish_save_status(&mut self, saved: bool, cx: &mut Context<Self>) {
-        self.show_operation_feedback(pinned_save_result_status(saved), cx);
+        self.show_operation_feedback(pinned_save_result_status(self.locale, saved), cx);
     }
 
     /// Keeps a completed action visible long enough for keyboard and pointer users to read it.
@@ -240,9 +247,9 @@ impl PinnedImage {
                 .detach();
         }
         let feedback = if scale > 1.0 {
-            "Zoomed in"
+            self.locale.text(UiText::PinZoomedIn)
         } else {
-            "Zoomed out"
+            self.locale.text(UiText::PinZoomedOut)
         };
         self.show_operation_feedback(feedback, cx);
     }
@@ -256,19 +263,19 @@ impl PinnedImage {
                     match crate::platform::window_visibility::set_opacity(handle.hwnd.get(), next) {
                         Ok(()) => {
                             self.opacity = next;
-                            pin_opacity_label(next)
+                            pin_opacity_label(self.locale, next)
                         }
                         Err(error) => {
                             log::warn!(target: "flash_shot::pinned", "pinned_window_opacity_failed error={error}");
-                            "Could not change opacity"
+                            self.locale.text(UiText::PinOpacityChangeFailed)
                         }
                     }
                 }
-                _ => "Window opacity is unavailable",
+                _ => self.locale.text(UiText::PinOpacityUnavailable),
             },
             Err(error) => {
                 log::warn!(target: "flash_shot::pinned", "pinned_window_handle_failed error={error}");
-                "Could not change opacity"
+                self.locale.text(UiText::PinOpacityChangeFailed)
             }
         };
         self.show_operation_feedback(feedback, cx);
@@ -289,24 +296,24 @@ impl PinnedImage {
                             if next {
                                 self.app.read(cx).notify_user(
                                     "Flash Shot",
-                                    "Mouse-through enabled; restore pin input from Actions",
+                                    self.locale.text(UiText::PinMouseThroughNotification),
                                 );
-                                "Mouse through enabled"
+                                self.locale.text(UiText::PinMouseThroughEnabled)
                             } else {
-                                "Mouse through disabled"
+                                self.locale.text(UiText::PinMouseThroughDisabled)
                             }
                         }
                         Err(error) => {
                             log::warn!(target: "flash_shot::pinned", "pinned_window_mouse_through_failed error={error}");
-                            "Could not change mouse-through"
+                            self.locale.text(UiText::PinMouseThroughFailed)
                         }
                     }
                 }
-                _ => "Mouse through is unavailable",
+                _ => self.locale.text(UiText::PinMouseThroughUnavailable),
             },
             Err(error) => {
                 log::warn!(target: "flash_shot::pinned", "pinned_window_handle_failed error={error}");
-                "Could not change mouse-through"
+                self.locale.text(UiText::PinMouseThroughFailed)
             }
         };
         self.show_operation_feedback(feedback, cx);
@@ -320,12 +327,15 @@ impl PinnedImage {
         if !self.mouse_through {
             return Ok(false);
         }
-        let handle = native_window_handle(window)
-            .ok_or_else(|| "Pinned window handle is unavailable".to_owned())?;
+        let handle = native_window_handle(window).ok_or_else(|| {
+            self.locale
+                .text(UiText::PinWindowHandleUnavailable)
+                .to_owned()
+        })?;
         crate::platform::window_visibility::set_mouse_through(handle, false)
             .map_err(|error| error.to_string())?;
         self.mouse_through = false;
-        self.show_operation_feedback("Mouse through disabled", cx);
+        self.show_operation_feedback(self.locale.text(UiText::PinMouseThroughDisabled), cx);
         Ok(true)
     }
 
@@ -337,12 +347,12 @@ impl PinnedImage {
                     app.hide_other_pinned_windows(current_window, cx)
                 });
                 if hidden == 0 {
-                    "No other pinned images"
+                    self.locale.text(UiText::PinNoOtherImages)
                 } else {
-                    "Other pinned images hidden"
+                    self.locale.text(UiText::PinOtherImagesHidden)
                 }
             }
-            None => "Pinned window handle is unavailable",
+            None => self.locale.text(UiText::PinWindowHandleUnavailable),
         };
         self.show_operation_feedback(feedback, cx);
     }
@@ -355,12 +365,12 @@ impl PinnedImage {
                     app.show_all_pinned_windows(current_window, cx)
                 });
                 if shown == 0 {
-                    "No pinned images to show"
+                    self.locale.text(UiText::PinNoImagesToShow)
                 } else {
-                    "All pinned images shown"
+                    self.locale.text(UiText::PinAllImagesShown)
                 }
             }
-            None => "Pinned window handle is unavailable",
+            None => self.locale.text(UiText::PinWindowHandleUnavailable),
         };
         self.show_operation_feedback(feedback, cx);
     }
@@ -413,6 +423,7 @@ fn pinned_tool_button(
     label: impl Into<String>,
     control: &'static str,
     colors: crate::theme::ThemeColors,
+    locale: Locale,
     tone: PinnedButtonTone,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
@@ -466,7 +477,7 @@ fn pinned_tool_button(
                 })
         })
         .tooltip(move |_, cx| {
-            cx.new(|_| PinnedTooltip(pinned_control_tooltip(control), colors))
+            cx.new(|_| PinnedTooltip(pinned_control_tooltip(locale, control), colors))
                 .into()
         })
         .on_click(on_click)
@@ -481,6 +492,7 @@ impl Render for PinnedImage {
             self.pending_zoom_size = None;
         }
         let colors = self.colors;
+        let locale = self.locale;
         if !self.topmost_requested
             && let Ok(handle) = window.window_handle()
             && let RawWindowHandle::Win32(handle) = handle.as_raw()
@@ -537,9 +549,10 @@ impl Render for PinnedImage {
                     )
                     .child(pinned_tool_button(
                         "pinned-save",
-                        "Save",
+                        locale.text(UiText::PinSave),
                         "save",
                         colors,
+                        locale,
                         PinnedButtonTone::Neutral,
                         cx.listener(|this, _, _, cx| this.save_image(cx)),
                     ))
@@ -548,6 +561,7 @@ impl Render for PinnedImage {
                         "-",
                         "zoom-out",
                         colors,
+                        locale,
                         PinnedButtonTone::Neutral,
                         cx.listener(|this, _, window, cx| this.zoom(0.8, window, cx)),
                     ))
@@ -556,6 +570,7 @@ impl Render for PinnedImage {
                         "+",
                         "zoom-in",
                         colors,
+                        locale,
                         PinnedButtonTone::Neutral,
                         cx.listener(|this, _, window, cx| this.zoom(1.25, window, cx)),
                     ))
@@ -564,14 +579,16 @@ impl Render for PinnedImage {
                         format!("{}%", opacity_percentage(self.opacity)),
                         "opacity",
                         colors,
+                        locale,
                         PinnedButtonTone::Neutral,
                         cx.listener(|this, _, window, cx| this.cycle_opacity(window, cx)),
                     ))
                     .child(pinned_tool_button(
                         "pinned-mouse-through",
-                        "Pass",
+                        locale.text(UiText::PinMouseThrough),
                         "mouse-through",
                         colors,
+                        locale,
                         if self.mouse_through {
                             PinnedButtonTone::Selected
                         } else {
@@ -581,9 +598,10 @@ impl Render for PinnedImage {
                     ))
                     .child(pinned_tool_button(
                         "pinned-solo",
-                        "Solo",
+                        locale.text(UiText::PinSolo),
                         "solo",
                         colors,
+                        locale,
                         PinnedButtonTone::Neutral,
                         cx.listener(|this, _, window, cx| {
                             this.hide_other_pinned_images(window, cx)
@@ -591,17 +609,19 @@ impl Render for PinnedImage {
                     ))
                     .child(pinned_tool_button(
                         "pinned-show-all",
-                        "Show all",
+                        locale.text(UiText::PinShowAll),
                         "show-all",
                         colors,
+                        locale,
                         PinnedButtonTone::Neutral,
                         cx.listener(|this, _, window, cx| this.show_all_pinned_images(window, cx)),
                     ))
                     .child(pinned_tool_button(
                         "pinned-copy",
-                        "Copy",
+                        locale.text(UiText::PinCopy),
                         "copy",
                         colors,
+                        locale,
                         PinnedButtonTone::Primary,
                         cx.listener(|this, _, _, cx| this.copy_image(cx)),
                     )),
@@ -614,6 +634,7 @@ impl Render for PinnedImage {
                 "X",
                 "close",
                 colors,
+                locale,
                 PinnedButtonTone::Destructive,
                 cx.listener(|this, _, window, cx| this.close(window, cx)),
             )
@@ -752,21 +773,22 @@ fn opacity_percentage(opacity: u8) -> u8 {
     ((u16::from(opacity) * 100 + 127) / 255) as u8
 }
 
-fn pin_opacity_label(opacity: u8) -> &'static str {
+/// Converts a bounded opacity level into a localized feedback label for the active Pin.
+fn pin_opacity_label(locale: Locale, opacity: u8) -> &'static str {
     match opacity {
-        255 => "Opacity 100%",
-        191 => "Opacity 75%",
-        128 => "Opacity 50%",
-        _ => "Opacity 25%",
+        255 => locale.text(UiText::PinOpacity100),
+        191 => locale.text(UiText::PinOpacity75),
+        128 => locale.text(UiText::PinOpacity50),
+        _ => locale.text(UiText::PinOpacity25),
     }
 }
 
 /// Keeps the Pin toolbar's completion text short enough to remain visible beside its controls.
-fn pinned_save_result_status(saved: bool) -> &'static str {
+fn pinned_save_result_status(locale: Locale, saved: bool) -> &'static str {
     if saved {
-        "Saved image"
+        locale.text(UiText::PinSavedImage)
     } else {
-        "Could not save image"
+        locale.text(UiText::PinSaveFailed)
     }
 }
 
@@ -783,6 +805,7 @@ mod tests {
         pinned_close_key, pinned_control_tooltip, pinned_copy_can_start, pinned_keyboard_command,
         pinned_save_result_status,
     };
+    use crate::i18n::Locale;
     use crate::{
         domain::geometry::PhysicalRect,
         platform::{
@@ -880,9 +903,13 @@ mod tests {
             "save",
             "close",
         ] {
-            assert!(!pinned_control_tooltip(control).is_empty());
+            assert!(!pinned_control_tooltip(Locale::English, control).is_empty());
         }
-        assert!(pinned_control_tooltip("close").contains("Escape"));
+        assert!(pinned_control_tooltip(Locale::English, "close").contains("Escape"));
+        assert_eq!(
+            pinned_control_tooltip(Locale::SimplifiedChinese, "copy"),
+            "复制图片（Ctrl+C）"
+        );
     }
 
     #[test]
@@ -954,8 +981,14 @@ mod tests {
 
     #[test]
     fn pinned_save_result_status_distinguishes_success_and_failure() {
-        assert_eq!(pinned_save_result_status(true), "Saved image");
-        assert_eq!(pinned_save_result_status(false), "Could not save image");
+        assert_eq!(
+            pinned_save_result_status(Locale::English, true),
+            "Saved image"
+        );
+        assert_eq!(
+            pinned_save_result_status(Locale::SimplifiedChinese, false),
+            "无法保存图片"
+        );
     }
 
     #[test]

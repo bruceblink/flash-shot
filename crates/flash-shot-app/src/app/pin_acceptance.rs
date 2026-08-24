@@ -272,7 +272,7 @@ mod windows {
             for frame in frames.iter().cloned() {
                 self.open_pinned_frame(
                     frame,
-                    "Pin lifecycle acceptance window opened",
+                    crate::i18n::UiText::PinAcceptanceOpened,
                     None,
                     false,
                     cx,
