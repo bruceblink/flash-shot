@@ -14,6 +14,7 @@ use crate::{
     domain::session::CaptureSessionState,
     i18n::{Locale, UiText},
     platform::shortcut::CaptureShortcut,
+    theme::ThemeMetrics,
 };
 
 const HISTORY_PREVIEW_LIMIT: usize = 5;
@@ -52,6 +53,7 @@ impl gpui::Render for FlashShotApp {
     /// Keeping the column bounded prevents wide windows from separating a preference label from its control.
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let colors = self.colors;
+        let metrics = ThemeMetrics::default();
         let locale = self.settings.locale;
         let compact_navigation =
             uses_compact_settings_navigation(f32::from(window.bounds().size.width));
@@ -127,7 +129,7 @@ impl gpui::Render for FlashShotApp {
             }))
             .flex()
             .flex_col()
-            .bg(colors.background)
+            .bg(colors.canvas)
             .text_color(colors.text)
             .child(settings_header(
                 colors,
@@ -158,7 +160,7 @@ impl gpui::Render for FlashShotApp {
                             .min_w(px(0.0))
                             .min_h(px(0.0))
                             .overflow_y_scroll()
-                            .p_5()
+                            .p(px(metrics.space_4))
                             .child(
                                 div()
                                     .id("settings-content-column")
@@ -274,7 +276,7 @@ impl gpui::Render for FlashShotApp {
             )
             .child(
                 div()
-                    .h(px(42.0))
+                    .h(px(48.0))
                     .flex_none()
                     .px_5()
                     .flex()
@@ -282,11 +284,13 @@ impl gpui::Render for FlashShotApp {
                     .gap_2()
                     .border_t_1()
                     .border_color(colors.border)
+                    .bg(colors.surface)
                     .text_sm()
-                    .text_color(colors.muted)
+                    .text_color(colors.text_muted)
                     .child(
                         div()
-                            .size(px(7.0))
+                            .w(px(3.0))
+                            .h(px(20.0))
                             .rounded_full()
                             .bg(status_indicator_color(&self.status, is_idle, colors)),
                     )
@@ -383,8 +387,9 @@ fn settings_header(
     locale: Locale,
     cx: &mut gpui::Context<FlashShotApp>,
 ) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
     div()
-        .h(px(72.0))
+        .h(px(76.0))
         .flex_none()
         .px_6()
         .flex()
@@ -392,6 +397,7 @@ fn settings_header(
         .justify_between()
         .border_b_1()
         .border_color(colors.border)
+        .bg(colors.surface)
         .child(
             div()
                 .flex()
@@ -399,13 +405,15 @@ fn settings_header(
                 .gap_3()
                 .child(
                     div()
-                        .size(px(32.0))
+                        .size(px(36.0))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_md()
-                        .bg(colors.accent)
-                        .text_color(colors.background)
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(colors.accent)
+                        .bg(colors.surface_elevated)
+                        .text_color(colors.accent)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("F"),
                 )
@@ -418,12 +426,13 @@ fn settings_header(
                             div()
                                 .text_lg()
                                 .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(colors.text)
                                 .child(locale.text(UiText::AppName)),
                         )
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(colors.muted)
+                                .text_color(colors.text_muted)
                                 .child(locale.text(UiText::WorkspaceSubtitle)),
                         ),
                 ),
@@ -432,31 +441,40 @@ fn settings_header(
             div().flex().items_center().gap_2().child(
                 div()
                     .id("settings-capture")
-                    .h(px(36.0))
+                    .h(px(metrics.control_height))
                     .px_4()
                     .flex()
                     .items_center()
-                    .rounded_md()
+                    .rounded_sm()
                     .border_1()
                     .border_color(if is_idle {
                         colors.accent
                     } else {
                         colors.border
                     })
-                    .bg(if is_idle { colors.accent } else { colors.panel })
+                    .bg(if is_idle {
+                        colors.accent
+                    } else {
+                        colors.surface_elevated
+                    })
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(if is_idle {
-                        colors.background
+                        colors.canvas
                     } else {
-                        colors.muted
+                        colors.text_disabled
                     })
                     .when(is_idle, |button| {
                         button
                             .focusable()
-                            .focus_visible(|style| style.border_color(colors.text))
+                            .focus_visible(|style| style.border_color(colors.focus))
                             .cursor_pointer()
-                            .hover(|style| style.bg(colors.panel).text_color(colors.text))
+                            .hover(|style| {
+                                style
+                                    .bg(colors.accent_hover)
+                                    .border_color(colors.accent_hover)
+                                    .text_color(colors.canvas)
+                            })
                             .on_click(cx.listener(|this, _, _, cx| this.start_capture(cx)))
                     })
                     .child(capture_command_label(
@@ -2042,7 +2060,7 @@ fn settings_navigation(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id("settings-navigation")
-        .bg(colors.panel)
+        .bg(colors.surface)
         .when(compact, |navigation| {
             navigation
                 .w_full()
@@ -2070,7 +2088,7 @@ fn settings_navigation(
                         .pb_2()
                         .text_xs()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(colors.muted)
+                        .text_color(colors.text_muted)
                         .child(locale.text(UiText::Workflow)),
                 )
         })
@@ -2160,33 +2178,29 @@ fn settings_navigation_item(
                 .justify_center()
                 .gap_1()
         })
-        .rounded_md()
+        .rounded_sm()
         .border_1()
-        .border_color(if active { colors.accent } else { colors.panel })
+        .border_color(if active {
+            colors.accent
+        } else {
+            colors.surface
+        })
         .text_sm()
         .cursor_pointer()
-        .bg(if active { colors.accent } else { colors.panel })
-        .text_color(if active {
-            colors.background
+        .bg(if active {
+            colors.surface_elevated
         } else {
-            colors.text
+            colors.surface
         })
+        .text_color(if active { colors.accent } else { colors.text })
         .focusable()
         .track_focus(&item_focus)
-        .focus_visible(|style| style.border_color(colors.accent))
+        .focus_visible(|style| style.border_color(colors.focus))
         .hover(move |style| {
             style
-                .bg(if active {
-                    colors.accent
-                } else {
-                    colors.background
-                })
+                .bg(colors.surface_hover)
                 .border_color(if active { colors.accent } else { colors.border })
-                .text_color(if active {
-                    colors.background
-                } else {
-                    colors.text
-                })
+                .text_color(if active { colors.accent } else { colors.text })
         })
         .on_key_down(move |event, window, cx| {
             if settings_navigation_activation(&event.keystroke) {
@@ -2208,10 +2222,15 @@ fn settings_navigation_item(
                 this.select_settings_section(item.section, cx)
             })
         })
+        .child(div().w(px(3.0)).h(px(22.0)).rounded_full().bg(if active {
+            colors.accent
+        } else {
+            colors.surface
+        }))
         .child(
             div()
                 .min_w(px(0.0))
-                .when(compact, |label| label.text_ellipsis())
+                .when(compact, |label| label.text_ellipsis().flex_1())
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(item.label),
         )
@@ -2219,11 +2238,7 @@ fn settings_navigation_item(
             element.child(
                 div()
                     .text_xs()
-                    .text_color(if active {
-                        colors.background.opacity(0.78)
-                    } else {
-                        colors.muted
-                    })
+                    .text_color(colors.text_muted)
                     .child(item.description),
             )
         })
@@ -2245,11 +2260,30 @@ fn settings_page_intro(
         .gap_1()
         .child(
             div()
-                .text_lg()
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(title),
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .w(px(3.0))
+                        .h(px(20.0))
+                        .rounded_full()
+                        .bg(colors.accent),
+                )
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(colors.text)
+                        .child(title),
+                ),
         )
-        .child(div().text_sm().text_color(colors.muted).child(description))
+        .child(
+            div()
+                .text_sm()
+                .text_color(colors.text_muted)
+                .child(description),
+        )
 }
 
 /// Returns the short heading and purpose statement shown before each settings task group.
@@ -2322,26 +2356,31 @@ fn settings_button(
     enabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    let metrics = ThemeMetrics::default();
     div()
         .id(id)
-        .h(px(34.0))
+        .h(px(metrics.control_height))
         .px_3()
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded_sm()
         .border_1()
         .border_color(colors.border)
-        .bg(colors.panel)
+        .bg(colors.surface_elevated)
         .text_sm()
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(if enabled { colors.text } else { colors.muted })
+        .text_color(if enabled {
+            colors.text
+        } else {
+            colors.text_disabled
+        })
         .when(enabled, |button| {
             button
                 .focusable()
-                .focus_visible(|style| style.border_color(colors.accent))
+                .focus_visible(|style| style.border_color(colors.focus))
                 .cursor_pointer()
-                .hover(|style| style.bg(colors.background))
+                .hover(|style| style.bg(colors.surface_hover))
                 .on_click(on_click)
         })
         .child(label.to_owned())
@@ -2360,7 +2399,11 @@ fn settings_danger_button(
         } else {
             colors.border
         })
-        .text_color(if enabled { colors.danger } else { colors.muted })
+        .text_color(if enabled {
+            colors.danger
+        } else {
+            colors.text_disabled
+        })
 }
 
 fn quick_action_button(
@@ -2371,16 +2414,17 @@ fn quick_action_button(
     primary: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    let metrics = ThemeMetrics::default();
     div()
         .id(id)
-        .h(px(44.0))
+        .h(px(metrics.toolbar_height))
         .when(primary, |button| button.w_full())
         .when(!primary, |button| button.flex_1().min_w(px(140.0)))
         .px_3()
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded_sm()
         .border_1()
         .border_color(if primary && enabled {
             colors.accent
@@ -2390,7 +2434,7 @@ fn quick_action_button(
         .bg(if primary && enabled {
             colors.accent
         } else {
-            colors.panel
+            colors.surface_elevated
         })
         .text_sm()
         .font_weight(FontWeight::SEMIBOLD)
@@ -2399,21 +2443,21 @@ fn quick_action_button(
         } else if enabled {
             colors.text
         } else {
-            colors.muted
+            colors.text_disabled
         })
         .when(enabled, |button| {
             button
                 .focusable()
-                .focus_visible(|style| style.border_color(colors.accent))
+                .focus_visible(|style| style.border_color(colors.focus))
                 .cursor_pointer()
                 .hover(move |style| {
                     style
                         .bg(if primary {
-                            colors.panel
+                            colors.accent_hover
                         } else {
-                            colors.background
+                            colors.surface_hover
                         })
-                        .text_color(colors.text)
+                        .text_color(if primary { colors.canvas } else { colors.text })
                 })
                 .on_click(on_click)
         })
@@ -2441,16 +2485,16 @@ fn settings_toggle(
         .bg(if enabled_value && enabled {
             colors.accent
         } else {
-            colors.panel
+            colors.surface_elevated
         })
         .border_1()
         .border_color(colors.border)
         .when(enabled, |toggle| {
             toggle
                 .focusable()
-                .focus_visible(|style| style.border_color(colors.accent))
+                .focus_visible(|style| style.border_color(colors.focus))
                 .cursor_pointer()
-                .hover(|style| style.bg(colors.accent))
+                .hover(|style| style.bg(colors.surface_hover))
                 .on_click(on_click)
         })
         .child(div().size(px(14.0)).rounded_full().bg(colors.text))
@@ -2472,7 +2516,7 @@ fn settings_segment_button(
         .bg(if selected {
             colors.accent
         } else {
-            colors.panel
+            colors.surface_elevated
         })
         .text_color(if selected {
             colors.background
