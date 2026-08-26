@@ -2315,72 +2315,120 @@ fn cancelling_scroll_advances_the_operation_generation() {
 #[test]
 fn translation_failure_messages_identify_the_recovery_step() {
     assert!(
-        translation_failure_status(&TranslationOutcome::OcrUnavailable)
+        translation_failure_status(Locale::English, &TranslationOutcome::OcrUnavailable)
             .contains("Install Tesseract")
     );
     assert!(
-        translation_failure_status(&TranslationOutcome::OcrFailed("bad image".to_owned()))
-            .contains("recognize text")
+        translation_failure_status(
+            Locale::English,
+            &TranslationOutcome::OcrFailed("bad image".to_owned()),
+        )
+        .contains("recognize text")
     );
     assert!(
-        translation_failure_status(&TranslationOutcome::ServiceFailed("timeout".to_owned()))
-            .contains("Check the endpoint")
+        translation_failure_status(
+            Locale::English,
+            &TranslationOutcome::ServiceFailed("timeout".to_owned()),
+        )
+        .contains("Check the endpoint")
+    );
+    assert_eq!(
+        translation_failure_status(
+            Locale::SimplifiedChinese,
+            &TranslationOutcome::OcrUnavailable
+        ),
+        "本地 OCR 不可用。请安装 Tesseract，或设置 FLASH_SHOT_TESSERACT。"
     );
 }
 
 #[test]
 fn recognition_requests_report_overlapping_work_without_replacing_the_first_task() {
-    assert_eq!(recognition_start_conflict_status(false), None);
     assert_eq!(
-        recognition_start_conflict_status(true),
-        Some("Recognition is already in progress")
+        recognition_start_conflict_status(Locale::English, false),
+        None
+    );
+    assert_eq!(
+        recognition_start_conflict_status(Locale::English, true),
+        Some("Recognition is already in progress".to_owned())
+    );
+    assert_eq!(
+        recognition_start_conflict_status(Locale::SimplifiedChinese, true),
+        Some("识别正在进行中".to_owned())
     );
 }
 
 #[test]
 fn translation_support_status_keeps_disabled_configuration_local_and_actionable() {
-    assert!(translation_support_status(Ok(None)).contains("FLASH_SHOT_TRANSLATION_ENDPOINT"));
+    assert!(
+        translation_support_status(Locale::English, Ok(None))
+            .contains("FLASH_SHOT_TRANSLATION_ENDPOINT")
+    );
+    assert_eq!(
+        translation_support_status(Locale::SimplifiedChinese, Ok(None)),
+        "翻译已禁用。如需启用，请设置 FLASH_SHOT_TRANSLATION_ENDPOINT。"
+    );
 
     let invalid = std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
         "translation endpoint must use HTTPS",
     );
-    assert!(translation_support_status(Err(invalid)).contains("needs attention"));
+    assert!(translation_support_status(Locale::English, Err(invalid)).contains("needs attention"));
 }
 
 #[test]
 fn translation_service_test_status_reports_readiness_without_returning_text() {
     let success = Ok("  Bonjour  ".to_owned());
     assert_eq!(
-        translation_service_test_status(&success),
+        translation_service_test_status(Locale::English, &success),
         "Translation service ready (7 characters)"
     );
 
     let empty = Ok(String::new());
-    assert!(translation_service_test_status(&empty).contains("returned no text"));
+    assert!(translation_service_test_status(Locale::English, &empty).contains("returned no text"));
 
     let failure = Err(std::io::Error::new(
         std::io::ErrorKind::TimedOut,
         "request timed out",
     ));
-    assert!(translation_service_test_status(&failure).contains("Check the endpoint"));
+    assert!(
+        translation_service_test_status(Locale::English, &failure).contains("Check the endpoint")
+    );
+    assert_eq!(
+        translation_service_test_status(Locale::SimplifiedChinese, &success),
+        "翻译服务已就绪（7 个字符）"
+    );
 }
 
 #[test]
 fn ocr_language_labels_make_each_saved_preset_readable() {
-    assert_eq!(ocr_language_label(None), "automatic");
-    assert_eq!(ocr_language_label(Some("eng")), "English");
-    assert_eq!(ocr_language_label(Some("chi_sim")), "Simplified Chinese");
+    assert_eq!(ocr_language_label(Locale::English, None), "automatic");
+    assert_eq!(ocr_language_label(Locale::English, Some("eng")), "English");
     assert_eq!(
-        ocr_language_label(Some("eng+chi_sim")),
+        ocr_language_label(Locale::English, Some("chi_sim")),
+        "Simplified Chinese"
+    );
+    assert_eq!(
+        ocr_language_label(Locale::English, Some("eng+chi_sim")),
         "English + Simplified Chinese"
     );
-    assert_eq!(ocr_language_label(Some("unknown")), "automatic");
+    assert_eq!(
+        ocr_language_label(Locale::English, Some("unknown")),
+        "automatic"
+    );
+    assert_eq!(ocr_language_label(Locale::SimplifiedChinese, None), "自动");
+    assert_eq!(
+        ocr_language_label(Locale::SimplifiedChinese, Some("eng+chi_sim")),
+        "英语 + 简体中文"
+    );
 }
 
 #[test]
 fn ocr_support_probe_names_the_local_installation_recovery_step() {
     let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "tesseract.exe");
 
-    assert!(ocr_support_status(Err(&missing)).contains("FLASH_SHOT_TESSERACT"));
+    assert!(ocr_support_status(Locale::English, Err(&missing)).contains("FLASH_SHOT_TESSERACT"));
+    assert!(
+        ocr_support_status(Locale::SimplifiedChinese, Err(&missing))
+            .contains("FLASH_SHOT_TESSERACT")
+    );
 }

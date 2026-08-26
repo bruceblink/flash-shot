@@ -145,7 +145,7 @@ U0 设计基线完成前，必须保留一组“当前版本 vs 新基线”的�
 | 4 | B2 | Capture/Save/Pin/Close 重复操作无残留 | overlay、pinned、窗口生命周期、runner | 待开始 |
 | 5 | B3 | 历史异步任务有界且不写回陈旧结果 | Library/history workflow | 待开始 |
 | 6 | B4 | 水印、文字、箭头编辑与导出回归保护 | overlay、annotation、image | 待开始 |
-| 7 | U1 | 完成 Record/OCR/更新/错误/忙状态国际化 | `i18n.rs`、workflow、Record UI | 待开始 |
+| 7 | U1 | 完成 Record/OCR/更新/错误/忙状态国际化 | `i18n.rs`、workflow、Record UI | 进行中 |
 | 8 | U2 | 收敛 Capture/Library/Record/App 的动作层级 | GPUI view、settings、Library、Record | 待开始 |
 | 9 | U3 | 实现视觉 token 和中英文双主题布局 | GPUI theme、view、overlay、Pin | 待开始 |
 | 10 | U4 | 补齐 Pin 中英文实时窗口与生命周期证据 | pinned、Pin runner、验收文档 | 待开始 |
@@ -300,6 +300,17 @@ Record/更新状态 view。
 - 为更新检查、忙状态、保存失败、剪贴板失败、历史失败和动态数量/路径/快捷键使用参数化模板；
 - 删除用户可见的英文状态拼接；品牌名、路径、快捷键和外部错误详情按既有规则保留；
 - 保持资源键、按钮语义 ID 和验收报告字段与语言无关。
+
+**当前进度（2026-08-26，首批 OCR/二维码/翻译切片）**：
+
+- `workflow/recognition.rs` 已将二维码、本地 OCR、翻译的选区校验、进行中、无结果、完成、失败和重试状态迁移到
+  `Locale`/`UiText`；识别结果标题与复制结果反馈也使用参数化资源；
+- `workflow/support.rs`、`workflow/settings.rs` 和 Capture 设置页已迁移 OCR 语言预设、本地支持检查、翻译配置检查、
+  翻译服务测试与取消状态，并保留不把截图文字直接放入服务测试反馈的规则；
+- `workflow/tests.rs` 与设置视图测试覆盖 English/简体中文的按钮、状态和动态数量模板；
+- 本切片已通过 `cargo fmt --all`、`cargo check -p flash-shot-app --all-targets --locked` 和
+  `cargo test -p flash-shot-app --lib --locked`（347 项通过）。Record、更新、历史/保存/通用剪贴板错误和其余动态状态
+  仍待后续分组迁移，U1 不在本切片宣称完成。
 
 **验收条件**：English 与简体中文下，Capture、Library、Record、App、Pin 的可见文案均来自资源目录；
 中文核心 UI 不出现未登记英文；状态切换、失败重试和取消路径行为相同；缺少 OCR 依赖不会阻塞截图。

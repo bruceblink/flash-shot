@@ -1,6 +1,7 @@
 //! Pure workflow state, formatting, and interaction helpers.
 
 use super::*;
+use crate::i18n::{Locale, UiText};
 
 pub(in crate::app) fn tool_selected_status(tool: AnnotationTool) -> &'static str {
     match tool {
@@ -416,85 +417,106 @@ pub(in crate::app) fn translate_selected_frame(
 }
 
 /// Formats the persisted OCR choice so status messages never expose a raw optional value.
-pub(in crate::app) fn ocr_language_label(language: Option<&str>) -> &'static str {
-    match language {
-        None => "automatic",
-        Some("eng") => "English",
-        Some("chi_sim") => "Simplified Chinese",
-        Some("eng+chi_sim") => "English + Simplified Chinese",
-        Some(_) => "automatic",
-    }
+pub(in crate::app) fn ocr_language_label(locale: Locale, language: Option<&str>) -> &'static str {
+    let key = match language {
+        None => UiText::OcrLanguageAutomatic,
+        Some("eng") => UiText::OcrLanguageEnglish,
+        Some("chi_sim") => UiText::OcrLanguageSimplifiedChinese,
+        Some("eng+chi_sim") => UiText::OcrLanguageEnglishSimplifiedChinese,
+        Some(_) => UiText::OcrLanguageAutomatic,
+    };
+    locale.text(key)
 }
 
 /// Turns a local OCR probe into a concise readiness result with a concrete recovery action.
 pub(in crate::app) fn ocr_support_status(
+    locale: Locale,
     result: Result<&crate::ocr::OcrSupport, &std::io::Error>,
 ) -> String {
     match result {
-        Ok(support) if support.language_available() => format!(
-            "Local OCR ready: {} with {}",
-            support.version(),
-            ocr_language_label(Some(support.language()))
+        Ok(support) if support.language_available() => locale.format_template(
+            UiText::OcrSupportReady,
+            &[
+                ("version", support.version()),
+                (
+                    "language",
+                    ocr_language_label(locale, Some(support.language())),
+                ),
+            ],
         ),
-        Ok(support) => format!(
-            "Tesseract is installed but the {} language data is missing. Install that language pack or choose another OCR language.",
-            ocr_language_label(Some(support.language()))
+        Ok(support) => locale.format_template(
+            UiText::OcrSupportLanguageMissing,
+            &[(
+                "language",
+                ocr_language_label(locale, Some(support.language())),
+            )],
         ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            format!(
-                "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT: {error}"
-            )
-        }
-        Err(error) => format!("Could not check local OCR support: {error}"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => locale.format_template(
+            UiText::OcrSupportUnavailable,
+            &[("error", &error.to_string())],
+        ),
+        Err(error) => locale.format_template(
+            UiText::OcrSupportCheckFailed,
+            &[("error", &error.to_string())],
+        ),
     }
 }
 
 /// Describes only local translation configuration so checking support never contacts a service.
 pub(in crate::app) fn translation_support_status(
+    locale: Locale,
     result: std::io::Result<Option<crate::translation::TranslationConfig>>,
 ) -> String {
     match result {
-        Ok(Some(config)) => format!(
-            "Translation ready: HTTPS endpoint configured for {}",
-            config.target_language()
+        Ok(Some(config)) => locale.format_template(
+            UiText::TranslationSupportReady,
+            &[("language", config.target_language())],
         ),
-        Ok(None) => {
-            "Translation is disabled. Set FLASH_SHOT_TRANSLATION_ENDPOINT to opt in.".to_owned()
-        }
-        Err(error) => format!("Translation configuration needs attention: {error}"),
+        Ok(None) => locale.text(UiText::TranslationSupportDisabled).to_owned(),
+        Err(error) => locale.format_template(
+            UiText::TranslationSupportNeedsAttention,
+            &[("error", &error.to_string())],
+        ),
     }
 }
 
 /// Turns an explicit fixed-text service probe into a safe status message without exposing the
 /// returned translation. The settings action only sends the phrase "Flash Shot" and reports its
 /// character count, so users can verify connectivity without putting screenshot text on the wire.
-pub(in crate::app) fn translation_service_test_status(result: &std::io::Result<String>) -> String {
+pub(in crate::app) fn translation_service_test_status(
+    locale: Locale,
+    result: &std::io::Result<String>,
+) -> String {
     match result {
-        Ok(text) if !text.trim().is_empty() => format!(
-            "Translation service ready ({} characters)",
-            text.trim().chars().count()
+        Ok(text) if !text.trim().is_empty() => locale.format_template(
+            UiText::TranslationServiceReady,
+            &[("count", &text.trim().chars().count().to_string())],
         ),
-        Ok(_) => "Translation service returned no text. Check the endpoint response.".to_owned(),
-        Err(error) => {
-            translation_failure_status(&TranslationOutcome::ServiceFailed(error.to_string()))
-        }
+        Ok(_) => locale.text(UiText::TranslationServiceNoText).to_owned(),
+        Err(error) => translation_failure_status(
+            locale,
+            &TranslationOutcome::ServiceFailed(error.to_string()),
+        ),
     }
 }
 
 /// Turns each translation-stage failure into a recovery action instead of a generic error.
-pub(in crate::app) fn translation_failure_status(outcome: &TranslationOutcome) -> String {
+pub(in crate::app) fn translation_failure_status(
+    locale: Locale,
+    outcome: &TranslationOutcome,
+) -> String {
     match outcome {
         TranslationOutcome::PreparationFailed(error) => {
-            format!("Could not prepare the selection for translation: {error}")
+            locale.format_template(UiText::TranslationPreparationFailed, &[("error", error)])
         }
         TranslationOutcome::OcrUnavailable => {
-            "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT.".to_owned()
+            locale.text(UiText::RecognitionOcrUnavailable).to_owned()
         }
         TranslationOutcome::OcrFailed(error) => {
-            format!("Could not recognize text for translation: {error}")
+            locale.format_template(UiText::TranslationOcrFailed, &[("error", error)])
         }
         TranslationOutcome::ServiceFailed(error) => {
-            format!("Translation service failed: {error}. Check the endpoint and try again.")
+            locale.format_template(UiText::TranslationServiceFailed, &[("error", error)])
         }
         TranslationOutcome::Completed(_) => String::new(),
     }

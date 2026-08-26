@@ -248,9 +248,16 @@ impl FlashShotApp {
         let Some(write_id) = self.try_begin_clipboard_write("copying recognized text", cx) else {
             return;
         };
+        let locale = self.settings.locale;
         self.status = match SystemClipboard.copy_text(&text) {
-            Ok(()) => format!("{title} copied to clipboard"),
-            Err(error) => format!("Could not copy {title}: {error}"),
+            Ok(()) => locale.format_template(
+                crate::i18n::UiText::RecognitionResultCopied,
+                &[("title", &title)],
+            ),
+            Err(error) => locale.format_template(
+                crate::i18n::UiText::RecognitionResultCopyFailed,
+                &[("title", &title), ("error", &error.to_string())],
+            ),
         };
         self.finish_clipboard_write(write_id);
         cx.notify();

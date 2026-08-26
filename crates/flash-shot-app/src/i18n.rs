@@ -224,6 +224,58 @@ pub enum UiText {
     PinClipboardError,
     PinFullScreenError,
     PinHistoryError,
+    RecognitionBusy,
+    RecognitionSelectAreaQr,
+    RecognitionQrInProgress,
+    RecognitionQrNone,
+    RecognitionQrFound,
+    RecognitionQrCode,
+    RecognitionQrCodes,
+    RecognitionQrFailed,
+    RecognitionSelectAreaText,
+    RecognitionTextInProgress,
+    RecognitionTextNone,
+    RecognitionTextCompleted,
+    RecognitionTextTitle,
+    RecognitionOcrUnavailable,
+    RecognitionOcrFailed,
+    RecognitionSelectAreaTranslate,
+    TranslationDisabled,
+    TranslationUnavailable,
+    TranslationInProgress,
+    TranslationNoText,
+    TranslationCompleted,
+    TranslationPreparationFailed,
+    TranslationOcrFailed,
+    TranslationServiceFailed,
+    TranslationSupportReady,
+    TranslationSupportDisabled,
+    TranslationSupportNeedsAttention,
+    TranslationServiceReady,
+    TranslationServiceNoText,
+    OcrSupportReady,
+    OcrSupportLanguageMissing,
+    OcrSupportUnavailable,
+    OcrSupportCheckFailed,
+    OcrSupportCheckBusy,
+    OcrSupportCheckInProgress,
+    OcrSupportCheck,
+    OcrLanguageAutomatic,
+    OcrLanguageEnglish,
+    OcrLanguageSimplifiedChinese,
+    OcrLanguageEnglishSimplifiedChinese,
+    OcrLanguageChanged,
+    OcrLanguageSaveFailed,
+    TranslationServiceTestBusy,
+    TranslationServiceTestInProgress,
+    TranslationServiceTestCancelled,
+    TranslationServiceTest,
+    TranslationServiceCancelTest,
+    SettingsLocalOcr,
+    SettingsTranslation,
+    RecordingSupportCheckInProgress,
+    RecognitionResultCopied,
+    RecognitionResultCopyFailed,
     CapturePageDescription,
     LibraryPageDescription,
     RecordPageDescription,
@@ -456,6 +508,78 @@ impl UiText {
             Self::PinClipboardError => "Could not pin clipboard image: {error}",
             Self::PinFullScreenError => "Could not pin full screen: {error}",
             Self::PinHistoryError => "Could not pin history image: {error}",
+            Self::RecognitionBusy => "Recognition is already in progress",
+            Self::RecognitionSelectAreaQr => "Select an area before recognizing a QR code",
+            Self::RecognitionQrInProgress => "Recognizing QR code locally...",
+            Self::RecognitionQrNone => "No QR code found in the selection",
+            Self::RecognitionQrFound => "Found {count} QR code(s)",
+            Self::RecognitionQrCode => "QR code",
+            Self::RecognitionQrCodes => "QR codes",
+            Self::RecognitionQrFailed => "QR recognition failed: {error}",
+            Self::RecognitionSelectAreaText => "Select an area before recognizing text",
+            Self::RecognitionTextInProgress => "Recognizing text locally ({language})...",
+            Self::RecognitionTextNone => "No text found in the selection",
+            Self::RecognitionTextCompleted => "Text recognized locally",
+            Self::RecognitionTextTitle => "Recognized text",
+            Self::RecognitionOcrUnavailable => {
+                "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT."
+            }
+            Self::RecognitionOcrFailed => "OCR failed: {error}",
+            Self::RecognitionSelectAreaTranslate => "Select an area before translating text",
+            Self::TranslationDisabled => {
+                "Translation is disabled. Configure FLASH_SHOT_TRANSLATION_ENDPOINT to opt in."
+            }
+            Self::TranslationUnavailable => "Translation is unavailable: {error}",
+            Self::TranslationInProgress => "Recognizing and translating text...",
+            Self::TranslationNoText => "No text found in the selection",
+            Self::TranslationCompleted => "Translation completed",
+            Self::TranslationPreparationFailed => {
+                "Could not prepare the selection for translation: {error}"
+            }
+            Self::TranslationOcrFailed => "Could not recognize text for translation: {error}",
+            Self::TranslationServiceFailed => {
+                "Translation service failed: {error}. Check the endpoint and try again."
+            }
+            Self::TranslationSupportReady => {
+                "Translation ready: HTTPS endpoint configured for {language}"
+            }
+            Self::TranslationSupportDisabled => {
+                "Translation is disabled. Set FLASH_SHOT_TRANSLATION_ENDPOINT to opt in."
+            }
+            Self::TranslationSupportNeedsAttention => {
+                "Translation configuration needs attention: {error}"
+            }
+            Self::TranslationServiceReady => "Translation service ready ({count} characters)",
+            Self::TranslationServiceNoText => {
+                "Translation service returned no text. Check the endpoint response."
+            }
+            Self::OcrSupportReady => "Local OCR ready: {version} with {language}",
+            Self::OcrSupportLanguageMissing => {
+                "Tesseract is installed but the {language} language data is missing. Install that language pack or choose another OCR language."
+            }
+            Self::OcrSupportUnavailable => {
+                "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT: {error}"
+            }
+            Self::OcrSupportCheckFailed => "Could not check local OCR support: {error}",
+            Self::OcrSupportCheckBusy => "Local OCR support check is already in progress",
+            Self::OcrSupportCheckInProgress => "Checking local OCR support...",
+            Self::OcrSupportCheck => "Check support",
+            Self::OcrLanguageAutomatic => "automatic",
+            Self::OcrLanguageEnglish => "English",
+            Self::OcrLanguageSimplifiedChinese => "Simplified Chinese",
+            Self::OcrLanguageEnglishSimplifiedChinese => "English + Simplified Chinese",
+            Self::OcrLanguageChanged => "Local OCR language: {language}",
+            Self::OcrLanguageSaveFailed => "Could not save OCR language preference: {error}",
+            Self::TranslationServiceTestBusy => "Translation service test is already in progress",
+            Self::TranslationServiceTestInProgress => "Testing translation service...",
+            Self::TranslationServiceTestCancelled => "Translation service test cancelled",
+            Self::TranslationServiceTest => "Test service",
+            Self::TranslationServiceCancelTest => "Cancel test",
+            Self::SettingsLocalOcr => "Local OCR",
+            Self::SettingsTranslation => "Translation",
+            Self::RecordingSupportCheckInProgress => "Checking FFmpeg recording support...",
+            Self::RecognitionResultCopied => "{title} copied to clipboard",
+            Self::RecognitionResultCopyFailed => "Could not copy {title}: {error}",
             Self::CapturePageDescription => "Start a screenshot or adjust capture preferences.",
             Self::LibraryPageDescription => {
                 "Find saved captures, change output, and manage history."
@@ -712,6 +836,68 @@ impl UiText {
             Self::PinClipboardError => "无法固定剪贴板图片：{error}",
             Self::PinFullScreenError => "无法固定全屏截图：{error}",
             Self::PinHistoryError => "无法固定历史图片：{error}",
+            Self::RecognitionBusy => "识别正在进行中",
+            Self::RecognitionSelectAreaQr => "请先选择区域再识别二维码",
+            Self::RecognitionQrInProgress => "正在本地识别二维码...",
+            Self::RecognitionQrNone => "选区中未找到二维码",
+            Self::RecognitionQrFound => "找到 {count} 个二维码",
+            Self::RecognitionQrCode => "二维码",
+            Self::RecognitionQrCodes => "二维码",
+            Self::RecognitionQrFailed => "二维码识别失败：{error}",
+            Self::RecognitionSelectAreaText => "请先选择区域再识别文字",
+            Self::RecognitionTextInProgress => "正在本地识别文字（{language}）...",
+            Self::RecognitionTextNone => "选区中未找到文字",
+            Self::RecognitionTextCompleted => "文字已在本地识别",
+            Self::RecognitionTextTitle => "识别出的文字",
+            Self::RecognitionOcrUnavailable => {
+                "本地 OCR 不可用。请安装 Tesseract，或设置 FLASH_SHOT_TESSERACT。"
+            }
+            Self::RecognitionOcrFailed => "OCR 失败：{error}",
+            Self::RecognitionSelectAreaTranslate => "请先选择区域再翻译文字",
+            Self::TranslationDisabled => {
+                "翻译已禁用。如需启用，请配置 FLASH_SHOT_TRANSLATION_ENDPOINT。"
+            }
+            Self::TranslationUnavailable => "翻译不可用：{error}",
+            Self::TranslationInProgress => "正在识别并翻译文字...",
+            Self::TranslationNoText => "选区中未找到文字",
+            Self::TranslationCompleted => "翻译完成",
+            Self::TranslationPreparationFailed => "无法准备翻译选区：{error}",
+            Self::TranslationOcrFailed => "无法为翻译识别文字：{error}",
+            Self::TranslationServiceFailed => "翻译服务失败：{error}。请检查端点后重试。",
+            Self::TranslationSupportReady => "翻译已就绪：已为 {language} 配置 HTTPS 端点",
+            Self::TranslationSupportDisabled => {
+                "翻译已禁用。如需启用，请设置 FLASH_SHOT_TRANSLATION_ENDPOINT。"
+            }
+            Self::TranslationSupportNeedsAttention => "翻译配置需要检查：{error}",
+            Self::TranslationServiceReady => "翻译服务已就绪（{count} 个字符）",
+            Self::TranslationServiceNoText => "翻译服务未返回文字，请检查端点响应。",
+            Self::OcrSupportReady => "本地 OCR 已就绪：{version}，使用 {language}",
+            Self::OcrSupportLanguageMissing => {
+                "Tesseract 已安装，但缺少 {language} 语言数据。请安装语言包或选择其他 OCR 语言。"
+            }
+            Self::OcrSupportUnavailable => {
+                "本地 OCR 不可用。请安装 Tesseract，或设置 FLASH_SHOT_TESSERACT：{error}"
+            }
+            Self::OcrSupportCheckFailed => "无法检查本地 OCR 支持：{error}",
+            Self::OcrSupportCheckBusy => "本地 OCR 支持检查正在进行中",
+            Self::OcrSupportCheckInProgress => "正在检查本地 OCR 支持...",
+            Self::OcrSupportCheck => "检查支持",
+            Self::OcrLanguageAutomatic => "自动",
+            Self::OcrLanguageEnglish => "英语",
+            Self::OcrLanguageSimplifiedChinese => "简体中文",
+            Self::OcrLanguageEnglishSimplifiedChinese => "英语 + 简体中文",
+            Self::OcrLanguageChanged => "本地 OCR 语言：{language}",
+            Self::OcrLanguageSaveFailed => "无法保存 OCR 语言偏好：{error}",
+            Self::TranslationServiceTestBusy => "翻译服务测试正在进行中",
+            Self::TranslationServiceTestInProgress => "正在测试翻译服务...",
+            Self::TranslationServiceTestCancelled => "翻译服务测试已取消",
+            Self::TranslationServiceTest => "测试服务",
+            Self::TranslationServiceCancelTest => "取消测试",
+            Self::SettingsLocalOcr => "本地 OCR",
+            Self::SettingsTranslation => "翻译",
+            Self::RecordingSupportCheckInProgress => "正在检查 FFmpeg 录屏支持...",
+            Self::RecognitionResultCopied => "{title}已复制到剪贴板",
+            Self::RecognitionResultCopyFailed => "无法复制{title}：{error}",
             Self::CapturePageDescription => "开始截图或调整截图偏好。",
             Self::LibraryPageDescription => "查找已保存截图、修改输出位置并管理历史记录。",
             Self::RecordPageDescription => "选择录制来源、输出目录和录屏控制。",

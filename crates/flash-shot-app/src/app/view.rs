@@ -354,20 +354,20 @@ fn status_indicator_color(
 }
 
 /// Switches the translation action to cancellation while its independent request is in flight.
-fn translation_service_test_label(in_flight: bool) -> &'static str {
+fn translation_service_test_label(locale: Locale, in_flight: bool) -> &'static str {
     if in_flight {
-        "Cancel test"
+        locale.text(UiText::TranslationServiceCancelTest)
     } else {
-        "Test service"
+        locale.text(UiText::TranslationServiceTest)
     }
 }
 
 /// Keeps the OCR support action readable while the local capability probe is running.
-fn ocr_support_check_label(in_flight: bool) -> &'static str {
+fn ocr_support_check_label(locale: Locale, in_flight: bool) -> &'static str {
     if in_flight {
-        "Checking..."
+        locale.text(UiText::OcrSupportCheckInProgress)
     } else {
-        "Check support"
+        locale.text(UiText::OcrSupportCheck)
     }
 }
 
@@ -686,7 +686,11 @@ fn capture_settings(
             )),
         )
         .child(
-            settings_row("Local OCR", colors).child(
+            settings_row(
+                app_state.settings.locale.text(UiText::SettingsLocalOcr),
+                colors,
+            )
+            .child(
                 div()
                     .flex()
                     .flex_wrap()
@@ -695,6 +699,7 @@ fn capture_settings(
                     .child(settings_button(
                         "settings-ocr-language",
                         super::workflow::ocr_language_label(
+                            app_state.settings.locale,
                             app_state.settings.ocr_language.as_deref(),
                         ),
                         colors,
@@ -706,7 +711,10 @@ fn capture_settings(
                     ))
                     .child(settings_button(
                         "settings-check-ocr-support",
-                        ocr_support_check_label(app_state.ocr_support_check_in_flight),
+                        ocr_support_check_label(
+                            app_state.settings.locale,
+                            app_state.ocr_support_check_in_flight,
+                        ),
                         colors,
                         !app_state.ocr_support_check_in_flight,
                         {
@@ -716,21 +724,30 @@ fn capture_settings(
                     )),
             ),
         )
-        .child(settings_row("Translation", colors).child(settings_button(
-            "settings-test-translation-service",
-            translation_service_test_label(app_state.translation_service_test_in_flight),
-            colors,
-            true,
-            move |_, _, cx| {
-                app.update(cx, |this, cx| {
-                    if this.translation_service_test_in_flight {
-                        this.cancel_translation_service_test(cx);
-                    } else {
-                        this.test_translation_service(cx);
-                    }
-                })
-            },
-        )));
+        .child(
+            settings_row(
+                app_state.settings.locale.text(UiText::SettingsTranslation),
+                colors,
+            )
+            .child(settings_button(
+                "settings-test-translation-service",
+                translation_service_test_label(
+                    app_state.settings.locale,
+                    app_state.translation_service_test_in_flight,
+                ),
+                colors,
+                true,
+                move |_, _, cx| {
+                    app.update(cx, |this, cx| {
+                        if this.translation_service_test_in_flight {
+                            this.cancel_translation_service_test(cx);
+                        } else {
+                            this.test_translation_service(cx);
+                        }
+                    })
+                },
+            )),
+        );
 
     let pin_recovery =
         settings_section(locale.text(UiText::PinRecovery), colors).child(settings_button(
@@ -3032,14 +3049,42 @@ mod tests {
 
     #[test]
     fn translation_test_label_explains_its_independent_busy_state() {
-        assert_eq!(translation_service_test_label(false), "Test service");
-        assert_eq!(translation_service_test_label(true), "Cancel test");
+        assert_eq!(
+            translation_service_test_label(Locale::English, false),
+            "Test service"
+        );
+        assert_eq!(
+            translation_service_test_label(Locale::English, true),
+            "Cancel test"
+        );
+        assert_eq!(
+            translation_service_test_label(Locale::SimplifiedChinese, false),
+            "测试服务"
+        );
+        assert_eq!(
+            translation_service_test_label(Locale::SimplifiedChinese, true),
+            "取消测试"
+        );
     }
 
     #[test]
     fn ocr_support_check_label_explains_its_busy_state() {
-        assert_eq!(ocr_support_check_label(false), "Check support");
-        assert_eq!(ocr_support_check_label(true), "Checking...");
+        assert_eq!(
+            ocr_support_check_label(Locale::English, false),
+            "Check support"
+        );
+        assert_eq!(
+            ocr_support_check_label(Locale::English, true),
+            "Checking local OCR support..."
+        );
+        assert_eq!(
+            ocr_support_check_label(Locale::SimplifiedChinese, false),
+            "检查支持"
+        );
+        assert_eq!(
+            ocr_support_check_label(Locale::SimplifiedChinese, true),
+            "正在检查本地 OCR 支持..."
+        );
     }
 
     #[test]

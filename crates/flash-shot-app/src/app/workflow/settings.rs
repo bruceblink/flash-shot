@@ -49,7 +49,11 @@ impl FlashShotApp {
         self.recording_support_check_in_flight =
             state == crate::RecordingSupportUiAcceptanceState::Checking;
         if self.recording_support_check_in_flight {
-            self.status = "Checking FFmpeg recording support...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::RecordingSupportCheckInProgress)
+                .to_owned();
         }
     }
 
@@ -64,11 +68,18 @@ impl FlashShotApp {
             crate::TranslationServiceUiAcceptanceState::Idle => {}
             crate::TranslationServiceUiAcceptanceState::Testing => {
                 self.translation_service_test_in_flight = true;
-                self.status = "Testing translation service...".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(crate::i18n::UiText::TranslationServiceTestInProgress)
+                    .to_owned();
             }
             crate::TranslationServiceUiAcceptanceState::Ready => {
                 // Keep a fixed count so acceptance screenshots never contact or expose a service.
-                self.status = "Translation service ready (12 characters)".to_owned();
+                self.status = self.settings.locale.format_template(
+                    crate::i18n::UiText::TranslationServiceReady,
+                    &[("count", "12")],
+                );
             }
         }
     }
@@ -80,7 +91,11 @@ impl FlashShotApp {
     ) {
         self.ocr_support_check_in_flight = state == crate::OcrSupportUiAcceptanceState::Checking;
         if self.ocr_support_check_in_flight {
-            self.status = "Checking local OCR support...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::OcrSupportCheckInProgress)
+                .to_owned();
         }
     }
 
@@ -442,14 +457,21 @@ impl FlashShotApp {
         let previous = self.settings.ocr_language.clone();
         let next = UserSettings::next_ocr_language(previous.as_deref());
         self.settings.ocr_language = next;
+        let locale = self.settings.locale;
         self.status = match self.settings.save(&self.settings_path) {
-            Ok(()) => format!(
-                "Local OCR language: {}",
-                ocr_language_label(self.settings.ocr_language.as_deref())
+            Ok(()) => locale.format_template(
+                crate::i18n::UiText::OcrLanguageChanged,
+                &[(
+                    "language",
+                    ocr_language_label(locale, self.settings.ocr_language.as_deref()),
+                )],
             ),
             Err(error) => {
                 self.settings.ocr_language = previous;
-                format!("Could not save OCR language preference: {error}")
+                locale.format_template(
+                    crate::i18n::UiText::OcrLanguageSaveFailed,
+                    &[("error", &error.to_string())],
+                )
             }
         };
         cx.notify();
@@ -458,7 +480,11 @@ impl FlashShotApp {
     /// Probes Tesseract and the selected language before the user needs OCR on a screenshot.
     pub(in crate::app) fn check_ocr_support(&mut self, cx: &mut Context<Self>) {
         if self.ocr_support_check_in_flight {
-            self.status = "Local OCR support check is already in progress".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::OcrSupportCheckBusy)
+                .to_owned();
             cx.notify();
             return;
         }
@@ -466,7 +492,11 @@ impl FlashShotApp {
         self.ocr_support_check_generation = self.ocr_support_check_generation.wrapping_add(1);
         let generation = self.ocr_support_check_generation;
         self.ocr_support_check_in_flight = true;
-        self.status = "Checking local OCR support...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::OcrSupportCheckInProgress)
+            .to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -481,7 +511,7 @@ impl FlashShotApp {
                             return;
                         }
                         this.ocr_support_check_in_flight = false;
-                        this.status = ocr_support_status(result.as_ref());
+                        this.status = ocr_support_status(this.settings.locale, result.as_ref());
                         cx.notify();
                     });
                 }
@@ -494,19 +524,23 @@ impl FlashShotApp {
     /// be verified from settings without reusing or exposing text from a captured screenshot.
     pub(in crate::app) fn test_translation_service(&mut self, cx: &mut Context<Self>) {
         if self.translation_service_test_in_flight {
-            self.status = "Translation service test is already in progress".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::TranslationServiceTestBusy)
+                .to_owned();
             cx.notify();
             return;
         }
         let config = match crate::translation::TranslationConfig::from_environment() {
             Ok(Some(config)) => config,
             Ok(None) => {
-                self.status = translation_support_status(Ok(None));
+                self.status = translation_support_status(self.settings.locale, Ok(None));
                 cx.notify();
                 return;
             }
             Err(error) => {
-                self.status = translation_support_status(Err(error));
+                self.status = translation_support_status(self.settings.locale, Err(error));
                 cx.notify();
                 return;
             }
@@ -515,7 +549,11 @@ impl FlashShotApp {
             self.translation_service_test_generation.wrapping_add(1);
         let generation = self.translation_service_test_generation;
         self.translation_service_test_in_flight = true;
-        self.status = "Testing translation service...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::TranslationServiceTestInProgress)
+            .to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -543,7 +581,11 @@ impl FlashShotApp {
         self.translation_service_test_generation =
             self.translation_service_test_generation.wrapping_add(1);
         self.translation_service_test_in_flight = false;
-        self.status = "Translation service test cancelled".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::TranslationServiceTestCancelled)
+            .to_owned();
         cx.notify();
     }
 
@@ -557,7 +599,7 @@ impl FlashShotApp {
             return;
         }
         self.translation_service_test_in_flight = false;
-        self.status = translation_service_test_status(&result);
+        self.status = translation_service_test_status(self.settings.locale, &result);
         cx.notify();
     }
 
