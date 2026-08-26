@@ -3,7 +3,35 @@ name: CI
 on:
   push:
     branches: [main]
+    # Documentation, editor metadata, and repository administration files do
+    # not change the Rust build or its release/package checks.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.editorconfig'
+      - '.gitattributes'
+      - '.gitignore'
+      - '.idea/**'
+      - '.vscode/**'
+      - '.github/CODEOWNERS'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE*'
+      - '.github/dependabot.yml'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.editorconfig'
+      - '.gitattributes'
+      - '.gitignore'
+      - '.idea/**'
+      - '.vscode/**'
+      - '.github/CODEOWNERS'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE*'
+      - '.github/dependabot.yml'
 
 jobs:
   rust:
