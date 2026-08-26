@@ -301,7 +301,7 @@ Record/更新状态 view。
 - 删除用户可见的英文状态拼接；品牌名、路径、快捷键和外部错误详情按既有规则保留；
 - 保持资源键、按钮语义 ID 和验收报告字段与语言无关。
 
-**当前进度（2026-08-26，OCR/二维码/翻译、Record、更新、快速保存、历史保留、历史操作、选区保存、标注项目 Save/Open 与 Pin/全屏导出分组切片）**：
+**当前进度（2026-08-26，OCR/二维码/翻译、Record、更新、快速保存、历史保留、历史操作、选区保存、标注项目 Save/Open、Pin/全屏导出与剪贴板反馈分组切片）**：
 
 - `workflow/recognition.rs` 已将二维码、本地 OCR、翻译的选区校验、进行中、无结果、完成、失败和重试状态迁移到
   `Locale`/`UiText`；识别结果标题与复制结果反馈也使用参数化资源；
@@ -321,12 +321,12 @@ Record/更新状态 view。
   `Locale`/`UiText`；图片路径、sidecar 路径、错误详情和打开对话框提示使用参数化模板，异步保存/加载与覆盖层生命周期保持不变；
 - `workflow/capture.rs` 与 `workflow/exporting.rs` 已将 Pin 快速保存、全屏复制、全屏保存和全屏固定的进行中、完成、取消/失败结果迁移到
   `Locale`/`UiText`；保存路径、错误详情和系统通知正文使用参数化模板，历史写入与异步 generation 生命周期保持不变；选区/全屏复制结果的
-  成功、取消和失败状态也已迁移，历史复制与通用剪贴板忙态留待后续切片；
+  成功、取消和失败状态也已迁移；历史复制、颜色复制、选区复制取消和共享剪贴板忙态已统一使用资源键与参数模板，剪贴板租用和取消规则保持不变；
 - `workflow/tests.rs` 与设置视图测试覆盖 English/简体中文的按钮、状态和动态数量模板；
-- OCR/二维码/翻译、Record、更新、快速保存、历史保留、历史操作、选区保存、标注项目 Save/Open 与 Pin/全屏导出分组已通过
+- OCR/二维码/翻译、Record、更新、快速保存、历史保留、历史操作、选区保存、标注项目 Save/Open、Pin/全屏导出与剪贴板反馈分组已通过
   `cargo fmt --all -- --check`、
   `cargo check -p flash-shot-app --all-targets --locked`、`cargo test --workspace --locked` 和
-  `cargo clippy --workspace --all-targets -- -D warnings`；通用剪贴板忙态、历史复制错误和其余动态状态仍待后续分组迁移，
+  `cargo clippy --workspace --all-targets -- -D warnings`；其余动态状态仍待后续分组迁移，
   U1 不在本切片宣称完成。
 
 **验收条件**：English 与简体中文下，Capture、Library、Record、App、Pin 的可见文案均来自资源目录；
