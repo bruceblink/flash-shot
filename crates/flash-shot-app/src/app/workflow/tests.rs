@@ -1573,6 +1573,7 @@ fn configured_quick_save_prefix_is_used_for_generated_paths() {
 fn recording_status_uses_ffmpeg_progress_without_exposing_process_output() {
     assert_eq!(
         format_recording_progress(
+            Locale::English,
             "selected area",
             crate::recording::RecordingProgress {
                 output_time_us: Some(3_900_000),
@@ -1587,7 +1588,7 @@ fn recording_status_uses_ffmpeg_progress_without_exposing_process_output() {
 #[test]
 fn recording_stop_status_names_the_target_during_late_progress() {
     assert_eq!(
-        format_recording_stopping("display"),
+        format_recording_stopping(Locale::English, "display"),
         "Stopping display recording..."
     );
 }
@@ -1595,10 +1596,15 @@ fn recording_stop_status_names_the_target_during_late_progress() {
 #[test]
 fn recording_start_failures_name_the_available_recovery_path() {
     let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "ffmpeg.exe");
-    assert!(recording_start_failure_status(&missing).contains("FLASH_SHOT_FFMPEG"));
+    assert!(
+        recording_start_failure_status(Locale::English, &missing).contains("FLASH_SHOT_FFMPEG")
+    );
 
     let unsupported = std::io::Error::new(std::io::ErrorKind::Unsupported, "ddagrab unavailable");
-    assert!(recording_start_failure_status(&unsupported).contains("ddagrab or gdigrab"));
+    assert!(
+        recording_start_failure_status(Locale::English, &unsupported)
+            .contains("ddagrab or gdigrab")
+    );
 }
 
 #[test]
@@ -1666,40 +1672,49 @@ fn fresh_capture_replaces_an_editable_or_terminal_session_but_not_in_flight_work
 #[test]
 fn overlay_recording_actions_explain_active_starting_and_stopping_conflicts() {
     assert_eq!(
-        recording_start_conflict_status(true, false, false),
+        recording_start_conflict_status(Locale::English, true, false, false),
         Some("Stop the current recording before starting another")
     );
     assert_eq!(
-        recording_start_conflict_status(false, true, false),
+        recording_start_conflict_status(Locale::English, false, true, false),
         Some("Screen recording startup is already in progress...")
     );
     assert_eq!(
-        recording_start_conflict_status(true, false, true),
+        recording_start_conflict_status(Locale::English, true, false, true),
         Some("Screen recording is already stopping...")
     );
-    assert_eq!(recording_start_conflict_status(false, false, false), None);
+    assert_eq!(
+        recording_start_conflict_status(Locale::English, false, false, false),
+        None
+    );
 }
 
 #[test]
 fn recording_start_waits_for_source_discovery_to_finish() {
     assert_eq!(
-        recording_discovery_conflict_status(true, false),
+        recording_discovery_conflict_status(Locale::English, true, false),
         Some("Wait for recording source discovery to finish...")
     );
     assert_eq!(
-        recording_discovery_conflict_status(false, true),
+        recording_discovery_conflict_status(Locale::English, false, true),
         Some("Wait for recording source discovery to finish...")
     );
-    assert_eq!(recording_discovery_conflict_status(false, false), None);
+    assert_eq!(
+        recording_discovery_conflict_status(Locale::English, false, false),
+        None
+    );
 }
 
 #[test]
 fn recording_start_waits_for_support_checks_to_finish() {
     assert_eq!(
-        recording_support_check_conflict_status(true),
+        recording_support_check_conflict_status(Locale::English, true),
         Some("Cancel or wait for the FFmpeg support check before recording")
     );
-    assert_eq!(recording_support_check_conflict_status(false), None);
+    assert_eq!(
+        recording_support_check_conflict_status(Locale::English, false),
+        None
+    );
 }
 
 #[test]
@@ -1754,7 +1769,7 @@ fn stale_recording_discovery_results_cannot_replace_new_lifecycle_state() {
 fn recording_support_probe_reuses_actionable_missing_ffmpeg_guidance() {
     let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "ffmpeg.exe");
 
-    assert!(recording_support_status(Err(&missing)).contains("FLASH_SHOT_FFMPEG"));
+    assert!(recording_support_status(Locale::English, Err(&missing)).contains("FLASH_SHOT_FFMPEG"));
 }
 
 #[test]
@@ -1828,37 +1843,46 @@ fn recording_output_requires_at_least_one_available_directory() {
 #[test]
 fn recording_status_identifies_each_capture_target() {
     assert_eq!(
-        recording_target_label(&crate::recording::RecordingTarget::Display {
-            bounds: PhysicalRect {
-                left: 0,
-                top: 0,
-                right: 1920,
-                bottom: 1080,
-            },
-        }),
+        recording_target_label(
+            Locale::English,
+            &crate::recording::RecordingTarget::Display {
+                bounds: PhysicalRect {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
+            }
+        ),
         "display"
     );
     assert_eq!(
-        recording_target_label(&crate::recording::RecordingTarget::Window {
-            title: "Editor".to_owned(),
-            bounds: PhysicalRect {
-                left: 10,
-                top: 10,
-                right: 100,
-                bottom: 100,
-            },
-        }),
+        recording_target_label(
+            Locale::English,
+            &crate::recording::RecordingTarget::Window {
+                title: "Editor".to_owned(),
+                bounds: PhysicalRect {
+                    left: 10,
+                    top: 10,
+                    right: 100,
+                    bottom: 100,
+                },
+            }
+        ),
         "window"
     );
     assert_eq!(
-        recording_target_label(&crate::recording::RecordingTarget::Region {
-            bounds: PhysicalRect {
-                left: 10,
-                top: 10,
-                right: 100,
-                bottom: 100,
-            },
-        }),
+        recording_target_label(
+            Locale::English,
+            &crate::recording::RecordingTarget::Region {
+                bounds: PhysicalRect {
+                    left: 10,
+                    top: 10,
+                    right: 100,
+                    bottom: 100,
+                },
+            }
+        ),
         "selected area"
     );
 }
@@ -1880,7 +1904,14 @@ fn recording_audio_selection_cycles_from_auto_to_off_then_local_sources() {
         microphone,
         super::RecordingAudioSelection::Source(sources[0].clone())
     );
-    assert_eq!(recording_audio_selection_label(&microphone), "mic: USB Mic");
+    assert_eq!(
+        recording_audio_selection_label(Locale::English, &microphone),
+        "mic: USB Mic"
+    );
+    assert_eq!(
+        recording_audio_selection_label(Locale::SimplifiedChinese, &microphone),
+        "麦克风：USB Mic"
+    );
     assert_eq!(
         next_recording_audio_selection(
             super::RecordingAudioSelection::Source(sources[1].clone()),
@@ -1936,8 +1967,12 @@ fn recording_display_selection_cycles_in_stable_primary_first_order() {
         }
     );
     assert_eq!(
-        recording_display_selection_label(&secondary),
+        recording_display_selection_label(Locale::English, &secondary),
         "display 2 (2560x1440)"
+    );
+    assert_eq!(
+        recording_display_selection_label(Locale::SimplifiedChinese, &secondary),
+        "显示器 2 (2560x1440)"
     );
     assert_eq!(
         next_recording_display_selection(secondary, &displays),

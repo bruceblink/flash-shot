@@ -72,14 +72,14 @@ impl gpui::Render for FlashShotApp {
             recording_state,
         );
         let recording_audio =
-            super::workflow::recording_audio_selection_label(&self.recording_audio);
+            super::workflow::recording_audio_selection_label(locale, &self.recording_audio);
         let recording_display =
-            super::workflow::recording_display_selection_label(&self.recording_display);
+            super::workflow::recording_display_selection_label(locale, &self.recording_display);
         let recording_directory = super::workflow::recording_directory_for_display(
             self.settings.recording_directory.as_deref(),
         )
         .map(|path| settings_path_label(&path))
-        .unwrap_or_else(|| "Recording folder unavailable".to_owned());
+        .unwrap_or_else(|| locale.text(UiText::RecordingFolderUnavailable).to_owned());
         let history_total = self.history.entries().len();
         let history_query = self.history_search_query().trim().to_lowercase();
         let filtered_history_total = self
@@ -204,6 +204,7 @@ impl gpui::Render for FlashShotApp {
                                         self.settings_section == SettingsSection::Recording,
                                         |content| {
                                             content.child(recording_settings(
+                                                locale,
                                                 colors,
                                                 recording_state,
                                                 &recording_display,
@@ -931,6 +932,7 @@ fn history_retention_label(locale: Locale, current_limit: u16, target: Option<u1
 
 /// Renders recording choices and commands, wrapping the command row before a narrow window clips it.
 fn recording_settings(
+    locale: Locale,
     colors: crate::theme::ThemeColors,
     state: RecordingViewState,
     display: &str,
@@ -945,37 +947,45 @@ fn recording_settings(
         !lifecycle_busy && !source_discovery_busy && !directory_check_in_flight;
     let settings_idle = support_check_available && !state.support_check_in_flight;
     let recording_toggle_enabled = recording_toggle_enabled(state, directory_check_in_flight);
-    settings_section("Recording", colors)
-        .child(settings_row("Display", colors).child(settings_button(
-            "settings-recording-display",
-            if state.display_discovery_in_flight {
-                "Discovering..."
-            } else {
-                display
-            },
-            colors,
-            settings_idle,
-            {
-                let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_display(cx))
-            },
-        )))
-        .child(settings_row("Audio", colors).child(settings_button(
-            "settings-recording-audio",
-            if state.audio_discovery_in_flight {
-                "Discovering..."
-            } else {
-                audio
-            },
-            colors,
-            settings_idle,
-            {
-                let app = app.clone();
-                move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_audio(cx))
-            },
-        )))
+    settings_section(locale.text(UiText::Record), colors)
         .child(
-            settings_row("Video folder", colors).child(
+            settings_row(locale.text(UiText::RecordingSettingsDisplay), colors).child(
+                settings_button(
+                    "settings-recording-display",
+                    if state.display_discovery_in_flight {
+                        locale.text(UiText::RecordingDiscoveringAction)
+                    } else {
+                        display
+                    },
+                    colors,
+                    settings_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_display(cx))
+                    },
+                ),
+            ),
+        )
+        .child(
+            settings_row(locale.text(UiText::RecordingSettingsAudio), colors).child(
+                settings_button(
+                    "settings-recording-audio",
+                    if state.audio_discovery_in_flight {
+                        locale.text(UiText::RecordingDiscoveringAction)
+                    } else {
+                        audio
+                    },
+                    colors,
+                    settings_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_audio(cx))
+                    },
+                ),
+            ),
+        )
+        .child(
+            settings_row(locale.text(UiText::RecordingSettingsVideoFolder), colors).child(
                 div()
                     .flex_1()
                     .min_w(px(160.0))
@@ -999,7 +1009,7 @@ fn recording_settings(
                             .gap_2()
                             .child(settings_button(
                                 "settings-recording-folder-choose",
-                                "Choose folder",
+                                locale.text(UiText::RecordingChooseFolderAction),
                                 colors,
                                 settings_idle,
                                 {
@@ -1014,9 +1024,9 @@ fn recording_settings(
                             .child(settings_button(
                                 "settings-recording-folder-check",
                                 if directory_check_in_flight {
-                                    "Checking..."
+                                    locale.text(UiText::RecordingCheckingFolderAction)
                                 } else {
-                                    "Check folder"
+                                    locale.text(UiText::RecordingCheckFolderAction)
                                 },
                                 colors,
                                 settings_idle,
@@ -1031,7 +1041,7 @@ fn recording_settings(
                             ))
                             .child(settings_button(
                                 "settings-recording-folder-open",
-                                "Open folder",
+                                locale.text(UiText::RecordingOpenFolderAction),
                                 colors,
                                 settings_idle,
                                 {
@@ -1043,7 +1053,7 @@ fn recording_settings(
                             ))
                             .child(settings_button(
                                 "settings-recording-folder-default",
-                                "Use default",
+                                locale.text(UiText::RecordingUseDefaultFolderAction),
                                 colors,
                                 settings_idle && directory.custom,
                                 {
@@ -1066,7 +1076,7 @@ fn recording_settings(
                 .gap_2()
                 .child(settings_button(
                     "settings-check-recording-support",
-                    recording_support_check_label(state.support_check_in_flight),
+                    recording_support_check_label(locale, state.support_check_in_flight),
                     colors,
                     support_check_available,
                     {
@@ -1084,7 +1094,7 @@ fn recording_settings(
                 ))
                 .child(settings_button(
                     "settings-record-display",
-                    recording_toggle_label(state, directory_check_in_flight),
+                    recording_toggle_label(locale, state, directory_check_in_flight),
                     colors,
                     recording_toggle_enabled,
                     {
@@ -1095,7 +1105,11 @@ fn recording_settings(
                 .when(state.active && !state.starting && !state.stopping, |row| {
                     row.child(settings_button(
                         "settings-pause-recording",
-                        if state.paused { "Resume" } else { "Pause" },
+                        if state.paused {
+                            locale.text(UiText::RecordingResumeAction)
+                        } else {
+                            locale.text(UiText::RecordingPauseAction)
+                        },
                         colors,
                         true,
                         move |_, _, cx| app.update(cx, |this, cx| this.toggle_recording_pause(cx)),
@@ -1104,13 +1118,14 @@ fn recording_settings(
         )
         .when(recording_status_visible(state), |section| {
             section.child(
-                settings_row("Status", colors).child(
+                settings_row(locale.text(UiText::RecordingStatusLabel), colors).child(
                     div()
                         .flex_1()
                         .min_w(px(160.0))
                         .text_sm()
                         .text_color(colors.text)
                         .child(recording_progress_label(
+                            locale,
                             state.active,
                             state.starting,
                             state.stopping,
@@ -1144,36 +1159,38 @@ fn recording_toggle_enabled(state: RecordingViewState, directory_check_in_flight
 }
 
 /// Switches FFmpeg support checking to an explicit cancellation action while probing.
-fn recording_support_check_label(in_flight: bool) -> &'static str {
+fn recording_support_check_label(locale: Locale, in_flight: bool) -> &'static str {
     if in_flight {
-        "Cancel check"
+        locale.text(UiText::RecordingCancelCheckAction)
     } else {
-        "Check support"
+        locale.text(UiText::RecordingCheckSupportAction)
     }
 }
 
 /// Gives the record command a truthful label while source discovery temporarily owns the action.
 fn recording_toggle_label(
+    locale: Locale,
     state: RecordingViewState,
     directory_check_in_flight: bool,
 ) -> &'static str {
     if state.starting {
-        "Cancel start"
+        locale.text(UiText::RecordingCancelStartAction)
     } else if state.stopping {
-        "Stopping..."
+        locale.text(UiText::RecordingStoppingAction)
     } else if recording_source_discovery_busy(state) {
-        "Discovering..."
+        locale.text(UiText::RecordingDiscoveringAction)
     } else if directory_check_in_flight {
-        "Checking folder..."
+        locale.text(UiText::RecordingCheckingFolderAction)
     } else if state.active {
-        "Stop recording"
+        locale.text(UiText::RecordingStopAction)
     } else {
-        "Record display"
+        locale.text(UiText::RecordingRecordDisplayAction)
     }
 }
 
 /// Summarizes recording lifecycle and FFmpeg progress in the settings page while a capture runs.
 fn recording_progress_label(
+    locale: Locale,
     recording_active: bool,
     recording_starting: bool,
     recording_stopping: bool,
@@ -1181,22 +1198,29 @@ fn recording_progress_label(
     progress: crate::recording::RecordingProgress,
 ) -> String {
     if recording_starting {
-        return "Preparing recording...".to_owned();
+        return locale.text(UiText::RecordingProgressPreparing).to_owned();
     }
     if recording_stopping {
-        return "Stopping recording...".to_owned();
+        return locale.text(UiText::RecordingProgressStopping).to_owned();
     }
     if !recording_active {
-        return "Recording is idle".to_owned();
+        return locale.text(UiText::RecordingProgressIdle).to_owned();
     }
     let seconds = progress.output_time_us.unwrap_or_default() / 1_000_000;
     let frames = progress.frame.unwrap_or_default();
     let state = if recording_paused {
-        "Paused"
+        locale.text(UiText::RecordingStatePaused)
     } else {
-        "Recording"
+        locale.text(UiText::RecordingStateActive)
     };
-    format!("{state} - {seconds}s, {frames} frames")
+    locale.format_template(
+        UiText::RecordingProgressSummary,
+        &[
+            ("state", state),
+            ("seconds", &seconds.to_string()),
+            ("frames", &frames.to_string()),
+        ],
+    )
 }
 
 fn system_settings(
@@ -2886,11 +2910,19 @@ mod tests {
     #[test]
     fn recording_progress_label_explains_start_pause_and_live_progress() {
         assert_eq!(
-            recording_progress_label(false, true, false, false, RecordingProgress::default()),
+            recording_progress_label(
+                Locale::English,
+                false,
+                true,
+                false,
+                false,
+                RecordingProgress::default(),
+            ),
             "Preparing recording..."
         );
         assert_eq!(
             recording_progress_label(
+                Locale::English,
                 true,
                 false,
                 false,
@@ -2905,6 +2937,7 @@ mod tests {
         );
         assert_eq!(
             recording_progress_label(
+                Locale::English,
                 true,
                 false,
                 false,
@@ -2918,7 +2951,14 @@ mod tests {
             "Paused - 2s, 48 frames"
         );
         assert_eq!(
-            recording_progress_label(false, false, true, false, RecordingProgress::default()),
+            recording_progress_label(
+                Locale::English,
+                false,
+                false,
+                true,
+                false,
+                RecordingProgress::default(),
+            ),
             "Stopping recording..."
         );
     }
@@ -2960,7 +3000,10 @@ mod tests {
             progress: RecordingProgress::default(),
         };
         assert!(recording_source_discovery_busy(state));
-        assert_eq!(recording_toggle_label(state, false), "Discovering...");
+        assert_eq!(
+            recording_toggle_label(Locale::English, state, false),
+            "Discovering..."
+        );
     }
 
     #[test]
@@ -2980,7 +3023,10 @@ mod tests {
             ..idle
         };
 
-        assert_eq!(recording_toggle_label(starting, false), "Cancel start");
+        assert_eq!(
+            recording_toggle_label(Locale::English, starting, false),
+            "Cancel start"
+        );
         assert!(recording_toggle_enabled(starting, false));
         assert!(!recording_toggle_enabled(
             RecordingViewState {
@@ -2989,14 +3035,23 @@ mod tests {
             },
             false,
         ));
-        assert_eq!(recording_toggle_label(idle, true), "Checking folder...");
+        assert_eq!(
+            recording_toggle_label(Locale::English, idle, true),
+            "Checking folder..."
+        );
         assert!(!recording_toggle_enabled(idle, true));
     }
 
     #[test]
     fn recording_support_check_label_explains_the_cancel_action() {
-        assert_eq!(recording_support_check_label(false), "Check support");
-        assert_eq!(recording_support_check_label(true), "Cancel check");
+        assert_eq!(
+            recording_support_check_label(Locale::English, false),
+            "Check support"
+        );
+        assert_eq!(
+            recording_support_check_label(Locale::English, true),
+            "Cancel check"
+        );
     }
 
     #[test]

@@ -274,6 +274,100 @@ pub enum UiText {
     SettingsLocalOcr,
     SettingsTranslation,
     RecordingSupportCheckInProgress,
+    RecordingStoppingAlready,
+    RecordingStopFailed,
+    RecordingWaitDirectoryCheck,
+    RecordingFinishScreenshotFirst,
+    RecordingPreparingDisplay,
+    RecordingStartupCancelled,
+    RecordingSupportCheckBusy,
+    RecordingStopBeforeSupportCheck,
+    RecordingSupportCheckCancelled,
+    RecordingDirectoryControlled,
+    RecordingWaitBeforeDirectoryChange,
+    RecordingChooseDirectory,
+    RecordingChooseDirectoryPrompt,
+    RecordingDirectorySaved,
+    RecordingDirectorySaveFailed,
+    RecordingDirectoryUseFailed,
+    RecordingDirectoryUnchanged,
+    RecordingDirectoryDefaultAlready,
+    RecordingDirectoryReset,
+    RecordingDirectoryResetPath,
+    RecordingDirectoryResetFailed,
+    RecordingWaitBeforeDirectoryCheck,
+    RecordingDirectoryCheckInProgress,
+    RecordingDirectoryReady,
+    RecordingDirectoryCheckFailed,
+    RecordingDirectoryOpened,
+    RecordingDirectoryOpenFailed,
+    RecordingSelectRegion,
+    RecordingSupportCheckBeforeStart,
+    RecordingPreparingRegion,
+    RecordingSelectWindow,
+    RecordingResolvingWindow,
+    RecordingDisplayDiscoveryInProgress,
+    RecordingDisplayChanged,
+    RecordingDisplayDiscoveryFailed,
+    RecordingAudioDiscoveryInProgress,
+    RecordingAudioChanged,
+    RecordingAudioDiscoveryFailed,
+    RecordingPausing,
+    RecordingResuming,
+    RecordingPauseFailed,
+    RecordingStarting,
+    RecordingActive,
+    RecordingPaused,
+    RecordingProgress,
+    RecordingStopping,
+    RecordingSaved,
+    RecordingSavedNotification,
+    RecordingFailed,
+    RecordingTargetScreen,
+    RecordingTargetDisplay,
+    RecordingTargetWindow,
+    RecordingTargetRegion,
+    RecordingAudioAutomatic,
+    RecordingAudioDisabled,
+    RecordingAudioMicrophone,
+    RecordingAudioSystem,
+    RecordingDisplayPrimary,
+    RecordingDisplayLabel,
+    RecordingStartFailureMissingFfmpeg,
+    RecordingStartFailureUnsupported,
+    RecordingStartFailureGeneric,
+    RecordingStartConflictStopping,
+    RecordingStartConflictActive,
+    RecordingStartConflictStarting,
+    RecordingDiscoveryConflict,
+    RecordingSupportCheckConflict,
+    RecordingSupportReady,
+    RecordingSupportDesktopUnavailable,
+    RecordingSettingsDisplay,
+    RecordingSettingsAudio,
+    RecordingSettingsVideoFolder,
+    RecordingFolderUnavailable,
+    RecordingChooseFolderAction,
+    RecordingCheckFolderAction,
+    RecordingOpenFolderAction,
+    RecordingUseDefaultFolderAction,
+    RecordingCheckSupportAction,
+    RecordingCancelCheckAction,
+    RecordingCancelStartAction,
+    RecordingStoppingAction,
+    RecordingDiscoveringAction,
+    RecordingCheckingFolderAction,
+    RecordingStopAction,
+    RecordingRecordDisplayAction,
+    RecordingPauseAction,
+    RecordingResumeAction,
+    RecordingStatusLabel,
+    RecordingProgressPreparing,
+    RecordingProgressStopping,
+    RecordingProgressIdle,
+    RecordingStateActive,
+    RecordingStatePaused,
+    RecordingProgressSummary,
     RecognitionResultCopied,
     RecognitionResultCopyFailed,
     CapturePageDescription,
@@ -578,6 +672,132 @@ impl UiText {
             Self::SettingsLocalOcr => "Local OCR",
             Self::SettingsTranslation => "Translation",
             Self::RecordingSupportCheckInProgress => "Checking FFmpeg recording support...",
+            Self::RecordingStoppingAlready => "Screen recording is already stopping...",
+            Self::RecordingStopFailed => "Could not stop screen recording: {error}",
+            Self::RecordingWaitDirectoryCheck => "Wait for the recording folder check to finish",
+            Self::RecordingFinishScreenshotFirst => {
+                "Finish or cancel the current screenshot before recording"
+            }
+            Self::RecordingPreparingDisplay => {
+                "Discovering FFmpeg and preparing display recording..."
+            }
+            Self::RecordingStartupCancelled => "Screen recording startup cancelled",
+            Self::RecordingSupportCheckBusy => {
+                "FFmpeg recording support check is already in progress"
+            }
+            Self::RecordingStopBeforeSupportCheck => {
+                "Stop the current recording before checking support"
+            }
+            Self::RecordingSupportCheckCancelled => "FFmpeg recording support check cancelled",
+            Self::RecordingDirectoryControlled => "Recording folder is controlled by {env}: {path}",
+            Self::RecordingWaitBeforeDirectoryChange => {
+                "Wait for the current recording action before changing its folder"
+            }
+            Self::RecordingChooseDirectory => "Choose a folder for MP4 recordings...",
+            Self::RecordingChooseDirectoryPrompt => "Choose recording folder",
+            Self::RecordingDirectorySaved => "MP4 recordings now use {path}",
+            Self::RecordingDirectorySaveFailed => {
+                "Could not save recording folder preference: {error}"
+            }
+            Self::RecordingDirectoryUseFailed => "Could not use recording folder: {error}",
+            Self::RecordingDirectoryUnchanged => "Recording folder unchanged",
+            Self::RecordingDirectoryDefaultAlready => {
+                "MP4 recordings already use the default folder"
+            }
+            Self::RecordingDirectoryReset => "Recording folder returned to the default location",
+            Self::RecordingDirectoryResetPath => "Recording folder returned to {path}",
+            Self::RecordingDirectoryResetFailed => {
+                "Could not reset recording folder preference: {error}"
+            }
+            Self::RecordingWaitBeforeDirectoryCheck => {
+                "Wait for the current recording action before checking its folder"
+            }
+            Self::RecordingDirectoryCheckInProgress => "Checking recording folder...",
+            Self::RecordingDirectoryReady => "Recording folder is ready: {path}",
+            Self::RecordingDirectoryCheckFailed => "Recording folder check failed: {error}",
+            Self::RecordingDirectoryOpened => "Opened recording folder {path}",
+            Self::RecordingDirectoryOpenFailed => "Could not open recording folder: {error}",
+            Self::RecordingSelectRegion => "Select a region before starting a recording",
+            Self::RecordingSupportCheckBeforeStart => {
+                "Cancel or wait for the FFmpeg support check before recording"
+            }
+            Self::RecordingPreparingRegion => "Preparing region recording...",
+            Self::RecordingSelectWindow => "Select a window before starting a recording",
+            Self::RecordingResolvingWindow => "Looking up selected window bounds for recording...",
+            Self::RecordingDisplayDiscoveryInProgress => "Discovering displays for recording...",
+            Self::RecordingDisplayChanged => "Recording display: {display}",
+            Self::RecordingDisplayDiscoveryFailed => "Could not discover displays: {error}",
+            Self::RecordingAudioDiscoveryInProgress => "Discovering recording audio sources...",
+            Self::RecordingAudioChanged => "Recording audio: {audio}",
+            Self::RecordingAudioDiscoveryFailed => "Could not discover recording audio: {error}",
+            Self::RecordingPausing => "Pausing screen recording...",
+            Self::RecordingResuming => "Resuming screen recording...",
+            Self::RecordingPauseFailed => "Could not change recording pause state: {error}",
+            Self::RecordingStarting => "Starting {target} recording...",
+            Self::RecordingActive => "Recording {target}...",
+            Self::RecordingPaused => "{target} recording paused",
+            Self::RecordingProgress => "Recording {target}: {seconds}s, {frames} frames",
+            Self::RecordingStopping => "Stopping {target} recording...",
+            Self::RecordingSaved => "Screen recording saved to {path}",
+            Self::RecordingSavedNotification => "Screen recording saved",
+            Self::RecordingFailed => "Screen recording failed: {error}",
+            Self::RecordingTargetScreen => "screen",
+            Self::RecordingTargetDisplay => "display",
+            Self::RecordingTargetWindow => "window",
+            Self::RecordingTargetRegion => "selected area",
+            Self::RecordingAudioAutomatic => "auto",
+            Self::RecordingAudioDisabled => "off",
+            Self::RecordingAudioMicrophone => "mic: {device}",
+            Self::RecordingAudioSystem => "system audio",
+            Self::RecordingDisplayPrimary => "primary",
+            Self::RecordingDisplayLabel => "display {label}",
+            Self::RecordingStartFailureMissingFfmpeg => {
+                "Recording is unavailable because FFmpeg was not found. Install FFmpeg or set FLASH_SHOT_FFMPEG: {error}"
+            }
+            Self::RecordingStartFailureUnsupported => {
+                "This FFmpeg build cannot record the selected source. Use a build with ddagrab or gdigrab: {error}"
+            }
+            Self::RecordingStartFailureGeneric => "Could not start screen recording: {error}",
+            Self::RecordingStartConflictStopping => "Screen recording is already stopping...",
+            Self::RecordingStartConflictActive => {
+                "Stop the current recording before starting another"
+            }
+            Self::RecordingStartConflictStarting => {
+                "Screen recording startup is already in progress..."
+            }
+            Self::RecordingDiscoveryConflict => "Wait for recording source discovery to finish...",
+            Self::RecordingSupportCheckConflict => {
+                "Cancel or wait for the FFmpeg support check before recording"
+            }
+            Self::RecordingSupportReady => "FFmpeg {version} ready ({backend})",
+            Self::RecordingSupportDesktopUnavailable => {
+                "FFmpeg {version}: desktop capture unavailable"
+            }
+            Self::RecordingSettingsDisplay => "Display",
+            Self::RecordingSettingsAudio => "Audio",
+            Self::RecordingSettingsVideoFolder => "Video folder",
+            Self::RecordingFolderUnavailable => "Recording folder unavailable",
+            Self::RecordingChooseFolderAction => "Choose folder",
+            Self::RecordingCheckFolderAction => "Check folder",
+            Self::RecordingOpenFolderAction => "Open folder",
+            Self::RecordingUseDefaultFolderAction => "Use default",
+            Self::RecordingCheckSupportAction => "Check support",
+            Self::RecordingCancelCheckAction => "Cancel check",
+            Self::RecordingCancelStartAction => "Cancel start",
+            Self::RecordingStoppingAction => "Stopping...",
+            Self::RecordingDiscoveringAction => "Discovering...",
+            Self::RecordingCheckingFolderAction => "Checking folder...",
+            Self::RecordingStopAction => "Stop recording",
+            Self::RecordingRecordDisplayAction => "Record display",
+            Self::RecordingPauseAction => "Pause",
+            Self::RecordingResumeAction => "Resume",
+            Self::RecordingStatusLabel => "Status",
+            Self::RecordingProgressPreparing => "Preparing recording...",
+            Self::RecordingProgressStopping => "Stopping recording...",
+            Self::RecordingProgressIdle => "Recording is idle",
+            Self::RecordingStateActive => "Recording",
+            Self::RecordingStatePaused => "Paused",
+            Self::RecordingProgressSummary => "{state} - {seconds}s, {frames} frames",
             Self::RecognitionResultCopied => "{title} copied to clipboard",
             Self::RecognitionResultCopyFailed => "Could not copy {title}: {error}",
             Self::CapturePageDescription => "Start a screenshot or adjust capture preferences.",
@@ -896,6 +1116,106 @@ impl UiText {
             Self::SettingsLocalOcr => "本地 OCR",
             Self::SettingsTranslation => "翻译",
             Self::RecordingSupportCheckInProgress => "正在检查 FFmpeg 录屏支持...",
+            Self::RecordingStoppingAlready => "屏幕录制正在停止...",
+            Self::RecordingStopFailed => "无法停止屏幕录制：{error}",
+            Self::RecordingWaitDirectoryCheck => "请等待录屏目录检查完成",
+            Self::RecordingFinishScreenshotFirst => "请先完成或取消当前截图，再开始录屏",
+            Self::RecordingPreparingDisplay => "正在检查 FFmpeg 并准备显示器录屏...",
+            Self::RecordingStartupCancelled => "已取消屏幕录制启动",
+            Self::RecordingSupportCheckBusy => "FFmpeg 录屏支持检查正在进行中",
+            Self::RecordingStopBeforeSupportCheck => "请先停止当前录屏，再检查支持情况",
+            Self::RecordingSupportCheckCancelled => "已取消 FFmpeg 录屏支持检查",
+            Self::RecordingDirectoryControlled => "录屏目录由 {env} 控制：{path}",
+            Self::RecordingWaitBeforeDirectoryChange => "请等待当前录屏操作完成，再修改目录",
+            Self::RecordingChooseDirectory => "正在选择 MP4 录屏目录...",
+            Self::RecordingChooseDirectoryPrompt => "选择录屏目录",
+            Self::RecordingDirectorySaved => "MP4 录屏将使用 {path}",
+            Self::RecordingDirectorySaveFailed => "无法保存录屏目录偏好：{error}",
+            Self::RecordingDirectoryUseFailed => "无法使用录屏目录：{error}",
+            Self::RecordingDirectoryUnchanged => "录屏目录未更改",
+            Self::RecordingDirectoryDefaultAlready => "MP4 录屏已经使用默认目录",
+            Self::RecordingDirectoryReset => "录屏目录已恢复为默认位置",
+            Self::RecordingDirectoryResetPath => "录屏目录已恢复为 {path}",
+            Self::RecordingDirectoryResetFailed => "无法重置录屏目录偏好：{error}",
+            Self::RecordingWaitBeforeDirectoryCheck => "请等待当前录屏操作完成，再检查目录",
+            Self::RecordingDirectoryCheckInProgress => "正在检查录屏目录...",
+            Self::RecordingDirectoryReady => "录屏目录已就绪：{path}",
+            Self::RecordingDirectoryCheckFailed => "录屏目录检查失败：{error}",
+            Self::RecordingDirectoryOpened => "已打开录屏目录 {path}",
+            Self::RecordingDirectoryOpenFailed => "无法打开录屏目录：{error}",
+            Self::RecordingSelectRegion => "请先选择区域，再开始录屏",
+            Self::RecordingSupportCheckBeforeStart => {
+                "请取消或等待 FFmpeg 支持检查完成，再开始录屏"
+            }
+            Self::RecordingPreparingRegion => "正在准备区域录屏...",
+            Self::RecordingSelectWindow => "请先选择窗口，再开始录屏",
+            Self::RecordingResolvingWindow => "正在查找所选窗口的边界以录屏...",
+            Self::RecordingDisplayDiscoveryInProgress => "正在发现可录制的显示器...",
+            Self::RecordingDisplayChanged => "录屏显示器：{display}",
+            Self::RecordingDisplayDiscoveryFailed => "无法发现显示器：{error}",
+            Self::RecordingAudioDiscoveryInProgress => "正在发现录屏音频源...",
+            Self::RecordingAudioChanged => "录屏音频：{audio}",
+            Self::RecordingAudioDiscoveryFailed => "无法发现录屏音频：{error}",
+            Self::RecordingPausing => "正在暂停屏幕录制...",
+            Self::RecordingResuming => "正在继续屏幕录制...",
+            Self::RecordingPauseFailed => "无法更改录屏暂停状态：{error}",
+            Self::RecordingStarting => "正在启动{target}录屏...",
+            Self::RecordingActive => "正在录制{target}...",
+            Self::RecordingPaused => "{target}录屏已暂停",
+            Self::RecordingProgress => "正在录制{target}：{seconds} 秒，{frames} 帧",
+            Self::RecordingStopping => "正在停止{target}录屏...",
+            Self::RecordingSaved => "屏幕录制已保存到 {path}",
+            Self::RecordingSavedNotification => "屏幕录制已保存",
+            Self::RecordingFailed => "屏幕录制失败：{error}",
+            Self::RecordingTargetScreen => "屏幕",
+            Self::RecordingTargetDisplay => "显示器",
+            Self::RecordingTargetWindow => "窗口",
+            Self::RecordingTargetRegion => "所选区域",
+            Self::RecordingAudioAutomatic => "自动",
+            Self::RecordingAudioDisabled => "关闭",
+            Self::RecordingAudioMicrophone => "麦克风：{device}",
+            Self::RecordingAudioSystem => "系统声音",
+            Self::RecordingDisplayPrimary => "主显示器",
+            Self::RecordingDisplayLabel => "显示器 {label}",
+            Self::RecordingStartFailureMissingFfmpeg => {
+                "录屏不可用，因为未找到 FFmpeg。请安装 FFmpeg，或设置 FLASH_SHOT_FFMPEG：{error}"
+            }
+            Self::RecordingStartFailureUnsupported => {
+                "当前 FFmpeg 版本无法录制所选来源。请使用支持 ddagrab 或 gdigrab 的版本：{error}"
+            }
+            Self::RecordingStartFailureGeneric => "无法启动屏幕录制：{error}",
+            Self::RecordingStartConflictStopping => "屏幕录制正在停止...",
+            Self::RecordingStartConflictActive => "请先停止当前录屏，再开始新的录屏",
+            Self::RecordingStartConflictStarting => "屏幕录制正在启动...",
+            Self::RecordingDiscoveryConflict => "请等待录屏来源发现完成...",
+            Self::RecordingSupportCheckConflict => "请取消或等待 FFmpeg 支持检查完成，再开始录屏",
+            Self::RecordingSupportReady => "FFmpeg {version} 已就绪（{backend}）",
+            Self::RecordingSupportDesktopUnavailable => "FFmpeg {version}：桌面捕获不可用",
+            Self::RecordingSettingsDisplay => "显示器",
+            Self::RecordingSettingsAudio => "音频",
+            Self::RecordingSettingsVideoFolder => "视频目录",
+            Self::RecordingFolderUnavailable => "录屏目录不可用",
+            Self::RecordingChooseFolderAction => "选择目录",
+            Self::RecordingCheckFolderAction => "检查目录",
+            Self::RecordingOpenFolderAction => "打开目录",
+            Self::RecordingUseDefaultFolderAction => "使用默认目录",
+            Self::RecordingCheckSupportAction => "检查支持",
+            Self::RecordingCancelCheckAction => "取消检查",
+            Self::RecordingCancelStartAction => "取消启动",
+            Self::RecordingStoppingAction => "正在停止...",
+            Self::RecordingDiscoveringAction => "正在发现...",
+            Self::RecordingCheckingFolderAction => "正在检查目录...",
+            Self::RecordingStopAction => "停止录屏",
+            Self::RecordingRecordDisplayAction => "录制显示器",
+            Self::RecordingPauseAction => "暂停",
+            Self::RecordingResumeAction => "继续",
+            Self::RecordingStatusLabel => "状态",
+            Self::RecordingProgressPreparing => "正在准备录屏...",
+            Self::RecordingProgressStopping => "正在停止录屏...",
+            Self::RecordingProgressIdle => "录屏未运行",
+            Self::RecordingStateActive => "录制中",
+            Self::RecordingStatePaused => "已暂停",
+            Self::RecordingProgressSummary => "{state} - {seconds} 秒，{frames} 帧",
             Self::RecognitionResultCopied => "{title}已复制到剪贴板",
             Self::RecognitionResultCopyFailed => "无法复制{title}：{error}",
             Self::CapturePageDescription => "开始截图或调整截图偏好。",
@@ -1095,6 +1415,24 @@ mod tests {
     fn catalog_contains_distinct_shell_translations() {
         assert_eq!(Locale::English.text(UiText::Capture), "Capture");
         assert_eq!(Locale::SimplifiedChinese.text(UiText::Capture), "截图");
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::RecordingSettingsDisplay),
+            "显示器"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::RecordingProgress,
+                &[("target", "所选区域"), ("seconds", "3"), ("frames", "117")],
+            ),
+            "正在录制所选区域：3 秒，117 帧"
+        );
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::RecordingStartFailureMissingFfmpeg,
+                &[("error", "ffmpeg.exe")],
+            ),
+            "Recording is unavailable because FFmpeg was not found. Install FFmpeg or set FLASH_SHOT_FFMPEG: ffmpeg.exe"
+        );
         assert_eq!(
             Locale::SimplifiedChinese.text(UiText::CapturePageDescription),
             "开始截图或调整截图偏好。"

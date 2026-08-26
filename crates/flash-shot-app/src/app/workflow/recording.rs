@@ -1,13 +1,15 @@
 //! Screen-recording workflow orchestration.
 
 use super::*;
+use crate::i18n::{Locale, UiText};
 
 impl FlashShotApp {
     /// Owns the display recording command lifecycle and keeps repeated stop/pause input harmless
     /// while FFmpeg finishes its graceful container shutdown.
     pub(in crate::app) fn toggle_display_recording(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         if self.recording_stopping {
-            self.status = "Screen recording is already stopping...".to_owned();
+            self.status = locale.text(UiText::RecordingStoppingAlready).to_owned();
             cx.notify();
             return;
         }
@@ -15,13 +17,20 @@ impl FlashShotApp {
             match control.request_stop() {
                 Ok(()) => {
                     self.recording_stopping = true;
-                    self.status =
-                        format_recording_stopping(recording_target_label(control.target()));
+                    self.status = format_recording_stopping(
+                        locale,
+                        recording_target_label(locale, control.target()),
+                    );
                     self.set_tray_recording_state(
                         crate::platform::tray::TrayRecordingState::Stopping,
                     );
                 }
-                Err(error) => self.status = format!("Could not stop screen recording: {error}"),
+                Err(error) => {
+                    self.status = locale.format_template(
+                        UiText::RecordingStopFailed,
+                        &[("error", &error.to_string())],
+                    )
+                }
             }
             cx.notify();
             return;
@@ -31,6 +40,7 @@ impl FlashShotApp {
             return;
         }
         if let Some(status) = recording_discovery_conflict_status(
+            locale,
             self.recording_display_discovery_in_flight,
             self.recording_audio_discovery_in_flight,
         ) {
@@ -39,26 +49,28 @@ impl FlashShotApp {
             return;
         }
         if let Some(status) =
-            recording_support_check_conflict_status(self.recording_support_check_in_flight)
+            recording_support_check_conflict_status(locale, self.recording_support_check_in_flight)
         {
             self.status = status.to_owned();
             cx.notify();
             return;
         }
         if self.recording_directory_check_in_flight {
-            self.status = "Wait for the recording folder check to finish".to_owned();
+            self.status = locale.text(UiText::RecordingWaitDirectoryCheck).to_owned();
             cx.notify();
             return;
         }
         if self.session.state() != CaptureSessionState::Idle {
-            self.status = "Finish or cancel the current screenshot before recording".to_owned();
+            self.status = locale
+                .text(UiText::RecordingFinishScreenshotFirst)
+                .to_owned();
             cx.notify();
             return;
         }
         self.recording_start_in_flight = true;
         self.set_tray_recording_target(crate::platform::tray::TrayRecordingTarget::Display);
         self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
-        self.status = "Discovering FFmpeg and preparing display recording...".to_owned();
+        self.status = locale.text(UiText::RecordingPreparingDisplay).to_owned();
         self.start_recording_request(
             None,
             self.recording_audio.clone(),
@@ -84,14 +96,19 @@ impl FlashShotApp {
         self.recording_paused = false;
         self.recording_progress = Default::default();
         self.reset_tray_recording_to_idle();
-        self.status = "Screen recording startup cancelled".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::RecordingStartupCancelled)
+            .to_owned();
         cx.notify();
     }
 
     /// Probes FFmpeg without opening a recording process so users can fix local prerequisites first.
     pub(in crate::app) fn check_recording_support(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         if self.recording_support_check_in_flight {
-            self.status = "FFmpeg recording support check is already in progress".to_owned();
+            self.status = locale.text(UiText::RecordingSupportCheckBusy).to_owned();
             cx.notify();
             return;
         }
@@ -99,16 +116,19 @@ impl FlashShotApp {
             || self.recording_start_in_flight
             || self.recording_stopping
         {
-            self.status = "Stop the current recording before checking support".to_owned();
+            self.status = locale
+                .text(UiText::RecordingStopBeforeSupportCheck)
+                .to_owned();
             cx.notify();
             return;
         }
         if self.recording_directory_check_in_flight {
-            self.status = "Wait for the recording folder check to finish".to_owned();
+            self.status = locale.text(UiText::RecordingWaitDirectoryCheck).to_owned();
             cx.notify();
             return;
         }
         if let Some(status) = recording_discovery_conflict_status(
+            locale,
             self.recording_display_discovery_in_flight,
             self.recording_audio_discovery_in_flight,
         ) {
@@ -117,7 +137,7 @@ impl FlashShotApp {
             return;
         }
         if let Some(status) =
-            recording_support_check_conflict_status(self.recording_support_check_in_flight)
+            recording_support_check_conflict_status(locale, self.recording_support_check_in_flight)
         {
             self.status = status.to_owned();
             cx.notify();
@@ -127,7 +147,9 @@ impl FlashShotApp {
             self.recording_support_check_generation.wrapping_add(1);
         let generation = self.recording_support_check_generation;
         self.recording_support_check_in_flight = true;
-        self.status = "Checking FFmpeg recording support...".to_owned();
+        self.status = locale
+            .text(UiText::RecordingSupportCheckInProgress)
+            .to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -142,7 +164,8 @@ impl FlashShotApp {
                             return;
                         }
                         this.recording_support_check_in_flight = false;
-                        this.status = recording_support_status(result.as_ref());
+                        this.status =
+                            recording_support_status(this.settings.locale, result.as_ref());
                         cx.notify();
                     });
                 }
@@ -160,7 +183,11 @@ impl FlashShotApp {
         self.recording_support_check_generation =
             self.recording_support_check_generation.wrapping_add(1);
         self.recording_support_check_in_flight = false;
-        self.status = "FFmpeg recording support check cancelled".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::RecordingSupportCheckCancelled)
+            .to_owned();
         cx.notify();
     }
 
@@ -169,10 +196,14 @@ impl FlashShotApp {
     /// The choice is committed only after the private write probe and settings save both succeed,
     /// so cancelling the picker or selecting a read-only folder cannot break the next recording.
     pub(in crate::app) fn choose_recording_directory(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         if let Some(directory) = recording_directory_override() {
-            self.status = format!(
-                "Recording folder is controlled by {RECORDING_DIRECTORY_ENV}: {}",
-                directory.display()
+            self.status = locale.format_template(
+                UiText::RecordingDirectoryControlled,
+                &[
+                    ("env", RECORDING_DIRECTORY_ENV),
+                    ("path", &directory.display().to_string()),
+                ],
             );
             cx.notify();
             return;
@@ -185,19 +216,20 @@ impl FlashShotApp {
             || self.recording_audio_discovery_in_flight
             || self.recording_directory_check_in_flight
         {
-            self.status =
-                "Wait for the current recording action before changing its folder".to_owned();
+            self.status = locale
+                .text(UiText::RecordingWaitBeforeDirectoryChange)
+                .to_owned();
             cx.notify();
             return;
         }
         self.recording_directory_check_in_flight = true;
-        self.status = "Choose a folder for MP4 recordings...".to_owned();
+        self.status = locale.text(UiText::RecordingChooseDirectory).to_owned();
         cx.notify();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Choose recording folder".into()),
+            prompt: Some(locale.text(UiText::RecordingChooseDirectoryPrompt).into()),
         });
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -224,24 +256,32 @@ impl FlashShotApp {
                                 this.settings.recording_directory = Some(directory.clone());
                                 match this.settings.save(&this.settings_path) {
                                     Ok(()) => {
-                                        this.status = format!(
-                                            "MP4 recordings now use {}",
-                                            directory.display()
+                                        this.status = this.settings.locale.format_template(
+                                            UiText::RecordingDirectorySaved,
+                                            &[("path", &directory.display().to_string())],
                                         );
                                     }
                                     Err(error) => {
                                         this.settings.recording_directory = previous;
-                                        this.status = format!(
-                                            "Could not save recording folder preference: {error}"
+                                        this.status = this.settings.locale.format_template(
+                                            UiText::RecordingDirectorySaveFailed,
+                                            &[("error", &error.to_string())],
                                         );
                                     }
                                 }
                             }
                             Some(Err(error)) => {
-                                this.status = format!("Could not use recording folder: {error}");
+                                this.status = this.settings.locale.format_template(
+                                    UiText::RecordingDirectoryUseFailed,
+                                    &[("error", &error.to_string())],
+                                );
                             }
                             None => {
-                                this.status = "Recording folder unchanged".to_owned();
+                                this.status = this
+                                    .settings
+                                    .locale
+                                    .text(UiText::RecordingDirectoryUnchanged)
+                                    .to_owned();
                             }
                         }
                         cx.notify();
@@ -254,10 +294,14 @@ impl FlashShotApp {
 
     /// Clears the persisted MP4 folder so the next recording returns to the Windows default.
     pub(in crate::app) fn use_default_recording_directory(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         if let Some(directory) = recording_directory_override() {
-            self.status = format!(
-                "Recording folder is controlled by {RECORDING_DIRECTORY_ENV}: {}",
-                directory.display()
+            self.status = locale.format_template(
+                UiText::RecordingDirectoryControlled,
+                &[
+                    ("env", RECORDING_DIRECTORY_ENV),
+                    ("path", &directory.display().to_string()),
+                ],
             );
             cx.notify();
             return;
@@ -270,24 +314,35 @@ impl FlashShotApp {
             || self.recording_audio_discovery_in_flight
             || self.recording_directory_check_in_flight
         {
-            self.status =
-                "Wait for the current recording action before changing its folder".to_owned();
+            self.status = locale
+                .text(UiText::RecordingWaitBeforeDirectoryChange)
+                .to_owned();
             cx.notify();
             return;
         }
         let Some(previous) = self.settings.recording_directory.take() else {
-            self.status = "MP4 recordings already use the default folder".to_owned();
+            self.status = locale
+                .text(UiText::RecordingDirectoryDefaultAlready)
+                .to_owned();
             cx.notify();
             return;
         };
         self.status = match self.settings.save(&self.settings_path) {
             Ok(()) => recording_directory_for_display(None).map_or_else(
-                || "Recording folder returned to the default location".to_owned(),
-                |directory| format!("Recording folder returned to {}", directory.display()),
+                || locale.text(UiText::RecordingDirectoryReset).to_owned(),
+                |directory| {
+                    locale.format_template(
+                        UiText::RecordingDirectoryResetPath,
+                        &[("path", &directory.display().to_string())],
+                    )
+                },
             ),
             Err(error) => {
                 self.settings.recording_directory = Some(previous);
-                format!("Could not reset recording folder preference: {error}")
+                locale.format_template(
+                    UiText::RecordingDirectoryResetFailed,
+                    &[("error", &error.to_string())],
+                )
             }
         };
         cx.notify();
@@ -305,14 +360,21 @@ impl FlashShotApp {
             || self.recording_display_discovery_in_flight
             || self.recording_audio_discovery_in_flight
         {
-            self.status =
-                "Wait for the current recording action before checking its folder".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::RecordingWaitBeforeDirectoryCheck)
+                .to_owned();
             cx.notify();
             return;
         }
         self.recording_directory_check_in_flight = true;
         let preferred = self.settings.recording_directory.clone();
-        self.status = "Checking recording folder...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::RecordingDirectoryCheckInProgress)
+            .to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -325,10 +387,14 @@ impl FlashShotApp {
                     this.update(&mut cx, |this, cx| {
                         this.recording_directory_check_in_flight = false;
                         this.status = match result {
-                            Ok(directory) => {
-                                format!("Recording folder is ready: {}", directory.display())
-                            }
-                            Err(error) => format!("Recording folder check failed: {error}"),
+                            Ok(directory) => this.settings.locale.format_template(
+                                UiText::RecordingDirectoryReady,
+                                &[("path", &directory.display().to_string())],
+                            ),
+                            Err(error) => this.settings.locale.format_template(
+                                UiText::RecordingDirectoryCheckFailed,
+                                &[("error", &error.to_string())],
+                            ),
                         };
                         cx.notify();
                     });
@@ -347,19 +413,27 @@ impl FlashShotApp {
         self.status = match recording_output_directory(preferred.as_deref())
             .and_then(|directory| directory::open(&directory).map(|()| directory))
         {
-            Ok(directory) => format!("Opened recording folder {}", directory.display()),
-            Err(error) => format!("Could not open recording folder: {error}"),
+            Ok(directory) => self.settings.locale.format_template(
+                UiText::RecordingDirectoryOpened,
+                &[("path", &directory.display().to_string())],
+            ),
+            Err(error) => self.settings.locale.format_template(
+                UiText::RecordingDirectoryOpenFailed,
+                &[("error", &error.to_string())],
+            ),
         };
         cx.notify();
     }
 
     pub(in crate::app) fn start_region_recording(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some(bounds) = self.selection_drag.selection() else {
-            self.status = "Select a region before starting a recording".to_owned();
+            self.status = locale.text(UiText::RecordingSelectRegion).to_owned();
             cx.notify();
             return;
         };
         if let Some(status) = recording_start_conflict_status(
+            locale,
             self.recording_control.is_some(),
             self.recording_start_in_flight,
             self.recording_stopping,
@@ -369,6 +443,7 @@ impl FlashShotApp {
             return;
         }
         if let Some(status) = recording_discovery_conflict_status(
+            locale,
             self.recording_display_discovery_in_flight,
             self.recording_audio_discovery_in_flight,
         ) {
@@ -377,19 +452,21 @@ impl FlashShotApp {
             return;
         }
         if self.recording_support_check_in_flight {
-            self.status = "Cancel or wait for the FFmpeg support check before recording".to_owned();
+            self.status = locale
+                .text(UiText::RecordingSupportCheckBeforeStart)
+                .to_owned();
             cx.notify();
             return;
         }
         if self.recording_directory_check_in_flight {
-            self.status = "Wait for the recording folder check to finish".to_owned();
+            self.status = locale.text(UiText::RecordingWaitDirectoryCheck).to_owned();
             cx.notify();
             return;
         }
         self.recording_start_in_flight = true;
         self.set_tray_recording_target(crate::platform::tray::TrayRecordingTarget::Region);
         self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
-        self.status = "Preparing region recording...".to_owned();
+        self.status = locale.text(UiText::RecordingPreparingRegion).to_owned();
         self.close_capture_overlays(cx);
         let _ = self.session.cancel();
         let _ = self.session.reset();
@@ -408,12 +485,14 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn start_selected_window_recording(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some(selection) = self.selection_drag.selection() else {
-            self.status = "Select a window before starting a recording".to_owned();
+            self.status = locale.text(UiText::RecordingSelectWindow).to_owned();
             cx.notify();
             return;
         };
         if let Some(status) = recording_start_conflict_status(
+            locale,
             self.recording_control.is_some(),
             self.recording_start_in_flight,
             self.recording_stopping,
@@ -423,6 +502,7 @@ impl FlashShotApp {
             return;
         }
         if let Some(status) = recording_discovery_conflict_status(
+            locale,
             self.recording_display_discovery_in_flight,
             self.recording_audio_discovery_in_flight,
         ) {
@@ -431,14 +511,14 @@ impl FlashShotApp {
             return;
         }
         if let Some(status) =
-            recording_support_check_conflict_status(self.recording_support_check_in_flight)
+            recording_support_check_conflict_status(locale, self.recording_support_check_in_flight)
         {
             self.status = status.to_owned();
             cx.notify();
             return;
         }
         if self.recording_directory_check_in_flight {
-            self.status = "Wait for the recording folder check to finish".to_owned();
+            self.status = locale.text(UiText::RecordingWaitDirectoryCheck).to_owned();
             cx.notify();
             return;
         }
@@ -449,7 +529,7 @@ impl FlashShotApp {
         self.recording_start_in_flight = true;
         self.set_tray_recording_target(crate::platform::tray::TrayRecordingTarget::Window);
         self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
-        self.status = "Looking up selected window bounds for recording...".to_owned();
+        self.status = locale.text(UiText::RecordingResolvingWindow).to_owned();
         self.close_capture_overlays(cx);
         let _ = self.session.cancel();
         let _ = self.session.reset();
@@ -545,7 +625,11 @@ impl FlashShotApp {
             return;
         }
         self.recording_display_discovery_in_flight = true;
-        self.status = "Discovering displays for recording...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::RecordingDisplayDiscoveryInProgress)
+            .to_owned();
         let current = self.recording_display.clone();
         let generation = self.operation_generation;
         cx.notify();
@@ -586,12 +670,23 @@ impl FlashShotApp {
         match result {
             Ok(displays) => {
                 self.recording_display = next_recording_display_selection(current, &displays);
-                self.status = format!(
-                    "Recording display: {}",
-                    recording_display_selection_label(&self.recording_display)
+                self.status = self.settings.locale.format_template(
+                    UiText::RecordingDisplayChanged,
+                    &[(
+                        "display",
+                        &recording_display_selection_label(
+                            self.settings.locale,
+                            &self.recording_display,
+                        ),
+                    )],
                 );
             }
-            Err(error) => self.status = format!("Could not discover displays: {error}"),
+            Err(error) => {
+                self.status = self.settings.locale.format_template(
+                    UiText::RecordingDisplayDiscoveryFailed,
+                    &[("error", &error.to_string())],
+                )
+            }
         }
         cx.notify();
     }
@@ -608,7 +703,11 @@ impl FlashShotApp {
             return;
         }
         self.recording_audio_discovery_in_flight = true;
-        self.status = "Discovering recording audio sources...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::RecordingAudioDiscoveryInProgress)
+            .to_owned();
         let current = self.recording_audio.clone();
         let generation = self.operation_generation;
         cx.notify();
@@ -649,19 +748,31 @@ impl FlashShotApp {
         match result {
             Ok(sources) => {
                 self.recording_audio = next_recording_audio_selection(current, &sources);
-                self.status = format!(
-                    "Recording audio: {}",
-                    recording_audio_selection_label(&self.recording_audio)
+                self.status = self.settings.locale.format_template(
+                    UiText::RecordingAudioChanged,
+                    &[(
+                        "audio",
+                        &recording_audio_selection_label(
+                            self.settings.locale,
+                            &self.recording_audio,
+                        ),
+                    )],
                 );
             }
-            Err(error) => self.status = format!("Could not discover recording audio: {error}"),
+            Err(error) => {
+                self.status = self.settings.locale.format_template(
+                    UiText::RecordingAudioDiscoveryFailed,
+                    &[("error", &error.to_string())],
+                )
+            }
         }
         cx.notify();
     }
 
     pub(in crate::app) fn toggle_recording_pause(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         if self.recording_stopping {
-            self.status = "Screen recording is already stopping...".to_owned();
+            self.status = locale.text(UiText::RecordingStoppingAlready).to_owned();
             cx.notify();
             return;
         }
@@ -677,12 +788,17 @@ impl FlashShotApp {
                     crate::platform::tray::TrayRecordingState::Resuming
                 });
                 self.status = if paused {
-                    "Pausing screen recording...".to_owned()
+                    locale.text(UiText::RecordingPausing).to_owned()
                 } else {
-                    "Resuming screen recording...".to_owned()
+                    locale.text(UiText::RecordingResuming).to_owned()
                 }
             }
-            Err(error) => self.status = format!("Could not change recording pause state: {error}"),
+            Err(error) => {
+                self.status = locale.format_template(
+                    UiText::RecordingPauseFailed,
+                    &[("error", &error.to_string())],
+                )
+            }
         }
         cx.notify();
     }
@@ -704,14 +820,16 @@ impl FlashShotApp {
         match result {
             Ok(control) => {
                 let events = control.events();
-                let target = recording_target_label(control.target());
+                let locale = self.settings.locale;
+                let target = recording_target_label(locale, control.target());
                 self.set_tray_recording_target(tray_recording_target(control.target()));
                 self.recording_control = Some(control);
                 self.recording_stopping = false;
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Starting);
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
-                self.status = format!("Starting {target} recording...");
+                self.status =
+                    locale.format_template(UiText::RecordingStarting, &[("target", target)]);
                 cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                     let mut cx = cx.clone();
                     async move {
@@ -727,7 +845,7 @@ impl FlashShotApp {
             }
             Err(error) => {
                 log::warn!(target: "flash_shot::recording", "recording_start_failed error={error}");
-                self.status = recording_start_failure_status(&error);
+                self.status = recording_start_failure_status(self.settings.locale, &error);
                 self.recording_stopping = false;
                 self.reset_tray_recording_to_idle();
             }
@@ -737,33 +855,37 @@ impl FlashShotApp {
     }
 
     fn handle_recording_event(&mut self, event: RecordingEvent, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let target = self
             .recording_control
             .as_ref()
-            .map(|control| recording_target_label(control.target()))
-            .unwrap_or("screen");
+            .map(|control| recording_target_label(locale, control.target()))
+            .unwrap_or_else(|| locale.text(UiText::RecordingTargetScreen));
         match event {
             RecordingEvent::Started => {
                 self.recording_stopping = false;
-                self.status = format!("Recording {target}...");
+                self.status =
+                    locale.format_template(UiText::RecordingActive, &[("target", target)]);
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Recording);
             }
             RecordingEvent::Paused => {
                 self.recording_paused = true;
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Paused);
-                self.status = format!("{target} recording paused");
+                self.status =
+                    locale.format_template(UiText::RecordingPaused, &[("target", target)]);
             }
             RecordingEvent::Resumed => {
                 self.recording_paused = false;
                 self.set_tray_recording_state(crate::platform::tray::TrayRecordingState::Recording);
-                self.status = format!("Recording {target}...");
+                self.status =
+                    locale.format_template(UiText::RecordingActive, &[("target", target)]);
             }
             RecordingEvent::Progress(progress) => {
                 self.recording_progress = progress;
                 self.status = if self.recording_stopping {
-                    format_recording_stopping(target)
+                    format_recording_stopping(locale, target)
                 } else {
-                    format_recording_progress(target, progress)
+                    format_recording_progress(locale, target, progress)
                 };
             }
             RecordingEvent::Finished { output } => {
@@ -772,8 +894,14 @@ impl FlashShotApp {
                 self.reset_tray_recording_to_idle();
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
-                self.status = format!("Screen recording saved to {}", output.display());
-                self.notify_user("Flash Shot", "Screen recording saved");
+                self.status = locale.format_template(
+                    UiText::RecordingSaved,
+                    &[("path", &output.display().to_string())],
+                );
+                self.notify_user(
+                    locale.text(UiText::AppName),
+                    locale.text(UiText::RecordingSavedNotification),
+                );
             }
             RecordingEvent::Failed { message } => {
                 self.recording_control = None;
@@ -781,7 +909,8 @@ impl FlashShotApp {
                 self.reset_tray_recording_to_idle();
                 self.recording_progress = Default::default();
                 self.recording_paused = false;
-                self.status = format!("Screen recording failed: {message}");
+                self.status =
+                    locale.format_template(UiText::RecordingFailed, &[("error", &message)]);
             }
         }
         cx.notify();
@@ -976,11 +1105,11 @@ fn verify_recording_directory(directory: PathBuf) -> std::io::Result<PathBuf> {
     Ok(directory)
 }
 
-pub(super) fn recording_target_label(target: &RecordingTarget) -> &'static str {
+pub(super) fn recording_target_label(locale: Locale, target: &RecordingTarget) -> &'static str {
     match target {
-        RecordingTarget::Display { .. } => "display",
-        RecordingTarget::Window { .. } => "window",
-        RecordingTarget::Region { .. } => "selected area",
+        RecordingTarget::Display { .. } => locale.text(UiText::RecordingTargetDisplay),
+        RecordingTarget::Window { .. } => locale.text(UiText::RecordingTargetWindow),
+        RecordingTarget::Region { .. } => locale.text(UiText::RecordingTargetRegion),
     }
 }
 
@@ -1010,16 +1139,21 @@ pub(in crate::app) fn next_recording_audio_selection(
 }
 
 pub(in crate::app) fn recording_audio_selection_label(
+    locale: Locale,
     selection: &RecordingAudioSelection,
 ) -> String {
     match selection {
-        RecordingAudioSelection::Automatic => "auto".to_owned(),
-        RecordingAudioSelection::Disabled => "off".to_owned(),
-        RecordingAudioSelection::Source(AudioSource::Microphone { device }) => {
-            format!("mic: {}", truncate_recording_audio_label(device))
+        RecordingAudioSelection::Automatic => {
+            locale.text(UiText::RecordingAudioAutomatic).to_owned()
         }
+        RecordingAudioSelection::Disabled => locale.text(UiText::RecordingAudioDisabled).to_owned(),
+        RecordingAudioSelection::Source(AudioSource::Microphone { device }) => locale
+            .format_template(
+                UiText::RecordingAudioMicrophone,
+                &[("device", &truncate_recording_audio_label(device))],
+            ),
         RecordingAudioSelection::Source(AudioSource::SystemAudio { .. }) => {
-            "system audio".to_owned()
+            locale.text(UiText::RecordingAudioSystem).to_owned()
         }
     }
 }
@@ -1065,11 +1199,16 @@ pub(in crate::app) fn next_recording_display_selection(
 }
 
 pub(in crate::app) fn recording_display_selection_label(
+    locale: Locale,
     selection: &RecordingDisplaySelection,
 ) -> String {
     match selection {
-        RecordingDisplaySelection::Primary => "primary".to_owned(),
-        RecordingDisplaySelection::Display { label, .. } => format!("display {label}"),
+        RecordingDisplaySelection::Primary => {
+            locale.text(UiText::RecordingDisplayPrimary).to_owned()
+        }
+        RecordingDisplaySelection::Display { label, .. } => {
+            locale.format_template(UiText::RecordingDisplayLabel, &[("label", label)])
+        }
     }
 }
 
@@ -1082,42 +1221,59 @@ pub(super) fn truncate_recording_audio_label(label: &str) -> String {
     result
 }
 
-pub(super) fn format_recording_progress(target: &str, progress: RecordingProgress) -> String {
+pub(super) fn format_recording_progress(
+    locale: Locale,
+    target: &str,
+    progress: RecordingProgress,
+) -> String {
     let seconds = progress.output_time_us.unwrap_or_default() / 1_000_000;
     let frames = progress.frame.unwrap_or_default();
-    format!("Recording {target}: {seconds}s, {frames} frames")
+    locale.format_template(
+        UiText::RecordingProgress,
+        &[
+            ("target", target),
+            ("seconds", &seconds.to_string()),
+            ("frames", &frames.to_string()),
+        ],
+    )
 }
 
 /// Maps FFmpeg startup failures to the concrete local recovery step while retaining diagnostics.
-pub(super) fn recording_start_failure_status(error: &std::io::Error) -> String {
+pub(super) fn recording_start_failure_status(locale: Locale, error: &std::io::Error) -> String {
     match error.kind() {
-        std::io::ErrorKind::NotFound => format!(
-            "Recording is unavailable because FFmpeg was not found. Install FFmpeg or set FLASH_SHOT_FFMPEG: {error}"
+        std::io::ErrorKind::NotFound => locale.format_template(
+            UiText::RecordingStartFailureMissingFfmpeg,
+            &[("error", &error.to_string())],
         ),
-        std::io::ErrorKind::Unsupported => format!(
-            "This FFmpeg build cannot record the selected source. Use a build with ddagrab or gdigrab: {error}"
+        std::io::ErrorKind::Unsupported => locale.format_template(
+            UiText::RecordingStartFailureUnsupported,
+            &[("error", &error.to_string())],
         ),
-        _ => format!("Could not start screen recording: {error}"),
+        _ => locale.format_template(
+            UiText::RecordingStartFailureGeneric,
+            &[("error", &error.to_string())],
+        ),
     }
 }
 
 /// Keeps the user-facing status in the stopping phase while late FFmpeg progress frames arrive.
-pub(super) fn format_recording_stopping(target: &str) -> String {
-    format!("Stopping {target} recording...")
+pub(super) fn format_recording_stopping(locale: Locale, target: &str) -> String {
+    locale.format_template(UiText::RecordingStopping, &[("target", target)])
 }
 
 /// Names the safe next action when a new overlay recording would overlap an active lifecycle.
 pub(super) fn recording_start_conflict_status(
+    locale: Locale,
     recording_active: bool,
     recording_starting: bool,
     recording_stopping: bool,
 ) -> Option<&'static str> {
     if recording_stopping {
-        Some("Screen recording is already stopping...")
+        Some(locale.text(UiText::RecordingStartConflictStopping))
     } else if recording_active {
-        Some("Stop the current recording before starting another")
+        Some(locale.text(UiText::RecordingStartConflictActive))
     } else if recording_starting {
-        Some("Screen recording startup is already in progress...")
+        Some(locale.text(UiText::RecordingStartConflictStarting))
     } else {
         None
     }
@@ -1126,19 +1282,20 @@ pub(super) fn recording_start_conflict_status(
 /// Prevents a recording from starting while display or audio source discovery is still changing
 /// the selected input; the async completion must settle before a request can snapshot it.
 pub(super) fn recording_discovery_conflict_status(
+    locale: Locale,
     display_discovery_in_flight: bool,
     audio_discovery_in_flight: bool,
 ) -> Option<&'static str> {
     (display_discovery_in_flight || audio_discovery_in_flight)
-        .then_some("Wait for recording source discovery to finish...")
+        .then_some(locale.text(UiText::RecordingDiscoveryConflict))
 }
 
 /// Blocks recording starts while the local FFmpeg capability probe owns the same inputs.
 pub(super) fn recording_support_check_conflict_status(
+    locale: Locale,
     support_check_in_flight: bool,
 ) -> Option<&'static str> {
-    support_check_in_flight
-        .then_some("Cancel or wait for the FFmpeg support check before recording")
+    support_check_in_flight.then_some(locale.text(UiText::RecordingSupportCheckConflict))
 }
 
 /// Accepts a completed FFmpeg startup only while the original startup request is still current.
@@ -1185,22 +1342,28 @@ pub(super) fn recording_discovery_result_is_applicable(
 
 /// Converts a read-only FFmpeg probe into an actionable recording readiness message.
 pub(super) fn recording_support_status(
+    locale: Locale,
     result: Result<&crate::recording::FfmpegCapabilities, &std::io::Error>,
 ) -> String {
     match result {
-        Ok(capabilities) if capabilities.supports_display_capture() => format!(
-            "FFmpeg {} ready ({})",
-            capabilities.version_label(),
-            if capabilities.supports_input("ddagrab") {
-                "DDagrab"
-            } else {
-                "GDI"
-            }
+        Ok(capabilities) if capabilities.supports_display_capture() => locale.format_template(
+            UiText::RecordingSupportReady,
+            &[
+                ("version", &capabilities.version_label()),
+                (
+                    "backend",
+                    if capabilities.supports_input("ddagrab") {
+                        "DDagrab"
+                    } else {
+                        "GDI"
+                    },
+                ),
+            ],
         ),
-        Ok(capabilities) => format!(
-            "FFmpeg {}: desktop capture unavailable",
-            capabilities.version_label()
+        Ok(capabilities) => locale.format_template(
+            UiText::RecordingSupportDesktopUnavailable,
+            &[("version", &capabilities.version_label())],
         ),
-        Err(error) => recording_start_failure_status(error),
+        Err(error) => recording_start_failure_status(locale, error),
     }
 }
