@@ -352,13 +352,18 @@ impl FlashShotApp {
         if !self.can_start_history_reader(&path) {
             return;
         }
+        let locale = self.settings.locale;
         let Some(clipboard_write_id) =
-            self.try_begin_clipboard_write("copying a history image", cx)
+            self.try_begin_clipboard_write(crate::i18n::UiText::ClipboardActionHistoryImage, cx)
         else {
             return;
         };
         let generation = self.begin_history_reader(HistoryReaderKind::Copy, path.clone());
-        self.status = format!("Copying {}...", path.display());
+        let path_detail = path.display().to_string();
+        self.status = locale.format_template(
+            crate::i18n::UiText::HistoryCopyInProgress,
+            &[("path", &path_detail)],
+        );
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -654,9 +659,18 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        let locale = self.settings.locale;
         self.status = match result {
-            Ok(()) => "History image copied to clipboard".to_owned(),
-            Err(error) => format!("Could not copy history image: {error}"),
+            Ok(()) => locale
+                .text(crate::i18n::UiText::HistoryCopiedToClipboard)
+                .to_owned(),
+            Err(error) => {
+                let error_detail = error.to_string();
+                locale.format_template(
+                    crate::i18n::UiText::HistoryCopyFailed,
+                    &[("error", &error_detail)],
+                )
+            }
         };
         cx.notify();
     }

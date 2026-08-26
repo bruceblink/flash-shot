@@ -261,7 +261,9 @@ impl FlashShotApp {
         };
         let title = result.title.clone();
         let text = result.text.clone();
-        let Some(write_id) = self.try_begin_clipboard_write("copying recognized text", cx) else {
+        let Some(write_id) =
+            self.try_begin_clipboard_write(crate::i18n::UiText::ClipboardActionRecognizedText, cx)
+        else {
             return;
         };
         let locale = self.settings.locale;
@@ -281,18 +283,32 @@ impl FlashShotApp {
 
     /// Copies the current physical-pixel sample without changing the capture or annotation state.
     pub(super) fn copy_hover_color(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let format = ColorFormat::from_setting(self.settings.color_format);
         let Some(color) = hovered_color(self.frame.as_ref(), self.hover_pixel, format) else {
-            self.status = "Move over the captured image to copy a color".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ColorCopyAreaRequired)
+                .to_owned();
             cx.notify();
             return;
         };
-        let Some(write_id) = self.try_begin_clipboard_write("copying a color", cx) else {
+        let Some(write_id) =
+            self.try_begin_clipboard_write(crate::i18n::UiText::ClipboardActionColor, cx)
+        else {
             return;
         };
         self.status = match SystemClipboard.copy_text(&color) {
-            Ok(()) => format!("{color} copied to clipboard"),
-            Err(error) => format!("Could not copy {color}: {error}"),
+            Ok(()) => locale.format_template(
+                crate::i18n::UiText::ColorCopiedToClipboard,
+                &[("color", &color)],
+            ),
+            Err(error) => {
+                let error_detail = error.to_string();
+                locale.format_template(
+                    crate::i18n::UiText::ColorCopyFailed,
+                    &[("color", &color), ("error", &error_detail)],
+                )
+            }
         };
         self.finish_clipboard_write(write_id);
         cx.notify();
@@ -418,11 +434,15 @@ impl FlashShotApp {
     /// newer clipboard operation.
     pub(in crate::app) fn try_begin_clipboard_write(
         &mut self,
-        action: &'static str,
+        action: crate::i18n::UiText,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
         if self.clipboard_write_lease.is_some() {
-            self.status = format!("Wait for the current clipboard copy to finish before {action}");
+            let action_label = self.settings.locale.text(action);
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::ClipboardBusy,
+                &[("action", action_label)],
+            );
             cx.notify();
             return None;
         }

@@ -103,7 +103,7 @@ impl PinnedImage {
             return;
         }
         let Some((write_id, clipboard)) = self.app.update(cx, |app, cx| {
-            app.try_begin_clipboard_write("copying a pinned image", cx)
+            app.try_begin_clipboard_write(UiText::ClipboardActionPinnedImage, cx)
                 .map(|write_id| (write_id, app.image_clipboard.clone()))
         }) else {
             self.show_operation_feedback(self.locale.text(UiText::PinWaitingClipboard), cx);

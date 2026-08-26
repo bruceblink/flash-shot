@@ -69,7 +69,7 @@ impl FlashShotApp {
             return;
         }
         let Some(clipboard_write_id) =
-            self.try_begin_clipboard_write("copying the full screen", cx)
+            self.try_begin_clipboard_write(crate::i18n::UiText::ClipboardActionFullScreen, cx)
         else {
             return;
         };

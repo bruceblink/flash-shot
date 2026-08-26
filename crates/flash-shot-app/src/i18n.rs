@@ -470,6 +470,25 @@ pub enum UiText {
     FullScreenSaveFailed,
     NotificationFullScreenSaved,
     FullScreenPinInProgress,
+    ClipboardBusy,
+    ClipboardActionSelection,
+    ClipboardActionRecognizedText,
+    ClipboardActionColor,
+    ClipboardActionFullScreen,
+    ClipboardActionPinnedImage,
+    ClipboardActionHistoryImage,
+    ClipboardActionClipboardImagePin,
+    SelectionCopyAreaRequired,
+    SelectionCopyInProgress,
+    SelectionCopyCancelling,
+    SelectionCopyWaitingForCommit,
+    HistoryCopyInProgress,
+    HistoryCopiedToClipboard,
+    HistoryCopyFailed,
+    ColorCopyAreaRequired,
+    ColorCopiedToClipboard,
+    ColorCopyFailed,
+    ClipboardPinInProgress,
     AnnotationDocumentUnavailable,
     AnnotationSaveDialogFailed,
     AnnotationSaveChoosing,
@@ -1044,6 +1063,27 @@ impl UiText {
             Self::FullScreenSaveFailed => "Could not save full screen: {error}",
             Self::NotificationFullScreenSaved => "Full screen saved",
             Self::FullScreenPinInProgress => "Capturing full screen to pin...",
+            Self::ClipboardBusy => "Wait for the current clipboard copy to finish before {action}",
+            Self::ClipboardActionSelection => "copying a selection",
+            Self::ClipboardActionRecognizedText => "copying recognized text",
+            Self::ClipboardActionColor => "copying a color",
+            Self::ClipboardActionFullScreen => "copying the full screen",
+            Self::ClipboardActionPinnedImage => "copying a pinned image",
+            Self::ClipboardActionHistoryImage => "copying a history image",
+            Self::ClipboardActionClipboardImagePin => "pinning a clipboard image",
+            Self::SelectionCopyAreaRequired => "Select an area before copying",
+            Self::SelectionCopyInProgress => "Copying selection in the background...",
+            Self::SelectionCopyCancelling => "Cancelling background clipboard copy...",
+            Self::SelectionCopyWaitingForCommit => {
+                "Clipboard write already started; waiting for copy to finish..."
+            }
+            Self::HistoryCopyInProgress => "Copying {path}...",
+            Self::HistoryCopiedToClipboard => "History image copied to clipboard",
+            Self::HistoryCopyFailed => "Could not copy history image: {error}",
+            Self::ColorCopyAreaRequired => "Move over the captured image to copy a color",
+            Self::ColorCopiedToClipboard => "{color} copied to clipboard",
+            Self::ColorCopyFailed => "Could not copy {color}: {error}",
+            Self::ClipboardPinInProgress => "Reading clipboard image...",
             Self::AnnotationDocumentUnavailable => "Annotation document is unavailable",
             Self::AnnotationSaveDialogFailed => "Could not show annotation Save dialog: {error}",
             Self::AnnotationSaveChoosing => "Choose where to save annotations...",
@@ -1554,6 +1594,25 @@ impl UiText {
             Self::FullScreenSaveFailed => "无法保存全屏截图：{error}",
             Self::NotificationFullScreenSaved => "全屏截图已保存",
             Self::FullScreenPinInProgress => "正在捕获全屏并固定...",
+            Self::ClipboardBusy => "请等待当前剪贴板复制完成后再{action}",
+            Self::ClipboardActionSelection => "复制选区",
+            Self::ClipboardActionRecognizedText => "复制识别文字",
+            Self::ClipboardActionColor => "复制颜色",
+            Self::ClipboardActionFullScreen => "复制全屏截图",
+            Self::ClipboardActionPinnedImage => "复制置顶图片",
+            Self::ClipboardActionHistoryImage => "复制历史图片",
+            Self::ClipboardActionClipboardImagePin => "固定剪贴板图片",
+            Self::SelectionCopyAreaRequired => "请先选择区域再复制",
+            Self::SelectionCopyInProgress => "正在后台复制选区...",
+            Self::SelectionCopyCancelling => "正在取消后台剪贴板复制...",
+            Self::SelectionCopyWaitingForCommit => "剪贴板写入已开始，正在等待复制完成...",
+            Self::HistoryCopyInProgress => "正在复制 {path}...",
+            Self::HistoryCopiedToClipboard => "历史图片已复制到剪贴板",
+            Self::HistoryCopyFailed => "无法复制历史图片：{error}",
+            Self::ColorCopyAreaRequired => "请将指针移到截图上再复制颜色",
+            Self::ColorCopiedToClipboard => "{color}已复制到剪贴板",
+            Self::ColorCopyFailed => "无法复制{color}：{error}",
+            Self::ClipboardPinInProgress => "正在读取剪贴板图片...",
             Self::AnnotationDocumentUnavailable => "标注文档不可用",
             Self::AnnotationSaveDialogFailed => "无法显示标注保存对话框：{error}",
             Self::AnnotationSaveChoosing => "请选择保存标注的位置...",
@@ -1838,6 +1897,38 @@ mod tests {
                 &[("error", "disk full")],
             ),
             "Could not update history retention: disk full. The previous limit remains active; try again."
+        );
+    }
+
+    #[test]
+    fn clipboard_feedback_localizes_actions_paths_and_errors() {
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::ClipboardBusy,
+                &[(
+                    "action",
+                    Locale::English.text(UiText::ClipboardActionSelection)
+                )],
+            ),
+            "Wait for the current clipboard copy to finish before copying a selection"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::HistoryCopyInProgress,
+                &[("path", "D:\\Screenshots\\capture.png")],
+            ),
+            "正在复制 D:\\Screenshots\\capture.png..."
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::ColorCopyFailed,
+                &[("color", "#AABBCC"), ("error", "剪贴板被占用")],
+            ),
+            "无法复制#AABBCC：剪贴板被占用"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::SelectionCopyCancelling),
+            "正在取消后台剪贴板复制..."
         );
     }
 

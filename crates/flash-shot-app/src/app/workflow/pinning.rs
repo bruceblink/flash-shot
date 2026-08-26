@@ -25,7 +25,11 @@ impl FlashShotApp {
             .then(|| self.session.selection())
             .flatten()
         else {
-            self.status = "Select an area before copying".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::SelectionCopyAreaRequired)
+                .to_owned();
             cx.notify();
             return;
         };
@@ -36,10 +40,15 @@ impl FlashShotApp {
         // Copy owns only its immutable pixel snapshot and the clipboard. The editable capture
         // stays in Selecting so Save, Pin, Scroll shot, and annotation work remain responsive.
         // The cloned source goes to the worker, which composites and crops it away from GPUI.
-        let Some(copy_id) = self.try_begin_clipboard_write("copying a selection", cx) else {
+        let Some(copy_id) = self.try_begin_clipboard_write(UiText::ClipboardActionSelection, cx)
+        else {
             return;
         };
-        self.status = "Copying selection in the background...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::SelectionCopyInProgress)
+            .to_owned();
         let status_generation = self.operation_generation;
         let cancellation = Arc::new(SelectionCopyCancellation::default());
         self.selection_copy = Some(SelectionCopyLease {
@@ -82,12 +91,16 @@ impl FlashShotApp {
         copy.cancel_requested = true;
         self.status = match copy.cancellation.request_cancel() {
             SelectionCopyCancelRequest::CancelledBeforeCommit
-            | SelectionCopyCancelRequest::AlreadyCancelled => {
-                "Cancelling background clipboard copy...".to_owned()
-            }
-            SelectionCopyCancelRequest::ClipboardCommitStarted => {
-                "Clipboard write already started; waiting for copy to finish...".to_owned()
-            }
+            | SelectionCopyCancelRequest::AlreadyCancelled => self
+                .settings
+                .locale
+                .text(UiText::SelectionCopyCancelling)
+                .to_owned(),
+            SelectionCopyCancelRequest::ClipboardCommitStarted => self
+                .settings
+                .locale
+                .text(UiText::SelectionCopyWaitingForCommit)
+                .to_owned(),
         };
         cx.notify();
     }
@@ -190,8 +203,14 @@ impl FlashShotApp {
     /// Reads the current clipboard image away from the UI thread and pins only the latest request.
     pub(in crate::app) fn pin_clipboard_image(&mut self, cx: &mut Context<Self>) {
         if self.clipboard_write_lease.is_some() {
-            self.status =
-                "Wait for the current clipboard copy to finish before pinning it".to_owned();
+            let action = self
+                .settings
+                .locale
+                .text(UiText::ClipboardActionClipboardImagePin);
+            self.status = self
+                .settings
+                .locale
+                .format_template(UiText::ClipboardBusy, &[("action", action)]);
             cx.notify();
             return;
         }
@@ -208,7 +227,11 @@ impl FlashShotApp {
         self.operation_generation = self.operation_generation.wrapping_add(1);
         let generation = self.operation_generation;
         self.clipboard_pin_generation = Some(generation);
-        self.status = "Reading clipboard image...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::ClipboardPinInProgress)
+            .to_owned();
         self.hide_settings_window();
         cx.notify();
 
