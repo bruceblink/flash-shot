@@ -55,6 +55,8 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
+powershell -NoProfile -File scripts/verify-bug-ui-baseline.ps1
+powershell -NoProfile -File scripts/test-verify-bug-ui-baseline.ps1
 .\scripts\run-dev-tool.ps1 -Release capture-stress --output target/capture-stress.json
 .\scripts\run-dev-tool.ps1 -Release annotation-stress --iterations 30
 # 当前单屏开发范围：要求环境恰好只有一块显示器，避免把多屏状态误记为单屏证据。
@@ -133,6 +135,9 @@ cargo test --workspace --all-features --locked
 并在检测到多块显示器时失败；这是当前单屏开发范围的保护，不代表双屏功能已经通过验收。
 设置页探针应串行执行：截图 worker 捕获窗口所在的桌面物理区域，多个验收窗口重叠时，
 后启动的进程可能截到前一个窗口，不能把并行输出当作独立主题或页面证据。
+B0 基线盘点使用 `powershell -NoProfile -File scripts/verify-bug-ui-baseline.ps1`，报告写入
+`target/bug-ui-baseline/bug-ui-baseline.json`。该命令只扫描源文件和工具入口，不启动原生窗口、OCR、录屏或
+网络服务；它的通过结果只能证明场景登记和状态来源可重复，不能替代下方真实桌面交互矩阵。
 提供最后一个 `display-index` 参数时，探针会将窗口放到指定的零基显示器，并在同名 JSON
 中保留该窗口实际观测到的 `dpi`、物理边界和 `scale_factor`；索引不存在时命令失败，避免
 把另一块显示器的截图误记为目标 DPI 证据。
@@ -324,6 +329,11 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 | 2026-08-16 | `github-release-v0.1.2-31950151868` | 标签 `v0.1.2` 指向候选提交 `d17cfe9`。GitHub Windows Release workflow 在 fresh runner 上完成源码门禁、Release 构建、未签名便携包与安装器打包、便携启动、current-user 安装/启动/卸载、manifest、SHA-256 和双语发布说明，并创建 draft；复核通过后于 `2026-08-16T14:00:39Z` 发布为 Latest Release。 | 通过（未签名策略范围） | 工作流 [31950151868](https://github.com/bruceblink/flash-shot/actions/runs/31950151868) 全部步骤通过。本机先以 `verify-github-release.ps1 -Tag v0.1.2 -RequireDraft`、发布后再以 `verify-github-release.ps1 -Tag v0.1.2` 下载并复核五项资产，便携程序均保持运行 5 秒。安装器 `FlashShot-0.1.2-windows-setup.exe` 为 6,604,005 bytes、SHA-256 `034ec68ca13c8e47dd48b7c2901a0a8f4ccc44066fda1c57b872ffea8bb3ddc6`；便携包 `FlashShot-0.1.2-windows-x86_64.zip` 为 7,090,532 bytes、SHA-256 `8e0f50322262849341b18cc5cf93518766d3827e7fae39e5c1b0a222abe8df84`；manifest SHA-256 为 `8dd5796810ed119f158b0f72c08e44c3f4c069d6e18c0c1d90cbc006d81761b8`，两份 sidecar 与 manifest 全部匹配。公开页面为 [v0.1.2](https://github.com/bruceblink/flash-shot/releases/tag/v0.1.2)；发布说明使用标签提交范围和双语分类，旧 `v0.1.1` 保持历史 draft。未签名 Authenticode 仍是当前开源发布策略明确接受并在 README 中披露的风险。 |
 
 | 2026-08-12 | `2e07cdc` | 当前提交重建 Release `recognition-acceptance`，使用含文字设置页 PNG 执行真实 PNG -> Tesseract OCR，并通过 `--require-ocr` 门禁。 | 通过 | `target/ui-acceptance/recognition-acceptance-ocr-current-2e07cdc.json`：schema 4，Tesseract `v5.5.3.20260724`，`ocr.available=true`，`ocr_exercise.passed=true`，文本长度 391，报告 `passed=true`；同一报告明确记录 `translation.configured=false`，因此翻译服务仍按独立矩阵行保持待执行。 |
+
+B0 基线盘点（2026-08-26）不属于原生桌面交互矩阵：在源代码提交 `f801e28` 上运行
+`scripts/test-verify-bug-ui-baseline.ps1` 两次生成报告，7 个稳定场景、317 个直接 `self.status` 赋值和
+24 个 `UiText` 引用在两次运行中保持一致；仓库外输出路径被拒绝且没有创建文件。报告位于
+`target/bug-ui-baseline/bug-ui-baseline.json`，真实文字/水印、双箭头和重复 Capture 交互仍按 B4/B2 场景执行。
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与
