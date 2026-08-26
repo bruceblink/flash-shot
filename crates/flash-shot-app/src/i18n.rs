@@ -241,6 +241,11 @@ pub enum UiText {
     LanguagePreferenceSaveFailed,
     SaveFailedKeepSelection,
     SaveFailedNeedsNewCapture,
+    HistoryRecordFailed,
+    HistoryFilesRemovedIndexFailed,
+    HistoryRetentionUpdateFailed,
+    HistoryFallbackUsed,
+    HistoryFallbackPreferenceFailed,
     NoPinnedWindowsNeededInputRecovery,
     PinnedWindowInputRestored,
     ReadyWithShortcut,
@@ -477,6 +482,19 @@ impl UiText {
             }
             Self::SaveFailedNeedsNewCapture => {
                 "Save failed: {error}; capture is no longer editable. Start a new capture."
+            }
+            Self::HistoryRecordFailed => {
+                " (history unavailable: {error}; the image was saved and can be used normally)"
+            }
+            Self::HistoryFilesRemovedIndexFailed => {
+                "Capture files were removed, but history could not be updated: {error}. Reopen Library to refresh."
+            }
+            Self::HistoryRetentionUpdateFailed => {
+                "Could not update history retention: {error}. The previous limit remains active; try again."
+            }
+            Self::HistoryFallbackUsed => "; quick-save folder unavailable; using {path}",
+            Self::HistoryFallbackPreferenceFailed => {
+                " (could not persist the fallback folder: {error})"
             }
             Self::NoPinnedWindowsNeededInputRecovery => "No pinned windows needed input recovery",
             Self::PinnedWindowInputRestored => "Restored mouse input for {count} pinned window(s)",
@@ -715,6 +733,15 @@ impl UiText {
             Self::SaveFailedNeedsNewCapture => {
                 "保存失败：{error}；当前截图无法继续编辑，请开始新的截图。"
             }
+            Self::HistoryRecordFailed => "（历史记录不可用：{error}；图片已保存，仍可正常使用）",
+            Self::HistoryFilesRemovedIndexFailed => {
+                "截图文件已移除，但历史记录未能更新：{error}。请重新打开图库刷新。"
+            }
+            Self::HistoryRetentionUpdateFailed => {
+                "无法更新历史记录保留数量：{error}。当前仍使用原设置，请重试。"
+            }
+            Self::HistoryFallbackUsed => "；快速保存目录不可用，已改用 {path}",
+            Self::HistoryFallbackPreferenceFailed => "（无法保存回退目录设置：{error}）",
             Self::NoPinnedWindowsNeededInputRecovery => "没有 Pin 窗口需要恢复输入",
             Self::PinnedWindowInputRestored => "已恢复 {count} 个 Pin 窗口的鼠标输入",
             Self::ReadyWithShortcut => "就绪 - {shortcut}",
@@ -949,6 +976,20 @@ mod tests {
             Locale::SimplifiedChinese
                 .format_template(UiText::PinClipboardError, &[("error", "读取失败")],),
             "无法固定剪贴板图片：读取失败"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::HistoryFilesRemovedIndexFailed,
+                &[("error", "拒绝访问")],
+            ),
+            "截图文件已移除，但历史记录未能更新：拒绝访问。请重新打开图库刷新。"
+        );
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::HistoryRetentionUpdateFailed,
+                &[("error", "disk full")],
+            ),
+            "Could not update history retention: disk full. The previous limit remains active; try again."
         );
     }
 }

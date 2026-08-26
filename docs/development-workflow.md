@@ -35,11 +35,14 @@ B0 的场景输入、失败恢复动作和可见状态来源登记在 [Bug 与�
 `powershell -NoProfile -File scripts/verify-bug-ui-baseline.ps1` 可重新生成基线报告；该报告只证明登记和
 静态来源可重复，不替代真实 Windows 交互验收。
 
-B1 当前已完成一个可独立验证的恢复切片：保存或快速保存失败时，workflow 回到 `Selecting` 并保留原选区，
-允许用户选择其他位置后再次 Save。确定性回归测试为
-`save_failures_keep_the_existing_selection_available_for_retry` 和
-`stale_save_failures_explain_when_a_new_capture_is_required`；真实只读目录、历史索引、剪贴板和 FFmpeg
-故障注入仍必须在同一 Release 会话中补充证据。
+B1 当前已完成两个可独立验证的恢复切片：保存或快速保存失败时，workflow 回到 `Selecting` 并保留原选区，
+允许用户选择其他位置后再次 Save；历史索引写入失败时，索引临时文件会清理，历史新增、清空、删除和
+后台移除保持可重试状态。确定性回归测试包括
+`save_failures_keep_the_existing_selection_available_for_retry`、
+`stale_save_failures_explain_when_a_new_capture_is_required`、
+`record_index_failure_keeps_the_capture_available_for_retry` 和
+`forget_deleted_index_failure_preserves_entries_for_a_retry`；真实只读目录、剪贴板和 FFmpeg 故障注入
+仍必须在同一 Release 会话中补充证据。
 
 ## 3. 真实输入与剪贴板授权
 

@@ -195,7 +195,11 @@ impl FlashShotApp {
         }
         if let Err(error) = self.history.forget_deleted(&deletion.deleted) {
             self.history_retention_target = None;
-            self.status = format!("Could not update screenshot history index: {error}");
+            let error_detail = error.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::HistoryFilesRemovedIndexFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }
@@ -217,7 +221,11 @@ impl FlashShotApp {
             return;
         };
         if let Err(error) = self.history.set_limit_after_prune(usize::from(target)) {
-            self.status = format!("Could not update screenshot history retention: {error}");
+            let error_detail = error.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::HistoryRetentionUpdateFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }

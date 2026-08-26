@@ -626,14 +626,15 @@ impl FlashShotApp {
         source: crate::history::HistorySource,
     ) -> Option<String> {
         if path.starts_with(self.history.root()) {
-            return self
-                .history
-                .record_with_source(path.to_owned(), source)
-                .err()
-                .map(|error| {
-                    log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
-                    format!("; history unavailable: {error}")
-                });
+            if let Err(error) = self.history.record_with_source(path.to_owned(), source) {
+                log::warn!(target: "flash_shot::history", "history_record_failed error={error}");
+                let error_detail = error.to_string();
+                return Some(self.settings.locale.format_template(
+                    crate::i18n::UiText::HistoryRecordFailed,
+                    &[("error", &error_detail)],
+                ));
+            }
+            return None;
         }
 
         let Some(parent) = path.parent() else {
@@ -651,19 +652,28 @@ impl FlashShotApp {
         };
         if let Err(error) = recovered.record_with_source(path.to_owned(), source) {
             log::warn!(target: "flash_shot::history", "history_recovery_record_failed error={error}");
-            return Some(format!("; history unavailable: {error}"));
+            let error_detail = error.to_string();
+            return Some(self.settings.locale.format_template(
+                crate::i18n::UiText::HistoryRecordFailed,
+                &[("error", &error_detail)],
+            ));
         }
         self.history = recovered;
 
-        let mut note = format!(
-            "; quick-save folder unavailable; using {}",
-            self.history.root().display()
+        let fallback_path = self.history.root().display().to_string();
+        let mut note = self.settings.locale.format_template(
+            crate::i18n::UiText::HistoryFallbackUsed,
+            &[("path", &fallback_path)],
         );
         if self.settings.quick_save_directory.take().is_some()
             && let Err(error) = self.settings.save(&self.settings_path)
         {
             log::warn!(target: "flash_shot::history", "history_recovery_preference_clear_failed error={error}");
-            note.push_str(&format!(" (could not persist fallback: {error})"));
+            let error_detail = error.to_string();
+            note.push_str(&self.settings.locale.format_template(
+                crate::i18n::UiText::HistoryFallbackPreferenceFailed,
+                &[("error", &error_detail)],
+            ));
         }
         Some(note)
     }
@@ -737,7 +747,11 @@ impl FlashShotApp {
             }
             Err(error) => {
                 log::warn!(target: "flash_shot::history", "history_index_update_failed error={error}");
-                format!("Capture files were cleared, but history could not be updated: {error}")
+                let error_detail = error.to_string();
+                self.settings.locale.format_template(
+                    crate::i18n::UiText::HistoryFilesRemovedIndexFailed,
+                    &[("error", &error_detail)],
+                )
             }
         };
         if scope == HistoryClearScope::All {
@@ -799,7 +813,11 @@ impl FlashShotApp {
                 Ok(()) => format!("Removed {} from screenshot history", path.display()),
                 Err(error) => {
                     log::warn!(target: "flash_shot::history", "history_index_update_failed error={error}");
-                    format!("Capture was removed, but history could not be updated: {error}")
+                    let error_detail = error.to_string();
+                    self.settings.locale.format_template(
+                        crate::i18n::UiText::HistoryFilesRemovedIndexFailed,
+                        &[("error", &error_detail)],
+                    )
                 }
             }
         };

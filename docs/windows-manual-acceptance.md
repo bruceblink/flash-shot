@@ -37,6 +37,7 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | --- | --- | --- | --- | --- |
 | 单显示器 100% | 通过 | 触发区域截图，拖动选区并键盘微调；点击工具栏与 More，确认命令不会穿透为新的选区；再次触发 Capture 快捷键；依次复制、保存、Pin、取消。 | 覆盖层只有一组可操作工具栏；工具栏命令只执行一次；再次 Capture 会关闭旧覆盖层并打开新的截图；复制和保存的像素尺寸等于选区物理尺寸；取消不留下窗口。 | `current-overlay-interaction-single-100` 在 2560x1440、DPI 96 下完成真实拖选、1px 微调、More/Less、Capture 重触发、Save/Pin/Copy sink、Cancel 与最终清理；1178x432 的 Save、Pin 和 Copy 均与点击前源帧逐像素一致。系统 PNG/CF_DIB 与普通消费者路径另由 `current-production-copy-contention-fixed` 的 toolbar/Enter 各 30 次当前源码 Release 批次验证；150%/200% 不计入本行。 |
 | 保存失败后重试 | 待执行 | 在同一选区选择只读目录或制造目标写入失败，观察 Save/Quick Save 失败后再次打开 Save；随后选择可写目录完成保存并 Escape 清理。 | 失败状态说明下一步动作；原选区、标注和覆盖层仍可用；没有目标半成品或 `.tmp` 文件；下一次 Save 成功后会话正常清理。 | 确定性状态回归已由 `save_failures_keep_the_existing_selection_available_for_retry` 与 `stale_save_failures_explain_when_a_new_capture_is_required` 覆盖；当前源码 Release 的真实 Windows 只读目录、同步失败和重试证据待 B1 后续。 |
+| 历史索引写入失败 | 部分通过 | 在 Library 中制造 `history.json` 冲突或只读目录，分别触发新增、清空、删除和保留数量更新；随后恢复目录权限并重试。 | 失败后 `.tmp` 清理；历史文件和内存条目不提前丢失；中英文状态说明重试或刷新动作；恢复权限后下一次历史操作成功。 | `record_index_failure_keeps_the_capture_available_for_retry`、`clear_index_failure_keeps_history_files_and_entries_intact`、`remove_index_failure_keeps_the_capture_for_a_later_attempt` 与 `forget_deleted_index_failure_preserves_entries_for_a_retry` 在隔离临时目录通过；真实 Windows 权限、冲突和同步失败证据待执行。 |
 | 负坐标双屏 | 暂缓 | 将副屏放在主屏左侧，跨屏拖动选区并在两屏边缘调整大小。 | 选区和放大镜不跳变；每个显示器只显示自己的覆盖层操作区；导出结果没有偏移或裁切错误。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 混合 DPI 双屏 | 暂缓 | 将两个显示器设置为不同缩放，例如 100% 与 150% 或 200%；跨屏截图、保存并核对像素尺寸。 | 光标、选区、窗口智能识别和导出均以物理像素对齐；无重复或缺失的工具栏。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 窄选区与最小设置窗 | 通过 | 将设置窗口缩小到最小可用尺寸；在屏幕边缘创建窄选区，展开次级操作与标注面板。 | 文本不截断，控件不重叠；主工具栏保持可点击，次级菜单在可用一侧展开。 | `current-narrow-edge-single-100` 在真实 420x420 client 中启动截图，拖出右下 160x96 选区并真实点击 More/Less 与 Mark 开关。 |
@@ -333,7 +334,7 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 
 B0 基线盘点（2026-08-26）不属于原生桌面交互矩阵：在源代码提交 `f801e28` 上运行
 `scripts/test-verify-bug-ui-baseline.ps1` 两次生成报告，7 个稳定场景、317 个直接 `self.status` 赋值和
-24 个 `UiText` 引用在两次运行中保持一致；仓库外输出路径被拒绝且没有创建文件。报告位于
+34 个 `UiText` 引用在两次运行中保持一致；仓库外输出路径被拒绝且没有创建文件。报告位于
 `target/bug-ui-baseline/bug-ui-baseline.json`，真实文字/水印、双箭头和重复 Capture 交互仍按 B4/B2 场景执行。
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
