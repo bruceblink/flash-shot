@@ -2,6 +2,7 @@
 
 use super::super::HistoryClearScope;
 use super::*;
+use crate::i18n::Locale;
 
 /// Returns an actionable save error while moving an in-flight export back to editable selection.
 ///
@@ -687,7 +688,11 @@ impl FlashShotApp {
             return;
         }
         if !self.history_clear_can_commit() {
-            self.status = "Waiting for active history reads before deleting...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::HistoryWaitingForReads)
+                .to_owned();
             cx.notify();
             return;
         }
@@ -699,7 +704,11 @@ impl FlashShotApp {
         self.history_clear_confirmation = false;
         self.history_clear_scope = HistoryClearScope::default();
         self.history_clear_count = 0;
-        self.status = format!("Clearing {} saved capture(s)...", paths.len());
+        let count = paths.len().to_string();
+        self.status = self
+            .settings
+            .locale
+            .format_template(crate::i18n::UiText::HistoryClearing, &[("count", &count)]);
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -733,18 +742,31 @@ impl FlashShotApp {
         self.history_selected_paths
             .retain(|path| !deletion.deleted.contains(path));
         self.status = match self.history.forget_deleted(&deletion.deleted) {
-            Ok(()) if failure_count == 0 && scope == HistoryClearScope::All => {
-                "Screenshot history cleared".to_owned()
-            }
+            Ok(()) if failure_count == 0 && scope == HistoryClearScope::All => self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::HistoryCleared)
+                .to_owned(),
             Ok(()) if failure_count == 0 && scope == HistoryClearScope::Selected => {
-                format!("Deleted {deleted_count} selected capture(s)")
+                Self::history_clear_success_status(
+                    self.settings.locale,
+                    scope,
+                    deleted_count,
+                    failure_count,
+                )
             }
-            Ok(()) if failure_count == 0 => {
-                format!("Cleared {deleted_count} filtered capture(s)")
-            }
-            Ok(()) => {
-                format!("Cleared {deleted_count} capture(s); {failure_count} could not be deleted")
-            }
+            Ok(()) if failure_count == 0 => Self::history_clear_success_status(
+                self.settings.locale,
+                scope,
+                deleted_count,
+                failure_count,
+            ),
+            Ok(()) => Self::history_clear_success_status(
+                self.settings.locale,
+                scope,
+                deleted_count,
+                failure_count,
+            ),
             Err(error) => {
                 log::warn!(target: "flash_shot::history", "history_index_update_failed error={error}");
                 let error_detail = error.to_string();
@@ -761,6 +783,34 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Formats successful history-clear feedback without changing the deletion result or scope.
+    fn history_clear_success_status(
+        locale: Locale,
+        scope: HistoryClearScope,
+        deleted_count: usize,
+        failure_count: usize,
+    ) -> String {
+        let deleted = deleted_count.to_string();
+        if failure_count == 0 {
+            let key = match scope {
+                HistoryClearScope::All => crate::i18n::UiText::HistoryCleared,
+                HistoryClearScope::Filtered => crate::i18n::UiText::HistoryClearedFiltered,
+                HistoryClearScope::Selected => crate::i18n::UiText::HistoryDeletedSelected,
+            };
+            if scope == HistoryClearScope::All {
+                locale.text(key).to_owned()
+            } else {
+                locale.format_template(key, &[("count", &deleted)])
+            }
+        } else {
+            let failed = failure_count.to_string();
+            locale.format_template(
+                crate::i18n::UiText::HistoryClearedWithFailures,
+                &[("deleted", &deleted), ("failed", &failed)],
+            )
+        }
+    }
+
     pub(in crate::app) fn remove_history_image(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         if !self.history_mutation_can_start()
             || !self
@@ -773,7 +823,11 @@ impl FlashShotApp {
             return;
         }
         self.invalidate_history_thumbnails();
-        self.status = format!("Removing {}...", path.display());
+        let path_detail = path.display().to_string();
+        self.status = self.settings.locale.format_template(
+            crate::i18n::UiText::HistoryRemoving,
+            &[("path", &path_detail)],
+        );
         cx.notify();
         let snapshot = self.history.clone();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -807,10 +861,20 @@ impl FlashShotApp {
             log::warn!(target: "flash_shot::history", "history_remove_failed path={} error={error}", failed_path.display());
         }
         self.status = if let Some((_, error)) = deletion.failures.first() {
-            format!("Could not remove screenshot history item: {error}")
+            let error_detail = error.to_string();
+            self.settings.locale.format_template(
+                crate::i18n::UiText::HistoryRemoveFailed,
+                &[("error", &error_detail)],
+            )
         } else {
             match self.history.forget_deleted(&deletion.deleted) {
-                Ok(()) => format!("Removed {} from screenshot history", path.display()),
+                Ok(()) => {
+                    let path_detail = path.display().to_string();
+                    self.settings.locale.format_template(
+                        crate::i18n::UiText::HistoryRemoved,
+                        &[("path", &path_detail)],
+                    )
+                }
                 Err(error) => {
                     log::warn!(target: "flash_shot::history", "history_index_update_failed error={error}");
                     let error_detail = error.to_string();
@@ -1099,6 +1163,8 @@ pub(super) fn claim_pinned_save_slot(in_flight: &mut bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{CaptureOverlay, finish_capture_teardown, remove_capture_overlay_by_id};
+    use crate::app::HistoryClearScope;
+    use crate::i18n::Locale;
     use gpui::{WindowHandle, WindowId};
     use std::collections::HashSet;
 
@@ -1131,5 +1197,27 @@ mod tests {
         assert!(!finish_capture_teardown(&mut pending, first_id));
         assert!(finish_capture_teardown(&mut pending, second_id));
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn history_clear_feedback_localizes_partial_deletion_results() {
+        assert_eq!(
+            super::FlashShotApp::history_clear_success_status(
+                Locale::English,
+                HistoryClearScope::Filtered,
+                3,
+                0,
+            ),
+            "Cleared 3 filtered capture(s)"
+        );
+        assert_eq!(
+            super::FlashShotApp::history_clear_success_status(
+                Locale::SimplifiedChinese,
+                HistoryClearScope::All,
+                2,
+                1,
+            ),
+            "已清除 2 张截图；1 张无法删除"
+        );
     }
 }

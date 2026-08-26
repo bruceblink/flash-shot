@@ -394,16 +394,6 @@ pub(super) struct HistoryReaderLease {
     pub(super) path: PathBuf,
 }
 
-impl HistoryClearScope {
-    pub(super) const fn label(self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::Filtered => "filtered",
-            Self::Selected => "selected",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct HistorySearch {
     content: String,

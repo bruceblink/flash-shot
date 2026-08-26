@@ -344,11 +344,14 @@ impl FlashShotApp {
             return;
         }
         self.history_keyboard_focus = Some(path.clone());
+        let locale = self.settings.locale;
         if self.history_selected_paths.remove(&path) {
-            self.status = "Capture removed from selection".to_owned();
+            self.status = locale.text(UiText::HistorySelectionRemoved).to_owned();
         } else {
             self.history_selected_paths.insert(path);
-            self.status = format!("{} capture(s) selected", self.history_selected_paths.len());
+            let count = self.history_selected_paths.len().to_string();
+            self.status =
+                locale.format_template(UiText::HistorySelectionCount, &[("count", &count)]);
         }
         cx.notify();
     }
@@ -375,14 +378,17 @@ impl FlashShotApp {
             .history_selected_paths
             .len()
             .saturating_sub(previous_count);
+        let locale = self.settings.locale;
         self.status = if added == 0 {
             if paths.is_empty() {
-                "No captures match the current filter".to_owned()
+                locale.text(UiText::HistoryNoMatches).to_owned()
             } else {
-                format!("{} capture(s) already selected", paths.len())
+                let count = paths.len().to_string();
+                locale.format_template(UiText::HistoryAlreadySelected, &[("count", &count)])
             }
         } else {
-            format!("Selected {added} additional capture(s)")
+            let count = added.to_string();
+            locale.format_template(UiText::HistorySelectionAdded, &[("count", &count)])
         };
         cx.notify();
     }
@@ -393,7 +399,11 @@ impl FlashShotApp {
             return;
         }
         self.history_selected_paths.clear();
-        self.status = "History selection cleared".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::HistorySelectionCleared)
+            .to_owned();
         cx.notify();
     }
 
@@ -418,6 +428,7 @@ impl FlashShotApp {
         if !self.history_mutation_can_start() {
             return;
         }
+        let locale = self.settings.locale;
         let paths = match scope {
             HistoryClearScope::All => self
                 .history
@@ -439,19 +450,18 @@ impl FlashShotApp {
             self.history_clear_count = 0;
             self.history_clear_paths.clear();
             self.status = match scope {
-                HistoryClearScope::Selected => "Select at least one capture first".to_owned(),
-                _ => "Screenshot history is already empty".to_owned(),
+                HistoryClearScope::Selected => {
+                    locale.text(UiText::HistorySelectAtLeastOne).to_owned()
+                }
+                _ => locale.text(UiText::HistoryAlreadyEmpty).to_owned(),
             };
         } else {
             self.history_clear_scope = scope;
             self.history_clear_count = paths.len();
             self.history_clear_paths = paths;
             self.history_clear_confirmation = true;
-            self.status = format!(
-                "Confirm deletion of {} {} saved capture(s)",
-                self.history_clear_count,
-                scope.label(),
-            );
+            self.status =
+                history_clear_confirmation_status(locale, self.history_clear_count, scope);
         }
         cx.notify();
     }
@@ -474,7 +484,11 @@ impl FlashShotApp {
         self.history_clear_scope = HistoryClearScope::default();
         self.history_clear_count = 0;
         self.history_clear_paths.clear();
-        self.status = "Screenshot history clear cancelled".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::HistoryClearCancelled)
+            .to_owned();
         cx.notify();
     }
 
@@ -989,6 +1003,25 @@ pub(in crate::app) fn update_check_status(
     }
 }
 
+/// Formats the destructive history confirmation while keeping its scope label in the active
+/// language. The captured count remains the exact deletion snapshot used by the commit step.
+fn history_clear_confirmation_status(
+    locale: Locale,
+    count: usize,
+    scope: HistoryClearScope,
+) -> String {
+    let scope_label = match scope {
+        HistoryClearScope::All => locale.text(UiText::HistoryClearScopeAll),
+        HistoryClearScope::Filtered => locale.text(UiText::HistoryClearScopeFiltered),
+        HistoryClearScope::Selected => locale.text(UiText::HistoryClearScopeSelected),
+    };
+    let count = count.to_string();
+    locale.format_template(
+        UiText::HistoryClearConfirmation,
+        &[("count", &count), ("scope", scope_label)],
+    )
+}
+
 /// Verifies a user-selected folder before making it the managed quick-save history root.
 ///
 /// Opening a history directory only needs metadata access, while a later export needs durable
@@ -1089,8 +1122,13 @@ fn acceptance_recording_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{acceptance_recording_state, open_verified_quick_save_history};
+    use super::{
+        acceptance_recording_state, history_clear_confirmation_status,
+        open_verified_quick_save_history,
+    };
     use crate::RecordingUiAcceptanceState;
+    use crate::app::HistoryClearScope;
+    use crate::i18n::Locale;
     use std::{fs, io};
 
     fn directory(name: &str) -> std::path::PathBuf {
@@ -1125,6 +1163,22 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(fs::read(&file).unwrap(), b"not a directory");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn history_clear_feedback_localizes_the_exact_scope_and_count() {
+        assert_eq!(
+            history_clear_confirmation_status(Locale::English, 4, HistoryClearScope::Filtered),
+            "Confirm deletion of 4 filtered saved capture(s)"
+        );
+        assert_eq!(
+            history_clear_confirmation_status(
+                Locale::SimplifiedChinese,
+                2,
+                HistoryClearScope::Selected
+            ),
+            "确认删除 已选择 的 2 张已保存截图"
+        );
     }
 
     #[test]

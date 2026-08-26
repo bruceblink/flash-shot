@@ -372,11 +372,22 @@ impl FlashShotApp {
 
     pub(super) fn open_history_directory(&mut self, cx: &mut Context<Self>) {
         let path = self.history.root().to_owned();
+        let locale = self.settings.locale;
         self.status = match directory::open(&path).map(|()| path) {
-            Ok(path) => format!("Opened screenshot folder {}", path.display()),
+            Ok(path) => {
+                let path_detail = path.display().to_string();
+                locale.format_template(
+                    crate::i18n::UiText::HistoryFolderOpened,
+                    &[("path", &path_detail)],
+                )
+            }
             Err(error) => {
                 log::warn!(target: "flash_shot::history", "history_directory_open_failed error={error}");
-                format!("Could not open screenshot folder: {error}")
+                let error_detail = error.to_string();
+                locale.format_template(
+                    crate::i18n::UiText::HistoryFolderOpenFailed,
+                    &[("error", &error_detail)],
+                )
             }
         };
         cx.notify();
