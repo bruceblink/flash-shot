@@ -75,7 +75,11 @@ impl FlashShotApp {
         };
         let generation = self.operation_generation;
         self.full_screen_copy_generation = Some(generation);
-        self.status = "Capturing full screen for clipboard...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::FullScreenCopyInProgress)
+            .to_owned();
         self.hide_settings_window();
         cx.notify();
 
@@ -124,13 +128,21 @@ impl FlashShotApp {
             return;
         }
         let Some(history_write_generation) = self.begin_history_write() else {
-            self.status = "Waiting for active history work before saving...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::SaveHistoryBusy)
+                .to_owned();
             cx.notify();
             return;
         };
         let generation = self.operation_generation;
         self.full_screen_save_generation = Some(generation);
-        self.status = "Capturing full screen to save...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::FullScreenSaveInProgress)
+            .to_owned();
         self.hide_settings_window();
         cx.notify();
 
@@ -191,7 +203,11 @@ impl FlashShotApp {
         }
         let generation = self.operation_generation;
         self.full_screen_pin_generation = Some(generation);
-        self.status = "Capturing full screen to pin...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::FullScreenPinInProgress)
+            .to_owned();
         self.hide_settings_window();
         cx.notify();
 

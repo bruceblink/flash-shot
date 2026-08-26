@@ -198,18 +198,23 @@ impl FlashShotApp {
         pin: WeakEntity<PinnedImage>,
         cx: &mut Context<Self>,
     ) -> bool {
+        let locale = self.settings.locale;
         if !claim_pinned_save_slot(&mut self.pinned_save_in_flight) {
-            self.status = "Another pinned image is already saving. Try again shortly.".to_owned();
+            self.status = locale.text(crate::i18n::UiText::PinnedSaveBusy).to_owned();
             cx.notify();
             return false;
         }
         let Some(history_write_generation) = self.begin_history_write() else {
             self.pinned_save_in_flight = false;
-            self.status = "Waiting for active history work before saving...".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::PinnedSaveWaitingForHistory)
+                .to_owned();
             cx.notify();
             return false;
         };
-        self.status = "Saving pinned image...".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::PinnedSaveInProgress)
+            .to_owned();
         let directory = self.history.root().to_owned();
         let prefix = self.settings.quick_save_prefix.clone();
         cx.notify();
@@ -238,14 +243,25 @@ impl FlashShotApp {
                                     &path,
                                     crate::history::HistorySource::Pinned,
                                 );
-                                this.status = format!("Pinned image saved to {}", path.display());
+                                let path_detail = path.display().to_string();
+                                this.status = locale.format_template(
+                                    crate::i18n::UiText::PinnedImageSavedTo,
+                                    &[("path", &path_detail)],
+                                );
                                 if let Some(history_note) = history_note {
                                     this.status.push_str(&history_note);
                                 }
-                                this.notify_user("Flash Shot", "Pinned image saved");
+                                this.notify_user(
+                                    locale.text(crate::i18n::UiText::AppName),
+                                    locale.text(crate::i18n::UiText::NotificationPinnedImageSaved),
+                                );
                             }
                             Err(error) => {
-                                this.status = format!("Could not save pinned image: {error}");
+                                let error_detail = error.to_string();
+                                this.status = locale.format_template(
+                                    crate::i18n::UiText::PinnedImageSaveFailed,
+                                    &[("error", &error_detail)],
+                                );
                                 log::warn!(target: "flash_shot::pinned", "pinned_save_failed error={error}");
                             }
                         }
@@ -1058,15 +1074,31 @@ impl FlashShotApp {
         }
         match result {
             Ok(true) => {
-                self.status = "Selection copied to clipboard".to_owned();
-                self.notify_user("Flash Shot", "Screenshot copied to clipboard");
+                self.status = self
+                    .settings
+                    .locale
+                    .text(crate::i18n::UiText::SelectionCopiedToClipboard)
+                    .to_owned();
+                self.notify_user(
+                    self.settings.locale.text(crate::i18n::UiText::AppName),
+                    self.settings
+                        .locale
+                        .text(crate::i18n::UiText::NotificationScreenshotCopied),
+                );
             }
             Ok(false) => {
-                self.status = "Copy cancelled before the clipboard changed".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(crate::i18n::UiText::CopyCancelledBeforeClipboardChanged)
+                    .to_owned();
             }
             Err(error) => {
-                let message = format!("Copy failed: {error}");
-                self.status = message;
+                let error_detail = error.to_string();
+                self.status = self
+                    .settings
+                    .locale
+                    .format_template(crate::i18n::UiText::CopyFailed, &[("error", &error_detail)]);
             }
         }
         cx.notify();
@@ -1092,11 +1124,24 @@ impl FlashShotApp {
         }
         match result {
             Ok(()) => {
-                self.status = "Full screen copied to clipboard".to_owned();
-                self.notify_user("Flash Shot", "Full screen copied to clipboard");
+                self.status = self
+                    .settings
+                    .locale
+                    .text(crate::i18n::UiText::FullScreenCopiedToClipboard)
+                    .to_owned();
+                self.notify_user(
+                    self.settings.locale.text(crate::i18n::UiText::AppName),
+                    self.settings
+                        .locale
+                        .text(crate::i18n::UiText::NotificationFullScreenCopied),
+                );
             }
             Err(error) => {
-                self.status = format!("Could not copy full screen: {error}");
+                let error_detail = error.to_string();
+                self.status = self.settings.locale.format_template(
+                    crate::i18n::UiText::FullScreenCopyFailed,
+                    &[("error", &error_detail)],
+                );
                 log::warn!(target: "flash_shot::capture", "full_screen_copy_failed error={error}");
             }
         }
@@ -1180,14 +1225,27 @@ impl FlashShotApp {
                     &path,
                     crate::history::HistorySource::FullScreen,
                 );
-                self.status = format!("Full screen saved to {}", path.display());
+                let path_detail = path.display().to_string();
+                self.status = self.settings.locale.format_template(
+                    crate::i18n::UiText::FullScreenSavedTo,
+                    &[("path", &path_detail)],
+                );
                 if let Some(history_status) = history_status {
                     self.status.push_str(&history_status);
                 }
-                self.notify_user("Flash Shot", "Full screen saved");
+                self.notify_user(
+                    self.settings.locale.text(crate::i18n::UiText::AppName),
+                    self.settings
+                        .locale
+                        .text(crate::i18n::UiText::NotificationFullScreenSaved),
+                );
             }
             Err(error) => {
-                self.status = format!("Could not save full screen: {error}");
+                let error_detail = error.to_string();
+                self.status = self.settings.locale.format_template(
+                    crate::i18n::UiText::FullScreenSaveFailed,
+                    &[("error", &error_detail)],
+                );
                 log::warn!(target: "flash_shot::capture", "full_screen_save_failed error={error}");
             }
         }
@@ -1383,6 +1441,30 @@ mod tests {
         assert_eq!(
             Locale::SimplifiedChinese.text(UiText::AnnotationOpenCancelled),
             "已取消打开标注"
+        );
+    }
+
+    #[test]
+    fn pin_and_full_screen_export_feedback_localizes_paths_and_errors() {
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::PinnedImageSavedTo,
+                &[("path", "D:\\Screenshots\\pinned.png")],
+            ),
+            "Pinned image saved to D:\\Screenshots\\pinned.png"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::FullScreenSaveFailed, &[("error", "磁盘空间不足")],),
+            "无法保存全屏截图：磁盘空间不足"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::FullScreenCopyInProgress),
+            "正在捕获全屏到剪贴板..."
+        );
+        assert_eq!(
+            Locale::English.text(UiText::NotificationScreenshotCopied),
+            "Screenshot copied to clipboard"
         );
     }
 }
