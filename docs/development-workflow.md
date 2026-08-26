@@ -35,6 +35,12 @@ B0 的场景输入、失败恢复动作和可见状态来源登记在 [Bug 与�
 `powershell -NoProfile -File scripts/verify-bug-ui-baseline.ps1` 可重新生成基线报告；该报告只证明登记和
 静态来源可重复，不替代真实 Windows 交互验收。
 
+B1 当前已完成一个可独立验证的恢复切片：保存或快速保存失败时，workflow 回到 `Selecting` 并保留原选区，
+允许用户选择其他位置后再次 Save。确定性回归测试为
+`save_failures_keep_the_existing_selection_available_for_retry` 和
+`stale_save_failures_explain_when_a_new_capture_is_required`；真实只读目录、历史索引、剪贴板和 FFmpeg
+故障注入仍必须在同一 Release 会话中补充证据。
+
 ## 3. 真实输入与剪贴板授权
 
 生产 UI 验收必须从可见覆盖层开始，用原生鼠标和键盘注入完成选区、动作和清理，不得直接调用内部

@@ -3,6 +3,31 @@
 use super::super::HistoryClearScope;
 use super::*;
 
+/// Returns an actionable save error while moving an in-flight export back to editable selection.
+///
+/// The caller keeps the capture overlays open so the user can choose another destination and
+/// retry without taking a second screenshot. If the session was superseded, the message points to
+/// a fresh capture instead of hiding the transition failure.
+pub(super) fn recoverable_save_failure(
+    locale: crate::i18n::Locale,
+    session: &mut crate::domain::session::CaptureSession,
+    error: &str,
+) -> String {
+    match session.export_cancelled() {
+        Ok(()) => locale.format_template(
+            crate::i18n::UiText::SaveFailedKeepSelection,
+            &[("error", error)],
+        ),
+        Err(transition) => {
+            let detail = format!("{error}; {transition}");
+            locale.format_template(
+                crate::i18n::UiText::SaveFailedNeedsNewCapture,
+                &[("error", &detail)],
+            )
+        }
+    }
+}
+
 impl FlashShotApp {
     pub(in crate::app) fn save_selection(&mut self, cx: &mut Context<Self>) {
         let selection = match self.session.start_export() {
@@ -576,11 +601,10 @@ impl FlashShotApp {
                 }
             }
             SaveOutcome::Failed(error) => {
-                let message = format!("Save failed: {error}");
-                let _ = self.session.fail(message.clone());
-                self.status = message;
-                self.close_capture_overlays(cx);
-                self.return_to_background();
+                // A destination or encoder failure is recoverable: return to Selecting so the
+                // existing pixels and annotations remain available for another Save attempt.
+                self.status =
+                    recoverable_save_failure(self.settings.locale, &mut self.session, &error);
             }
         }
         if let Some(history_write_generation) = history_write_generation

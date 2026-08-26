@@ -239,6 +239,8 @@ pub enum UiText {
     Light,
     LanguageChanged,
     LanguagePreferenceSaveFailed,
+    SaveFailedKeepSelection,
+    SaveFailedNeedsNewCapture,
     NoPinnedWindowsNeededInputRecovery,
     PinnedWindowInputRestored,
     ReadyWithShortcut,
@@ -470,6 +472,12 @@ impl UiText {
             Self::Light => "Light",
             Self::LanguageChanged => "Language changed to {language}",
             Self::LanguagePreferenceSaveFailed => "Could not save language preference: {error}",
+            Self::SaveFailedKeepSelection => {
+                "Save failed: {error}. Selection kept; choose another location and try Save again."
+            }
+            Self::SaveFailedNeedsNewCapture => {
+                "Save failed: {error}; capture is no longer editable. Start a new capture."
+            }
             Self::NoPinnedWindowsNeededInputRecovery => "No pinned windows needed input recovery",
             Self::PinnedWindowInputRestored => "Restored mouse input for {count} pinned window(s)",
             Self::ReadyWithShortcut => "Ready - {shortcut}",
@@ -701,6 +709,12 @@ impl UiText {
             Self::Light => "浅色",
             Self::LanguageChanged => "语言已切换为 {language}",
             Self::LanguagePreferenceSaveFailed => "无法保存语言偏好：{error}",
+            Self::SaveFailedKeepSelection => {
+                "保存失败：{error}。已保留选区，请选择其他位置后重试保存。"
+            }
+            Self::SaveFailedNeedsNewCapture => {
+                "保存失败：{error}；当前截图无法继续编辑，请开始新的截图。"
+            }
             Self::NoPinnedWindowsNeededInputRecovery => "没有 Pin 窗口需要恢复输入",
             Self::PinnedWindowInputRestored => "已恢复 {count} 个 Pin 窗口的鼠标输入",
             Self::ReadyWithShortcut => "就绪 - {shortcut}",

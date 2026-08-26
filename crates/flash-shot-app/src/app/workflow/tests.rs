@@ -1,4 +1,6 @@
-use super::exporting::{claim_pinned_save_slot, selection_copy_completion_can_report};
+use super::exporting::{
+    claim_pinned_save_slot, recoverable_save_failure, selection_copy_completion_can_report,
+};
 use super::recognition::recognition_completion_is_current;
 use super::{
     ColorFormat, ImageTimestamp, KeyboardCommand, TranslationOutcome, adjusted_number_value,
@@ -30,6 +32,7 @@ use super::{
 use crate::app::{
     ClipboardWriteLease, SelectionCopyCancelRequest, SelectionCopyCancellation, SelectionCopyLease,
 };
+use crate::i18n::Locale;
 use crate::{
     domain::{
         annotation::{
@@ -37,7 +40,7 @@ use crate::{
             AnnotationStyle, AnnotationTool, CommandHistory,
         },
         geometry::{PhysicalPoint, PhysicalRect},
-        session::CaptureSessionState,
+        session::{CaptureSession, CaptureSessionState},
     },
     platform::{
         capture::{CaptureFrame, DisplayCapture, PixelFormat},
@@ -1596,6 +1599,39 @@ fn recording_start_failures_name_the_available_recovery_path() {
 
     let unsupported = std::io::Error::new(std::io::ErrorKind::Unsupported, "ddagrab unavailable");
     assert!(recording_start_failure_status(&unsupported).contains("ddagrab or gdigrab"));
+}
+
+#[test]
+fn save_failures_keep_the_existing_selection_available_for_retry() {
+    let selection = PhysicalRect {
+        left: 10,
+        top: 20,
+        right: 110,
+        bottom: 220,
+    };
+    let mut session = CaptureSession::default();
+    session.begin().unwrap();
+    session.frames_ready().unwrap();
+    session.select(selection).unwrap();
+    session.start_export().unwrap();
+
+    let status = recoverable_save_failure(Locale::English, &mut session, "access denied");
+
+    assert_eq!(session.state(), CaptureSessionState::Selecting);
+    assert_eq!(session.selection(), Some(selection));
+    assert!(status.contains("Selection kept"));
+    assert!(status.contains("try Save again"));
+}
+
+#[test]
+fn stale_save_failures_explain_when_a_new_capture_is_required() {
+    let mut session = CaptureSession::default();
+
+    let status = recoverable_save_failure(Locale::SimplifiedChinese, &mut session, "capture reset");
+
+    assert_eq!(session.state(), CaptureSessionState::Idle);
+    assert!(status.contains("无法继续编辑"));
+    assert!(status.contains("开始新的截图"));
 }
 
 #[test]
