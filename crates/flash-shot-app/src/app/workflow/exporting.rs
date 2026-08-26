@@ -266,20 +266,29 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn save_annotation_document(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some(document) = self.annotation_document.clone() else {
-            self.status = "Annotation document is unavailable".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::AnnotationDocumentUnavailable)
+                .to_owned();
             cx.notify();
             return;
         };
         let demoted_overlays = match self.demote_capture_overlays_for_dialog(cx) {
             Ok(handles) => handles,
             Err(error) => {
-                self.status = format!("Could not show annotation Save dialog: {error}");
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::AnnotationSaveDialogFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
         };
-        self.status = "Choose where to save annotations...".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::AnnotationSaveChoosing)
+            .to_owned();
         cx.notify();
         let prompt =
             cx.prompt_for_new_path(&PathBuf::default(), Some("flash-shot.annotations.json"));
@@ -307,10 +316,22 @@ impl FlashShotApp {
                     this.update(&mut cx, |this, cx| {
                         this.status = match result {
                             Ok(Some(path)) => {
-                                format!("Annotations saved to {}", path.display())
+                                let path_detail = path.display().to_string();
+                                locale.format_template(
+                                    crate::i18n::UiText::AnnotationSaved,
+                                    &[("path", &path_detail)],
+                                )
                             }
-                            Ok(None) => "Annotation save cancelled".to_owned(),
-                            Err(error) => format!("Could not save annotations: {error}"),
+                            Ok(None) => locale
+                                .text(crate::i18n::UiText::AnnotationSaveCancelled)
+                                .to_owned(),
+                            Err(error) => {
+                                let error_detail = error.to_string();
+                                locale.format_template(
+                                    crate::i18n::UiText::AnnotationSaveFailed,
+                                    &[("error", &error_detail)],
+                                )
+                            }
                         };
                         cx.notify();
                     });
@@ -321,6 +342,7 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn save_editable_project(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some((frame, document)) = self.export_source() else {
             cx.notify();
             return;
@@ -328,12 +350,18 @@ impl FlashShotApp {
         let demoted_overlays = match self.demote_capture_overlays_for_dialog(cx) {
             Ok(handles) => handles,
             Err(error) => {
-                self.status = format!("Could not show editable-project Save dialog: {error}");
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::EditableProjectSaveDialogFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
         };
-        self.status = "Choose where to save the editable image...".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::EditableProjectSaveChoosing)
+            .to_owned();
         cx.notify();
         let suggested_name = default_png_image_filename();
         let prompt = cx.prompt_for_new_path(&PathBuf::default(), Some(&suggested_name));
@@ -361,13 +389,24 @@ impl FlashShotApp {
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.status = match result {
-                            Ok(Some(path)) => format!(
-                                "Editable project saved to {} and {}",
-                                path.display(),
-                                annotation_sidecar_path(&path).display()
-                            ),
-                            Ok(None) => "Editable-project save cancelled".to_owned(),
-                            Err(error) => format!("Could not save editable project: {error}"),
+                            Ok(Some(path)) => {
+                                let image = path.display().to_string();
+                                let sidecar = annotation_sidecar_path(&path).display().to_string();
+                                locale.format_template(
+                                    crate::i18n::UiText::EditableProjectSaved,
+                                    &[("image", &image), ("sidecar", &sidecar)],
+                                )
+                            }
+                            Ok(None) => locale
+                                .text(crate::i18n::UiText::EditableProjectSaveCancelled)
+                                .to_owned(),
+                            Err(error) => {
+                                let error_detail = error.to_string();
+                                locale.format_template(
+                                    crate::i18n::UiText::EditableProjectSaveFailed,
+                                    &[("error", &error_detail)],
+                                )
+                            }
                         };
                         cx.notify();
                     });
@@ -379,8 +418,11 @@ impl FlashShotApp {
 
     /// Opens annotations for this capture and ignores a result after a newer capture replaces it.
     pub(in crate::app) fn open_annotation_document(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some(frame) = self.frame.as_ref() else {
-            self.status = "Capture frame is unavailable".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::CaptureFrameUnavailable)
+                .to_owned();
             cx.notify();
             return;
         };
@@ -389,18 +431,28 @@ impl FlashShotApp {
         let demoted_overlays = match self.demote_capture_overlays_for_dialog(cx) {
             Ok(handles) => handles,
             Err(error) => {
-                self.status = format!("Could not show annotation Open dialog: {error}");
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::AnnotationOpenDialogFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
         };
-        self.status = "Choose annotations to open...".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::AnnotationOpenChoosing)
+            .to_owned();
         cx.notify();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open annotation document".into()),
+            prompt: Some(
+                locale
+                    .text(crate::i18n::UiText::AnnotationOpenPrompt)
+                    .into(),
+            ),
         });
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -441,15 +493,25 @@ impl FlashShotApp {
                                 this.selected_annotation = None;
                                 this.next_annotation_id = next_id;
                                 this.next_sequence_number = next_sequence;
-                                this.status = format!("Loaded annotations from {}", path.display());
+                                let path_detail = path.display().to_string();
+                                this.status = locale.format_template(
+                                    crate::i18n::UiText::AnnotationLoaded,
+                                    &[("path", &path_detail)],
+                                );
                                 cx.notify();
                             }
                             Ok(None) => {
-                                this.status = "Open annotations cancelled".to_owned();
+                                this.status = locale
+                                    .text(crate::i18n::UiText::AnnotationOpenCancelled)
+                                    .to_owned();
                                 cx.notify();
                             }
                             Err(error) => {
-                                this.status = format!("Could not open annotations: {error}");
+                                let error_detail = error.to_string();
+                                this.status = locale.format_template(
+                                    crate::i18n::UiText::AnnotationOpenFailed,
+                                    &[("error", &error_detail)],
+                                );
                                 cx.notify();
                             }
                         }
@@ -1296,6 +1358,31 @@ mod tests {
                 &[("source", source), ("path", "D:\\Screenshots\\capture.png")],
             ),
             "已将选区截图保存到 D:\\Screenshots\\capture.png"
+        );
+    }
+
+    #[test]
+    fn annotation_project_feedback_localizes_paths_and_cancel_states() {
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::AnnotationSaved,
+                &[("path", "D:\\Screenshots\\capture.annotations.json")],
+            ),
+            "Annotations saved to D:\\Screenshots\\capture.annotations.json"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::EditableProjectSaved,
+                &[
+                    ("image", "D:\\Screenshots\\capture.png"),
+                    ("sidecar", "D:\\Screenshots\\capture.annotations.json"),
+                ],
+            ),
+            "可编辑项目已保存到 D:\\Screenshots\\capture.png 和 D:\\Screenshots\\capture.annotations.json"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::AnnotationOpenCancelled),
+            "已取消打开标注"
         );
     }
 }
