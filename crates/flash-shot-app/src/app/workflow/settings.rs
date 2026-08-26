@@ -117,23 +117,24 @@ impl FlashShotApp {
 
     /// Opens a native folder picker, then swaps history only after the new private root is ready.
     pub(in crate::app) fn choose_quick_save_directory(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         if self.history_root_change_in_flight
             || self.history_file_read_in_flight()
             || self.history_mutation_pending()
         {
-            self.status = "Finish active history work before changing the save folder".to_owned();
+            self.status = locale.text(UiText::QuickSaveFolderBusy).to_owned();
             cx.notify();
             return;
         }
         self.history_root_change_in_flight = true;
-        self.status = "Choose a folder for quick saves and screenshot history...".to_owned();
+        self.status = locale.text(UiText::QuickSaveFolderChoosing).to_owned();
         cx.notify();
         let limit = usize::from(self.settings.history_limit);
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Choose quick-save folder".into()),
+            prompt: Some(locale.text(UiText::QuickSaveFolderPrompt).into()),
         });
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -149,8 +150,9 @@ impl FlashShotApp {
                             if let Some(this) = this.upgrade() {
                                 this.update(&mut cx, |this, cx| {
                                     this.history_root_change_in_flight = false;
-                                    this.status =
-                                        "Quick-save folder selection cancelled".to_owned();
+                                    this.status = locale
+                                        .text(UiText::QuickSaveFolderSelectionCancelled)
+                                        .to_owned();
                                     cx.notify();
                                 });
                             }
@@ -161,7 +163,9 @@ impl FlashShotApp {
                         if let Some(this) = this.upgrade() {
                             this.update(&mut cx, |this, cx| {
                                 this.history_root_change_in_flight = false;
-                                this.status = "Quick-save folder selection cancelled".to_owned();
+                                this.status = locale
+                                    .text(UiText::QuickSaveFolderSelectionCancelled)
+                                    .to_owned();
                                 cx.notify();
                             });
                         }
@@ -182,21 +186,28 @@ impl FlashShotApp {
                                     Ok(()) => {
                                         this.history = history;
                                         this.synchronize_history_preview_cache();
-                                        this.status = format!(
-                                            "Quick saves and history now use {}",
-                                            this.history.root().display()
+                                        let path = this.history.root().display().to_string();
+                                        this.status = locale.format_template(
+                                            UiText::QuickSaveFolderChanged,
+                                            &[("path", &path)],
                                         );
                                     }
                                     Err(error) => {
                                         this.settings.quick_save_directory = previous;
-                                        this.status = format!(
-                                            "Could not save quick-save folder preference: {error}"
+                                        let error_detail = error.to_string();
+                                        this.status = locale.format_template(
+                                            UiText::QuickSaveFolderPreferenceSaveFailed,
+                                            &[("error", &error_detail)],
                                         );
                                     }
                                 }
                             }
                             Err(error) => {
-                                this.status = format!("Could not use quick-save folder: {error}");
+                                let error_detail = error.to_string();
+                                this.status = locale.format_template(
+                                    UiText::QuickSaveFolderUseFailed,
+                                    &[("error", &error_detail)],
+                                );
                             }
                         }
                         cx.notify();
@@ -218,7 +229,9 @@ impl FlashShotApp {
         }
         self.quick_save_directory_check_in_flight = true;
         let directory = self.history.root().to_owned();
-        self.status = format!("Checking quick-save folder {}...", directory.display());
+        let locale = self.settings.locale;
+        let path = directory.display().to_string();
+        self.status = locale.format_template(UiText::QuickSaveFolderChecking, &[("path", &path)]);
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -238,11 +251,14 @@ impl FlashShotApp {
                             return;
                         }
                         this.status = match result {
-                            Ok(()) => {
-                                format!("Quick-save folder is ready: {}", directory.display())
-                            }
+                            Ok(()) => locale
+                                .format_template(UiText::QuickSaveFolderReady, &[("path", &path)]),
                             Err(error) => {
-                                format!("Quick-save folder check failed: {error}")
+                                let error_detail = error.to_string();
+                                locale.format_template(
+                                    UiText::QuickSaveFolderCheckFailed,
+                                    &[("error", &error_detail)],
+                                )
                             }
                         };
                         cx.notify();
@@ -255,16 +271,21 @@ impl FlashShotApp {
 
     /// Cycles a persisted safe filename prefix shared by selection, full-screen, and pin saves.
     pub(in crate::app) fn cycle_quick_save_prefix(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let previous = self.settings.quick_save_prefix.clone();
         self.settings.quick_save_prefix = UserSettings::next_save_prefix(&previous);
         self.status = match self.settings.save(&self.settings_path) {
-            Ok(()) => format!(
-                "Quick-save names use {}<yyyyMMddHHmmssSSS><UUIDv7>.png",
-                self.settings.quick_save_prefix
+            Ok(()) => locale.format_template(
+                UiText::QuickSavePrefixChanged,
+                &[("prefix", &self.settings.quick_save_prefix)],
             ),
             Err(error) => {
                 self.settings.quick_save_prefix = previous;
-                format!("Could not save quick-save naming preference: {error}")
+                let error_detail = error.to_string();
+                locale.format_template(
+                    UiText::QuickSavePrefixSaveFailed,
+                    &[("error", &error_detail)],
+                )
             }
         };
         cx.notify();

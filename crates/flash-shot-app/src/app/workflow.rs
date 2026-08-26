@@ -152,7 +152,11 @@ impl FlashShotApp {
         let next_limit = next_history_limit(self.settings.history_limit);
         self.history_retention_target = Some(next_limit);
         self.invalidate_history_thumbnails();
-        self.status = format!("Updating screenshot history retention to {next_limit}...");
+        let count = next_limit.to_string();
+        self.status = self.settings.locale.format_template(
+            crate::i18n::UiText::HistoryRetentionUpdating,
+            &[("count", &count)],
+        );
         cx.notify();
         self.continue_history_retention(cx);
     }
@@ -209,8 +213,10 @@ impl FlashShotApp {
         if !deletion.failures.is_empty() {
             let failure_count = deletion.failures.len();
             self.history_retention_target = None;
-            self.status = format!(
-                "Could not remove {failure_count} capture(s); history retention was unchanged"
+            let count = failure_count.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::HistoryRetentionDeleteFailed,
+                &[("count", &count)],
             );
             cx.notify();
             return;
@@ -232,11 +238,19 @@ impl FlashShotApp {
             return;
         }
         self.settings.history_limit = target;
+        let count = target.to_string();
         self.status = match self.settings.save(&self.settings_path) {
-            Ok(()) => format!("Screenshot history retains the latest {target} captures"),
-            Err(error) => format!(
-                "History retention is {target} captures for this session but could not be saved: {error}"
+            Ok(()) => self.settings.locale.format_template(
+                crate::i18n::UiText::HistoryRetentionUpdated,
+                &[("count", &count)],
             ),
+            Err(error) => {
+                let error_detail = error.to_string();
+                self.settings.locale.format_template(
+                    crate::i18n::UiText::HistoryRetentionSaveFailed,
+                    &[("count", &count), ("error", &error_detail)],
+                )
+            }
         };
         cx.notify();
     }

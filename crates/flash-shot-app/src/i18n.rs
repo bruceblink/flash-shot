@@ -399,8 +399,24 @@ pub enum UiText {
     HistoryRecordFailed,
     HistoryFilesRemovedIndexFailed,
     HistoryRetentionUpdateFailed,
+    HistoryRetentionUpdating,
+    HistoryRetentionDeleteFailed,
+    HistoryRetentionUpdated,
+    HistoryRetentionSaveFailed,
     HistoryFallbackUsed,
     HistoryFallbackPreferenceFailed,
+    QuickSaveFolderBusy,
+    QuickSaveFolderChoosing,
+    QuickSaveFolderPrompt,
+    QuickSaveFolderSelectionCancelled,
+    QuickSaveFolderChanged,
+    QuickSaveFolderPreferenceSaveFailed,
+    QuickSaveFolderUseFailed,
+    QuickSaveFolderChecking,
+    QuickSaveFolderReady,
+    QuickSaveFolderCheckFailed,
+    QuickSavePrefixChanged,
+    QuickSavePrefixSaveFailed,
     NoPinnedWindowsNeededInputRecovery,
     PinnedWindowInputRestored,
     ReadyWithShortcut,
@@ -858,9 +874,41 @@ impl UiText {
             Self::HistoryRetentionUpdateFailed => {
                 "Could not update history retention: {error}. The previous limit remains active; try again."
             }
+            Self::HistoryRetentionUpdating => "Updating screenshot history retention to {count}...",
+            Self::HistoryRetentionDeleteFailed => {
+                "Could not remove {count} capture(s); history retention was unchanged"
+            }
+            Self::HistoryRetentionUpdated => {
+                "Screenshot history retains the latest {count} captures"
+            }
+            Self::HistoryRetentionSaveFailed => {
+                "History retention is {count} captures for this session but could not be saved: {error}"
+            }
             Self::HistoryFallbackUsed => "; quick-save folder unavailable; using {path}",
             Self::HistoryFallbackPreferenceFailed => {
                 " (could not persist the fallback folder: {error})"
+            }
+            Self::QuickSaveFolderBusy => {
+                "Finish active history work before changing the save folder"
+            }
+            Self::QuickSaveFolderChoosing => {
+                "Choose a folder for quick saves and screenshot history..."
+            }
+            Self::QuickSaveFolderPrompt => "Choose quick-save folder",
+            Self::QuickSaveFolderSelectionCancelled => "Quick-save folder selection cancelled",
+            Self::QuickSaveFolderChanged => "Quick saves and history now use {path}",
+            Self::QuickSaveFolderPreferenceSaveFailed => {
+                "Could not save quick-save folder preference: {error}"
+            }
+            Self::QuickSaveFolderUseFailed => "Could not use quick-save folder: {error}",
+            Self::QuickSaveFolderChecking => "Checking quick-save folder {path}...",
+            Self::QuickSaveFolderReady => "Quick-save folder is ready: {path}",
+            Self::QuickSaveFolderCheckFailed => "Quick-save folder check failed: {error}",
+            Self::QuickSavePrefixChanged => {
+                "Quick-save names use {prefix}<yyyyMMddHHmmssSSS><UUIDv7>.png"
+            }
+            Self::QuickSavePrefixSaveFailed => {
+                "Could not save quick-save naming preference: {error}"
             }
             Self::NoPinnedWindowsNeededInputRecovery => "No pinned windows needed input recovery",
             Self::PinnedWindowInputRestored => "Restored mouse input for {count} pinned window(s)",
@@ -1277,8 +1325,28 @@ impl UiText {
             Self::HistoryRetentionUpdateFailed => {
                 "无法更新历史记录保留数量：{error}。当前仍使用原设置，请重试。"
             }
+            Self::HistoryRetentionUpdating => "正在将截图历史保留数量更新为 {count}...",
+            Self::HistoryRetentionDeleteFailed => "无法删除 {count} 张截图；截图历史保留设置未更改",
+            Self::HistoryRetentionUpdated => "截图历史记录保留最近 {count} 张截图",
+            Self::HistoryRetentionSaveFailed => {
+                "本次会话的历史保留数量为 {count} 张截图，但无法保存：{error}"
+            }
             Self::HistoryFallbackUsed => "；快速保存目录不可用，已改用 {path}",
             Self::HistoryFallbackPreferenceFailed => "（无法保存回退目录设置：{error}）",
+            Self::QuickSaveFolderBusy => "请先完成正在进行的历史记录操作，再更改保存目录",
+            Self::QuickSaveFolderChoosing => "请选择快速保存和截图历史记录目录...",
+            Self::QuickSaveFolderPrompt => "选择快速保存目录",
+            Self::QuickSaveFolderSelectionCancelled => "已取消选择快速保存目录",
+            Self::QuickSaveFolderChanged => "快速保存和历史记录现在使用 {path}",
+            Self::QuickSaveFolderPreferenceSaveFailed => "无法保存快速保存目录设置：{error}",
+            Self::QuickSaveFolderUseFailed => "无法使用快速保存目录：{error}",
+            Self::QuickSaveFolderChecking => "正在检查快速保存目录 {path}...",
+            Self::QuickSaveFolderReady => "快速保存目录已就绪：{path}",
+            Self::QuickSaveFolderCheckFailed => "快速保存目录检查失败：{error}",
+            Self::QuickSavePrefixChanged => {
+                "快速保存文件名使用 {prefix}<yyyyMMddHHmmssSSS><UUIDv7>.png"
+            }
+            Self::QuickSavePrefixSaveFailed => "无法保存快速保存命名设置：{error}",
             Self::NoPinnedWindowsNeededInputRecovery => "没有 Pin 窗口需要恢复输入",
             Self::PinnedWindowInputRestored => "已恢复 {count} 个 Pin 窗口的鼠标输入",
             Self::ReadyWithShortcut => "就绪 - {shortcut}",
@@ -1545,6 +1613,29 @@ mod tests {
                 &[("error", "disk full")],
             ),
             "Could not update history retention: disk full. The previous limit remains active; try again."
+        );
+    }
+
+    #[test]
+    fn library_and_history_status_templates_keep_dynamic_details_localized() {
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::QuickSaveFolderChanged,
+                &[("path", "D:\\Screenshots")],
+            ),
+            "Quick saves and history now use D:\\Screenshots"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::QuickSaveFolderCheckFailed, &[("error", "拒绝访问")],),
+            "快速保存目录检查失败：拒绝访问"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::HistoryRetentionSaveFailed,
+                &[("count", "50"), ("error", "磁盘已满")],
+            ),
+            "本次会话的历史保留数量为 50 张截图，但无法保存：磁盘已满"
         );
     }
 }
