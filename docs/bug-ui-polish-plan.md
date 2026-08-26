@@ -301,7 +301,7 @@ Record/更新状态 view。
 - 删除用户可见的英文状态拼接；品牌名、路径、快捷键和外部错误详情按既有规则保留；
 - 保持资源键、按钮语义 ID 和验收报告字段与语言无关。
 
-**当前进度（2026-08-26，OCR/二维码/翻译、Record 与更新分组切片）**：
+**当前进度（2026-08-26，OCR/二维码/翻译、Record、更新、快速保存与历史保留分组切片）**：
 
 - `workflow/recognition.rs` 已将二维码、本地 OCR、翻译的选区校验、进行中、无结果、完成、失败和重试状态迁移到
   `Locale`/`UiText`；识别结果标题与复制结果反馈也使用参数化资源；
@@ -311,10 +311,12 @@ Record/更新状态 view。
   目标标签、进度、冲突和失败状态迁移到 `Locale`/`UiText`，动态路径、设备名、目标和进度使用参数化模板；
 - `workflow/settings.rs` 已将更新检查的配置禁用、忙态、进行中、取消、可用、已最新、本地版本较新和失败状态迁移到
   `Locale`/`UiText`，发布版本与错误详情使用参数化模板；
+- `workflow/settings.rs` 已将快速保存目录选择、取消、切换、检查、失败与命名规则状态迁移到 `Locale`/`UiText`，目录路径和错误详情使用参数化模板；
+- `workflow.rs` 已将历史保留数量更新、删除失败、更新完成和设置保存失败状态迁移到 `Locale`/`UiText`，数量和错误详情使用参数化模板；
 - `workflow/tests.rs` 与设置视图测试覆盖 English/简体中文的按钮、状态和动态数量模板；
-- OCR/二维码/翻译、Record 与更新分组已通过 `cargo fmt --all -- --check`、`cargo check -p flash-shot-app --all-targets --locked`、
-  `cargo test --workspace --locked` 和 `cargo clippy --workspace --all-targets -- -D warnings`；历史/保存/通用剪贴板错误和其余
-  动态状态仍待后续分组迁移，U1 不在本切片宣称完成。
+- OCR/二维码/翻译、Record、更新、快速保存与历史保留分组已通过 `cargo fmt --all -- --check`、`cargo check -p flash-shot-app --all-targets --locked`、
+  `cargo test --workspace --locked` 和 `cargo clippy --workspace --all-targets -- -D warnings`；保存、通用剪贴板错误和其余动态状态仍待后续分组迁移，
+  U1 不在本切片宣称完成。
 
 **验收条件**：English 与简体中文下，Capture、Library、Record、App、Pin 的可见文案均来自资源目录；
 中文核心 UI 不出现未登记英文；状态切换、失败重试和取消路径行为相同；缺少 OCR 依赖不会阻塞截图。
