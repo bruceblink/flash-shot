@@ -2,6 +2,7 @@
 
 use super::super::{HistoryClearScope, history_entry_matches, selected_history_paths};
 use super::*;
+use crate::i18n::{Locale, UiText};
 
 impl FlashShotApp {
     /// Selects the initial settings page for native acceptance screenshots.
@@ -106,7 +107,11 @@ impl FlashShotApp {
     ) {
         self.update_check_in_flight = state == crate::UpdateUiAcceptanceState::Checking;
         if self.update_check_in_flight {
-            self.status = "Checking for updates...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::UpdateCheckInProgress)
+                .to_owned();
         }
     }
 
@@ -866,21 +871,24 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         if self.update_check_in_flight {
-            self.status = "Update check is already in progress".to_owned();
+            self.status = locale.text(UiText::UpdateCheckBusy).to_owned();
             cx.notify();
             return;
         }
         let config = match UpdateConfig::from_environment() {
             Ok(Some(config)) => config,
             Ok(None) => {
-                self.status =
-                    "Update checks are disabled: set FLASH_SHOT_UPDATE_ENDPOINT".to_owned();
+                self.status = locale.text(UiText::UpdateChecksDisabled).to_owned();
                 cx.notify();
                 return;
             }
             Err(error) => {
-                self.status = format!("Update checks are unavailable: {error}");
+                self.status = locale.format_template(
+                    UiText::UpdateChecksUnavailable,
+                    &[("error", &error.to_string())],
+                );
                 cx.notify();
                 return;
             }
@@ -888,7 +896,7 @@ impl FlashShotApp {
         self.update_check_generation = self.update_check_generation.wrapping_add(1);
         let generation = self.update_check_generation;
         self.update_check_in_flight = true;
-        self.status = "Checking for updates...".to_owned();
+        self.status = locale.text(UiText::UpdateCheckInProgress).to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -914,7 +922,11 @@ impl FlashShotApp {
         }
         self.update_check_generation = self.update_check_generation.wrapping_add(1);
         self.update_check_in_flight = false;
-        self.status = "Update check cancelled".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::UpdateCheckCancelled)
+            .to_owned();
         cx.notify();
     }
 
@@ -928,24 +940,31 @@ impl FlashShotApp {
             return;
         }
         self.update_check_in_flight = false;
-        self.status = match result {
-            Ok(UpdateAvailability::Available { version }) => {
-                format!(
-                    "Update available: {version} (download from your configured release channel)"
-                )
-            }
-            Ok(UpdateAvailability::Current { version }) => {
-                format!("Flash Shot {version} is up to date")
-            }
-            Ok(UpdateAvailability::NewerLocal { version }) => {
-                format!("Installed version is newer than release manifest {version}")
-            }
-            Err(error) => {
-                log::warn!(target: "flash_shot::update", "update_check_failed error={error}");
-                format!("Could not check for updates: {error}")
-            }
-        };
+        self.status = update_check_status(self.settings.locale, result);
         cx.notify();
+    }
+}
+
+/// Converts an update probe result into the active language's status text while retaining version
+/// and error details for recovery decisions. The caller only owns UI state; no update is started.
+pub(in crate::app) fn update_check_status(
+    locale: Locale,
+    result: std::io::Result<UpdateAvailability>,
+) -> String {
+    match result {
+        Ok(UpdateAvailability::Available { version }) => {
+            locale.format_template(UiText::UpdateAvailable, &[("version", &version)])
+        }
+        Ok(UpdateAvailability::Current { version }) => {
+            locale.format_template(UiText::UpdateCurrent, &[("version", &version)])
+        }
+        Ok(UpdateAvailability::NewerLocal { version }) => {
+            locale.format_template(UiText::UpdateNewerLocal, &[("version", &version)])
+        }
+        Err(error) => {
+            log::warn!(target: "flash_shot::update", "update_check_failed error={error}");
+            locale.format_template(UiText::UpdateCheckFailed, &[("error", &error.to_string())])
+        }
     }
 }
 

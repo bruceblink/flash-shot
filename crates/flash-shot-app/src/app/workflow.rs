@@ -39,6 +39,8 @@ pub(super) use recording::{
     recording_audio_selection_label, recording_directory_for_display,
     recording_display_selection_label,
 };
+#[cfg(test)]
+pub(super) use settings::update_check_status;
 
 use std::{
     ops::Range,

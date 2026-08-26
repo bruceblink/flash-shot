@@ -27,7 +27,7 @@ use super::{
     reserve_quick_save_path, resolve_pointer_selection, save_annotated_frame_selection,
     save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
     text_annotation_with_content, tool_selected_status, translation_failure_status,
-    translation_service_test_status, translation_support_status, with_alpha,
+    translation_service_test_status, translation_support_status, update_check_status, with_alpha,
 };
 use crate::app::{
     ClipboardWriteLease, SelectionCopyCancelRequest, SelectionCopyCancellation, SelectionCopyLease,
@@ -49,6 +49,7 @@ use crate::{
         window_inspector::{InspectionKind, InspectionTarget},
     },
     recording::AudioSource,
+    update::UpdateAvailability,
 };
 use gpui::Keystroke;
 use std::{
@@ -1770,6 +1771,33 @@ fn recording_support_probe_reuses_actionable_missing_ffmpeg_guidance() {
     let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "ffmpeg.exe");
 
     assert!(recording_support_status(Locale::English, Err(&missing)).contains("FLASH_SHOT_FFMPEG"));
+}
+
+#[test]
+fn update_statuses_use_the_active_catalog_and_preserve_release_details() {
+    assert_eq!(
+        update_check_status(
+            Locale::English,
+            Ok(UpdateAvailability::Available {
+                version: "0.2.0".to_owned(),
+            }),
+        ),
+        "Update available: 0.2.0 (download from your configured release channel)"
+    );
+    assert_eq!(
+        update_check_status(
+            Locale::SimplifiedChinese,
+            Ok(UpdateAvailability::Current {
+                version: "0.1.2".to_owned(),
+            }),
+        ),
+        "Flash Shot 0.1.2 已是最新版本"
+    );
+    let error = std::io::Error::new(std::io::ErrorKind::TimedOut, "manifest timeout");
+    assert_eq!(
+        update_check_status(Locale::SimplifiedChinese, Err(error)),
+        "无法检查更新：manifest timeout"
+    );
 }
 
 #[test]
