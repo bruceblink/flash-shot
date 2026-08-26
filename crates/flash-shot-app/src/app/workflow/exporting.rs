@@ -31,10 +31,15 @@ pub(super) fn recoverable_save_failure(
 
 impl FlashShotApp {
     pub(in crate::app) fn save_selection(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let selection = match self.session.start_export() {
             Ok(selection) => selection,
             Err(error) => {
-                self.status = error.to_string();
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::SaveStartFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
@@ -47,13 +52,19 @@ impl FlashShotApp {
             Ok(handles) => handles,
             Err(error) => {
                 let _ = self.session.export_cancelled();
-                self.status = format!("Could not show Save dialog above capture: {error}");
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::SaveDialogAboveCaptureFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
         };
 
-        self.status = "Choose where to save the selection...".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::SaveSelectionChoosing)
+            .to_owned();
         let generation = self.operation_generation;
         // The source label belongs to this export, not to whichever capture may be active when the
         // native dialog and background writer eventually return.
@@ -105,8 +116,9 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn quick_save_selection(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some(history_write_generation) = self.begin_history_write() else {
-            self.status = "Waiting for active history work before saving...".to_owned();
+            self.status = locale.text(crate::i18n::UiText::SaveHistoryBusy).to_owned();
             cx.notify();
             return;
         };
@@ -114,7 +126,11 @@ impl FlashShotApp {
             Ok(selection) => selection,
             Err(error) => {
                 self.finish_history_write(history_write_generation);
-                self.status = error.to_string();
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::SaveStartFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
@@ -125,7 +141,9 @@ impl FlashShotApp {
             return;
         };
 
-        self.status = "Quick saving selection...".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::SaveSelectionInProgress)
+            .to_owned();
         let generation = self.operation_generation;
         // The worker can finish after Reset or a new capture changes the live app state. Keep the
         // source that produced these pixels with the task so its managed-history entry is exact.
@@ -580,16 +598,30 @@ impl FlashShotApp {
         match outcome {
             SaveOutcome::Saved { path, managed } => {
                 if let Err(error) = self.session.export_completed() {
-                    self.status = error.to_string();
+                    let error_detail = error.to_string();
+                    self.status = self.settings.locale.format_template(
+                        crate::i18n::UiText::SaveTransitionFailed,
+                        &[("error", &error_detail)],
+                    );
                 } else {
                     let history_status = managed
                         .then(|| self.record_managed_save_with_recovery(&path, history_source))
                         .flatten();
-                    self.status = format!("{} saved to {}", history_source.label(), path.display());
+                    let source = save_source_label(self.settings.locale, history_source);
+                    let path_detail = path.display().to_string();
+                    self.status = self.settings.locale.format_template(
+                        crate::i18n::UiText::SaveCompleted,
+                        &[("source", source), ("path", &path_detail)],
+                    );
                     if let Some(history_status) = history_status {
                         self.status.push_str(&history_status);
                     }
-                    self.notify_user("Flash Shot", "Screenshot saved");
+                    self.notify_user(
+                        self.settings.locale.text(crate::i18n::UiText::AppName),
+                        self.settings
+                            .locale
+                            .text(crate::i18n::UiText::NotificationScreenshotSaved),
+                    );
                     self.close_capture_overlays(cx);
                     self.return_to_background();
                 }
@@ -639,7 +671,12 @@ impl FlashShotApp {
         }
 
         let Some(parent) = path.parent() else {
-            return Some("; history unavailable: saved path has no parent".to_owned());
+            return Some(
+                self.settings
+                    .locale
+                    .text(crate::i18n::UiText::HistoryUnavailableNoParent)
+                    .to_owned(),
+            );
         };
         let mut recovered = match crate::history::ScreenshotHistory::open_with_limit(
             parent,
@@ -648,7 +685,11 @@ impl FlashShotApp {
             Ok(history) => history,
             Err(error) => {
                 log::warn!(target: "flash_shot::history", "history_recovery_open_failed error={error}");
-                return Some(format!("; history unavailable: {error}"));
+                let error_detail = error.to_string();
+                return Some(self.settings.locale.format_template(
+                    crate::i18n::UiText::HistoryUnavailable,
+                    &[("error", &error_detail)],
+                ));
             }
         };
         if let Err(error) = recovered.record_with_source(path.to_owned(), source) {
@@ -1119,6 +1160,27 @@ impl FlashShotApp {
     }
 }
 
+/// Maps a managed capture source to a localized label for the shared save-success template.
+fn save_source_label(locale: Locale, source: crate::history::HistorySource) -> &'static str {
+    match source {
+        crate::history::HistorySource::Unknown => {
+            locale.text(crate::i18n::UiText::LibrarySourceSavedCapture)
+        }
+        crate::history::HistorySource::Selection => {
+            locale.text(crate::i18n::UiText::LibrarySourceSelection)
+        }
+        crate::history::HistorySource::Scrolling => {
+            locale.text(crate::i18n::UiText::LibrarySourceScrolling)
+        }
+        crate::history::HistorySource::FullScreen => {
+            locale.text(crate::i18n::UiText::LibrarySourceFullScreen)
+        }
+        crate::history::HistorySource::Pinned => {
+            locale.text(crate::i18n::UiText::LibrarySourcePinned)
+        }
+    }
+}
+
 /// Allows Copy feedback only while both its source editor and recognition context remain current.
 pub(super) const fn selection_copy_completion_can_report(
     task_operation_generation: u64,
@@ -1164,7 +1226,7 @@ pub(super) fn claim_pinned_save_slot(in_flight: &mut bool) -> bool {
 mod tests {
     use super::{CaptureOverlay, finish_capture_teardown, remove_capture_overlay_by_id};
     use crate::app::HistoryClearScope;
-    use crate::i18n::Locale;
+    use crate::i18n::{Locale, UiText};
     use gpui::{WindowHandle, WindowId};
     use std::collections::HashSet;
 
@@ -1218,6 +1280,22 @@ mod tests {
                 1,
             ),
             "已清除 2 张截图；1 张无法删除"
+        );
+    }
+
+    #[test]
+    fn save_feedback_localizes_the_source_without_losing_the_path() {
+        let source = super::save_source_label(
+            Locale::SimplifiedChinese,
+            crate::history::HistorySource::Selection,
+        );
+        assert_eq!(source, "选区截图");
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::SaveCompleted,
+                &[("source", source), ("path", "D:\\Screenshots\\capture.png")],
+            ),
+            "已将选区截图保存到 D:\\Screenshots\\capture.png"
         );
     }
 }
