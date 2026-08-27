@@ -396,6 +396,42 @@ pub enum UiText {
     ExportFormatChanged,
     ExportFormatSaveFailed,
     SettingsOpenFailed,
+    ScrollingScreenshot,
+    ScrollingSelectArea,
+    ScrollingStartFailed,
+    ScrollingAlreadyActive,
+    ScrollingWaitForFinish,
+    ScrollingReady,
+    ScrollingNotActive,
+    ScrollingNotCollecting,
+    ScrollingFrameCaptureBusy,
+    ScrollingCapturingNextFrame,
+    ScrollingAssistFailed,
+    ScrollingSettling,
+    ScrollingFrameCaptured,
+    ScrollingFrameCaptureFailed,
+    ScrollingWaitForFrame,
+    ScrollingNeedAnotherFrame,
+    ScrollingFinishFailed,
+    ScrollingStitching,
+    ScrollingStitched,
+    ScrollingOpenFailed,
+    ScrollingCancelled,
+    ScrollingNoNewContentFinish,
+    ScrollingNoNewContentRetry,
+    ScrollingOverlapMismatch,
+    ScrollingCaptureView,
+    ScrollingRetryView,
+    ScrollingCaptureInProgress,
+    ScrollingScrolling,
+    ScrollingScrollDownCapture,
+    ScrollingFinish,
+    ScrollingNotReady,
+    ScrollingNoFrames,
+    ScrollingOneFrame,
+    ScrollingManyFrames,
+    ScrollingReadyToFinish,
+    ScrollingCaptureAnother,
     CancelDelay,
     Appearance,
     Language,
@@ -969,6 +1005,50 @@ impl UiText {
             Self::ExportFormatChanged => "Default export format: {format}",
             Self::ExportFormatSaveFailed => "Could not save export format preference: {error}",
             Self::SettingsOpenFailed => "Could not open settings: {error}",
+            Self::ScrollingScreenshot => "Scrolling screenshot",
+            Self::ScrollingSelectArea => "Select an area before starting a scrolling screenshot",
+            Self::ScrollingStartFailed => "Could not start scrolling screenshot: {error}",
+            Self::ScrollingAlreadyActive => "A scrolling screenshot is already active",
+            Self::ScrollingWaitForFinish => "Wait for the scrolling screenshot to finish",
+            Self::ScrollingReady => "Scrolling screenshot ready. One frame captured.",
+            Self::ScrollingNotActive => "Scrolling screenshot is not active",
+            Self::ScrollingNotCollecting => "Scrolling screenshot is not collecting frames",
+            Self::ScrollingFrameCaptureBusy => "Scroll frame capture is already in progress",
+            Self::ScrollingCapturingNextFrame => "Capturing next scroll frame...",
+            Self::ScrollingAssistFailed => "Could not assist scroll: {error}",
+            Self::ScrollingSettling => "Scrolled target content. Capturing when it settles...",
+            Self::ScrollingFrameCaptured => "Captured scroll frame {count} ({overlap} px overlap)",
+            Self::ScrollingFrameCaptureFailed => "Could not capture scroll frame: {error}",
+            Self::ScrollingWaitForFrame => "Wait for the current scroll frame capture to finish",
+            Self::ScrollingNeedAnotherFrame => "Capture another scroll frame before finishing",
+            Self::ScrollingFinishFailed => "Could not finish scrolling screenshot: {error}",
+            Self::ScrollingStitching => "Stitching scrolling screenshot",
+            Self::ScrollingStitched => {
+                "Scrolling screenshot stitched {frames} frames with {joins} overlap joins"
+            }
+            Self::ScrollingOpenFailed => "Could not open stitched capture: {error}",
+            Self::ScrollingCancelled => "Scrolling screenshot cancelled",
+            Self::ScrollingNoNewContentFinish => {
+                "No new content was revealed. Finish the scrolling screenshot or adjust the page and capture again."
+            }
+            Self::ScrollingNoNewContentRetry => {
+                "No new content was revealed. Scroll the page, then capture again."
+            }
+            Self::ScrollingOverlapMismatch => {
+                "That frame did not overlap the previous one: {error}. Adjust the scroll position and capture again."
+            }
+            Self::ScrollingCaptureView => "Capture view",
+            Self::ScrollingRetryView => "Retry view",
+            Self::ScrollingCaptureInProgress => "Capturing...",
+            Self::ScrollingScrolling => "Scrolling...",
+            Self::ScrollingScrollDownCapture => "Scroll down + capture",
+            Self::ScrollingFinish => "Finish",
+            Self::ScrollingNotReady => "Not ready",
+            Self::ScrollingNoFrames => "No frames",
+            Self::ScrollingOneFrame => "1 frame",
+            Self::ScrollingManyFrames => "{count} frames",
+            Self::ScrollingReadyToFinish => "{count} - ready to finish",
+            Self::ScrollingCaptureAnother => "{count} - capture another",
             Self::CancelDelay => "Cancel delay",
             Self::Appearance => "Appearance",
             Self::Language => "Language",
@@ -1552,6 +1632,46 @@ impl UiText {
             Self::ExportFormatChanged => "默认导出格式：{format}",
             Self::ExportFormatSaveFailed => "无法保存导出格式偏好：{error}",
             Self::SettingsOpenFailed => "无法打开设置：{error}",
+            Self::ScrollingScreenshot => "长截图",
+            Self::ScrollingSelectArea => "请先选择区域再开始长截图",
+            Self::ScrollingStartFailed => "无法开始长截图：{error}",
+            Self::ScrollingAlreadyActive => "长截图已在进行中",
+            Self::ScrollingWaitForFinish => "请等待长截图完成",
+            Self::ScrollingReady => "长截图已就绪，已捕获 1 个视口。",
+            Self::ScrollingNotActive => "长截图未在进行中",
+            Self::ScrollingNotCollecting => "长截图当前未收集视口",
+            Self::ScrollingFrameCaptureBusy => "滚动视口捕获已在进行中",
+            Self::ScrollingCapturingNextFrame => "正在捕获下一个滚动视口...",
+            Self::ScrollingAssistFailed => "无法辅助滚动：{error}",
+            Self::ScrollingSettling => "已滚动目标内容，等待稳定后捕获...",
+            Self::ScrollingFrameCaptured => "已捕获第 {count} 个滚动视口（重叠 {overlap} 像素）",
+            Self::ScrollingFrameCaptureFailed => "无法捕获滚动视口：{error}",
+            Self::ScrollingWaitForFrame => "请等待当前滚动视口捕获完成",
+            Self::ScrollingNeedAnotherFrame => "完成前请再捕获一个滚动视口",
+            Self::ScrollingFinishFailed => "无法完成长截图：{error}",
+            Self::ScrollingStitching => "正在拼接长截图",
+            Self::ScrollingStitched => "长截图已拼接：{frames} 个视口，{joins} 个重叠连接",
+            Self::ScrollingOpenFailed => "无法打开拼接后的截图：{error}",
+            Self::ScrollingCancelled => "已取消长截图",
+            Self::ScrollingNoNewContentFinish => {
+                "未发现新内容。请完成长截图，或调整页面后重新捕获。"
+            }
+            Self::ScrollingNoNewContentRetry => "未发现新内容。请滚动页面后重新捕获。",
+            Self::ScrollingOverlapMismatch => {
+                "该视口与上一视口没有重叠：{error}。请调整滚动位置后重新捕获。"
+            }
+            Self::ScrollingCaptureView => "捕获视口",
+            Self::ScrollingRetryView => "重试视口",
+            Self::ScrollingCaptureInProgress => "正在捕获...",
+            Self::ScrollingScrolling => "滚动中...",
+            Self::ScrollingScrollDownCapture => "向下滚动并捕获",
+            Self::ScrollingFinish => "完成",
+            Self::ScrollingNotReady => "未就绪",
+            Self::ScrollingNoFrames => "没有视口",
+            Self::ScrollingOneFrame => "1 个视口",
+            Self::ScrollingManyFrames => "{count} 个视口",
+            Self::ScrollingReadyToFinish => "{count}，可以完成",
+            Self::ScrollingCaptureAnother => "{count}，请再捕获一个",
             Self::CancelDelay => "取消延时",
             Self::Appearance => "外观",
             Self::Language => "语言",
@@ -1958,6 +2078,37 @@ mod tests {
             Locale::SimplifiedChinese
                 .format_template(UiText::SettingsOpenFailed, &[("error", "窗口不可用")],),
             "无法打开设置：窗口不可用"
+        );
+    }
+
+    #[test]
+    fn scrolling_feedback_localizes_actions_and_progress_details() {
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::ScrollingScreenshot),
+            "长截图"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::ScrollingScrollDownCapture),
+            "向下滚动并捕获"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::ScrollingFrameCaptured,
+                &[("count", "3"), ("overlap", "120")],
+            ),
+            "已捕获第 3 个滚动视口（重叠 120 像素）"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::ScrollingStitched,
+                &[("frames", "4"), ("joins", "3")],
+            ),
+            "长截图已拼接：4 个视口，3 个重叠连接"
+        );
+        assert_eq!(
+            Locale::English
+                .format_template(UiText::ScrollingOverlapMismatch, &[("error", "no overlap")],),
+            "That frame did not overlap the previous one: no overlap. Adjust the scroll position and capture again."
         );
     }
 

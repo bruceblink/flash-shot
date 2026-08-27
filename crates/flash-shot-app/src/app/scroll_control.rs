@@ -7,6 +7,7 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::FlashShotApp;
+use crate::i18n::{Locale, UiText};
 
 const MANUAL_SCROLL_BUTTON_HEIGHT: f32 = 32.0;
 const MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH: f32 = 176.0;
@@ -178,6 +179,7 @@ impl Render for ManualScrollControl {
         }
         let app = self.app.read(cx);
         let colors = app.colors;
+        let locale = app.settings.locale;
         let status = app.status.clone();
         let frame_count = app.manual_scroll.frame_count();
         let capture_in_flight = app.manual_scroll_capture_in_flight;
@@ -185,7 +187,7 @@ impl Render for ManualScrollControl {
         let controls_busy = capture_in_flight || auto_capture_pending;
         let retry_available = app.manual_scroll.failure().is_some();
         let can_finish = app.manual_scroll.can_finish();
-        let frame_count_label = manual_scroll_frame_count_label(frame_count, can_finish);
+        let frame_count_label = manual_scroll_frame_count_label(locale, frame_count, can_finish);
 
         div()
             .size_full()
@@ -218,7 +220,7 @@ impl Render for ManualScrollControl {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(colors.text)
                             .truncate()
-                            .child("Scrolling screenshot"),
+                            .child(locale.text(UiText::ScrollingScreenshot)),
                     )
                     .child(
                         div()
@@ -245,7 +247,7 @@ impl Render for ManualScrollControl {
                     .child(manual_scroll_button(
                         "scroll-auto-capture-next",
                         ManualScrollShortcut::AutoCapture,
-                        auto_scroll_capture_label(auto_capture_pending),
+                        auto_scroll_capture_label(locale, auto_capture_pending),
                         colors,
                         !controls_busy,
                         ManualScrollButtonTone::Primary,
@@ -259,7 +261,7 @@ impl Render for ManualScrollControl {
                     .child(manual_scroll_button(
                         "scroll-capture-next",
                         ManualScrollShortcut::Capture,
-                        manual_scroll_capture_label(capture_in_flight, retry_available),
+                        manual_scroll_capture_label(locale, capture_in_flight, retry_available),
                         colors,
                         !controls_busy,
                         ManualScrollButtonTone::Neutral,
@@ -273,7 +275,7 @@ impl Render for ManualScrollControl {
                     .child(manual_scroll_button(
                         "scroll-finish",
                         ManualScrollShortcut::Finish,
-                        manual_scroll_finish_label(can_finish),
+                        manual_scroll_finish_label(locale, can_finish),
                         colors,
                         !controls_busy && can_finish,
                         if can_finish {
@@ -291,7 +293,7 @@ impl Render for ManualScrollControl {
                     .child(manual_scroll_button(
                         "scroll-cancel",
                         ManualScrollShortcut::Cancel,
-                        "Cancel",
+                        locale.text(UiText::OverlayCancel),
                         colors,
                         true,
                         ManualScrollButtonTone::Destructive,
@@ -340,41 +342,52 @@ fn manual_scroll_shortcut(keystroke: &Keystroke) -> Option<ManualScrollShortcut>
 }
 
 /// Keeps the primary action explicit while one scroll frame is being captured.
-fn manual_scroll_capture_label(capture_in_flight: bool, retry_available: bool) -> &'static str {
+fn manual_scroll_capture_label(
+    locale: Locale,
+    capture_in_flight: bool,
+    retry_available: bool,
+) -> &'static str {
     if capture_in_flight {
-        "Capturing..."
+        locale.text(UiText::ScrollingCaptureInProgress)
     } else if retry_available {
-        "Retry view"
+        locale.text(UiText::ScrollingRetryView)
     } else {
-        "Capture view"
+        locale.text(UiText::ScrollingCaptureView)
     }
 }
 
 /// Explains that automatic capture is waiting for the target application to repaint.
-fn auto_scroll_capture_label(auto_capture_pending: bool) -> &'static str {
+fn auto_scroll_capture_label(locale: Locale, auto_capture_pending: bool) -> &'static str {
     if auto_capture_pending {
-        "Scrolling..."
+        locale.text(UiText::ScrollingScrolling)
     } else {
-        "Scroll down + capture"
+        locale.text(UiText::ScrollingScrollDownCapture)
     }
 }
 
 /// Names the next required action until a second viewport makes stitching possible.
-fn manual_scroll_finish_label(can_finish: bool) -> &'static str {
-    if can_finish { "Finish" } else { "Not ready" }
+fn manual_scroll_finish_label(locale: Locale, can_finish: bool) -> &'static str {
+    if can_finish {
+        locale.text(UiText::ScrollingFinish)
+    } else {
+        locale.text(UiText::ScrollingNotReady)
+    }
 }
 
 /// Summarizes the session stage next to the frame count so the next action is obvious.
-fn manual_scroll_frame_count_label(frame_count: usize, can_finish: bool) -> String {
+fn manual_scroll_frame_count_label(locale: Locale, frame_count: usize, can_finish: bool) -> String {
     let count = match frame_count {
-        0 => "No frames".to_owned(),
-        1 => "1 frame".to_owned(),
-        count => format!("{count} frames"),
+        0 => locale.text(UiText::ScrollingNoFrames).to_owned(),
+        1 => locale.text(UiText::ScrollingOneFrame).to_owned(),
+        count => locale.format_template(
+            UiText::ScrollingManyFrames,
+            &[("count", &count.to_string())],
+        ),
     };
     if can_finish {
-        format!("{count} - ready to finish")
+        locale.format_template(UiText::ScrollingReadyToFinish, &[("count", &count)])
     } else {
-        format!("{count} - capture another")
+        locale.format_template(UiText::ScrollingCaptureAnother, &[("count", &count)])
     }
 }
 
@@ -386,41 +399,76 @@ mod tests {
         ManualScrollShortcut, auto_scroll_capture_label, manual_scroll_capture_label,
         manual_scroll_finish_label, manual_scroll_frame_count_label, manual_scroll_shortcut,
     };
+    use crate::i18n::Locale;
     use gpui::Keystroke;
 
     #[test]
     fn capture_action_describes_its_busy_state() {
-        assert_eq!(manual_scroll_capture_label(false, false), "Capture view");
-        assert_eq!(manual_scroll_capture_label(false, true), "Retry view");
-        assert_eq!(manual_scroll_capture_label(true, true), "Capturing...");
+        assert_eq!(
+            manual_scroll_capture_label(Locale::English, false, false),
+            "Capture view"
+        );
+        assert_eq!(
+            manual_scroll_capture_label(Locale::English, false, true),
+            "Retry view"
+        );
+        assert_eq!(
+            manual_scroll_capture_label(Locale::English, true, true),
+            "Capturing..."
+        );
+        assert_eq!(
+            manual_scroll_capture_label(Locale::SimplifiedChinese, false, true),
+            "重试视口"
+        );
     }
 
     #[test]
     fn finish_action_requires_an_overlapping_viewport() {
-        assert_eq!(manual_scroll_finish_label(false), "Not ready");
-        assert_eq!(manual_scroll_finish_label(true), "Finish");
+        assert_eq!(
+            manual_scroll_finish_label(Locale::English, false),
+            "Not ready"
+        );
+        assert_eq!(manual_scroll_finish_label(Locale::English, true), "Finish");
+        assert_eq!(
+            manual_scroll_finish_label(Locale::SimplifiedChinese, true),
+            "完成"
+        );
     }
 
     #[test]
     fn frame_count_badge_explains_when_the_session_can_finish() {
         assert_eq!(
-            manual_scroll_frame_count_label(1, false),
+            manual_scroll_frame_count_label(Locale::English, 1, false),
             "1 frame - capture another"
         );
         assert_eq!(
-            manual_scroll_frame_count_label(2, true),
+            manual_scroll_frame_count_label(Locale::English, 2, true),
             "2 frames - ready to finish"
         );
         assert_eq!(
-            manual_scroll_frame_count_label(0, false),
+            manual_scroll_frame_count_label(Locale::English, 0, false),
             "No frames - capture another"
+        );
+        assert_eq!(
+            manual_scroll_frame_count_label(Locale::SimplifiedChinese, 2, true),
+            "2 个视口，可以完成"
         );
     }
 
     #[test]
     fn automatic_capture_action_reports_its_settle_delay() {
-        assert_eq!(auto_scroll_capture_label(false), "Scroll down + capture");
-        assert_eq!(auto_scroll_capture_label(true), "Scrolling...");
+        assert_eq!(
+            auto_scroll_capture_label(Locale::English, false),
+            "Scroll down + capture"
+        );
+        assert_eq!(
+            auto_scroll_capture_label(Locale::English, true),
+            "Scrolling..."
+        );
+        assert_eq!(
+            auto_scroll_capture_label(Locale::SimplifiedChinese, false),
+            "向下滚动并捕获"
+        );
     }
 
     #[test]

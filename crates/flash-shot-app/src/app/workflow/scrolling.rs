@@ -8,33 +8,46 @@ impl FlashShotApp {
     /// Starts a scrolling session from the selected viewport and replaces the capture overlay
     /// with the compact scrolling controller.
     pub(in crate::app) fn start_manual_scroll(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some(selection) = self.session.selection() else {
-            self.status = "Select an area before starting a scrolling screenshot".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingSelectArea)
+                .to_owned();
             cx.notify();
             return;
         };
         let Some(frame) = self.frame.as_ref() else {
-            self.status = "Capture frame is unavailable".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::CaptureFrameUnavailable)
+                .to_owned();
             cx.notify();
             return;
         };
         let first = match frame.crop(selection) {
             Ok(frame) => frame,
             Err(error) => {
-                self.status = format!("Could not start scrolling screenshot: {error}");
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::ScrollingStartFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
         };
         if self.manual_scroll.state() == crate::scroll::ManualScrollState::Collecting {
-            self.status = "A scrolling screenshot is already active".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingAlreadyActive)
+                .to_owned();
             cx.notify();
             return;
         }
         if self.manual_scroll.state() == crate::scroll::ManualScrollState::Finishing
             || self.manual_scroll_finish_in_flight
         {
-            self.status = "Wait for the scrolling screenshot to finish".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingWaitForFinish)
+                .to_owned();
             cx.notify();
             return;
         }
@@ -42,7 +55,11 @@ impl FlashShotApp {
             let _ = self.manual_scroll.reset();
         }
         if let Err(error) = self.manual_scroll.begin(first) {
-            self.status = format!("Could not start scrolling screenshot: {error}");
+            let error_detail = error.to_string();
+            self.status = locale.format_template(
+                crate::i18n::UiText::ScrollingStartFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }
@@ -51,7 +68,7 @@ impl FlashShotApp {
         // stitched-image editor that opens after Finish.
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
-        self.status = "Scrolling screenshot ready. One frame captured.".to_owned();
+        self.status = locale.text(crate::i18n::UiText::ScrollingReady).to_owned();
         self.close_capture_overlays(cx);
         let app = cx.entity();
         cx.defer(move |cx| open_manual_scroll_control(app, cx));
@@ -59,23 +76,32 @@ impl FlashShotApp {
     }
 
     pub(in crate::app) fn capture_manual_scroll_frame(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some(selection) = self.manual_scroll_selection else {
-            self.status = "Scrolling screenshot is not active".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingNotActive)
+                .to_owned();
             cx.notify();
             return;
         };
         if self.manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
-            self.status = "Scrolling screenshot is not collecting frames".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingNotCollecting)
+                .to_owned();
             cx.notify();
             return;
         }
         if self.manual_scroll_capture_in_flight || self.manual_scroll_finish_in_flight {
-            self.status = "Scroll frame capture is already in progress".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingFrameCaptureBusy)
+                .to_owned();
             cx.notify();
             return;
         }
         self.manual_scroll_capture_in_flight = true;
-        self.status = "Capturing next scroll frame...".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::ScrollingCapturingNextFrame)
+            .to_owned();
         self.set_scroll_control_visibility(false, cx);
         let generation = self.operation_generation;
         cx.notify();
@@ -101,20 +127,27 @@ impl FlashShotApp {
     /// The generation token makes a queued capture harmless after the user cancels or starts a
     /// new workflow, so delayed input never appends a frame to the wrong scrolling session.
     pub(in crate::app) fn auto_capture_manual_scroll_frame(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         let Some(selection) = self.manual_scroll_selection else {
-            self.status = "Scrolling screenshot is not active".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingNotActive)
+                .to_owned();
             cx.notify();
             return;
         };
         if self.manual_scroll.state() != crate::scroll::ManualScrollState::Collecting {
-            self.status = "Scrolling screenshot is not collecting frames".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingNotCollecting)
+                .to_owned();
             cx.notify();
             return;
         }
         if self.manual_scroll_capture_in_flight
             || self.manual_scroll_auto_capture_generation.is_some()
         {
-            self.status = "Scroll frame capture is already in progress".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingFrameCaptureBusy)
+                .to_owned();
             cx.notify();
             return;
         }
@@ -123,7 +156,11 @@ impl FlashShotApp {
             target,
             crate::platform::scroll::DEFAULT_SCROLL_NOTCHES,
         ) {
-            self.status = format!("Could not assist scroll: {error}");
+            let error_detail = error.to_string();
+            self.status = locale.format_template(
+                crate::i18n::UiText::ScrollingAssistFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }
@@ -131,7 +168,9 @@ impl FlashShotApp {
         let generation = self.operation_generation;
         self.manual_scroll_auto_capture_generation = Some(generation);
         self.set_scroll_control_visibility(false, cx);
-        self.status = "Scrolled target content. Capturing when it settles...".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::ScrollingSettling)
+            .to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -170,45 +209,68 @@ impl FlashShotApp {
         if !is_current_operation(self.operation_generation, generation) {
             return;
         }
+        let locale = self.settings.locale;
         self.manual_scroll_capture_in_flight = false;
         self.set_scroll_control_visibility(true, cx);
         self.status = match result {
             Ok(frame) => match self.manual_scroll.append(frame, Default::default()) {
-                Ok(overlap) => format!(
-                    "Captured scroll frame {} ({} px overlap)",
-                    self.manual_scroll.frame_count(),
-                    overlap
-                ),
-                Err(error) => {
-                    scroll_frame_append_failure_status(&error, self.manual_scroll.can_finish())
+                Ok(overlap) => {
+                    let frame_count = self.manual_scroll.frame_count().to_string();
+                    let overlap = overlap.to_string();
+                    locale.format_template(
+                        crate::i18n::UiText::ScrollingFrameCaptured,
+                        &[("count", &frame_count), ("overlap", &overlap)],
+                    )
                 }
+                Err(error) => scroll_frame_append_failure_status(
+                    locale,
+                    &error,
+                    self.manual_scroll.can_finish(),
+                ),
             },
-            Err(error) => format!("Could not capture scroll frame: {error}"),
+            Err(error) => {
+                let error_detail = error.to_string();
+                locale.format_template(
+                    crate::i18n::UiText::ScrollingFrameCaptureFailed,
+                    &[("error", &error_detail)],
+                )
+            }
         };
         cx.notify();
     }
 
     pub(in crate::app) fn finish_manual_scroll(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         if self.manual_scroll_capture_in_flight || self.manual_scroll_finish_in_flight {
-            self.status = "Wait for the current scroll frame capture to finish".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingWaitForFrame)
+                .to_owned();
             cx.notify();
             return;
         }
         if !self.manual_scroll.can_finish() {
-            self.status = "Capture another scroll frame before finishing".to_owned();
+            self.status = locale
+                .text(crate::i18n::UiText::ScrollingNeedAnotherFrame)
+                .to_owned();
             cx.notify();
             return;
         }
         let finish = match self.manual_scroll.begin_finish() {
             Ok(finish) => finish,
             Err(error) => {
-                self.status = format!("Could not finish scrolling screenshot: {error}");
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::ScrollingFinishFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
         };
         self.manual_scroll_finish_in_flight = true;
-        self.status = "Stitching scrolling screenshot".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::ScrollingStitching)
+            .to_owned();
         let generation = self.operation_generation;
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -249,6 +311,7 @@ impl FlashShotApp {
             return;
         }
         self.manual_scroll_finish_in_flight = false;
+        let locale = self.settings.locale;
         let (stitched, preview) = match result {
             Ok(result) => result,
             Err(error) => {
@@ -256,7 +319,11 @@ impl FlashShotApp {
                 self.abandon_manual_scroll();
                 self.close_manual_scroll_window(cx);
                 self.return_to_background();
-                self.status = format!("Could not finish scrolling screenshot: {error}");
+                let error_detail = error.to_string();
+                self.status = locale.format_template(
+                    crate::i18n::UiText::ScrollingFinishFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
@@ -282,10 +349,11 @@ impl FlashShotApp {
             self.manual_scroll_capture_in_flight = false;
             self.manual_scroll_auto_capture_generation = None;
             self.manual_scroll.finish_succeeded()?;
-            self.status = format!(
-                "Scrolling screenshot stitched {} frames with {} overlap joins",
-                stitched.overlaps.len() + 1,
-                stitched.overlaps.len()
+            let frames = (stitched.overlaps.len() + 1).to_string();
+            let joins = stitched.overlaps.len().to_string();
+            self.status = locale.format_template(
+                crate::i18n::UiText::ScrollingStitched,
+                &[("frames", &frames), ("joins", &joins)],
             );
             self.close_manual_scroll_window(cx);
             let _ = self.manual_scroll.reset();
@@ -298,15 +366,22 @@ impl FlashShotApp {
             self.abandon_manual_scroll();
             self.close_manual_scroll_window(cx);
             self.return_to_background();
-            self.status = format!("Could not open stitched capture: {error}");
+            let error_detail = error.to_string();
+            self.status = locale.format_template(
+                crate::i18n::UiText::ScrollingOpenFailed,
+                &[("error", &error_detail)],
+            );
         }
         cx.notify();
     }
 
     pub(in crate::app) fn cancel_manual_scroll(&mut self, cx: &mut Context<Self>) {
+        let locale = self.settings.locale;
         self.abandon_manual_scroll();
         self.close_manual_scroll_window(cx);
-        self.status = "Scrolling screenshot cancelled".to_owned();
+        self.status = locale
+            .text(crate::i18n::UiText::ScrollingCancelled)
+            .to_owned();
         self.return_to_background();
         cx.notify();
     }
@@ -317,7 +392,11 @@ impl FlashShotApp {
         }
         self.abandon_manual_scroll();
         self.scroll_window = None;
-        self.status = "Scrolling screenshot cancelled".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::ScrollingCancelled)
+            .to_owned();
         self.return_to_background();
         cx.notify();
     }
@@ -384,25 +463,34 @@ pub(super) const fn should_cancel_manual_scroll_for_close(tracked_control: bool)
     tracked_control
 }
 
-/// Turns overlap failures into the next useful scroll action.
+/// Turns overlap failures into the next useful scroll action in the active language.
 ///
 /// An unchanged viewport normally means the page reached its end. Once two compatible frames
 /// already exist, finishing is safer than asking the user to repeat a capture that cannot add
 /// pixels; before then, the user still needs to scroll and collect a second viewport.
-fn scroll_frame_append_failure_status(error: &std::io::Error, can_finish: bool) -> String {
+fn scroll_frame_append_failure_status(
+    locale: crate::i18n::Locale,
+    error: &std::io::Error,
+    can_finish: bool,
+) -> String {
     if error.kind() == std::io::ErrorKind::InvalidData
         && error.to_string() == "scroll frame did not reveal new content"
     {
         return if can_finish {
-            "No new content was revealed. Finish the scrolling screenshot or adjust the page and capture again."
+            locale
+                .text(crate::i18n::UiText::ScrollingNoNewContentFinish)
                 .to_owned()
         } else {
-            "No new content was revealed. Scroll the page, then capture again.".to_owned()
+            locale
+                .text(crate::i18n::UiText::ScrollingNoNewContentRetry)
+                .to_owned()
         };
     }
 
-    format!(
-        "That frame did not overlap the previous one: {error}. Adjust the scroll position and capture again."
+    let error_detail = error.to_string();
+    locale.format_template(
+        crate::i18n::UiText::ScrollingOverlapMismatch,
+        &[("error", &error_detail)],
     )
 }
 
@@ -420,6 +508,7 @@ mod tests {
         scroll_frame_append_failure_status, scroll_target, should_cancel_manual_scroll_for_close,
     };
     use crate::domain::geometry::PhysicalRect;
+    use crate::i18n::Locale;
     use std::io::{Error, ErrorKind};
 
     #[test]
@@ -443,12 +532,20 @@ mod tests {
         );
 
         assert_eq!(
-            scroll_frame_append_failure_status(&unchanged, false),
+            scroll_frame_append_failure_status(Locale::English, &unchanged, false),
             "No new content was revealed. Scroll the page, then capture again."
         );
         assert_eq!(
-            scroll_frame_append_failure_status(&unchanged, true),
+            scroll_frame_append_failure_status(Locale::English, &unchanged, true),
             "No new content was revealed. Finish the scrolling screenshot or adjust the page and capture again."
+        );
+        assert_eq!(
+            scroll_frame_append_failure_status(Locale::SimplifiedChinese, &unchanged, false),
+            "未发现新内容。请滚动页面后重新捕获。"
+        );
+        assert_eq!(
+            scroll_frame_append_failure_status(Locale::SimplifiedChinese, &unchanged, true),
+            "未发现新内容。请完成长截图，或调整页面后重新捕获。"
         );
     }
 
@@ -457,8 +554,12 @@ mod tests {
         let mismatch = Error::new(ErrorKind::InvalidData, "no reliable vertical overlap found");
 
         assert_eq!(
-            scroll_frame_append_failure_status(&mismatch, true),
+            scroll_frame_append_failure_status(Locale::English, &mismatch, true),
             "That frame did not overlap the previous one: no reliable vertical overlap found. Adjust the scroll position and capture again."
+        );
+        assert_eq!(
+            scroll_frame_append_failure_status(Locale::SimplifiedChinese, &mismatch, true),
+            "该视口与上一视口没有重叠：no reliable vertical overlap found。请调整滚动位置后重新捕获。"
         );
     }
 
