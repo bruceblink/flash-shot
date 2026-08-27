@@ -894,7 +894,7 @@ impl FlashShotApp {
             if let Some(document) = self.annotation_document.as_ref() {
                 self.annotation_editor.update(document, point);
             }
-            self.status = drawing_status(tool).to_owned();
+            self.status = drawing_status(self.settings.locale, tool);
             cx.notify();
             return;
         }

@@ -3,69 +3,77 @@
 use super::*;
 use crate::i18n::{Locale, UiText};
 
-pub(in crate::app) fn tool_selected_status(tool: AnnotationTool) -> &'static str {
+/// Maps an annotation tool to the localized label already used by the overlay toolbar.
+fn annotation_tool_label(tool: AnnotationTool) -> UiText {
     match tool {
-        AnnotationTool::Text => "Text tool selected",
-        AnnotationTool::Watermark => "Watermark tool selected",
-        AnnotationTool::Number => "Number tool selected",
-        AnnotationTool::Blur => "Blur tool selected",
-        AnnotationTool::Mosaic => "Mosaic tool selected",
-        AnnotationTool::Highlight => "Highlight tool selected",
-        AnnotationTool::Rectangle => "Rectangle tool selected",
-        AnnotationTool::Ellipse => "Ellipse tool selected",
-        AnnotationTool::Line => "Line tool selected",
-        AnnotationTool::Arrow => "Arrow tool selected",
-        AnnotationTool::Freehand => "Freehand tool selected",
+        AnnotationTool::Text => UiText::OverlayText,
+        AnnotationTool::Watermark => UiText::OverlayWatermark,
+        AnnotationTool::Number => UiText::OverlayNumber,
+        AnnotationTool::Blur => UiText::OverlayBlur,
+        AnnotationTool::Mosaic => UiText::OverlayMosaic,
+        AnnotationTool::Highlight => UiText::OverlayHighlight,
+        AnnotationTool::Rectangle => UiText::OverlayRectangle,
+        AnnotationTool::Ellipse => UiText::OverlayEllipse,
+        AnnotationTool::Line => UiText::OverlayLine,
+        AnnotationTool::Arrow => UiText::OverlayArrow,
+        AnnotationTool::Freehand => UiText::OverlayFreehand,
     }
 }
 
-pub(in crate::app) fn drawing_status(tool: AnnotationTool) -> &'static str {
+/// Formats the tool-selection feedback in the active UI language.
+pub(in crate::app) fn tool_selected_status(locale: Locale, tool: AnnotationTool) -> String {
+    locale.format_template(
+        UiText::AnnotationToolSelected,
+        &[("tool", locale.text(annotation_tool_label(tool)))],
+    )
+}
+
+/// Formats the drawing/editing feedback while preserving the tool-specific wording.
+pub(in crate::app) fn drawing_status(locale: Locale, tool: AnnotationTool) -> String {
     match tool {
-        AnnotationTool::Text => "Editing text...",
-        AnnotationTool::Watermark => "Placing watermark...",
-        AnnotationTool::Number => "Placing number...",
-        AnnotationTool::Blur => "Drawing blur...",
-        AnnotationTool::Mosaic => "Drawing mosaic...",
-        AnnotationTool::Highlight => "Drawing highlight...",
-        AnnotationTool::Rectangle => "Drawing rectangle...",
-        AnnotationTool::Ellipse => "Drawing ellipse...",
-        AnnotationTool::Line => "Drawing line...",
-        AnnotationTool::Arrow => "Drawing arrow...",
-        AnnotationTool::Freehand => "Drawing freehand...",
+        AnnotationTool::Text => locale.text(UiText::AnnotationTextEditing).to_owned(),
+        AnnotationTool::Watermark => locale.text(UiText::AnnotationWatermarkPlacing).to_owned(),
+        AnnotationTool::Number => locale.text(UiText::AnnotationNumberPlacing).to_owned(),
+        AnnotationTool::Blur => locale.text(UiText::AnnotationDrawingBlur).to_owned(),
+        AnnotationTool::Mosaic => locale.text(UiText::AnnotationDrawingMosaic).to_owned(),
+        AnnotationTool::Highlight => locale.text(UiText::AnnotationDrawingHighlight).to_owned(),
+        AnnotationTool::Rectangle => locale.text(UiText::AnnotationDrawingRectangle).to_owned(),
+        AnnotationTool::Ellipse => locale.text(UiText::AnnotationDrawingEllipse).to_owned(),
+        AnnotationTool::Line => locale.text(UiText::AnnotationDrawingLine).to_owned(),
+        AnnotationTool::Arrow => locale.text(UiText::AnnotationDrawingArrow).to_owned(),
+        AnnotationTool::Freehand => locale.text(UiText::AnnotationDrawingFreehand).to_owned(),
     }
 }
 
-pub(in crate::app) fn annotation_added_status(tool: Option<AnnotationTool>) -> &'static str {
+/// Formats the completion feedback, including the special freehand-stroke wording.
+pub(in crate::app) fn annotation_added_status(
+    locale: Locale,
+    tool: Option<AnnotationTool>,
+) -> String {
     match tool {
-        Some(AnnotationTool::Text) => "Text added",
-        Some(AnnotationTool::Watermark) => "Watermark added",
-        Some(AnnotationTool::Number) => "Number added",
-        Some(AnnotationTool::Blur) => "Blur added",
-        Some(AnnotationTool::Mosaic) => "Mosaic added",
-        Some(AnnotationTool::Highlight) => "Highlight added",
-        Some(AnnotationTool::Rectangle) => "Rectangle added",
-        Some(AnnotationTool::Ellipse) => "Ellipse added",
-        Some(AnnotationTool::Line) => "Line added",
-        Some(AnnotationTool::Arrow) => "Arrow added",
-        Some(AnnotationTool::Freehand) => "Freehand stroke added",
-        _ => "Annotation added",
+        Some(AnnotationTool::Freehand) => locale.text(UiText::AnnotationFreehandAdded).to_owned(),
+        Some(tool) => locale.format_template(
+            UiText::AnnotationToolAdded,
+            &[("tool", locale.text(annotation_tool_label(tool)))],
+        ),
+        None => locale.text(UiText::AnnotationAdded).to_owned(),
     }
 }
 
-pub(in crate::app) fn annotation_cancelled_status(tool: Option<AnnotationTool>) -> &'static str {
+/// Formats cancellation feedback, including the special freehand-stroke wording.
+pub(in crate::app) fn annotation_cancelled_status(
+    locale: Locale,
+    tool: Option<AnnotationTool>,
+) -> String {
     match tool {
-        Some(AnnotationTool::Text) => "Text cancelled",
-        Some(AnnotationTool::Watermark) => "Watermark cancelled",
-        Some(AnnotationTool::Number) => "Number cancelled",
-        Some(AnnotationTool::Blur) => "Blur cancelled",
-        Some(AnnotationTool::Mosaic) => "Mosaic cancelled",
-        Some(AnnotationTool::Highlight) => "Highlight cancelled",
-        Some(AnnotationTool::Rectangle) => "Rectangle cancelled",
-        Some(AnnotationTool::Ellipse) => "Ellipse cancelled",
-        Some(AnnotationTool::Line) => "Line cancelled",
-        Some(AnnotationTool::Arrow) => "Arrow cancelled",
-        Some(AnnotationTool::Freehand) => "Freehand stroke cancelled",
-        _ => "Annotation cancelled",
+        Some(AnnotationTool::Freehand) => {
+            locale.text(UiText::AnnotationFreehandCancelled).to_owned()
+        }
+        Some(tool) => locale.format_template(
+            UiText::AnnotationToolCancelled,
+            &[("tool", locale.text(annotation_tool_label(tool)))],
+        ),
+        None => locale.text(UiText::AnnotationCancelled).to_owned(),
     }
 }
 

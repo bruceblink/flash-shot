@@ -459,20 +459,50 @@ fn freehand_tool_has_specific_user_feedback() {
     use crate::domain::annotation::AnnotationTool;
 
     assert_eq!(
-        tool_selected_status(AnnotationTool::Freehand),
+        tool_selected_status(Locale::English, AnnotationTool::Freehand),
         "Freehand tool selected"
     );
     assert_eq!(
-        drawing_status(AnnotationTool::Freehand),
+        drawing_status(Locale::English, AnnotationTool::Freehand),
         "Drawing freehand..."
     );
     assert_eq!(
-        annotation_added_status(Some(AnnotationTool::Freehand)),
+        annotation_added_status(Locale::English, Some(AnnotationTool::Freehand)),
         "Freehand stroke added"
     );
     assert_eq!(
-        annotation_cancelled_status(Some(AnnotationTool::Freehand)),
+        annotation_cancelled_status(Locale::English, Some(AnnotationTool::Freehand)),
         "Freehand stroke cancelled"
+    );
+}
+
+#[test]
+fn annotation_tool_feedback_uses_the_selected_locale() {
+    use crate::domain::annotation::AnnotationTool;
+
+    assert_eq!(
+        tool_selected_status(Locale::SimplifiedChinese, AnnotationTool::Arrow),
+        "已选择箭头工具"
+    );
+    assert_eq!(
+        drawing_status(Locale::SimplifiedChinese, AnnotationTool::Arrow),
+        "正在绘制箭头..."
+    );
+    assert_eq!(
+        annotation_added_status(Locale::SimplifiedChinese, Some(AnnotationTool::Freehand)),
+        "已添加画笔笔划"
+    );
+    assert_eq!(
+        annotation_cancelled_status(Locale::SimplifiedChinese, Some(AnnotationTool::Freehand)),
+        "已取消画笔笔划"
+    );
+    assert_eq!(
+        annotation_added_status(Locale::SimplifiedChinese, None),
+        "已添加标注"
+    );
+    assert_eq!(
+        annotation_cancelled_status(Locale::SimplifiedChinese, None),
+        "已取消标注"
     );
 }
 
@@ -481,19 +511,19 @@ fn watermark_tool_has_specific_user_feedback() {
     use crate::domain::annotation::AnnotationTool;
 
     assert_eq!(
-        tool_selected_status(AnnotationTool::Watermark),
+        tool_selected_status(Locale::English, AnnotationTool::Watermark),
         "Watermark tool selected"
     );
     assert_eq!(
-        drawing_status(AnnotationTool::Watermark),
+        drawing_status(Locale::English, AnnotationTool::Watermark),
         "Placing watermark..."
     );
     assert_eq!(
-        annotation_added_status(Some(AnnotationTool::Watermark)),
+        annotation_added_status(Locale::English, Some(AnnotationTool::Watermark)),
         "Watermark added"
     );
     assert_eq!(
-        annotation_cancelled_status(Some(AnnotationTool::Watermark)),
+        annotation_cancelled_status(Locale::English, Some(AnnotationTool::Watermark)),
         "Watermark cancelled"
     );
 }
@@ -568,15 +598,15 @@ fn highlight_tool_has_specific_user_feedback_and_translucent_style() {
     use crate::domain::annotation::{AnnotationStyle, AnnotationTool};
 
     assert_eq!(
-        tool_selected_status(AnnotationTool::Highlight),
+        tool_selected_status(Locale::English, AnnotationTool::Highlight),
         "Highlight tool selected"
     );
     assert_eq!(
-        drawing_status(AnnotationTool::Highlight),
+        drawing_status(Locale::English, AnnotationTool::Highlight),
         "Drawing highlight..."
     );
     assert_eq!(
-        annotation_added_status(Some(AnnotationTool::Highlight)),
+        annotation_added_status(Locale::English, Some(AnnotationTool::Highlight)),
         "Highlight added"
     );
     assert_eq!(
@@ -603,16 +633,19 @@ fn mosaic_tool_has_specific_user_feedback() {
     use crate::domain::annotation::AnnotationTool;
 
     assert_eq!(
-        tool_selected_status(AnnotationTool::Mosaic),
+        tool_selected_status(Locale::English, AnnotationTool::Mosaic),
         "Mosaic tool selected"
     );
-    assert_eq!(drawing_status(AnnotationTool::Mosaic), "Drawing mosaic...");
     assert_eq!(
-        annotation_added_status(Some(AnnotationTool::Mosaic)),
+        drawing_status(Locale::English, AnnotationTool::Mosaic),
+        "Drawing mosaic..."
+    );
+    assert_eq!(
+        annotation_added_status(Locale::English, Some(AnnotationTool::Mosaic)),
         "Mosaic added"
     );
     assert_eq!(
-        annotation_cancelled_status(Some(AnnotationTool::Mosaic)),
+        annotation_cancelled_status(Locale::English, Some(AnnotationTool::Mosaic)),
         "Mosaic cancelled"
     );
 }
@@ -622,16 +655,19 @@ fn blur_tool_has_specific_user_feedback() {
     use crate::domain::annotation::AnnotationTool;
 
     assert_eq!(
-        tool_selected_status(AnnotationTool::Blur),
+        tool_selected_status(Locale::English, AnnotationTool::Blur),
         "Blur tool selected"
     );
-    assert_eq!(drawing_status(AnnotationTool::Blur), "Drawing blur...");
     assert_eq!(
-        annotation_added_status(Some(AnnotationTool::Blur)),
+        drawing_status(Locale::English, AnnotationTool::Blur),
+        "Drawing blur..."
+    );
+    assert_eq!(
+        annotation_added_status(Locale::English, Some(AnnotationTool::Blur)),
         "Blur added"
     );
     assert_eq!(
-        annotation_cancelled_status(Some(AnnotationTool::Blur)),
+        annotation_cancelled_status(Locale::English, Some(AnnotationTool::Blur)),
         "Blur cancelled"
     );
 }

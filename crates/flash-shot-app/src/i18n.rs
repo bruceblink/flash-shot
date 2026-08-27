@@ -565,6 +565,44 @@ pub enum UiText {
     AnnotationLoaded,
     AnnotationOpenCancelled,
     AnnotationOpenFailed,
+    AnnotationNumberMarker,
+    AnnotationColorSelected,
+    AnnotationWidth,
+    AnnotationTextSize,
+    AnnotationOpacity,
+    AnnotationFillUnavailable,
+    AnnotationFillEnabled,
+    AnnotationFillDisabled,
+    AnnotationSelectionToolSelected,
+    AnnotationToolSelected,
+    AnnotationTextEditing,
+    AnnotationWatermarkPlacing,
+    AnnotationNumberPlacing,
+    AnnotationDrawingBlur,
+    AnnotationDrawingMosaic,
+    AnnotationDrawingHighlight,
+    AnnotationDrawingRectangle,
+    AnnotationDrawingEllipse,
+    AnnotationDrawingLine,
+    AnnotationDrawingArrow,
+    AnnotationDrawingFreehand,
+    AnnotationToolAdded,
+    AnnotationFreehandAdded,
+    AnnotationAdded,
+    AnnotationToolCancelled,
+    AnnotationFreehandCancelled,
+    AnnotationCancelled,
+    AnnotationTextPrompt,
+    AnnotationMoved,
+    AnnotationResized,
+    AnnotationMoveCancelled,
+    AnnotationResizeCancelled,
+    AnnotationTextDeleted,
+    AnnotationTextCancelled,
+    AnnotationTextMissing,
+    AnnotationTextUnsupported,
+    AnnotationTextUpdated,
+    AnnotationTextEditPrompt,
     NoPinnedWindowsNeededInputRecovery,
     PinnedWindowInputRestored,
     ReadyWithShortcut,
@@ -1228,6 +1266,44 @@ impl UiText {
             Self::AnnotationLoaded => "Loaded annotations from {path}",
             Self::AnnotationOpenCancelled => "Open annotations cancelled",
             Self::AnnotationOpenFailed => "Could not open annotations: {error}",
+            Self::AnnotationNumberMarker => "Number marker: {value}",
+            Self::AnnotationColorSelected => "Annotation color selected",
+            Self::AnnotationWidth => "Annotation width: {width} px",
+            Self::AnnotationTextSize => "Text size: {size} px",
+            Self::AnnotationOpacity => "Annotation opacity: {percent}%",
+            Self::AnnotationFillUnavailable => "Fill is available for rectangles and ellipses",
+            Self::AnnotationFillEnabled => "Shape fill enabled",
+            Self::AnnotationFillDisabled => "Shape fill disabled",
+            Self::AnnotationSelectionToolSelected => "Selection tool selected",
+            Self::AnnotationToolSelected => "{tool} tool selected",
+            Self::AnnotationTextEditing => "Editing text...",
+            Self::AnnotationWatermarkPlacing => "Placing watermark...",
+            Self::AnnotationNumberPlacing => "Placing number...",
+            Self::AnnotationDrawingBlur => "Drawing blur...",
+            Self::AnnotationDrawingMosaic => "Drawing mosaic...",
+            Self::AnnotationDrawingHighlight => "Drawing highlight...",
+            Self::AnnotationDrawingRectangle => "Drawing rectangle...",
+            Self::AnnotationDrawingEllipse => "Drawing ellipse...",
+            Self::AnnotationDrawingLine => "Drawing line...",
+            Self::AnnotationDrawingArrow => "Drawing arrow...",
+            Self::AnnotationDrawingFreehand => "Drawing freehand...",
+            Self::AnnotationToolAdded => "{tool} added",
+            Self::AnnotationFreehandAdded => "Freehand stroke added",
+            Self::AnnotationAdded => "Annotation added",
+            Self::AnnotationToolCancelled => "{tool} cancelled",
+            Self::AnnotationFreehandCancelled => "Freehand stroke cancelled",
+            Self::AnnotationCancelled => "Annotation cancelled",
+            Self::AnnotationTextPrompt => "Type {kind}, then press Enter",
+            Self::AnnotationMoved => "Annotation moved",
+            Self::AnnotationResized => "Annotation resized",
+            Self::AnnotationMoveCancelled => "Annotation move cancelled",
+            Self::AnnotationResizeCancelled => "Annotation resize cancelled",
+            Self::AnnotationTextDeleted => "Text annotation deleted",
+            Self::AnnotationTextCancelled => "Text cancelled",
+            Self::AnnotationTextMissing => "Text annotation no longer exists",
+            Self::AnnotationTextUnsupported => "Selected annotation cannot be edited as text",
+            Self::AnnotationTextUpdated => "Text annotation updated",
+            Self::AnnotationTextEditPrompt => "Edit text, then press Enter",
             Self::NoPinnedWindowsNeededInputRecovery => "No pinned windows needed input recovery",
             Self::PinnedWindowInputRestored => "Restored mouse input for {count} pinned window(s)",
             Self::ReadyWithShortcut => "Ready - {shortcut}",
@@ -1817,6 +1893,44 @@ impl UiText {
             Self::AnnotationLoaded => "已从 {path} 加载标注",
             Self::AnnotationOpenCancelled => "已取消打开标注",
             Self::AnnotationOpenFailed => "无法打开标注：{error}",
+            Self::AnnotationNumberMarker => "序号：{value}",
+            Self::AnnotationColorSelected => "已选择标注颜色",
+            Self::AnnotationWidth => "标注线宽：{width} 像素",
+            Self::AnnotationTextSize => "文字大小：{size} 像素",
+            Self::AnnotationOpacity => "标注不透明度：{percent}%",
+            Self::AnnotationFillUnavailable => "填充仅适用于矩形和椭圆",
+            Self::AnnotationFillEnabled => "已启用形状填充",
+            Self::AnnotationFillDisabled => "已禁用形状填充",
+            Self::AnnotationSelectionToolSelected => "选择工具已选中",
+            Self::AnnotationToolSelected => "已选择{tool}工具",
+            Self::AnnotationTextEditing => "正在编辑文字...",
+            Self::AnnotationWatermarkPlacing => "正在放置水印...",
+            Self::AnnotationNumberPlacing => "正在放置序号...",
+            Self::AnnotationDrawingBlur => "正在绘制模糊...",
+            Self::AnnotationDrawingMosaic => "正在绘制马赛克...",
+            Self::AnnotationDrawingHighlight => "正在绘制高亮...",
+            Self::AnnotationDrawingRectangle => "正在绘制矩形...",
+            Self::AnnotationDrawingEllipse => "正在绘制椭圆...",
+            Self::AnnotationDrawingLine => "正在绘制直线...",
+            Self::AnnotationDrawingArrow => "正在绘制箭头...",
+            Self::AnnotationDrawingFreehand => "正在绘制画笔...",
+            Self::AnnotationToolAdded => "已添加{tool}",
+            Self::AnnotationFreehandAdded => "已添加画笔笔划",
+            Self::AnnotationAdded => "已添加标注",
+            Self::AnnotationToolCancelled => "已取消{tool}",
+            Self::AnnotationFreehandCancelled => "已取消画笔笔划",
+            Self::AnnotationCancelled => "已取消标注",
+            Self::AnnotationTextPrompt => "请输入{kind}，然后按 Enter",
+            Self::AnnotationMoved => "标注已移动",
+            Self::AnnotationResized => "标注已调整大小",
+            Self::AnnotationMoveCancelled => "已取消移动标注",
+            Self::AnnotationResizeCancelled => "已取消调整标注大小",
+            Self::AnnotationTextDeleted => "文字标注已删除",
+            Self::AnnotationTextCancelled => "已取消文字输入",
+            Self::AnnotationTextMissing => "文字标注已不存在",
+            Self::AnnotationTextUnsupported => "选中的标注不是可编辑文字",
+            Self::AnnotationTextUpdated => "文字标注已更新",
+            Self::AnnotationTextEditPrompt => "编辑文字，然后按 Enter",
             Self::NoPinnedWindowsNeededInputRecovery => "没有 Pin 窗口需要恢复输入",
             Self::PinnedWindowInputRestored => "已恢复 {count} 个 Pin 窗口的鼠标输入",
             Self::ReadyWithShortcut => "就绪 - {shortcut}",
@@ -2042,6 +2156,56 @@ mod tests {
         assert_eq!(
             Locale::English.text(UiText::PinCopyTooltip),
             "Copy image (Ctrl+C)"
+        );
+    }
+
+    #[test]
+    fn annotation_feedback_localizes_tools_styles_and_text_editing() {
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::AnnotationToolSelected,
+                &[("tool", Locale::English.text(UiText::OverlayArrow))],
+            ),
+            "Arrow tool selected"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::AnnotationToolSelected,
+                &[("tool", Locale::SimplifiedChinese.text(UiText::OverlayArrow))],
+            ),
+            "已选择箭头工具"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::AnnotationNumberMarker, &[("value", "12")],),
+            "序号：12"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(UiText::AnnotationWidth, &[("width", "4")],),
+            "标注线宽：4 像素"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::AnnotationOpacity, &[("percent", "50")],),
+            "标注不透明度：50%"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::AnnotationTextPrompt,
+                &[(
+                    "kind",
+                    Locale::SimplifiedChinese.text(UiText::OverlayWatermark)
+                )],
+            ),
+            "请输入水印，然后按 Enter"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::AnnotationTextUnsupported),
+            "选中的标注不是可编辑文字"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::AnnotationMoveCancelled),
+            "已取消移动标注"
         );
     }
 

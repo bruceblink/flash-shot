@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::app::TextEdit;
+use crate::i18n::UiText;
 
 impl FlashShotApp {
     pub(in crate::app) fn select_rectangle_tool(&mut self, cx: &mut Context<Self>) {
@@ -68,7 +69,11 @@ impl FlashShotApp {
             .apply(document, AnnotationCommand::Replace(replacement))
         {
             Ok(()) => {
-                self.status = format!("Number marker: {value}");
+                let value = value.to_string();
+                self.status = self
+                    .settings
+                    .locale
+                    .format_template(UiText::AnnotationNumberMarker, &[("value", &value)]);
                 cx.notify();
                 true
             }
@@ -104,17 +109,22 @@ impl FlashShotApp {
                 self.annotation_style.fill_rgba.map(|_| fill_color(color));
         }
         self.replace_selected_annotation_style(cx);
-        self.status = "Annotation color selected".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::AnnotationColorSelected)
+            .to_owned();
         cx.notify();
     }
 
     pub(in crate::app) fn select_annotation_width(&mut self, width: u32, cx: &mut Context<Self>) {
         self.annotation_style.stroke_width = width.max(1);
         self.replace_selected_annotation_style(cx);
-        self.status = format!(
-            "Annotation width: {} px",
-            self.annotation_style.stroke_width
-        );
+        let width = self.annotation_style.stroke_width.to_string();
+        self.status = self
+            .settings
+            .locale
+            .format_template(UiText::AnnotationWidth, &[("width", &width)]);
         cx.notify();
     }
 
@@ -125,7 +135,11 @@ impl FlashShotApp {
     ) {
         self.annotation_style.text_font_size = font_size.max(1);
         self.replace_selected_annotation_style(cx);
-        self.status = format!("Text size: {} px", self.annotation_style.text_font_size);
+        let size = self.annotation_style.text_font_size.to_string();
+        self.status = self
+            .settings
+            .locale
+            .format_template(UiText::AnnotationTextSize, &[("size", &size)]);
         cx.notify();
     }
 
@@ -139,7 +153,11 @@ impl FlashShotApp {
             self.annotation_style.fill_rgba = Some(with_alpha(fill, fill_alpha(opacity)));
         }
         self.replace_selected_annotation_style(cx);
-        self.status = format!("Annotation opacity: {}%", u16::from(opacity) * 100 / 255);
+        let percent = (u16::from(opacity) * 100 / 255).to_string();
+        self.status = self
+            .settings
+            .locale
+            .format_template(UiText::AnnotationOpacity, &[("percent", &percent)]);
         cx.notify();
     }
 
@@ -152,7 +170,11 @@ impl FlashShotApp {
                 .annotation_tool
                 .is_some_and(AnnotationTool::supports_fill);
         if !supported {
-            self.status = "Fill is available for rectangles and ellipses".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::AnnotationFillUnavailable)
+                .to_owned();
             cx.notify();
             return;
         }
@@ -162,12 +184,12 @@ impl FlashShotApp {
             .is_none()
             .then(|| fill_color(self.annotation_style.stroke_rgba));
         self.replace_selected_annotation_style(cx);
-        self.status = if self.annotation_style.fill_rgba.is_some() {
-            "Shape fill enabled"
+        let status = if self.annotation_style.fill_rgba.is_some() {
+            UiText::AnnotationFillEnabled
         } else {
-            "Shape fill disabled"
-        }
-        .to_owned();
+            UiText::AnnotationFillDisabled
+        };
+        self.status = self.settings.locale.text(status).to_owned();
         cx.notify();
     }
 
@@ -208,7 +230,11 @@ impl FlashShotApp {
         self.text_edit_annotation = None;
         self.annotation_tool = None;
         self.selected_annotation = None;
-        self.status = "Selection tool selected".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::AnnotationSelectionToolSelected)
+            .to_owned();
         cx.notify();
     }
 
@@ -218,7 +244,7 @@ impl FlashShotApp {
         self.text_edit_annotation = None;
         self.annotation_tool = Some(tool);
         self.selected_annotation = None;
-        self.status = tool_selected_status(tool).to_owned();
+        self.status = tool_selected_status(self.settings.locale, tool);
         cx.notify();
     }
 
@@ -241,11 +267,15 @@ impl FlashShotApp {
             } else {
                 TextEdit::new(point)
             });
-            self.status = if tool == AnnotationTool::Watermark {
-                "Type watermark, then press Enter".to_owned()
+            let kind = if tool == AnnotationTool::Watermark {
+                self.settings.locale.text(UiText::OverlayWatermark)
             } else {
-                "Type text, then press Enter".to_owned()
+                self.settings.locale.text(UiText::OverlayText)
             };
+            self.status = self
+                .settings
+                .locale
+                .format_template(UiText::AnnotationTextPrompt, &[("kind", kind)]);
             return;
         }
         let started = if tool == AnnotationTool::Number {
@@ -267,7 +297,7 @@ impl FlashShotApp {
         };
         if started.is_ok() {
             self.next_annotation_id = self.next_annotation_id.saturating_add(1);
-            self.status = drawing_status(tool).to_owned();
+            self.status = drawing_status(self.settings.locale, tool);
         }
     }
 
@@ -283,27 +313,43 @@ impl FlashShotApp {
             .commit(document, &mut self.annotation_history)
         {
             Ok(true) if moving => {
-                self.status = "Annotation moved".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationMoved)
+                    .to_owned();
                 false
             }
             Ok(true) if resizing => {
-                self.status = "Annotation resized".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationResized)
+                    .to_owned();
                 false
             }
             Ok(true) => {
-                self.status = annotation_added_status(tool).to_owned();
+                self.status = annotation_added_status(self.settings.locale, tool);
                 tool == Some(AnnotationTool::Number)
             }
             Ok(false) if moving => {
-                self.status = "Annotation move cancelled".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationMoveCancelled)
+                    .to_owned();
                 false
             }
             Ok(false) if resizing => {
-                self.status = "Annotation resize cancelled".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationResizeCancelled)
+                    .to_owned();
                 false
             }
             Ok(false) => {
-                self.status = annotation_cancelled_status(tool).to_owned();
+                self.status = annotation_cancelled_status(self.settings.locale, tool);
                 false
             }
             Err(error) => {
@@ -336,24 +382,40 @@ impl FlashShotApp {
                 {
                     Ok(()) => {
                         self.selected_annotation = None;
-                        self.status = "Text annotation deleted".to_owned();
+                        self.status = self
+                            .settings
+                            .locale
+                            .text(UiText::AnnotationTextDeleted)
+                            .to_owned();
                     }
                     Err(error) => self.status = error.to_string(),
                 }
             } else {
-                self.status = "Text cancelled".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationTextCancelled)
+                    .to_owned();
             }
             cx.notify();
             return true;
         }
         if let Some(id) = target {
             let Some(existing) = document.annotation(id).cloned() else {
-                self.status = "Text annotation no longer exists".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationTextMissing)
+                    .to_owned();
                 cx.notify();
                 return true;
             };
             let Some(replacement) = text_annotation_with_content(existing, content) else {
-                self.status = "Selected annotation cannot be edited as text".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationTextUnsupported)
+                    .to_owned();
                 cx.notify();
                 return true;
             };
@@ -361,7 +423,13 @@ impl FlashShotApp {
                 .annotation_history
                 .apply(document, AnnotationCommand::Replace(replacement))
             {
-                Ok(()) => self.status = "Text annotation updated".to_owned(),
+                Ok(()) => {
+                    self.status = self
+                        .settings
+                        .locale
+                        .text(UiText::AnnotationTextUpdated)
+                        .to_owned()
+                }
                 Err(error) => self.status = error.to_string(),
             }
             cx.notify();
@@ -400,7 +468,11 @@ impl FlashShotApp {
             return false;
         }
         self.text_edit_annotation = None;
-        self.status = "Text cancelled".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::AnnotationTextCancelled)
+            .to_owned();
         cx.notify();
         true
     }
@@ -434,7 +506,11 @@ impl FlashShotApp {
         self.annotation_tool = None;
         self.text_edit = Some(TextEdit::with_content(origin, content, true));
         self.text_edit_annotation = Some(id);
-        self.status = "Edit text, then press Enter".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::AnnotationTextEditPrompt)
+            .to_owned();
         cx.notify();
         true
     }
@@ -462,7 +538,11 @@ impl FlashShotApp {
             .map(|selection| range.start + selection.start..range.start + selection.end)
             .unwrap_or(cursor..cursor);
         edit.marked_range = marked_range_utf16.map(|_| range.start..cursor);
-        self.status = "Editing text...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::AnnotationTextEditing)
+            .to_owned();
         cx.notify();
         true
     }
@@ -994,7 +1074,11 @@ impl FlashShotApp {
             .apply(document, AnnotationCommand::Replace(replacement))
         {
             Ok(()) => {
-                self.status = "Annotation moved".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationMoved)
+                    .to_owned();
                 cx.notify();
                 true
             }

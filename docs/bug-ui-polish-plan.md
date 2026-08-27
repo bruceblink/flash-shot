@@ -301,7 +301,7 @@ Record/更新状态 view。
 - 删除用户可见的英文状态拼接；品牌名、路径、快捷键和外部错误详情按既有规则保留；
 - 保持资源键、按钮语义 ID 和验收报告字段与语言无关。
 
-**当前进度（2026-08-27，OCR/二维码/翻译、Record、更新、快速保存、历史保留、历史操作、选区保存、标注项目 Save/Open、Pin/全屏导出、剪贴板反馈、Capture 偏好与滚动截图分组切片）**：
+**当前进度（2026-08-27，OCR/二维码/翻译、Record、更新、快速保存、历史保留、历史操作、选区保存、标注项目 Save/Open、标注工具交互反馈、Pin/全屏导出、剪贴板反馈、Capture 偏好与滚动截图分组切片）**：
 
 - `workflow/recognition.rs` 已将二维码、本地 OCR、翻译的选区校验、进行中、无结果、完成、失败和重试状态迁移到
   `Locale`/`UiText`；识别结果标题与复制结果反馈也使用参数化资源；
@@ -326,8 +326,10 @@ Record/更新状态 view。
   成功/失败反馈迁移到 `Locale`/`UiText`；动态快捷键、秒数、格式名和错误详情使用参数化模板，快捷键注册状态、保存与窗口行为保持不变；
 - `workflow/scrolling.rs` 与 `scroll_control.rs` 已将滚动截图的启动、采集、辅助滚动、拼接、取消、重试和失败状态，以及控制器标题、按钮和帧数摘要
   迁移到 `Locale`/`UiText`；帧数、重叠像素数和错误详情使用参数化模板，滚动状态机、输入注入和图像拼接行为保持不变；
+- `workflow/annotation.rs`、`workflow/capture.rs` 与 `workflow/support.rs` 已将标注工具选择、绘制/提交/取消、移动/调整大小、颜色/线宽/文字大小/不透明度、填充和文字编辑提示迁移到
+  `Locale`/`UiText`；工具名称复用覆盖层资源，动态数值使用参数化模板，标注编辑和捕获行为保持不变；
 - `workflow/tests.rs`、设置视图、滚动控制器和资源目录测试覆盖 English/简体中文的按钮、状态、快捷键摘要和动态参数模板；
-- OCR/二维码/翻译、Record、更新、快速保存、历史保留、历史操作、选区保存、标注项目 Save/Open、Pin/全屏导出、剪贴板反馈、Capture 偏好与滚动截图分组已通过
+- OCR/二维码/翻译、Record、更新、快速保存、历史保留、历史操作、选区保存、标注项目 Save/Open、标注工具交互反馈、Pin/全屏导出、剪贴板反馈、Capture 偏好与滚动截图分组已通过
   `cargo fmt --all -- --check`、
   `cargo check -p flash-shot-app --all-targets --locked`、`cargo test --workspace --locked` 和
   `cargo clippy --workspace --all-targets -- -D warnings`；其余动态状态仍待后续分组迁移，
