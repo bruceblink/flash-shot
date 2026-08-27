@@ -70,7 +70,7 @@ impl CaptureFrame {
             .checked_mul(height as usize)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "PNG dimensions overflow"))?;
         let mut bgra = Vec::with_capacity(length);
-        for pixel in rgba[..info.buffer_size()].chunks_exact(4) {
+        for pixel in rgba[..info.buffer_size()].as_chunks::<4>().0 {
             bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
         }
         if bgra.len() != length {
@@ -722,10 +722,9 @@ impl CaptureFrame {
         // rows incrementally, avoiding full-image color and compressed staging buffers.
         let mut rgba_row = vec![0_u8; row_bytes];
         for source_row in self.pixels.chunks_exact(self.stride) {
-            for (source, target) in source_row[..row_bytes]
-                .chunks_exact(4)
-                .zip(rgba_row.chunks_exact_mut(4))
-            {
+            let source_pixels = source_row[..row_bytes].as_chunks::<4>().0;
+            let target_pixels = rgba_row.as_chunks_mut::<4>().0;
+            for (source, target) in source_pixels.iter().zip(target_pixels.iter_mut()) {
                 target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
             }
             stream.write_all(&rgba_row)?;
@@ -811,7 +810,7 @@ impl CaptureFrame {
         }
         let mut rgba = Vec::with_capacity(self.width as usize * self.height as usize * 4);
         for row in self.pixels.chunks_exact(self.stride) {
-            for pixel in row[..self.width as usize * 4].chunks_exact(4) {
+            for pixel in row[..self.width as usize * 4].as_chunks::<4>().0 {
                 rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
             }
         }
@@ -838,7 +837,9 @@ impl CaptureFrame {
                 .map_err(io::Error::other)?;
         } else {
             let rgb: Vec<u8> = rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
                 .collect();
             let image =
@@ -1137,7 +1138,7 @@ mod tests {
         const HEIGHT: u32 = 96;
         let mut pixels = vec![0_u8; WIDTH as usize * HEIGHT as usize * 4];
         let mut state = 0x5A17_9C3D_u32;
-        for pixel in pixels.chunks_exact_mut(4) {
+        for pixel in pixels.as_chunks_mut::<4>().0 {
             state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             pixel.copy_from_slice(&state.to_le_bytes());
         }
@@ -1762,7 +1763,14 @@ mod tests {
             .unwrap();
 
         let composited = frame.composite_annotations(&document).unwrap();
-        assert!(composited.pixels.chunks_exact(4).any(|pixel| pixel[1] > 0));
+        assert!(
+            composited
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[1] > 0)
+        );
     }
 
     #[test]
@@ -1978,7 +1986,14 @@ mod tests {
             .unwrap();
 
         let composited = frame.composite_annotations(&document).unwrap();
-        assert!(composited.pixels.chunks_exact(4).any(|pixel| pixel[2] > 0));
+        assert!(
+            composited
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[2] > 0)
+        );
     }
 
     #[test]
