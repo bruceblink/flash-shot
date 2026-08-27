@@ -110,16 +110,24 @@ impl FlashShotApp {
         if let Err(error) = self.settings.save(&self.settings_path) {
             self.capture_delay_seconds = previous_delay;
             self.settings.capture_delay_seconds = previous_delay;
-            self.status = format!("Could not save capture delay: {error}");
+            let error_detail = error.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::CaptureDelaySaveFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }
+        let seconds = self.capture_delay_seconds.to_string();
         self.status = if self.capture_delay_seconds == 0 {
-            "Capture delay disabled".to_owned()
+            self.settings
+                .locale
+                .text(crate::i18n::UiText::CaptureDelayDisabled)
+                .to_owned()
         } else {
-            format!(
-                "Capture delay set to {} seconds",
-                self.capture_delay_seconds
+            self.settings.locale.format_template(
+                crate::i18n::UiText::CaptureDelaySet,
+                &[("seconds", &seconds)],
             )
         };
         cx.notify();
@@ -132,15 +140,25 @@ impl FlashShotApp {
         if let Err(error) = self.settings.save(&self.settings_path) {
             self.include_cursor = previous_value;
             self.settings.include_cursor = previous_value;
-            self.status = format!("Could not save cursor preference: {error}");
+            let error_detail = error.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::CaptureCursorSaveFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }
         self.set_tray_capture_cursor_enabled(self.include_cursor);
         self.status = if self.include_cursor {
-            "Capture will include the system cursor".to_owned()
+            self.settings
+                .locale
+                .text(crate::i18n::UiText::CaptureCursorIncluded)
+                .to_owned()
         } else {
-            "Capture will omit the system cursor".to_owned()
+            self.settings
+                .locale
+                .text(crate::i18n::UiText::CaptureCursorOmitted)
+                .to_owned()
         };
         cx.notify();
     }
@@ -321,11 +339,18 @@ impl FlashShotApp {
         self.settings.color_format = next.setting_value();
         if let Err(error) = self.settings.save(&self.settings_path) {
             self.settings.color_format = previous;
-            self.status = format!("Could not save color format preference: {error}");
+            let error_detail = error.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::ColorCopyFormatSaveFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }
-        self.status = format!("Color copy format: {}", next.label());
+        self.status = self.settings.locale.format_template(
+            crate::i18n::UiText::ColorCopyFormatChanged,
+            &[("format", next.label())],
+        );
         cx.notify();
     }
 
@@ -340,11 +365,18 @@ impl FlashShotApp {
         self.settings.export_format = next;
         if let Err(error) = self.settings.save(&self.settings_path) {
             self.settings.export_format = previous;
-            self.status = format!("Could not save export format preference: {error}");
+            let error_detail = error.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::ExportFormatSaveFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }
-        self.status = format!("Default export format: {}", self.export_format_label());
+        self.status = self.settings.locale.format_template(
+            crate::i18n::UiText::ExportFormatChanged,
+            &[("format", self.export_format_label())],
+        );
         cx.notify();
     }
 
@@ -375,7 +407,11 @@ impl FlashShotApp {
         if let Some(handle) = self.settings_window_handle
             && let Err(error) = window_visibility::restore(handle)
         {
-            self.status = format!("Could not open settings: {error}");
+            let error_detail = error.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::SettingsOpenFailed,
+                &[("error", &error_detail)],
+            );
             log::warn!(target: "flash_shot::settings", "settings_window_restore_failed error={error}");
         }
         cx.notify();

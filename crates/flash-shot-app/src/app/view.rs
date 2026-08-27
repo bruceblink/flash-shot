@@ -507,11 +507,11 @@ fn settings_actions_available(session_idle: bool, recording_state: RecordingView
 }
 
 /// Makes the configured capture shortcut and its current system registration readable together.
-fn capture_shortcut_summary(shortcut: &str, registered: bool) -> String {
+fn capture_shortcut_summary(locale: Locale, shortcut: &str, registered: bool) -> String {
     if registered {
-        format!("Registered: {shortcut}")
+        locale.format_template(UiText::RegisteredShortcut, &[("shortcut", shortcut)])
     } else {
-        format!("Disabled: {shortcut}")
+        locale.format_template(UiText::DisabledShortcut, &[("shortcut", shortcut)])
     }
 }
 
@@ -570,25 +570,26 @@ fn capture_settings(
     );
 
     let recovery_app = app.clone();
-    let preferences = settings_section("Capture preferences", colors)
+    let preferences = settings_section(locale.text(UiText::CapturePreferences), colors)
         .child(
             div()
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(div().text_sm().child("Global shortcut"))
+                .child(div().text_sm().child(locale.text(UiText::GlobalShortcut)))
                 .child(
                     div()
                         .text_sm()
                         .text_color(colors.muted)
                         .child(capture_shortcut_summary(
+                            locale,
                             &app_state.capture_shortcut,
                             app_state.capture_shortcut_enabled,
                         )),
                 ),
         )
         .child(
-            settings_row("Global shortcut", colors).child(settings_toggle(
+            settings_row(locale.text(UiText::GlobalShortcut), colors).child(settings_toggle(
                 "settings-shortcut-enabled",
                 app_state.capture_shortcut_enabled,
                 colors,
@@ -600,7 +601,7 @@ fn capture_settings(
             )),
         )
         .child(
-            settings_row("Include cursor", colors).child(settings_toggle(
+            settings_row(locale.text(UiText::IncludeCursor), colors).child(settings_toggle(
                 "settings-cursor",
                 app_state.include_cursor,
                 colors,
@@ -611,7 +612,7 @@ fn capture_settings(
                 },
             )),
         )
-        .child(settings_row("Shortcut", colors).child(
+        .child(settings_row(locale.text(UiText::Shortcut), colors).child(
             div().flex().flex_wrap().justify_end().gap_2().children(
                 CaptureShortcut::PRESETS.into_iter().map(|preset| {
                     let app = app.clone();
@@ -628,7 +629,7 @@ fn capture_settings(
             ),
         ))
         .child(
-            settings_row("Full screen key", colors).child(settings_button(
+            settings_row(locale.text(UiText::FullScreenKey), colors).child(settings_button(
                 "settings-full-screen-shortcut",
                 super::workflow::shortcut_option_label(
                     app_state.settings.full_screen_shortcut.as_deref(),
@@ -642,7 +643,7 @@ fn capture_settings(
             )),
         )
         .child(
-            settings_row("Focused window key", colors).child(settings_button(
+            settings_row(locale.text(UiText::FocusedWindowKey), colors).child(settings_button(
                 "settings-focused-window-shortcut",
                 super::workflow::shortcut_option_label(
                     app_state.settings.focused_window_shortcut.as_deref(),
@@ -658,24 +659,28 @@ fn capture_settings(
             )),
         )
         .child(
-            settings_row("Capture delay", colors).child(div().flex().gap_1().children(
-                [0, 3, 5, 10].map(|delay_seconds| {
-                    let app = app.clone();
-                    settings_delay_button(
-                        format!("settings-delay-{delay_seconds}"),
-                        delay_seconds,
-                        app_state.capture_delay_seconds == delay_seconds,
-                        colors,
-                        is_idle,
-                        move |_, _, cx| {
-                            app.update(cx, |this, cx| this.set_capture_delay(delay_seconds, cx))
-                        },
-                    )
-                }),
-            )),
+            settings_row(locale.text(UiText::CaptureDelay), colors).child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .children([0, 3, 5, 10].map(|delay_seconds| {
+                        let app = app.clone();
+                        settings_delay_button(
+                            format!("settings-delay-{delay_seconds}"),
+                            delay_seconds,
+                            app_state.capture_delay_seconds == delay_seconds,
+                            colors,
+                            is_idle,
+                            locale,
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| this.set_capture_delay(delay_seconds, cx))
+                            },
+                        )
+                    })),
+            ),
         )
         .child(
-            settings_row("Color copy format", colors).child(settings_button(
+            settings_row(locale.text(UiText::ColorCopyFormat), colors).child(settings_button(
                 "settings-color-format",
                 app_state.color_format_label(),
                 colors,
@@ -2632,10 +2637,11 @@ fn settings_delay_button(
     selected: bool,
     colors: crate::theme::ThemeColors,
     enabled: bool,
+    locale: Locale,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
     let label = if delay_seconds == 0 {
-        "Off".to_owned()
+        locale.text(UiText::CaptureDelayOff).to_owned()
     } else {
         format!("{delay_seconds}s")
     };
@@ -2691,12 +2697,20 @@ mod tests {
     #[test]
     fn shortcut_summary_distinguishes_registered_and_disabled_keys() {
         assert_eq!(
-            capture_shortcut_summary("Ctrl+Alt+S", true),
+            capture_shortcut_summary(Locale::English, "Ctrl+Alt+S", true),
             "Registered: Ctrl+Alt+S"
         );
         assert_eq!(
-            capture_shortcut_summary("Ctrl+Alt+S", false),
+            capture_shortcut_summary(Locale::English, "Ctrl+Alt+S", false),
             "Disabled: Ctrl+Alt+S"
+        );
+        assert_eq!(
+            capture_shortcut_summary(Locale::SimplifiedChinese, "Ctrl+Alt+S", true),
+            "已注册：Ctrl+Alt+S"
+        );
+        assert_eq!(
+            capture_shortcut_summary(Locale::SimplifiedChinese, "Ctrl+Alt+S", false),
+            "已禁用：Ctrl+Alt+S"
         );
     }
 

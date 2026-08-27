@@ -374,6 +374,28 @@ pub enum UiText {
     LibraryPageDescription,
     RecordPageDescription,
     AppPageDescription,
+    CapturePreferences,
+    GlobalShortcut,
+    IncludeCursor,
+    Shortcut,
+    FullScreenKey,
+    FocusedWindowKey,
+    CaptureDelay,
+    CaptureDelayOff,
+    ColorCopyFormat,
+    RegisteredShortcut,
+    DisabledShortcut,
+    CaptureDelayDisabled,
+    CaptureDelaySet,
+    CaptureDelaySaveFailed,
+    CaptureCursorSaveFailed,
+    CaptureCursorIncluded,
+    CaptureCursorOmitted,
+    ColorCopyFormatChanged,
+    ColorCopyFormatSaveFailed,
+    ExportFormatChanged,
+    ExportFormatSaveFailed,
+    SettingsOpenFailed,
     CancelDelay,
     Appearance,
     Language,
@@ -925,6 +947,28 @@ impl UiText {
             Self::AppPageDescription => {
                 "Set appearance, language, startup, and update preferences."
             }
+            Self::CapturePreferences => "Capture preferences",
+            Self::GlobalShortcut => "Global shortcut",
+            Self::IncludeCursor => "Include cursor",
+            Self::Shortcut => "Shortcut",
+            Self::FullScreenKey => "Full screen key",
+            Self::FocusedWindowKey => "Focused window key",
+            Self::CaptureDelay => "Capture delay",
+            Self::CaptureDelayOff => "Off",
+            Self::ColorCopyFormat => "Color copy format",
+            Self::RegisteredShortcut => "Registered: {shortcut}",
+            Self::DisabledShortcut => "Disabled: {shortcut}",
+            Self::CaptureDelayDisabled => "Capture delay disabled",
+            Self::CaptureDelaySet => "Capture delay set to {seconds} seconds",
+            Self::CaptureDelaySaveFailed => "Could not save capture delay: {error}",
+            Self::CaptureCursorSaveFailed => "Could not save cursor preference: {error}",
+            Self::CaptureCursorIncluded => "Capture will include the system cursor",
+            Self::CaptureCursorOmitted => "Capture will omit the system cursor",
+            Self::ColorCopyFormatChanged => "Color copy format: {format}",
+            Self::ColorCopyFormatSaveFailed => "Could not save color format preference: {error}",
+            Self::ExportFormatChanged => "Default export format: {format}",
+            Self::ExportFormatSaveFailed => "Could not save export format preference: {error}",
+            Self::SettingsOpenFailed => "Could not open settings: {error}",
             Self::CancelDelay => "Cancel delay",
             Self::Appearance => "Appearance",
             Self::Language => "Language",
@@ -1486,6 +1530,28 @@ impl UiText {
             Self::LibraryPageDescription => "查找已保存截图、修改输出位置并管理历史记录。",
             Self::RecordPageDescription => "选择录制来源、输出目录和录屏控制。",
             Self::AppPageDescription => "设置外观、语言、启动和更新偏好。",
+            Self::CapturePreferences => "截图偏好",
+            Self::GlobalShortcut => "全局快捷键",
+            Self::IncludeCursor => "包含光标",
+            Self::Shortcut => "快捷键",
+            Self::FullScreenKey => "全屏快捷键",
+            Self::FocusedWindowKey => "焦点窗口快捷键",
+            Self::CaptureDelay => "截图延迟",
+            Self::CaptureDelayOff => "关闭",
+            Self::ColorCopyFormat => "颜色复制格式",
+            Self::RegisteredShortcut => "已注册：{shortcut}",
+            Self::DisabledShortcut => "已禁用：{shortcut}",
+            Self::CaptureDelayDisabled => "截图延迟已关闭",
+            Self::CaptureDelaySet => "截图延迟已设置为 {seconds} 秒",
+            Self::CaptureDelaySaveFailed => "无法保存截图延迟：{error}",
+            Self::CaptureCursorSaveFailed => "无法保存光标偏好：{error}",
+            Self::CaptureCursorIncluded => "截图将包含系统光标",
+            Self::CaptureCursorOmitted => "截图将不包含系统光标",
+            Self::ColorCopyFormatChanged => "颜色复制格式：{format}",
+            Self::ColorCopyFormatSaveFailed => "无法保存颜色格式偏好：{error}",
+            Self::ExportFormatChanged => "默认导出格式：{format}",
+            Self::ExportFormatSaveFailed => "无法保存导出格式偏好：{error}",
+            Self::SettingsOpenFailed => "无法打开设置：{error}",
             Self::CancelDelay => "取消延时",
             Self::Appearance => "外观",
             Self::Language => "语言",
@@ -1856,6 +1922,42 @@ mod tests {
         assert_eq!(
             Locale::English.text(UiText::PinCopyTooltip),
             "Copy image (Ctrl+C)"
+        );
+    }
+
+    #[test]
+    fn capture_preference_feedback_localizes_labels_and_dynamic_values() {
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::CapturePreferences),
+            "截图偏好"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::CaptureDelayOff),
+            "关闭"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::RegisteredShortcut, &[("shortcut", "Ctrl+Alt+S")],),
+            "已注册：Ctrl+Alt+S"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::CaptureDelaySet, &[("seconds", "5")],),
+            "截图延迟已设置为 5 秒"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::CaptureCursorIncluded),
+            "截图将包含系统光标"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::ColorCopyFormatChanged, &[("format", "RGB")],),
+            "颜色复制格式：RGB"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::SettingsOpenFailed, &[("error", "窗口不可用")],),
+            "无法打开设置：窗口不可用"
         );
     }
 
