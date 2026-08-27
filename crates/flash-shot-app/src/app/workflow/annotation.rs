@@ -723,7 +723,11 @@ impl FlashShotApp {
             return true;
         }
         if let Err(error) = crate::platform::cursor::move_to(target) {
-            self.status = format!("Could not move color sampler: {error}");
+            let error = error.to_string();
+            self.status = self.settings.locale.format_template(
+                UiText::AnnotationColorSamplerMoveFailed,
+                &[("error", &error)],
+            );
             cx.notify();
             return true;
         }
@@ -742,12 +746,20 @@ impl FlashShotApp {
             return true;
         }
         if self.annotation_editor.cancel() {
-            self.status = "Annotation edit cancelled".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::AnnotationEditCancelled)
+                .to_owned();
             cx.notify();
             return true;
         }
         if self.selected_annotation.take().is_some() {
-            self.status = "Annotation deselected".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::AnnotationDeselected)
+                .to_owned();
             cx.notify();
             return true;
         }
@@ -771,7 +783,11 @@ impl FlashShotApp {
         };
         match self.annotation_history.undo(document) {
             Ok(true) => {
-                self.status = "Annotation undone".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationUndone)
+                    .to_owned();
                 cx.notify();
                 true
             }
@@ -791,7 +807,11 @@ impl FlashShotApp {
         };
         match self.annotation_history.redo(document) {
             Ok(true) => {
-                self.status = "Annotation redone".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationRedone)
+                    .to_owned();
                 cx.notify();
                 true
             }
@@ -818,7 +838,11 @@ impl FlashShotApp {
         {
             Ok(()) => {
                 self.selected_annotation = None;
-                self.status = "Annotation deleted".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationDeleted)
+                    .to_owned();
                 cx.notify();
                 true
             }
@@ -856,7 +880,11 @@ impl FlashShotApp {
             Ok(()) => {
                 self.next_annotation_id = self.next_annotation_id.saturating_add(1);
                 self.selected_annotation = Some(duplicate_id);
-                self.status = "Annotation duplicated".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationDuplicated)
+                    .to_owned();
                 cx.notify();
                 true
             }
@@ -883,7 +911,11 @@ impl FlashShotApp {
             return false;
         };
         let Some(rotated) = existing.rotated_clockwise_within(document.canvas_bounds()) else {
-            self.status = "Rotation is not supported for text or number annotations".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::AnnotationRotationUnsupported)
+                .to_owned();
             cx.notify();
             return true;
         };
@@ -892,7 +924,11 @@ impl FlashShotApp {
             .apply(document, AnnotationCommand::Replace(rotated))
         {
             Ok(()) => {
-                self.status = "Annotation rotated clockwise".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AnnotationRotatedClockwise)
+                    .to_owned();
                 cx.notify();
                 true
             }
@@ -908,7 +944,7 @@ impl FlashShotApp {
         &mut self,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.reorder_selected_annotation(usize::MAX, "Annotation brought to front", cx)
+        self.reorder_selected_annotation(usize::MAX, UiText::AnnotationBroughtToFront, cx)
     }
 
     pub(in crate::app) fn select_annotation_layer(
@@ -931,9 +967,11 @@ impl FlashShotApp {
         self.annotation_tool = None;
         self.selected_annotation = Some(id);
         self.annotation_style = annotation.style;
-        self.status = format!(
-            "Selected annotation {position} of {}",
-            document.annotations().len()
+        let count = document.annotations().len().to_string();
+        let position = position.to_string();
+        self.status = self.settings.locale.format_template(
+            UiText::AnnotationSelectedPosition,
+            &[("position", &position), ("count", &count)],
         );
         cx.notify();
         true
@@ -958,10 +996,11 @@ impl FlashShotApp {
         self.annotation_tool = None;
         self.selected_annotation = Some(id);
         self.annotation_style = annotation.style;
-        self.status = format!(
-            "Selected annotation {} of {}",
-            annotation_position(&ids, id),
-            ids.len()
+        let position = annotation_position(&ids, id).to_string();
+        let count = ids.len().to_string();
+        self.status = self.settings.locale.format_template(
+            UiText::AnnotationSelectedPosition,
+            &[("position", &position), ("count", &count)],
         );
         cx.notify();
         true
@@ -971,7 +1010,7 @@ impl FlashShotApp {
         &mut self,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.reorder_selected_annotation(0, "Annotation sent to back", cx)
+        self.reorder_selected_annotation(0, UiText::AnnotationSentToBack, cx)
     }
 
     pub(in crate::app) fn bring_selected_annotation_forward(
@@ -981,7 +1020,11 @@ impl FlashShotApp {
         let Some(index) = self.selected_annotation_index() else {
             return false;
         };
-        self.reorder_selected_annotation(index.saturating_add(1), "Annotation brought forward", cx)
+        self.reorder_selected_annotation(
+            index.saturating_add(1),
+            UiText::AnnotationBroughtForward,
+            cx,
+        )
     }
 
     pub(in crate::app) fn send_selected_annotation_backward(
@@ -991,7 +1034,11 @@ impl FlashShotApp {
         let Some(index) = self.selected_annotation_index() else {
             return false;
         };
-        self.reorder_selected_annotation(index.saturating_sub(1), "Annotation sent backward", cx)
+        self.reorder_selected_annotation(
+            index.saturating_sub(1),
+            UiText::AnnotationSentBackward,
+            cx,
+        )
     }
 
     fn selected_annotation_index(&self) -> Option<usize> {
@@ -1006,7 +1053,7 @@ impl FlashShotApp {
     fn reorder_selected_annotation(
         &mut self,
         index: usize,
-        status: &'static str,
+        status: UiText,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(id) = self.selected_annotation else {
@@ -1021,7 +1068,7 @@ impl FlashShotApp {
             .apply(document, AnnotationCommand::Reorder { id, index: target })
         {
             Ok(()) => {
-                self.status = status.to_owned();
+                self.status = self.settings.locale.text(status).to_owned();
                 cx.notify();
                 true
             }

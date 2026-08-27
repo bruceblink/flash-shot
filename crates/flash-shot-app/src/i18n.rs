@@ -603,6 +603,20 @@ pub enum UiText {
     AnnotationTextUnsupported,
     AnnotationTextUpdated,
     AnnotationTextEditPrompt,
+    AnnotationColorSamplerMoveFailed,
+    AnnotationEditCancelled,
+    AnnotationDeselected,
+    AnnotationUndone,
+    AnnotationRedone,
+    AnnotationDeleted,
+    AnnotationDuplicated,
+    AnnotationRotationUnsupported,
+    AnnotationRotatedClockwise,
+    AnnotationSelectedPosition,
+    AnnotationBroughtToFront,
+    AnnotationSentToBack,
+    AnnotationBroughtForward,
+    AnnotationSentBackward,
     NoPinnedWindowsNeededInputRecovery,
     PinnedWindowInputRestored,
     ReadyWithShortcut,
@@ -1304,6 +1318,22 @@ impl UiText {
             Self::AnnotationTextUnsupported => "Selected annotation cannot be edited as text",
             Self::AnnotationTextUpdated => "Text annotation updated",
             Self::AnnotationTextEditPrompt => "Edit text, then press Enter",
+            Self::AnnotationColorSamplerMoveFailed => "Could not move color sampler: {error}",
+            Self::AnnotationEditCancelled => "Annotation edit cancelled",
+            Self::AnnotationDeselected => "Annotation deselected",
+            Self::AnnotationUndone => "Annotation undone",
+            Self::AnnotationRedone => "Annotation redone",
+            Self::AnnotationDeleted => "Annotation deleted",
+            Self::AnnotationDuplicated => "Annotation duplicated",
+            Self::AnnotationRotationUnsupported => {
+                "Rotation is not supported for text or number annotations"
+            }
+            Self::AnnotationRotatedClockwise => "Annotation rotated clockwise",
+            Self::AnnotationSelectedPosition => "Selected annotation {position} of {count}",
+            Self::AnnotationBroughtToFront => "Annotation brought to front",
+            Self::AnnotationSentToBack => "Annotation sent to back",
+            Self::AnnotationBroughtForward => "Annotation brought forward",
+            Self::AnnotationSentBackward => "Annotation sent backward",
             Self::NoPinnedWindowsNeededInputRecovery => "No pinned windows needed input recovery",
             Self::PinnedWindowInputRestored => "Restored mouse input for {count} pinned window(s)",
             Self::ReadyWithShortcut => "Ready - {shortcut}",
@@ -1931,6 +1961,20 @@ impl UiText {
             Self::AnnotationTextUnsupported => "选中的标注不是可编辑文字",
             Self::AnnotationTextUpdated => "文字标注已更新",
             Self::AnnotationTextEditPrompt => "编辑文字，然后按 Enter",
+            Self::AnnotationColorSamplerMoveFailed => "无法移动颜色取样器：{error}",
+            Self::AnnotationEditCancelled => "已取消标注编辑",
+            Self::AnnotationDeselected => "已取消选择标注",
+            Self::AnnotationUndone => "已撤销标注操作",
+            Self::AnnotationRedone => "已重做标注操作",
+            Self::AnnotationDeleted => "标注已删除",
+            Self::AnnotationDuplicated => "标注已复制",
+            Self::AnnotationRotationUnsupported => "文字或序号标注不支持旋转",
+            Self::AnnotationRotatedClockwise => "标注已顺时针旋转",
+            Self::AnnotationSelectedPosition => "已选择第 {position} 个标注，共 {count} 个",
+            Self::AnnotationBroughtToFront => "标注已置于顶层",
+            Self::AnnotationSentToBack => "标注已置于底层",
+            Self::AnnotationBroughtForward => "标注已上移",
+            Self::AnnotationSentBackward => "标注已下移",
             Self::NoPinnedWindowsNeededInputRecovery => "没有 Pin 窗口需要恢复输入",
             Self::PinnedWindowInputRestored => "已恢复 {count} 个 Pin 窗口的鼠标输入",
             Self::ReadyWithShortcut => "就绪 - {shortcut}",
@@ -2206,6 +2250,32 @@ mod tests {
         assert_eq!(
             Locale::SimplifiedChinese.text(UiText::AnnotationMoveCancelled),
             "已取消移动标注"
+        );
+        assert_eq!(
+            Locale::English.text(UiText::AnnotationUndone),
+            "Annotation undone"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::AnnotationRotatedClockwise),
+            "标注已顺时针旋转"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::AnnotationSelectedPosition,
+                &[("position", "2"), ("count", "5")],
+            ),
+            "已选择第 2 个标注，共 5 个"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::AnnotationColorSamplerMoveFailed,
+                &[("error", "拒绝访问")],
+            ),
+            "无法移动颜色取样器：拒绝访问"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::AnnotationBroughtForward),
+            "标注已上移"
         );
     }
 
