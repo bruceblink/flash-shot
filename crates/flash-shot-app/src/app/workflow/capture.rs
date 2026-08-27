@@ -38,7 +38,7 @@ impl FlashShotApp {
             self.recording_start_in_flight,
             self.recording_stopping,
         ) {
-            self.status = status.to_owned();
+            self.status = self.settings.locale.text(status).to_owned();
             cx.notify();
             return;
         }
@@ -64,7 +64,7 @@ impl FlashShotApp {
             self.recording_start_in_flight,
             self.recording_stopping,
         ) {
-            self.status = status.to_owned();
+            self.status = self.settings.locale.text(status).to_owned();
             cx.notify();
             return;
         }
@@ -123,7 +123,7 @@ impl FlashShotApp {
             self.recording_start_in_flight,
             self.recording_stopping,
         ) {
-            self.status = status.to_owned();
+            self.status = self.settings.locale.text(status).to_owned();
             cx.notify();
             return;
         }
@@ -197,7 +197,7 @@ impl FlashShotApp {
             self.recording_start_in_flight,
             self.recording_stopping,
         ) {
-            self.status = status.to_owned();
+            self.status = self.settings.locale.text(status).to_owned();
             cx.notify();
             return;
         }
@@ -254,7 +254,7 @@ impl FlashShotApp {
             self.recording_start_in_flight,
             self.recording_stopping,
         ) {
-            self.status = status.to_owned();
+            self.status = self.settings.locale.text(status).to_owned();
             cx.notify();
             return;
         }
@@ -276,7 +276,7 @@ impl FlashShotApp {
         let generation = self.operation_generation;
         self.delayed_capture_generation = Some(generation);
         self.delayed_capture_remaining_seconds = Some(delay_seconds);
-        self.status = delayed_capture_status(delay_seconds);
+        self.status = delayed_capture_status(self.settings.locale, delay_seconds);
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -428,7 +428,11 @@ impl FlashShotApp {
         }
         self.delayed_capture_remaining_seconds = None;
         self.operation_generation = self.operation_generation.wrapping_add(1);
-        self.status = "Delayed capture cancelled".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::DelayedCaptureCancelled)
+            .to_owned();
         cx.notify();
     }
 
@@ -446,7 +450,7 @@ impl FlashShotApp {
         }
         if remaining_seconds > 0 {
             self.delayed_capture_remaining_seconds = Some(remaining_seconds);
-            self.status = delayed_capture_status(remaining_seconds);
+            self.status = delayed_capture_status(self.settings.locale, remaining_seconds);
             cx.notify();
             return false;
         }
@@ -483,7 +487,7 @@ impl FlashShotApp {
             self.recording_start_in_flight,
             self.recording_stopping,
         ) {
-            self.status = status.to_owned();
+            self.status = self.settings.locale.text(status).to_owned();
             cx.notify();
             return;
         }
@@ -525,7 +529,11 @@ impl FlashShotApp {
         self.update_check_generation = self.update_check_generation.wrapping_add(1);
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
-        self.status = "Capturing virtual desktop...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::CaptureStarting)
+            .to_owned();
         self.hide_settings_window();
         cx.notify();
 
@@ -598,13 +606,13 @@ impl FlashShotApp {
                     "shortcut_to_frame_ready",
                     frame_ready_at.duration_since(started_at),
                 );
-                self.status = format!(
-                    "{} x {} physical pixels - {} display(s) - {:.1} ms - {} CPU copy",
+                self.status = capture_summary_status(
+                    self.settings.locale,
                     capture.capture.frame.width,
                     capture.capture.frame.height,
                     capture.capture.display_count,
-                    capture.capture.frame.capture_duration.as_secs_f64() * 1_000.0,
-                    capture.capture.frame.cpu_copy_count
+                    capture.capture.frame.capture_duration,
+                    capture.capture.frame.cpu_copy_count,
                 );
                 let pipeline = CapturePipelineMeasurement {
                     started_at,
@@ -627,7 +635,11 @@ impl FlashShotApp {
                     match AnnotationDocument::new(capture.capture.frame.bounds) {
                         Ok(document) => document,
                         Err(error) => {
-                            let message = format!("Could not create annotation document: {error}");
+                            let error_detail = error.to_string();
+                            let message = self.settings.locale.format_template(
+                                crate::i18n::UiText::CaptureAnnotationDocumentCreateFailed,
+                                &[("error", &error_detail)],
+                            );
                             let _ = self.session.fail(message.clone());
                             self.status = message;
                             self.return_to_background();
@@ -656,8 +668,11 @@ impl FlashShotApp {
                 } else if preselect_focused_window {
                     let Some(selection) = focused_window_selection(focused_window, frame_bounds)
                     else {
-                        let message =
-                            "Could not find a focused window outside Flash Shot".to_owned();
+                        let message = self
+                            .settings
+                            .locale
+                            .text(crate::i18n::UiText::CaptureFocusedWindowUnavailable)
+                            .to_owned();
                         let _ = self.session.fail(message.clone());
                         self.status = message;
                         self.return_to_background();
@@ -670,17 +685,21 @@ impl FlashShotApp {
                         return;
                     }
                     self.selection_drag.select(selection);
-                    self.status = format!(
-                        "Focused window: {} x {} physical pixels",
+                    self.status = focused_window_status(
+                        self.settings.locale,
                         selection.width(),
-                        selection.height()
+                        selection.height(),
                     );
                 }
                 let app = cx.entity();
                 cx.defer(move |cx| open_capture_overlays(app, capture.displays, pipeline, cx));
             }
             Err(error) => {
-                let message = format!("Capture failed: {error}");
+                let error_detail = error.to_string();
+                let message = self.settings.locale.format_template(
+                    crate::i18n::UiText::CaptureFailed,
+                    &[("error", &error_detail)],
+                );
                 let _ = self.session.fail(message.clone());
                 self.status = message;
                 log::warn!(target: "flash_shot::capture", "capture_failed error={error}");
@@ -845,7 +864,11 @@ impl FlashShotApp {
             .begin_resize(document, id, handle)
             .is_ok()
         {
-            self.status = "Resizing annotation...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::AnnotationResizing)
+                .to_owned();
             return;
         }
         if let Some(document) = self.annotation_document.as_ref()
@@ -857,7 +880,11 @@ impl FlashShotApp {
         {
             self.selected_annotation = Some(annotation.id);
             self.annotation_style = annotation.style;
-            self.status = "Moving annotation...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::AnnotationMoving)
+                .to_owned();
             return;
         }
         self.pending_click_target = self
@@ -873,7 +900,11 @@ impl FlashShotApp {
         {
             self.pending_click_target = None;
             self.selection_drag.begin_move(selection, point);
-            self.status = "Moving selection...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::SelectionMoving)
+                .to_owned();
         } else {
             self.selection_drag.begin(point);
         }
@@ -903,18 +934,25 @@ impl FlashShotApp {
             if let Some(document) = self.annotation_document.as_ref() {
                 self.annotation_editor.update(document, point);
             }
-            self.status = if self.annotation_editor.resizing().is_some() {
-                "Resizing annotation..."
-            } else {
-                "Moving annotation..."
-            }
-            .to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(if self.annotation_editor.resizing().is_some() {
+                    crate::i18n::UiText::AnnotationResizing
+                } else {
+                    crate::i18n::UiText::AnnotationMoving
+                })
+                .to_owned();
             cx.notify();
             return;
         }
         if self.selection_drag.is_moving() {
             self.selection_drag.update_move(point, frame.bounds);
-            self.status = "Moving selection...".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::SelectionMoving)
+                .to_owned();
         } else {
             let point = clamp_physical_point(point, frame.bounds);
             if resize_from_center {
@@ -1028,13 +1066,13 @@ pub(super) fn capture_start_conflict_status(
     recording_active: bool,
     recording_starting: bool,
     recording_stopping: bool,
-) -> Option<&'static str> {
+) -> Option<crate::i18n::UiText> {
     if recording_stopping {
-        Some("Screen recording is already stopping...")
+        Some(crate::i18n::UiText::CaptureRecordingStoppingConflict)
     } else if recording_active {
-        Some("Stop the current recording before starting a capture")
+        Some(crate::i18n::UiText::CaptureRecordingActiveConflict)
     } else if recording_starting {
-        Some("Wait for screen recording startup to finish before capturing")
+        Some(crate::i18n::UiText::CaptureRecordingStartingConflict)
     } else {
         None
     }

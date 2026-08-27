@@ -106,8 +106,46 @@ pub(in crate::app) fn next_history_limit(current: u16) -> u16 {
     }
 }
 
-pub(in crate::app) fn delayed_capture_status(remaining_seconds: u8) -> String {
-    format!("Capture scheduled in {remaining_seconds} seconds")
+/// Formats the countdown shown while a delayed capture owns the capture shortcut.
+pub(in crate::app) fn delayed_capture_status(locale: Locale, remaining_seconds: u8) -> String {
+    let seconds = remaining_seconds.to_string();
+    locale.format_template(UiText::DelayedCaptureScheduled, &[("seconds", &seconds)])
+}
+
+/// Formats the capture pipeline summary without embedding language-specific wording in the workflow.
+pub(in crate::app) fn capture_summary_status(
+    locale: Locale,
+    width: u32,
+    height: u32,
+    display_count: usize,
+    capture_duration: std::time::Duration,
+    cpu_copy_count: u32,
+) -> String {
+    let width = width.to_string();
+    let height = height.to_string();
+    let display_count = display_count.to_string();
+    let duration_ms = format!("{:.1}", capture_duration.as_secs_f64() * 1_000.0);
+    let cpu_copy_count = cpu_copy_count.to_string();
+    locale.format_template(
+        UiText::CaptureSummary,
+        &[
+            ("width", &width),
+            ("height", &height),
+            ("display_count", &display_count),
+            ("duration_ms", &duration_ms),
+            ("cpu_copy_count", &cpu_copy_count),
+        ],
+    )
+}
+
+/// Formats the dimensions of a focused-window capture after clipping it to the desktop frame.
+pub(in crate::app) fn focused_window_status(locale: Locale, width: u32, height: u32) -> String {
+    let width = width.to_string();
+    let height = height.to_string();
+    locale.format_template(
+        UiText::CaptureFocusedWindow,
+        &[("width", &width), ("height", &height)],
+    )
 }
 
 pub(in crate::app) fn clamp_physical_point(

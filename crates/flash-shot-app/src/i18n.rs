@@ -396,6 +396,20 @@ pub enum UiText {
     ExportFormatChanged,
     ExportFormatSaveFailed,
     SettingsOpenFailed,
+    DelayedCaptureScheduled,
+    DelayedCaptureCancelled,
+    CaptureStarting,
+    CaptureSummary,
+    CaptureFocusedWindow,
+    CaptureFocusedWindowUnavailable,
+    CaptureFailed,
+    CaptureAnnotationDocumentCreateFailed,
+    CaptureRecordingStoppingConflict,
+    CaptureRecordingActiveConflict,
+    CaptureRecordingStartingConflict,
+    AnnotationResizing,
+    AnnotationMoving,
+    SelectionMoving,
     ScrollingScreenshot,
     ScrollingSelectArea,
     ScrollingStartFailed,
@@ -1057,6 +1071,30 @@ impl UiText {
             Self::ExportFormatChanged => "Default export format: {format}",
             Self::ExportFormatSaveFailed => "Could not save export format preference: {error}",
             Self::SettingsOpenFailed => "Could not open settings: {error}",
+            Self::DelayedCaptureScheduled => "Capture scheduled in {seconds} seconds",
+            Self::DelayedCaptureCancelled => "Delayed capture cancelled",
+            Self::CaptureStarting => "Capturing virtual desktop...",
+            Self::CaptureSummary => {
+                "Captured {width} x {height} physical pixels across {display_count} display(s) in {duration_ms} ms ({cpu_copy_count} CPU copies)"
+            }
+            Self::CaptureFocusedWindow => "Focused window: {width} x {height} physical pixels",
+            Self::CaptureFocusedWindowUnavailable => {
+                "Could not find a focused window outside Flash Shot"
+            }
+            Self::CaptureFailed => "Capture failed: {error}",
+            Self::CaptureAnnotationDocumentCreateFailed => {
+                "Could not create annotation document: {error}"
+            }
+            Self::CaptureRecordingStoppingConflict => "Screen recording is already stopping...",
+            Self::CaptureRecordingActiveConflict => {
+                "Stop the current recording before starting a capture"
+            }
+            Self::CaptureRecordingStartingConflict => {
+                "Wait for screen recording startup to finish before capturing"
+            }
+            Self::AnnotationResizing => "Resizing annotation...",
+            Self::AnnotationMoving => "Moving annotation...",
+            Self::SelectionMoving => "Moving selection...",
             Self::ScrollingScreenshot => "Scrolling screenshot",
             Self::ScrollingSelectArea => "Select an area before starting a scrolling screenshot",
             Self::ScrollingStartFailed => "Could not start scrolling screenshot: {error}",
@@ -1738,6 +1776,22 @@ impl UiText {
             Self::ExportFormatChanged => "默认导出格式：{format}",
             Self::ExportFormatSaveFailed => "无法保存导出格式偏好：{error}",
             Self::SettingsOpenFailed => "无法打开设置：{error}",
+            Self::DelayedCaptureScheduled => "将在 {seconds} 秒后截图",
+            Self::DelayedCaptureCancelled => "已取消延迟截图",
+            Self::CaptureStarting => "正在捕获虚拟桌面...",
+            Self::CaptureSummary => {
+                "已捕获 {width} x {height} 个物理像素，涵盖 {display_count} 个显示器，用时 {duration_ms} ms（{cpu_copy_count} 次 CPU 复制）"
+            }
+            Self::CaptureFocusedWindow => "焦点窗口：{width} x {height} 个物理像素",
+            Self::CaptureFocusedWindowUnavailable => "找不到 Flash Shot 之外的焦点窗口",
+            Self::CaptureFailed => "截图失败：{error}",
+            Self::CaptureAnnotationDocumentCreateFailed => "无法创建标注文档：{error}",
+            Self::CaptureRecordingStoppingConflict => "屏幕录制正在停止...",
+            Self::CaptureRecordingActiveConflict => "请先停止当前录屏，再开始截图",
+            Self::CaptureRecordingStartingConflict => "请等待屏幕录制启动完成，再开始截图",
+            Self::AnnotationResizing => "正在调整标注大小...",
+            Self::AnnotationMoving => "正在移动标注...",
+            Self::SelectionMoving => "正在移动选区...",
             Self::ScrollingScreenshot => "长截图",
             Self::ScrollingSelectArea => "请先选择区域再开始长截图",
             Self::ScrollingStartFailed => "无法开始长截图：{error}",

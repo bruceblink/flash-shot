@@ -6,15 +6,16 @@ use super::{
     ColorFormat, ImageTimestamp, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
     annotation_position, annotation_sidecar_path, capture::focused_window_selection,
-    capture_session_can_restart, capture_start_conflict_status, claim_idle_completion,
-    compose_captured_displays, copy_selection_snapshot_cancellable, delayed_capture_status,
-    drawing_status, export_path, fill_alpha, fill_color, format_hsl, format_recording_progress,
-    format_recording_stopping, hovered_color, intersect_rect, is_current_operation,
-    keyboard_command, load_annotation_document, manual_scroll_control_bounds,
-    manual_scroll_control_rect, next_annotation_counters, next_annotation_selection,
-    next_recording_audio_selection, next_recording_display_selection, ocr_language_label,
-    ocr_support_status, open_annotation_project, open_image_project, pinned_size,
-    project_image_path, quick_save_annotated_frame_selection_in_with_prefix,
+    capture_session_can_restart, capture_start_conflict_status, capture_summary_status,
+    claim_idle_completion, compose_captured_displays, copy_selection_snapshot_cancellable,
+    delayed_capture_status, drawing_status, export_path, fill_alpha, fill_color,
+    focused_window_status, format_hsl, format_recording_progress, format_recording_stopping,
+    hovered_color, intersect_rect, is_current_operation, keyboard_command,
+    load_annotation_document, manual_scroll_control_bounds, manual_scroll_control_rect,
+    next_annotation_counters, next_annotation_selection, next_recording_audio_selection,
+    next_recording_display_selection, ocr_language_label, ocr_support_status,
+    open_annotation_project, open_image_project, pinned_size, project_image_path,
+    quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
     recognition_start_conflict_status, recording_audio_selection_label,
@@ -32,7 +33,7 @@ use super::{
 use crate::app::{
     ClipboardWriteLease, SelectionCopyCancelRequest, SelectionCopyCancellation, SelectionCopyLease,
 };
-use crate::i18n::Locale;
+use crate::i18n::{Locale, UiText};
 use crate::{
     domain::{
         annotation::{
@@ -700,7 +701,7 @@ fn pinned_window_size_matches_the_image_without_downscaling() {
 fn delayed_capture_status_reports_each_remaining_second() {
     let remaining = (1..=10)
         .rev()
-        .map(delayed_capture_status)
+        .map(|seconds| delayed_capture_status(Locale::English, seconds))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -709,6 +710,53 @@ fn delayed_capture_status_reports_each_remaining_second() {
     );
     assert_eq!(remaining.last().unwrap(), "Capture scheduled in 1 seconds");
     assert_eq!(remaining.len(), 10);
+
+    assert_eq!(
+        delayed_capture_status(Locale::SimplifiedChinese, 3),
+        "将在 3 秒后截图"
+    );
+}
+
+#[test]
+fn capture_lifecycle_feedback_uses_the_selected_locale() {
+    assert_eq!(
+        capture_summary_status(
+            Locale::English,
+            1_920,
+            1_080,
+            1,
+            Duration::from_micros(12_345),
+            2,
+        ),
+        "Captured 1920 x 1080 physical pixels across 1 display(s) in 12.3 ms (2 CPU copies)"
+    );
+    assert_eq!(
+        capture_summary_status(
+            Locale::SimplifiedChinese,
+            1_920,
+            1_080,
+            1,
+            Duration::from_micros(12_345),
+            2,
+        ),
+        "已捕获 1920 x 1080 个物理像素，涵盖 1 个显示器，用时 12.3 ms（2 次 CPU 复制）"
+    );
+    assert_eq!(
+        focused_window_status(Locale::SimplifiedChinese, 800, 600),
+        "焦点窗口：800 x 600 个物理像素"
+    );
+    assert_eq!(
+        Locale::English.text(capture_start_conflict_status(true, false, false).unwrap()),
+        "Stop the current recording before starting a capture"
+    );
+    assert_eq!(
+        Locale::SimplifiedChinese.text(capture_start_conflict_status(false, true, false).unwrap()),
+        "请等待屏幕录制启动完成，再开始截图"
+    );
+    assert_eq!(
+        Locale::SimplifiedChinese.text(UiText::CaptureFocusedWindowUnavailable),
+        "找不到 Flash Shot 之外的焦点窗口"
+    );
 }
 
 #[test]
@@ -1681,15 +1729,15 @@ fn stale_save_failures_explain_when_a_new_capture_is_required() {
 fn capture_start_waits_for_recording_lifecycle_to_settle() {
     assert_eq!(
         capture_start_conflict_status(true, false, false),
-        Some("Stop the current recording before starting a capture")
+        Some(UiText::CaptureRecordingActiveConflict)
     );
     assert_eq!(
         capture_start_conflict_status(false, true, false),
-        Some("Wait for screen recording startup to finish before capturing")
+        Some(UiText::CaptureRecordingStartingConflict)
     );
     assert_eq!(
         capture_start_conflict_status(false, false, true),
-        Some("Screen recording is already stopping...")
+        Some(UiText::CaptureRecordingStoppingConflict)
     );
     assert_eq!(capture_start_conflict_status(false, false, false), None);
 }
