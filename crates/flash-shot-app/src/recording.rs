@@ -474,6 +474,10 @@ pub fn start_recording(
     })
 }
 
+/// Runs one recording process, turning process lifecycle changes into bounded UI events.
+///
+/// The worker owns all blocking waits and reports every terminal process outcome so the caller
+/// can return to a retryable state without relying on a worker panic.
 fn recording_worker(
     command: FfmpegCommand,
     output: PathBuf,
@@ -549,7 +553,15 @@ fn recording_worker(
                 let _ = events.try_send(RecordingEvent::Finished { output });
                 return;
             }
-            Ok(Some(_)) => unreachable!("non-zero recording exits return an error"),
+            Ok(Some(exit)) => {
+                let message = if exit.diagnostic.is_empty() {
+                    "FFmpeg exited unsuccessfully".to_owned()
+                } else {
+                    format!("FFmpeg exited unsuccessfully: {}", exit.diagnostic)
+                };
+                let _ = events.try_send(RecordingEvent::Failed { message });
+                return;
+            }
             Err(error) => {
                 let _ = events.try_send(RecordingEvent::Failed {
                     message: error.to_string(),
@@ -663,11 +675,77 @@ pub struct RecordingProcess {
     stderr_reader: Option<JoinHandle<io::Result<Vec<u8>>>>,
 }
 
+/// Owns the child and Job Object while startup is still fallible.
+///
+/// Any setup error before the recording process is fully constructed drops this guard, which
+/// terminates and reaps the child instead of leaving an untracked FFmpeg process behind.
+struct StartupChildCleanup {
+    child: Option<Child>,
+    process_group: Option<ProcessGroup>,
+}
+
+impl StartupChildCleanup {
+    fn new(child: Child, process_group: ProcessGroup) -> Self {
+        Self {
+            child: Some(child),
+            process_group: Some(process_group),
+        }
+    }
+
+    fn assign(&self) -> io::Result<()> {
+        let process_group = self.process_group.as_ref().ok_or_else(|| {
+            io::Error::other("recording Job Object is unavailable during startup")
+        })?;
+        let child = self
+            .child
+            .as_ref()
+            .ok_or_else(|| io::Error::other("recording child is unavailable during startup"))?;
+        process_group.assign(child)
+    }
+
+    /// Returns the child for taking its three pipes while this guard remains armed.
+    fn child_mut(&mut self) -> &mut Child {
+        self.child
+            .as_mut()
+            .expect("startup cleanup guard must own its child")
+    }
+
+    /// Disarms cleanup only after all startup-owned resources have been transferred successfully.
+    fn into_parts(mut self) -> (Child, ProcessGroup) {
+        (
+            self.child
+                .take()
+                .expect("startup cleanup guard must own its child"),
+            self.process_group
+                .take()
+                .expect("startup cleanup guard must own its Job Object"),
+        )
+    }
+
+    /// Terminates and reaps the child before an early startup error is returned.
+    fn terminate_and_reap(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        if let Some(process_group) = self.process_group.as_ref() {
+            let _ = process_group.terminate();
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+impl Drop for StartupChildCleanup {
+    fn drop(&mut self) {
+        self.terminate_and_reap();
+    }
+}
+
 impl RecordingProcess {
     /// Starts FFmpeg with piped control input and continuously drained stderr.
     pub fn start(command: FfmpegCommand) -> io::Result<Self> {
         let process_group = ProcessGroup::create()?;
-        let mut child = command
+        let child = command
             .into_command()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -676,20 +754,47 @@ impl RecordingProcess {
             .map_err(|error| {
                 io::Error::new(error.kind(), format!("could not start FFmpeg: {error}"))
             })?;
-        process_group.assign(&child)?;
-        let stdin = child.stdin.take().ok_or_else(|| {
+        let mut startup = StartupChildCleanup::new(child, process_group);
+        startup.assign()?;
+        let stdin = startup.child_mut().stdin.take().ok_or_else(|| {
             io::Error::other("FFmpeg control input pipe was not available after startup")
         })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
+        let stdout = startup.child_mut().stdout.take().ok_or_else(|| {
             io::Error::other("FFmpeg progress output pipe was not available after startup")
         })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
+        let stderr = startup.child_mut().stderr.take().ok_or_else(|| {
             io::Error::other("FFmpeg diagnostic pipe was not available after startup")
         })?;
         let progress = Arc::new(Mutex::new(RecordingProgress::default()));
         let progress_target = Arc::clone(&progress);
-        let stdout_reader = thread::spawn(move || read_progress(stdout, progress_target));
-        let stderr_reader = thread::spawn(move || read_bounded_diagnostics(stderr));
+        let stdout_reader = match thread::Builder::new()
+            .name("flash-shot-recording-progress".to_owned())
+            .spawn(move || read_progress(stdout, progress_target))
+        {
+            Ok(reader) => reader,
+            Err(error) => {
+                startup.terminate_and_reap();
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!("could not start FFmpeg progress reader: {error}"),
+                ));
+            }
+        };
+        let stderr_reader = match thread::Builder::new()
+            .name("flash-shot-recording-diagnostics".to_owned())
+            .spawn(move || read_bounded_diagnostics(stderr))
+        {
+            Ok(reader) => reader,
+            Err(error) => {
+                startup.terminate_and_reap();
+                let _ = stdout_reader.join();
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!("could not start FFmpeg diagnostic reader: {error}"),
+                ));
+            }
+        };
+        let (child, process_group) = startup.into_parts();
         Ok(Self {
             child: Some(child),
             process_group,
@@ -1328,12 +1433,12 @@ mod tests {
     use super::{
         AudioSource, DEVICE_ARGUMENTS, FFMPEG_PROBE_TIMEOUT, FORMAT_ARGUMENTS, FfmpegCapabilities,
         FfmpegCommand, GRACEFUL_STOP_TIMEOUT, MAX_DIAGNOSTIC_BYTES, ProgressParser,
-        RecordingAudioConfig, RecordingCommands, RecordingProcess, RecordingProgress,
-        RecordingRequest, RecordingSession, RecordingState, RecordingTarget, VERSION_ARGUMENTS,
-        audio_source_from_config, build_recording_command, diagnostic_suffix, executable_from,
-        first_diagnostic_line, graceful_stop_input, last_diagnostic_line,
-        parse_dshow_audio_devices, parse_input_formats, parse_version, read_bounded_diagnostics,
-        wait_for_probe_child,
+        RecordingAudioConfig, RecordingCommands, RecordingEvent, RecordingProcess,
+        RecordingProgress, RecordingRequest, RecordingSession, RecordingState, RecordingTarget,
+        StartupChildCleanup, VERSION_ARGUMENTS, audio_source_from_config, build_recording_command,
+        diagnostic_suffix, executable_from, first_diagnostic_line, graceful_stop_input,
+        last_diagnostic_line, parse_dshow_audio_devices, parse_input_formats, parse_version,
+        read_bounded_diagnostics, recording_worker, wait_for_probe_child,
     };
     use crate::domain::geometry::PhysicalRect;
     use std::{
@@ -1341,6 +1446,7 @@ mod tests {
         io::Cursor,
         path::PathBuf,
         process::{Command, Stdio},
+        sync::Arc,
         time::Duration,
     };
 
@@ -1934,6 +2040,87 @@ mod tests {
         let error = process.wait_for_exit().unwrap_err();
 
         assert!(error.to_string().contains("encoder failed"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recording_worker_reports_an_abnormal_exit_without_panicking() {
+        let command = FfmpegCommand {
+            executable: PathBuf::from("cmd.exe"),
+            arguments: ["/C", "echo encoder failed 1>&2 & exit /b 7"]
+                .map(OsString::from)
+                .into(),
+        };
+        let commands = Arc::new(RecordingCommands::new());
+        let (events, received) = async_channel::bounded(4);
+
+        recording_worker(
+            command,
+            PathBuf::from("failed.mp4"),
+            Arc::clone(&commands),
+            events,
+        );
+
+        assert!(matches!(received.try_recv(), Ok(RecordingEvent::Started)));
+        let failure = received.try_recv().unwrap();
+        match failure {
+            RecordingEvent::Failed { message } => assert!(message.contains("encoder failed")),
+            other => panic!("expected a failure event, got {other:?}"),
+        }
+        assert!(!commands.running.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_stop_timeout_terminates_and_reaps_the_child() {
+        let command = FfmpegCommand {
+            executable: PathBuf::from("cmd.exe"),
+            arguments: ["/C", "ping -n 10 127.0.0.1 > nul"]
+                .map(OsString::from)
+                .into(),
+        };
+        let mut process = RecordingProcess::start(command).unwrap();
+
+        let error = process
+            .stop_gracefully(Duration::from_millis(100))
+            .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("was terminated"));
+        assert!(process.child.is_none());
+        assert!(process.stdin.is_none());
+        assert!(process.stdout_reader.is_none());
+        assert!(process.stderr_reader.is_none());
+        assert!(process.try_wait_for_exit().is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn startup_cleanup_terminates_a_child_before_process_construction() {
+        let marker = std::env::temp_dir().join(format!(
+            "flash-shot-recording-startup-{}.txt",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let process_group = super::ProcessGroup::create().unwrap();
+        let command_line = format!(
+            r#"ping -n 10 127.0.0.1 > nul & echo leaked > "{}""#,
+            marker.display()
+        );
+        let child = Command::new("cmd.exe")
+            .args(["/C", command_line.as_str()])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let startup = StartupChildCleanup::new(child, process_group);
+        startup.assign().unwrap();
+
+        drop(startup);
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!marker.exists(), "startup cleanup left a child running");
+        let _ = std::fs::remove_file(marker);
     }
 
     #[cfg(windows)]
