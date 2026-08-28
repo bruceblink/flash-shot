@@ -119,7 +119,11 @@ impl FlashShotApp {
 
     pub(in crate::app) fn pin_selection(&mut self, cx: &mut Context<Self>) {
         let Some(selection) = self.session.selection() else {
-            self.status = "Select an area before pinning".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::PinSelectionAreaRequired)
+                .to_owned();
             cx.notify();
             return;
         };
@@ -132,7 +136,11 @@ impl FlashShotApp {
         // deferred callbacks can leave the Windows event loop blocked instead.
         self.reset(cx);
         let generation = self.operation_generation;
-        self.status = "Preparing pinned image...".to_owned();
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::PinPreparingImage)
+            .to_owned();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();

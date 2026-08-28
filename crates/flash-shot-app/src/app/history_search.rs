@@ -5,6 +5,7 @@ use std::ops::Range;
 use gpui::{Context, Keystroke};
 
 use super::{FlashShotApp, SettingsSection};
+use crate::i18n::UiText;
 
 /// Identifies guarded history shortcuts before they reach the existing batch-action flow.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,7 +113,11 @@ impl FlashShotApp {
         let paths = self.filtered_history_paths();
         let Some(index) = history_focus_index(&paths, self.history_keyboard_focus.as_ref(), true)
         else {
-            self.status = "No captures match the current filter".to_owned();
+            self.status = self
+                .settings
+                .locale
+                .text(UiText::HistoryNoMatches)
+                .to_owned();
             cx.notify();
             return;
         };

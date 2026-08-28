@@ -322,13 +322,20 @@ fn status_indicator_color(
         "cannot",
         "not found",
         "needs attention",
+        "无法",
+        "失败",
+        "不可用",
+        "错误",
+        "无效",
+        "找不到",
+        "需要检查",
     ]
     .iter()
     .any(|marker| normalized.contains(marker));
     if failure {
         return colors.danger;
     }
-    let cancelled = ["cancelled", "canceled"]
+    let cancelled = ["cancelled", "canceled", "已取消", "取消"]
         .iter()
         .any(|marker| normalized.contains(marker));
     if cancelled {
@@ -344,6 +351,11 @@ fn status_indicator_color(
         "starting",
         "preparing",
         "updating",
+        "正在",
+        "等待",
+        "读取",
+        "拼接",
+        "滚动",
     ]
     .iter()
     .any(|marker| normalized.contains(marker));
@@ -632,6 +644,7 @@ fn capture_settings(
             settings_row(locale.text(UiText::FullScreenKey), colors).child(settings_button(
                 "settings-full-screen-shortcut",
                 super::workflow::shortcut_option_label(
+                    locale,
                     app_state.settings.full_screen_shortcut.as_deref(),
                 ),
                 colors,
@@ -646,6 +659,7 @@ fn capture_settings(
             settings_row(locale.text(UiText::FocusedWindowKey), colors).child(settings_button(
                 "settings-focused-window-shortcut",
                 super::workflow::shortcut_option_label(
+                    locale,
                     app_state.settings.focused_window_shortcut.as_deref(),
                 ),
                 colors,
@@ -2643,7 +2657,8 @@ fn settings_delay_button(
     let label = if delay_seconds == 0 {
         locale.text(UiText::CaptureDelayOff).to_owned()
     } else {
-        format!("{delay_seconds}s")
+        let seconds = delay_seconds.to_string();
+        locale.format_template(UiText::CaptureDelaySeconds, &[("seconds", &seconds)])
     };
     settings_button(id, &label, colors, enabled, on_click)
         .border_color(if selected {

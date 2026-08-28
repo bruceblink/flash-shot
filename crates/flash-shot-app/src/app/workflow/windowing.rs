@@ -1,6 +1,7 @@
 //! GPUI window orchestration and multi-display capture previews.
 
 use super::*;
+use crate::i18n::UiText;
 
 // Keeps every scrolling-screenshot command on one stable row without squeezing labels.
 const MANUAL_SCROLL_CONTROL_WIDTH: f32 = 520.0;
@@ -63,8 +64,11 @@ pub(super) fn open_capture_overlays(
             Ok(window) => windows.push(window),
             Err(error) => {
                 close_overlay_windows(windows, cx);
-                let message = format!("Capture overlay failed: {error}");
                 app.update(cx, |app, cx| {
+                    let message = app.settings.locale.format_template(
+                        UiText::CaptureOverlayOpenFailed,
+                        &[("error", &error.to_string())],
+                    );
                     let _ = app.session.fail(message.clone());
                     app.status = message;
                     app.return_to_background();
@@ -94,6 +98,7 @@ pub(super) fn open_image_overlay(
         return;
     };
     let operation_generation = app.read(cx).operation_generation;
+    let locale = app.read(cx).settings.locale;
     let display = crate::platform::display::DisplayInfo {
         id: "opened-image".to_owned(),
         platform_id: 0,
@@ -112,7 +117,7 @@ pub(super) fn open_image_overlay(
         WindowOptions {
             window_bounds: Some(WindowBounds::centered(window_size, cx)),
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Flash Shot - Edit Image".into()),
+                title: Some(locale.text(UiText::ImageEditorTitle).into()),
                 ..Default::default()
             }),
             focus: true,
@@ -147,8 +152,11 @@ pub(super) fn open_image_overlay(
             app.update(cx, |app, _| app.hide_settings_window());
         }
         Err(error) => {
-            let message = format!("Image editor window failed: {error}");
             app.update(cx, |app, cx| {
+                let message = app.settings.locale.format_template(
+                    UiText::ImageEditorOpenFailed,
+                    &[("error", &error.to_string())],
+                );
                 let _ = app.session.fail(message.clone());
                 app.status = message;
                 app.return_to_background();
@@ -183,11 +191,12 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
             )
         });
     let control_app = app.clone();
+    let locale = app.read(cx).settings.locale;
     match cx.open_window(
         WindowOptions {
             window_bounds: Some(control_bounds),
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Flash Shot - Scrolling Screenshot".into()),
+                title: Some(locale.text(UiText::ScrollingScreenshotTitle).into()),
                 ..Default::default()
             }),
             focus: true,
@@ -218,7 +227,10 @@ pub(super) fn open_manual_scroll_control(app: gpui::Entity<FlashShotApp>, cx: &m
                 app.manual_scroll_selection = None;
                 app.manual_scroll_capture_in_flight = false;
                 app.manual_scroll_auto_capture_generation = None;
-                app.status = format!("Could not open scrolling screenshot controls: {error}");
+                app.status = app.settings.locale.format_template(
+                    UiText::ScrollingControlOpenFailed,
+                    &[("error", &error.to_string())],
+                );
                 app.return_to_background();
                 cx.notify();
             });

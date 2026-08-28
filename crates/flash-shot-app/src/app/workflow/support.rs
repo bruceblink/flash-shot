@@ -28,6 +28,16 @@ pub(in crate::app) fn tool_selected_status(locale: Locale, tool: AnnotationTool)
     )
 }
 
+/// Formats an operation error with a localized explanation while preserving the technical detail.
+pub(in crate::app) fn localized_error_status(
+    locale: Locale,
+    key: UiText,
+    error: impl std::fmt::Display,
+) -> String {
+    let error = error.to_string();
+    locale.format_template(key, &[("error", &error)])
+}
+
 /// Formats the drawing/editing feedback while preserving the tool-specific wording.
 pub(in crate::app) fn drawing_status(locale: Locale, tool: AnnotationTool) -> String {
     match tool {

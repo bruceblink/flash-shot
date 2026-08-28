@@ -773,6 +773,49 @@ pub enum UiText {
     LibraryMinutesAgo,
     LibraryHoursAgo,
     LibraryDaysAgo,
+    OpenImageChoosing,
+    OpenImagePrompt,
+    OpenProjectChoosing,
+    OpenProjectPrompt,
+    OpenHistoryInProgress,
+    PinHistoryInProgress,
+    OpenImageCancelled,
+    OpenImageOpened,
+    OpenImageOpenedWithoutAnnotations,
+    OpenImageFailed,
+    SettingsHideBeforeEditorFailed,
+    ImageEditorOpenFailed,
+    CaptureOverlayOpenFailed,
+    ScrollingControlOpenFailed,
+    ImageEditorTitle,
+    ScrollingScreenshotTitle,
+    PinSelectionAreaRequired,
+    PinPreparingImage,
+    ShortcutUseFailed,
+    CaptureShortcutChanged,
+    FullScreenShortcutChanged,
+    FocusedWindowShortcutChanged,
+    ShortcutsRemainDisabled,
+    ShortcutPreferenceSaveFailed,
+    GlobalShortcutsRegisterFailed,
+    GlobalShortcutDisabled,
+    GlobalShortcutEnabled,
+    GlobalShortcutDisableFailed,
+    GlobalShortcutEnableFailed,
+    GlobalShortcutRegisterFailed,
+    GlobalShortcutPreferenceSaveFailed,
+    ExecutableNotFound,
+    AutoStartEnabled,
+    AutoStartDisabled,
+    AutoStartManagedElsewhere,
+    AutoStartUpdateFailed,
+    AppearancePreferenceSaveFailed,
+    AppearanceChanged,
+    ShortcutOff,
+    CaptureSessionOperationFailed,
+    AnnotationOperationFailed,
+    CaptureDelaySeconds,
+    ExportSourceUnavailable,
 }
 
 impl UiText {
@@ -1536,6 +1579,59 @@ impl UiText {
             Self::LibraryMinutesAgo => "{count}m ago",
             Self::LibraryHoursAgo => "{count}h ago",
             Self::LibraryDaysAgo => "{count}d ago",
+            Self::OpenImageChoosing => "Choose a PNG image to annotate...",
+            Self::OpenImagePrompt => "Open PNG image",
+            Self::OpenProjectChoosing => "Choose an editable annotation project...",
+            Self::OpenProjectPrompt => "Open annotation project",
+            Self::OpenHistoryInProgress => "Opening {path}...",
+            Self::PinHistoryInProgress => "Pinning {path}...",
+            Self::OpenImageCancelled => "Open image cancelled",
+            Self::OpenImageOpened => "Opened {path} for annotation",
+            Self::OpenImageOpenedWithoutAnnotations => {
+                "Opened {path} without annotations: {warning}"
+            }
+            Self::OpenImageFailed => "Could not open image: {error}",
+            Self::SettingsHideBeforeEditorFailed => {
+                "Could not hide settings before opening the editor: {error}"
+            }
+            Self::ImageEditorOpenFailed => "Image editor window failed: {error}",
+            Self::CaptureOverlayOpenFailed => "Capture overlay failed: {error}",
+            Self::ScrollingControlOpenFailed => {
+                "Could not open scrolling screenshot controls: {error}"
+            }
+            Self::ImageEditorTitle => "Flash Shot - Edit image",
+            Self::ScrollingScreenshotTitle => "Flash Shot - Scrolling screenshot",
+            Self::PinSelectionAreaRequired => "Select an area before pinning",
+            Self::PinPreparingImage => "Preparing pinned image...",
+            Self::ShortcutUseFailed => "Could not use shortcut: {error}",
+            Self::CaptureShortcutChanged => "Capture shortcut changed to {shortcut}",
+            Self::FullScreenShortcutChanged => "Full-screen shortcut: {shortcut}",
+            Self::FocusedWindowShortcutChanged => "Focused-window shortcut: {shortcut}",
+            Self::ShortcutsRemainDisabled => "{status}; global shortcuts remain disabled",
+            Self::ShortcutPreferenceSaveFailed => "Could not save shortcut preference: {error}",
+            Self::GlobalShortcutsRegisterFailed => "Could not register global shortcuts: {error}",
+            Self::GlobalShortcutDisabled => "Global capture shortcut disabled",
+            Self::GlobalShortcutEnabled => "Global capture shortcut enabled: {shortcut}",
+            Self::GlobalShortcutDisableFailed => "Could not disable global shortcut: {error}",
+            Self::GlobalShortcutEnableFailed => "Could not enable global shortcut: {error}",
+            Self::GlobalShortcutRegisterFailed => "Could not register {shortcut}: {error}",
+            Self::GlobalShortcutPreferenceSaveFailed => {
+                "Could not save global shortcut preference: {error}"
+            }
+            Self::ExecutableNotFound => "Could not find the application executable: {error}",
+            Self::AutoStartEnabled => "Launch at sign-in enabled",
+            Self::AutoStartDisabled => "Launch at sign-in disabled",
+            Self::AutoStartManagedElsewhere => {
+                "Launch at sign-in is managed by a different Flash Shot executable"
+            }
+            Self::AutoStartUpdateFailed => "Could not update launch at sign-in: {error}",
+            Self::AppearancePreferenceSaveFailed => "Could not save appearance preference: {error}",
+            Self::AppearanceChanged => "Appearance changed to {mode}",
+            Self::ShortcutOff => "Off",
+            Self::CaptureSessionOperationFailed => "Could not update capture state: {error}",
+            Self::AnnotationOperationFailed => "Could not update annotation: {error}",
+            Self::CaptureDelaySeconds => "{seconds}s",
+            Self::ExportSourceUnavailable => "Capture frame or annotation document is unavailable",
         }
     }
 
@@ -2197,6 +2293,49 @@ impl UiText {
             Self::LibraryMinutesAgo => "{count} 分钟前",
             Self::LibraryHoursAgo => "{count} 小时前",
             Self::LibraryDaysAgo => "{count} 天前",
+            Self::OpenImageChoosing => "请选择要标注的 PNG 图片...",
+            Self::OpenImagePrompt => "打开 PNG 图片",
+            Self::OpenProjectChoosing => "请选择可编辑标注项目...",
+            Self::OpenProjectPrompt => "打开标注项目",
+            Self::OpenHistoryInProgress => "正在打开 {path}...",
+            Self::PinHistoryInProgress => "正在固定 {path}...",
+            Self::OpenImageCancelled => "已取消打开图片",
+            Self::OpenImageOpened => "已打开 {path}，可以开始标注",
+            Self::OpenImageOpenedWithoutAnnotations => "已打开 {path}，未加载标注：{warning}",
+            Self::OpenImageFailed => "无法打开图片：{error}",
+            Self::SettingsHideBeforeEditorFailed => "打开编辑器前无法隐藏设置窗口：{error}",
+            Self::ImageEditorOpenFailed => "无法打开图片编辑器窗口：{error}",
+            Self::CaptureOverlayOpenFailed => "无法打开截图覆盖层：{error}",
+            Self::ScrollingControlOpenFailed => "无法打开长截图控制器：{error}",
+            Self::ImageEditorTitle => "Flash Shot - 图片编辑",
+            Self::ScrollingScreenshotTitle => "Flash Shot - 长截图",
+            Self::PinSelectionAreaRequired => "请先选择区域，再固定图片",
+            Self::PinPreparingImage => "正在准备置顶图片...",
+            Self::ShortcutUseFailed => "无法使用快捷键：{error}",
+            Self::CaptureShortcutChanged => "截图快捷键已改为 {shortcut}",
+            Self::FullScreenShortcutChanged => "全屏快捷键：{shortcut}",
+            Self::FocusedWindowShortcutChanged => "焦点窗口快捷键：{shortcut}",
+            Self::ShortcutsRemainDisabled => "{status}；全局快捷键仍处于禁用状态",
+            Self::ShortcutPreferenceSaveFailed => "无法保存快捷键偏好：{error}",
+            Self::GlobalShortcutsRegisterFailed => "无法注册全局快捷键：{error}",
+            Self::GlobalShortcutDisabled => "全局截图快捷键已禁用",
+            Self::GlobalShortcutEnabled => "全局截图快捷键已启用：{shortcut}",
+            Self::GlobalShortcutDisableFailed => "无法禁用全局快捷键：{error}",
+            Self::GlobalShortcutEnableFailed => "无法启用全局快捷键：{error}",
+            Self::GlobalShortcutRegisterFailed => "无法注册 {shortcut}：{error}",
+            Self::GlobalShortcutPreferenceSaveFailed => "无法保存全局快捷键偏好：{error}",
+            Self::ExecutableNotFound => "找不到应用程序：{error}",
+            Self::AutoStartEnabled => "已启用随系统登录启动",
+            Self::AutoStartDisabled => "已禁用随系统登录启动",
+            Self::AutoStartManagedElsewhere => "随系统登录启动由其他 Flash Shot 程序管理",
+            Self::AutoStartUpdateFailed => "无法更新随系统登录启动设置：{error}",
+            Self::AppearancePreferenceSaveFailed => "无法保存外观偏好：{error}",
+            Self::AppearanceChanged => "外观已切换为 {mode}",
+            Self::ShortcutOff => "关闭",
+            Self::CaptureSessionOperationFailed => "无法更新截图状态：{error}",
+            Self::AnnotationOperationFailed => "无法更新标注：{error}",
+            Self::CaptureDelaySeconds => "{seconds} 秒",
+            Self::ExportSourceUnavailable => "截图帧或标注文档不可用",
         }
     }
 }
@@ -2369,6 +2508,13 @@ mod tests {
             Locale::SimplifiedChinese.text(UiText::AnnotationBroughtForward),
             "标注已上移"
         );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::AnnotationOperationFailed,
+                &[("error", "历史记录不可用")],
+            ),
+            "无法更新标注：历史记录不可用"
+        );
     }
 
     #[test]
@@ -2404,6 +2550,22 @@ mod tests {
             Locale::SimplifiedChinese
                 .format_template(UiText::SettingsOpenFailed, &[("error", "窗口不可用")],),
             "无法打开设置：窗口不可用"
+        );
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::CaptureSessionOperationFailed,
+                &[("error", "invalid state")],
+            ),
+            "Could not update capture state: invalid state"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::CaptureDelaySeconds, &[("seconds", "5")],),
+            "5 秒"
+        );
+        assert_eq!(
+            Locale::English.text(UiText::ExportSourceUnavailable),
+            "Capture frame or annotation document is unavailable"
         );
     }
 

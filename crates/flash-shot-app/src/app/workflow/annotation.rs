@@ -78,7 +78,11 @@ impl FlashShotApp {
                 true
             }
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 true
             }
@@ -217,7 +221,11 @@ impl FlashShotApp {
         {
             Ok(()) => true,
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 false
             }
@@ -353,7 +361,11 @@ impl FlashShotApp {
                 false
             }
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 false
             }
         };
@@ -388,7 +400,13 @@ impl FlashShotApp {
                             .text(UiText::AnnotationTextDeleted)
                             .to_owned();
                     }
-                    Err(error) => self.status = error.to_string(),
+                    Err(error) => {
+                        self.status = localized_error_status(
+                            self.settings.locale,
+                            UiText::AnnotationOperationFailed,
+                            error,
+                        )
+                    }
                 }
             } else {
                 self.status = self
@@ -430,7 +448,13 @@ impl FlashShotApp {
                         .text(UiText::AnnotationTextUpdated)
                         .to_owned()
                 }
-                Err(error) => self.status = error.to_string(),
+                Err(error) => {
+                    self.status = localized_error_status(
+                        self.settings.locale,
+                        UiText::AnnotationOperationFailed,
+                        error,
+                    )
+                }
             }
             cx.notify();
             return true;
@@ -454,7 +478,11 @@ impl FlashShotApp {
             )
         };
         if let Err(error) = started {
-            self.status = error.to_string();
+            self.status = localized_error_status(
+                self.settings.locale,
+                UiText::AnnotationOperationFailed,
+                error,
+            );
             cx.notify();
             return true;
         }
@@ -793,7 +821,11 @@ impl FlashShotApp {
             }
             Ok(false) => false,
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 true
             }
@@ -817,7 +849,11 @@ impl FlashShotApp {
             }
             Ok(false) => false,
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 true
             }
@@ -847,7 +883,11 @@ impl FlashShotApp {
                 true
             }
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 true
             }
@@ -889,7 +929,11 @@ impl FlashShotApp {
                 true
             }
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 true
             }
@@ -933,7 +977,11 @@ impl FlashShotApp {
                 true
             }
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 true
             }
@@ -1073,7 +1121,11 @@ impl FlashShotApp {
                 true
             }
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 true
             }
@@ -1130,7 +1182,11 @@ impl FlashShotApp {
                 true
             }
             Err(error) => {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    UiText::AnnotationOperationFailed,
+                    error,
+                );
                 cx.notify();
                 true
             }

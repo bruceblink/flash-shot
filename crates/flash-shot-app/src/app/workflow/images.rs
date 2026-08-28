@@ -175,19 +175,26 @@ impl FlashShotApp {
             Ok(Some(generation)) => generation,
             Ok(None) => return,
             Err(error) => {
-                self.status = error.to_string();
+                let error_detail = error.to_string();
+                self.status = self.settings.locale.format_template(
+                    crate::i18n::UiText::OpenImageFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
         };
-        self.status = "Choose a PNG image to annotate...".to_owned();
+        let locale = self.settings.locale;
+        self.status = locale
+            .text(crate::i18n::UiText::OpenImageChoosing)
+            .to_owned();
         cx.notify();
 
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open PNG image".into()),
+            prompt: Some(locale.text(crate::i18n::UiText::OpenImagePrompt).into()),
         });
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -246,18 +253,25 @@ impl FlashShotApp {
             Ok(Some(generation)) => generation,
             Ok(None) => return,
             Err(error) => {
-                self.status = error.to_string();
+                let error_detail = error.to_string();
+                self.status = self.settings.locale.format_template(
+                    crate::i18n::UiText::OpenImageFailed,
+                    &[("error", &error_detail)],
+                );
                 cx.notify();
                 return;
             }
         };
-        self.status = "Choose an editable annotation project...".to_owned();
+        let locale = self.settings.locale;
+        self.status = locale
+            .text(crate::i18n::UiText::OpenProjectChoosing)
+            .to_owned();
         cx.notify();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open annotation project".into()),
+            prompt: Some(locale.text(crate::i18n::UiText::OpenProjectPrompt).into()),
         });
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -307,12 +321,20 @@ impl FlashShotApp {
             return;
         }
         if let Err(error) = self.session.begin() {
-            self.status = error.to_string();
+            let error_detail = error.to_string();
+            self.status = self.settings.locale.format_template(
+                crate::i18n::UiText::OpenImageFailed,
+                &[("error", &error_detail)],
+            );
             cx.notify();
             return;
         }
         let generation = self.begin_history_reader(HistoryReaderKind::Open, path.clone());
-        self.status = format!("Opening {}...", path.display());
+        let path_detail = path.display().to_string();
+        self.status = self.settings.locale.format_template(
+            crate::i18n::UiText::OpenHistoryInProgress,
+            &[("path", &path_detail)],
+        );
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -391,7 +413,11 @@ impl FlashShotApp {
             return;
         }
         let generation = self.begin_history_reader(HistoryReaderKind::Pin, path.clone());
-        self.status = format!("Pinning {}...", path.display());
+        let path_detail = path.display().to_string();
+        self.status = self.settings.locale.format_template(
+            crate::i18n::UiText::PinHistoryInProgress,
+            &[("path", &path_detail)],
+        );
         self.hide_settings_window();
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -592,16 +618,21 @@ impl FlashShotApp {
                 match result {
                     Ok(()) => {
                         self.status = match document_warning {
-                            Some(warning) => {
-                                format!("Opened {} without annotations: {warning}", path.display())
-                            }
-                            None => format!("Opened {} for annotation", path.display()),
+                            Some(warning) => self.settings.locale.format_template(
+                                crate::i18n::UiText::OpenImageOpenedWithoutAnnotations,
+                                &[("path", &path.display().to_string()), ("warning", &warning)],
+                            ),
+                            None => self.settings.locale.format_template(
+                                crate::i18n::UiText::OpenImageOpened,
+                                &[("path", &path.display().to_string())],
+                            ),
                         };
                         if let Some(handle) = self.settings_window_handle
                             && let Err(error) = window_visibility::hide(handle)
                         {
-                            let message = format!(
-                                "Could not hide settings before opening the editor: {error}"
+                            let message = self.settings.locale.format_template(
+                                crate::i18n::UiText::SettingsHideBeforeEditorFailed,
+                                &[("error", &error.to_string())],
                             );
                             let _ = self.session.fail(message.clone());
                             self.status = message;
@@ -612,7 +643,10 @@ impl FlashShotApp {
                         cx.defer(move |cx| open_image_overlay(app, bounds, cx));
                     }
                     Err(error) => {
-                        let message = format!("Could not open image: {error}");
+                        let message = self.settings.locale.format_template(
+                            crate::i18n::UiText::OpenImageFailed,
+                            &[("error", &error.to_string())],
+                        );
                         let _ = self.session.fail(message.clone());
                         self.status = message;
                     }
@@ -621,10 +655,17 @@ impl FlashShotApp {
             OpenImageOutcome::Cancelled => {
                 let _ = self.session.cancel();
                 let _ = self.session.reset();
-                self.status = "Open image cancelled".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(crate::i18n::UiText::OpenImageCancelled)
+                    .to_owned();
             }
             OpenImageOutcome::Failed(error) => {
-                let message = format!("Could not open image: {error}");
+                let message = self
+                    .settings
+                    .locale
+                    .format_template(crate::i18n::UiText::OpenImageFailed, &[("error", &error)]);
                 let _ = self.session.fail(message.clone());
                 self.status = message;
             }

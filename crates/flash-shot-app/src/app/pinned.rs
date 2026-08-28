@@ -295,7 +295,7 @@ impl PinnedImage {
                             self.mouse_through = next;
                             if next {
                                 self.app.read(cx).notify_user(
-                                    "Flash Shot",
+                                    self.locale.text(UiText::AppName),
                                     self.locale.text(UiText::PinMouseThroughNotification),
                                 );
                                 self.locale.text(UiText::PinMouseThroughEnabled)

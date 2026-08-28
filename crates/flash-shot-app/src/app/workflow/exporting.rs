@@ -634,7 +634,11 @@ impl FlashShotApp {
         match (self.frame.clone(), self.annotation_document.clone()) {
             (Some(frame), Some(document)) => Some((frame, document)),
             _ => {
-                let message = "capture frame or annotation document is unavailable".to_owned();
+                let message = self
+                    .settings
+                    .locale
+                    .text(crate::i18n::UiText::ExportSourceUnavailable)
+                    .to_owned();
                 let _ = self.session.fail(message.clone());
                 self.status = message;
                 None
@@ -706,7 +710,11 @@ impl FlashShotApp {
             }
             SaveOutcome::Cancelled => {
                 if let Err(error) = self.session.export_cancelled() {
-                    self.status = error.to_string();
+                    self.status = localized_error_status(
+                        self.settings.locale,
+                        crate::i18n::UiText::SaveTransitionFailed,
+                        error,
+                    );
                 } else if let Some(selection) = self.session.selection() {
                     self.status = selection_status(self.settings.locale, selection);
                 }

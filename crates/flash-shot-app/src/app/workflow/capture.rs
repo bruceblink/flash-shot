@@ -492,7 +492,11 @@ impl FlashShotApp {
             return;
         }
         if let Err(error) = self.session.begin() {
-            self.status = error.to_string();
+            self.status = localized_error_status(
+                self.settings.locale,
+                crate::i18n::UiText::CaptureSessionOperationFailed,
+                error,
+            );
             cx.notify();
             return;
         }
@@ -597,7 +601,11 @@ impl FlashShotApp {
         match result {
             Ok((capture, focused_window)) => {
                 if let Err(error) = self.session.frames_ready() {
-                    self.status = error.to_string();
+                    self.status = localized_error_status(
+                        self.settings.locale,
+                        crate::i18n::UiText::CaptureSessionOperationFailed,
+                        error,
+                    );
                     cx.notify();
                     return;
                 }
@@ -660,7 +668,11 @@ impl FlashShotApp {
                 self.frame = Some(capture.capture.frame);
                 if preselect_full_screen {
                     if let Err(error) = self.session.select(frame_bounds) {
-                        self.status = error.to_string();
+                        self.status = localized_error_status(
+                            self.settings.locale,
+                            crate::i18n::UiText::CaptureSessionOperationFailed,
+                            error,
+                        );
                         cx.notify();
                         return;
                     }
@@ -680,7 +692,11 @@ impl FlashShotApp {
                         return;
                     };
                     if let Err(error) = self.session.select(selection) {
-                        self.status = error.to_string();
+                        self.status = localized_error_status(
+                            self.settings.locale,
+                            crate::i18n::UiText::CaptureSessionOperationFailed,
+                            error,
+                        );
                         cx.notify();
                         return;
                     }
@@ -1047,7 +1063,11 @@ impl FlashShotApp {
         if let Some(selection) = selection {
             self.selection_drag.select(selection);
             if let Err(error) = self.session.select(selection) {
-                self.status = error.to_string();
+                self.status = localized_error_status(
+                    self.settings.locale,
+                    crate::i18n::UiText::CaptureSessionOperationFailed,
+                    error,
+                );
                 cx.notify();
                 return;
             }

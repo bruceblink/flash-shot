@@ -654,7 +654,11 @@ impl FlashShotApp {
         let shortcut = match crate::platform::shortcut::CaptureShortcut::parse_preset(preset) {
             Ok(shortcut) => shortcut,
             Err(error) => {
-                self.status = format!("Could not use shortcut: {error}");
+                let error_detail = error.to_string();
+                self.status = self
+                    .settings
+                    .locale
+                    .format_template(UiText::ShortcutUseFailed, &[("error", &error_detail)]);
                 cx.notify();
                 return;
             }
@@ -666,7 +670,10 @@ impl FlashShotApp {
         self.apply_shortcut_change(
             previous_label,
             previous_settings,
-            format!("Capture shortcut changed to {}", self.capture_shortcut),
+            self.settings.locale.format_template(
+                UiText::CaptureShortcutChanged,
+                &[("shortcut", &self.capture_shortcut)],
+            ),
             cx,
         );
     }
@@ -685,9 +692,15 @@ impl FlashShotApp {
         self.apply_shortcut_change(
             previous_label,
             previous_settings,
-            format!(
-                "Full-screen shortcut: {}",
-                shortcut_option_label(self.settings.full_screen_shortcut.as_deref())
+            self.settings.locale.format_template(
+                UiText::FullScreenShortcutChanged,
+                &[(
+                    "shortcut",
+                    shortcut_option_label(
+                        self.settings.locale,
+                        self.settings.full_screen_shortcut.as_deref(),
+                    ),
+                )],
             ),
             cx,
         );
@@ -707,9 +720,15 @@ impl FlashShotApp {
         self.apply_shortcut_change(
             previous_label,
             previous_settings,
-            format!(
-                "Focused-window shortcut: {}",
-                shortcut_option_label(self.settings.focused_window_shortcut.as_deref())
+            self.settings.locale.format_template(
+                UiText::FocusedWindowShortcutChanged,
+                &[(
+                    "shortcut",
+                    shortcut_option_label(
+                        self.settings.locale,
+                        self.settings.focused_window_shortcut.as_deref(),
+                    ),
+                )],
             ),
             cx,
         );
@@ -723,13 +742,20 @@ impl FlashShotApp {
         success_status: String,
         cx: &mut Context<Self>,
     ) {
+        let locale = self.settings.locale;
         if !self.settings.capture_shortcut_enabled {
             self.status = match self.settings.save(&self.settings_path) {
-                Ok(()) => format!("{success_status}; global shortcuts remain disabled"),
+                Ok(()) => locale.format_template(
+                    UiText::ShortcutsRemainDisabled,
+                    &[("status", &success_status)],
+                ),
                 Err(error) => {
                     self.capture_shortcut = previous_label;
                     self.settings = previous_settings;
-                    format!("Could not save shortcut preference: {error}")
+                    locale.format_template(
+                        UiText::ShortcutPreferenceSaveFailed,
+                        &[("error", &error.to_string())],
+                    )
                 }
             };
             cx.notify();
@@ -748,7 +774,10 @@ impl FlashShotApp {
                     self.capture_shortcut = previous_label;
                     self.settings = previous_settings;
                     self.restore_global_shortcuts(cx);
-                    self.status = format!("Could not save shortcut preference: {error}");
+                    self.status = locale.format_template(
+                        UiText::ShortcutPreferenceSaveFailed,
+                        &[("error", &error.to_string())],
+                    );
                 } else {
                     Self::listen_for_shortcut(events, cx);
                     self._shortcut = Some(service);
@@ -763,7 +792,10 @@ impl FlashShotApp {
                 self.restore_global_shortcuts(cx);
                 self.capture_shortcut_enabled = self._shortcut.is_some();
                 self.set_tray_capture_shortcut_enabled(self.capture_shortcut_enabled);
-                self.status = format!("Could not register global shortcuts: {error}");
+                self.status = locale.format_template(
+                    UiText::GlobalShortcutsRegisterFailed,
+                    &[("error", &error.to_string())],
+                );
             }
         }
         cx.notify();
@@ -790,23 +822,36 @@ impl FlashShotApp {
             self.settings.capture_shortcut_enabled = false;
             if let Err(error) = self.settings.save(&self.settings_path) {
                 self.settings.capture_shortcut_enabled = true;
-                self.status = format!("Could not disable global shortcut: {error}");
+                self.status = self.settings.locale.format_template(
+                    UiText::GlobalShortcutDisableFailed,
+                    &[("error", &error.to_string())],
+                );
                 cx.notify();
                 return;
             }
             drop(self._shortcut.take());
             self.capture_shortcut_enabled = false;
             self.set_tray_capture_shortcut_enabled(false);
-            self.status = "Global capture shortcut disabled".to_owned();
-            self.notify_user("Flash Shot", "Global capture shortcut disabled");
+            let locale = self.settings.locale;
+            self.status = locale.text(UiText::GlobalShortcutDisabled).to_owned();
+            self.notify_user(
+                locale.text(UiText::AppName),
+                locale.text(UiText::GlobalShortcutDisabled),
+            );
             cx.notify();
             return;
         }
 
-        let shortcut = match self.capture_shortcut.parse() {
+        let shortcut = match self
+            .capture_shortcut
+            .parse::<crate::platform::shortcut::CaptureShortcut>()
+        {
             Ok(shortcut) => shortcut,
             Err(error) => {
-                self.status = format!("Could not enable global shortcut: {error}");
+                self.status = self.settings.locale.format_template(
+                    UiText::GlobalShortcutEnableFailed,
+                    &[("error", &error.to_string())],
+                );
                 cx.notify();
                 return;
             }
@@ -815,7 +860,13 @@ impl FlashShotApp {
             match super::super::register_global_shortcuts(shortcut, &self.settings) {
                 Ok(registered) => registered,
                 Err(error) => {
-                    self.status = format!("Could not register {}: {error}", self.capture_shortcut);
+                    self.status = self.settings.locale.format_template(
+                        UiText::GlobalShortcutRegisterFailed,
+                        &[
+                            ("shortcut", &self.capture_shortcut),
+                            ("error", &error.to_string()),
+                        ],
+                    );
                     cx.notify();
                     return;
                 }
@@ -824,7 +875,10 @@ impl FlashShotApp {
         if let Err(error) = self.settings.save(&self.settings_path) {
             drop(service);
             self.settings.capture_shortcut_enabled = false;
-            self.status = format!("Could not save global shortcut preference: {error}");
+            self.status = self.settings.locale.format_template(
+                UiText::GlobalShortcutPreferenceSaveFailed,
+                &[("error", &error.to_string())],
+            );
             cx.notify();
             return;
         }
@@ -832,8 +886,16 @@ impl FlashShotApp {
         self._shortcut = Some(service);
         self.capture_shortcut_enabled = true;
         self.set_tray_capture_shortcut_enabled(true);
-        self.status = format!("Global capture shortcut enabled: {}", self.capture_shortcut);
-        self.notify_user("Flash Shot", "Global capture shortcut enabled");
+        let locale = self.settings.locale;
+        self.status = locale.format_template(
+            UiText::GlobalShortcutEnabled,
+            &[("shortcut", &self.capture_shortcut)],
+        );
+        let enabled_message = locale.format_template(
+            UiText::GlobalShortcutEnabled,
+            &[("shortcut", &self.capture_shortcut)],
+        );
+        self.notify_user(locale.text(UiText::AppName), &enabled_message);
         cx.notify();
     }
 
@@ -841,7 +903,10 @@ impl FlashShotApp {
         let executable = match std::env::current_exe() {
             Ok(executable) => executable,
             Err(error) => {
-                self.status = format!("Could not find the application executable: {error}");
+                self.status = self
+                    .settings
+                    .locale
+                    .format_template(UiText::ExecutableNotFound, &[("error", &error.to_string())]);
                 cx.notify();
                 return;
             }
@@ -851,23 +916,37 @@ impl FlashShotApp {
             Ok(AutoStartState::Enabled) => {
                 self.auto_start_enabled = true;
                 self.set_tray_auto_start_state(AutoStartState::Enabled);
-                self.status = "Launch at sign-in enabled".to_owned();
-                self.notify_user("Flash Shot", "Launch at sign-in enabled");
+                let locale = self.settings.locale;
+                self.status = locale.text(UiText::AutoStartEnabled).to_owned();
+                self.notify_user(
+                    locale.text(UiText::AppName),
+                    locale.text(UiText::AutoStartEnabled),
+                );
             }
             Ok(AutoStartState::Disabled) => {
                 self.auto_start_enabled = false;
                 self.set_tray_auto_start_state(AutoStartState::Disabled);
-                self.status = "Launch at sign-in disabled".to_owned();
-                self.notify_user("Flash Shot", "Launch at sign-in disabled");
+                let locale = self.settings.locale;
+                self.status = locale.text(UiText::AutoStartDisabled).to_owned();
+                self.notify_user(
+                    locale.text(UiText::AppName),
+                    locale.text(UiText::AutoStartDisabled),
+                );
             }
             Ok(AutoStartState::ManagedByAnotherExecutable) => {
                 self.auto_start_enabled = false;
                 self.set_tray_auto_start_state(AutoStartState::ManagedByAnotherExecutable);
-                self.status =
-                    "Launch at sign-in is managed by a different Flash Shot executable".to_owned();
+                self.status = self
+                    .settings
+                    .locale
+                    .text(UiText::AutoStartManagedElsewhere)
+                    .to_owned();
             }
             Err(error) => {
-                self.status = format!("Could not update launch at sign-in: {error}");
+                self.status = self.settings.locale.format_template(
+                    UiText::AutoStartUpdateFailed,
+                    &[("error", &error.to_string())],
+                );
                 log::warn!(target: "flash_shot::autostart", "auto_start_update_failed error={error}");
             }
         }
@@ -881,12 +960,20 @@ impl FlashShotApp {
         self.settings.theme_mode = next;
         if let Err(error) = self.settings.save(&self.settings_path) {
             self.settings.theme_mode = previous;
-            self.status = format!("Could not save appearance preference: {error}");
+            self.status = self.settings.locale.format_template(
+                UiText::AppearancePreferenceSaveFailed,
+                &[("error", &error.to_string())],
+            );
             cx.notify();
             return;
         }
         self.colors = crate::theme::ThemeColors::for_mode(next);
-        self.status = format!("Appearance changed to {}", next.label());
+        let locale = self.settings.locale;
+        let mode = locale.text(match next {
+            crate::theme::ThemeMode::Dark => UiText::Dark,
+            crate::theme::ThemeMode::Light => UiText::Light,
+        });
+        self.status = locale.format_template(UiText::AppearanceChanged, &[("mode", mode)]);
         cx.notify();
     }
 
@@ -1034,8 +1121,8 @@ fn open_verified_quick_save_history(
     crate::history::ScreenshotHistory::open_with_limit(path, limit)
 }
 
-pub(in crate::app) fn shortcut_option_label(shortcut: Option<&str>) -> &str {
-    shortcut.unwrap_or("Off")
+pub(in crate::app) fn shortcut_option_label(locale: Locale, shortcut: Option<&str>) -> &str {
+    shortcut.unwrap_or_else(|| locale.text(UiText::ShortcutOff))
 }
 
 fn acceptance_recording_state(
