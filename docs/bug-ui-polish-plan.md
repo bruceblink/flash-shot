@@ -203,8 +203,13 @@ Copy、Save 或 Record 能成功；没有半成品文件、孤儿进程、残留
 恢复到 `Selecting`，保留原选区和标注覆盖层；状态会明确提示选择其他位置后再次 Save。历史索引写入改为
 先同步临时文件再替换索引，失败时清理 `.tmp`，新增、清空、删除和后台移除不会提前破坏可重试的
 历史状态；相关失败提示已经进入 English/简体中文目录。确定性测试覆盖保存失败恢复和四种历史索引失败
-夹具；剪贴板争用、FFmpeg 运行中退出/停止超时以及真实 Windows 失败注入仍待本切片后续完成，不能将
-B1 标记为整体完成。
+夹具。本轮（2026-08-29，提交 `88e36cf`）为录屏启动阶段增加 `StartupChildCleanup`，在 Job Object
+归属、管道提取或后台读取器创建失败时终止并回收子进程；worker 对运行中异常退出发送 `Failed` 事件，
+不再通过 `unreachable!` 触发崩溃；停止超时会终止并回收子进程及读取器。Windows 回归测试
+`recording_worker_reports_an_abnormal_exit_without_panicking`、
+`process_stop_timeout_terminates_and_reaps_the_child` 和
+`startup_cleanup_terminates_a_child_before_process_construction` 已通过；真实用户界面的 FFmpeg 失败注入、
+MP4 处理和 Release 手工故障矩阵仍待执行，不能将 B1 标记为整体完成。
 
 ### B2：窗口和任务生命周期
 
