@@ -10,12 +10,12 @@ use super::{
     claim_idle_completion, compose_captured_displays, copy_selection_snapshot_cancellable,
     delayed_capture_status, drawing_status, export_path, fill_alpha, fill_color,
     focused_window_status, format_hsl, format_recording_progress, format_recording_stopping,
-    hovered_color, intersect_rect, is_current_operation, keyboard_command,
-    load_annotation_document, manual_scroll_control_bounds, manual_scroll_control_rect,
-    next_annotation_counters, next_annotation_selection, next_recording_audio_selection,
-    next_recording_display_selection, ocr_language_label, ocr_support_status,
-    open_annotation_project, open_image_project, pinned_size, project_image_path,
-    quick_save_annotated_frame_selection_in_with_prefix,
+    frame_dimensions_status, hover_pixel_status, hovered_color, inspection_kind_label,
+    intersect_rect, is_current_operation, keyboard_command, load_annotation_document,
+    manual_scroll_control_bounds, manual_scroll_control_rect, next_annotation_counters,
+    next_annotation_selection, next_recording_audio_selection, next_recording_display_selection,
+    ocr_language_label, ocr_support_status, open_annotation_project, open_image_project,
+    pinned_size, project_image_path, quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
     recognition_start_conflict_status, recording_audio_selection_label,
@@ -26,7 +26,8 @@ use super::{
     recording_start_result_is_applicable, recording_support_check_conflict_status,
     recording_support_status, recording_target_label, release_clipboard_write_lease,
     reserve_quick_save_path, resolve_pointer_selection, save_annotated_frame_selection,
-    save_annotation_document, save_editable_project, smart_target_status, style_for_tool,
+    save_annotation_document, save_editable_project, selection_dimension_label,
+    selection_hover_status, selection_status, smart_target_status, style_for_tool,
     text_annotation_with_content, tool_selected_status, translation_failure_status,
     translation_service_test_status, translation_support_status, update_check_status, with_alpha,
 };
@@ -756,6 +757,47 @@ fn capture_lifecycle_feedback_uses_the_selected_locale() {
     assert_eq!(
         Locale::SimplifiedChinese.text(UiText::CaptureFocusedWindowUnavailable),
         "找不到 Flash Shot 之外的焦点窗口"
+    );
+}
+
+#[test]
+fn selection_and_hover_feedback_uses_the_selected_locale() {
+    let selection = PhysicalRect {
+        left: -20,
+        top: 30,
+        right: 180,
+        bottom: 150,
+    };
+    let point = PhysicalPoint { x: 12, y: 34 };
+
+    assert_eq!(
+        selection_status(Locale::English, selection),
+        "Selection: 200 x 120 physical pixels"
+    );
+    assert_eq!(
+        selection_dimension_label(Locale::SimplifiedChinese, selection),
+        "200 x 120 像素"
+    );
+    assert_eq!(
+        selection_hover_status(
+            Locale::SimplifiedChinese,
+            selection,
+            point,
+            "#AABBCC".to_owned(),
+        ),
+        "200 x 120 像素 | (12, 34) #AABBCC"
+    );
+    assert_eq!(
+        hover_pixel_status(Locale::English, point, "#AABBCC".to_owned()),
+        "(12, 34) #AABBCC"
+    );
+    assert_eq!(
+        frame_dimensions_status(Locale::SimplifiedChinese, 1_920, 1_080),
+        "1920 x 1080 个物理像素"
+    );
+    assert_eq!(
+        inspection_kind_label(Locale::SimplifiedChinese, InspectionKind::Control),
+        "控件"
     );
 }
 
@@ -2440,7 +2482,12 @@ fn smart_target_status_includes_target_kind_bounds_and_pixel_details() {
     };
 
     assert_eq!(
-        smart_target_status(target, PhysicalPoint { x: 12, y: 34 }, "#AABBCC".to_owned()),
+        smart_target_status(
+            Locale::English,
+            target,
+            PhysicalPoint { x: 12, y: 34 },
+            "#AABBCC".to_owned(),
+        ),
         "Control: 500 x 200 px | (12, 34) #AABBCC"
     );
 }

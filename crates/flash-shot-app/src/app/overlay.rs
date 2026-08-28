@@ -15,7 +15,10 @@ use gpui::{
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-use super::FlashShotApp;
+use super::{
+    FlashShotApp,
+    workflow::{inspection_kind_label, selection_dimension_label},
+};
 use crate::{
     domain::{
         annotation::{
@@ -946,10 +949,11 @@ pub(super) fn open_ui_acceptance(
                     x: target.bounds.left + target.bounds.width() as i32 / 2,
                     y: target.bounds.top + target.bounds.height() as i32 / 2,
                 });
-                app.status = format!(
-                    "Smart target ready: {} x {} physical pixels",
-                    target.bounds.width(),
-                    target.bounds.height()
+                let width = target.bounds.width().to_string();
+                let height = target.bounds.height().to_string();
+                app.status = app.settings.locale.format_template(
+                    UiText::OverlaySmartTargetReady,
+                    &[("width", &width), ("height", &height)],
                 );
             }
             crate::OverlayUiAcceptanceScenario::SelectedRegion {
@@ -967,14 +971,19 @@ pub(super) fn open_ui_acceptance(
                         if show_annotation_controls {
                             app.toggle_overlay_annotation_controls(cx);
                         }
-                        app.status = format!(
-                            "Selection ready: {} x {} physical pixels",
-                            selection.width(),
-                            selection.height()
+                        let width = selection.width().to_string();
+                        let height = selection.height().to_string();
+                        app.status = app.settings.locale.format_template(
+                            UiText::OverlaySelectionReady,
+                            &[("width", &width), ("height", &height)],
                         );
                     }
                     Err(error) => {
-                        app.status = format!("Could not seed acceptance selection: {error}");
+                        let error_detail = error.to_string();
+                        app.status = app.settings.locale.format_template(
+                            UiText::OverlaySeedSelectionFailed,
+                            &[("error", &error_detail)],
+                        );
                     }
                 }
             }
@@ -1489,7 +1498,7 @@ impl Render for CaptureOverlay {
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .shadow_lg()
-                        .child(format!("{} x {} px", selection.width(), selection.height())),
+                        .child(selection_dimension_label(locale, selection)),
                 )
             })
             .when_some(smart_target_hud, |overlay, layout| {
@@ -1518,7 +1527,7 @@ impl Render for CaptureOverlay {
                                 .w_full()
                                 .min_w(px(0.0))
                                 .text_ellipsis()
-                                .child(smart_target_hud_label(layout.target)),
+                                .child(smart_target_hud_label(locale, layout.target)),
                         ),
                 )
             })
@@ -4158,16 +4167,14 @@ fn smart_target_hud_layout(
     })
 }
 
-/// Identifies the bounds a near-click would adopt without exposing a window title.
-fn smart_target_hud_label(target: InspectionTarget) -> String {
-    let kind = match target.kind {
-        InspectionKind::Control => "Control",
-        InspectionKind::Window => "Window",
-    };
-    format!(
-        "{kind} | {} x {} px",
-        target.bounds.width(),
-        target.bounds.height()
+/// Formats the compact smart-target HUD label without exposing a window title.
+fn smart_target_hud_label(locale: Locale, target: InspectionTarget) -> String {
+    let kind = inspection_kind_label(locale, target.kind);
+    let width = target.bounds.width().to_string();
+    let height = target.bounds.height().to_string();
+    locale.format_template(
+        UiText::SmartTargetLabel,
+        &[("kind", kind), ("width", &width), ("height", &height)],
     )
 }
 
@@ -5578,27 +5585,48 @@ mod tests {
     #[test]
     fn smart_target_hud_labels_the_full_detected_bounds() {
         assert_eq!(
-            smart_target_hud_label(InspectionTarget {
-                bounds: PhysicalRect {
-                    left: 1800,
-                    top: 100,
-                    right: 2200,
-                    bottom: 500,
-                },
-                kind: InspectionKind::Window,
-            }),
+            smart_target_hud_label(
+                Locale::English,
+                InspectionTarget {
+                    bounds: PhysicalRect {
+                        left: 1800,
+                        top: 100,
+                        right: 2200,
+                        bottom: 500,
+                    },
+                    kind: InspectionKind::Window,
+                }
+            ),
             "Window | 400 x 400 px"
         );
         assert_eq!(
-            smart_target_hud_label(InspectionTarget {
-                bounds: PhysicalRect {
-                    left: 20,
-                    top: 30,
-                    right: 500,
-                    bottom: 150,
+            smart_target_hud_label(
+                Locale::SimplifiedChinese,
+                InspectionTarget {
+                    bounds: PhysicalRect {
+                        left: 1800,
+                        top: 100,
+                        right: 2200,
+                        bottom: 500,
+                    },
+                    kind: InspectionKind::Window,
                 },
-                kind: InspectionKind::Control,
-            }),
+            ),
+            "窗口 | 400 x 400 像素"
+        );
+        assert_eq!(
+            smart_target_hud_label(
+                Locale::English,
+                InspectionTarget {
+                    bounds: PhysicalRect {
+                        left: 20,
+                        top: 30,
+                        right: 500,
+                        bottom: 150,
+                    },
+                    kind: InspectionKind::Control,
+                }
+            ),
             "Control | 480 x 120 px"
         );
     }

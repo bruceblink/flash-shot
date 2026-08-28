@@ -1088,7 +1088,7 @@ impl FlashShotApp {
             return false;
         };
         if self.session.select(selection).is_ok() {
-            self.status = selection_status(selection);
+            self.status = selection_status(self.settings.locale, selection);
             cx.notify();
             true
         } else {
@@ -1145,26 +1145,19 @@ impl FlashShotApp {
                 .map(|color| (point, color))
         }) {
             self.status = if let Some(selection) = self.selection_drag.selection() {
-                format!(
-                    "{} x {} px | ({}, {}) {}",
-                    selection.width(),
-                    selection.height(),
-                    point.x,
-                    point.y,
-                    color.hex_rgb()
-                )
+                selection_hover_status(self.settings.locale, selection, point, color.hex_rgb())
             } else if let Some(target) = self
                 .inspection_target
                 .filter(|target| target.bounds.contains(point))
             {
-                smart_target_status(target, point, color.hex_rgb())
+                smart_target_status(self.settings.locale, target, point, color.hex_rgb())
             } else {
-                format!("({}, {}) {}", point.x, point.y, color.hex_rgb())
+                hover_pixel_status(self.settings.locale, point, color.hex_rgb())
             };
         } else if let Some(selection) = self.selection_drag.selection() {
-            self.status = selection_status(selection);
+            self.status = selection_status(self.settings.locale, selection);
         } else if let Some(frame) = self.frame.as_ref() {
-            self.status = format!("{} x {} physical pixels", frame.width, frame.height);
+            self.status = frame_dimensions_status(self.settings.locale, frame.width, frame.height);
         }
     }
 

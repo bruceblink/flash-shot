@@ -196,30 +196,104 @@ pub(in crate::app) fn next_char_boundary(text: &str, offset: usize) -> usize {
         .unwrap_or(text.len())
 }
 
-pub(in crate::app) fn selection_status(selection: PhysicalRect) -> String {
-    format!(
-        "Selection: {} x {} physical pixels",
-        selection.width(),
-        selection.height()
+/// Formats the committed selection dimensions for the status bar in the active UI language.
+pub(in crate::app) fn selection_status(locale: Locale, selection: PhysicalRect) -> String {
+    let width = selection.width().to_string();
+    let height = selection.height().to_string();
+    locale.format_template(
+        UiText::SelectionDimensions,
+        &[("width", &width), ("height", &height)],
     )
 }
 
+/// Formats the compact dimensions label rendered beside a selection on the capture overlay.
+pub(in crate::app) fn selection_dimension_label(locale: Locale, selection: PhysicalRect) -> String {
+    let width = selection.width().to_string();
+    let height = selection.height().to_string();
+    locale.format_template(
+        UiText::SelectionDimensionLabel,
+        &[("width", &width), ("height", &height)],
+    )
+}
+
+/// Formats pointer details while a selection is being measured over the captured frame.
+pub(in crate::app) fn selection_hover_status(
+    locale: Locale,
+    selection: PhysicalRect,
+    point: PhysicalPoint,
+    color: String,
+) -> String {
+    let width = selection.width().to_string();
+    let height = selection.height().to_string();
+    let x = point.x.to_string();
+    let y = point.y.to_string();
+    locale.format_template(
+        UiText::SelectionHoverDetails,
+        &[
+            ("width", &width),
+            ("height", &height),
+            ("x", &x),
+            ("y", &y),
+            ("color", &color),
+        ],
+    )
+}
+
+/// Formats one physical pixel sample when no selection or smart target is active.
+pub(in crate::app) fn hover_pixel_status(
+    locale: Locale,
+    point: PhysicalPoint,
+    color: String,
+) -> String {
+    let x = point.x.to_string();
+    let y = point.y.to_string();
+    locale.format_template(
+        UiText::HoverPixelDetails,
+        &[("x", &x), ("y", &y), ("color", &color)],
+    )
+}
+
+/// Formats the full captured-frame dimensions for the idle overlay status.
+pub(in crate::app) fn frame_dimensions_status(locale: Locale, width: u32, height: u32) -> String {
+    let width = width.to_string();
+    let height = height.to_string();
+    locale.format_template(
+        UiText::FrameDimensions,
+        &[("width", &width), ("height", &height)],
+    )
+}
+
+/// Formats smart-target bounds and the sampled pixel under the pointer.
 pub(in crate::app) fn smart_target_status(
+    locale: Locale,
     target: InspectionTarget,
     point: PhysicalPoint,
     color: String,
 ) -> String {
-    let kind = match target.kind {
-        InspectionKind::Control => "Control",
-        InspectionKind::Window => "Window",
-    };
-    format!(
-        "{kind}: {} x {} px | ({}, {}) {color}",
-        target.bounds.width(),
-        target.bounds.height(),
-        point.x,
-        point.y,
+    let kind = inspection_kind_label(locale, target.kind);
+    let width = target.bounds.width().to_string();
+    let height = target.bounds.height().to_string();
+    let x = point.x.to_string();
+    let y = point.y.to_string();
+    locale.format_template(
+        UiText::SmartTargetDetails,
+        &[
+            ("kind", kind),
+            ("width", &width),
+            ("height", &height),
+            ("x", &x),
+            ("y", &y),
+            ("color", &color),
+        ],
     )
+}
+
+/// Returns the localized label for a detected control or top-level window.
+pub(in crate::app) fn inspection_kind_label(locale: Locale, kind: InspectionKind) -> &'static str {
+    match kind {
+        InspectionKind::Control => locale.text(UiText::InspectionControl),
+        InspectionKind::Window => locale.text(UiText::InspectionWindow),
+    }
 }
 
 pub(in crate::app) fn fill_color(stroke_rgba: u32) -> u32 {

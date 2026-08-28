@@ -16,6 +16,7 @@ use flash_shot::{
     domain::geometry::{PhysicalPoint, PhysicalRect},
     domain::selection::{ResizeHandle, SelectionDrag},
     history::ScreenshotHistory,
+    i18n::{Locale, UiText},
     performance::PerformanceRecorder,
     platform::display::{DisplayInfo, DisplayProvider, SystemDisplayProvider},
     settings::UserSettings,
@@ -1808,6 +1809,7 @@ struct WorkerContext {
     capture_scenario: CaptureScenarioOption,
     scroll_export: ScrollExportOption,
     record_target: Option<RecordTargetOption>,
+    locale: Locale,
 }
 
 #[cfg(windows)]
@@ -1935,6 +1937,10 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     isolate_process_environment(&session_root);
     let settings_path = session_root.join("settings.json");
     let mut settings = UserSettings::default();
+    // Keep native acceptance deterministic while still deriving visible status text from the
+    // application catalog rather than duplicating English wording in the runner.
+    let locale = Locale::English;
+    settings.locale = locale;
     settings.capture_shortcut = Some(CAPTURE_SHORTCUT.to_owned());
     settings.full_screen_shortcut = None;
     settings.focused_window_shortcut = None;
@@ -1980,6 +1986,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         capture_scenario: options.capture_scenario,
         scroll_export: options.scroll_export,
         record_target: options.record_target,
+        locale,
     };
     let mut report = initial_report(&worker_context);
     write_report(&worker_context.report_path, &report)?;
@@ -5907,10 +5914,12 @@ fn execute_save_interaction(
             && state.overlay_count == 1
             && state.capture_preflight_ready
             && state.status
-                == format!(
-                    "Selection: {} x {} physical pixels",
-                    selection.width(),
-                    selection.height()
+                == context.locale.format_template(
+                    UiText::SelectionDimensions,
+                    &[
+                        ("width", &selection.width().to_string()),
+                        ("height", &selection.height().to_string()),
+                    ],
                 )
     })?;
     if cancelled.selection != Some(selection) {

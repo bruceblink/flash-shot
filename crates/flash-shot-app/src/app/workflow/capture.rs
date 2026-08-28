@@ -968,7 +968,7 @@ impl FlashShotApp {
         if let Some(selection) = self.selection_drag.selection()
             && !self.selection_drag.is_moving()
         {
-            self.status = selection_status(selection);
+            self.status = selection_status(self.settings.locale, selection);
         }
         cx.notify();
     }
@@ -1051,7 +1051,7 @@ impl FlashShotApp {
                 cx.notify();
                 return;
             }
-            self.status = selection_status(selection);
+            self.status = selection_status(self.settings.locale, selection);
             if copy_on_double_click {
                 self.copy_selection(cx);
                 return;

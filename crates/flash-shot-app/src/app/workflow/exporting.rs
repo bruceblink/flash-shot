@@ -708,7 +708,7 @@ impl FlashShotApp {
                 if let Err(error) = self.session.export_cancelled() {
                     self.status = error.to_string();
                 } else if let Some(selection) = self.session.selection() {
-                    self.status = selection_status(selection);
+                    self.status = selection_status(self.settings.locale, selection);
                 }
             }
             SaveOutcome::Failed(error) => {
