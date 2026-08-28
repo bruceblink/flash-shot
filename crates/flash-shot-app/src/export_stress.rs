@@ -197,7 +197,7 @@ fn benchmark_frame(width: u32, height: u32) -> io::Result<CaptureFrame> {
     let (stride, pixel_bytes) = checked_pixel_layout(width, height)?;
     let mut pixels = vec![0_u8; pixel_bytes];
     for (y, row) in pixels.chunks_exact_mut(stride).enumerate() {
-        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+        for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             pixel.copy_from_slice(&[
                 x as u8,
                 y as u8,

@@ -168,7 +168,7 @@ fn benchmark_frame(width: u32, height: u32) -> io::Result<CaptureFrame> {
     let (stride, pixel_bytes) = checked_pixel_layout(width, height)?;
     let mut pixels = vec![0_u8; pixel_bytes];
     for (y, row) in pixels.chunks_exact_mut(stride).enumerate() {
-        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+        for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             pixel.copy_from_slice(&[
                 x as u8,
                 y as u8,
@@ -244,16 +244,16 @@ fn bgra_matches_rgba(frame: &CaptureFrame, rgba: &[u8]) -> bool {
     frame
         .pixels
         .chunks_exact(frame.stride)
-        .flat_map(|row| row[..frame.width as usize * 4].chunks_exact(4))
-        .zip(rgba.chunks_exact(4))
-        .all(|(bgra, rgba)| bgra == [rgba[2], rgba[1], rgba[0], rgba[3]])
+        .flat_map(|row| row[..frame.width as usize * 4].as_chunks::<4>().0.iter())
+        .zip(rgba.as_chunks::<4>().0.iter())
+        .all(|(bgra, rgba)| *bgra == [rgba[2], rgba[1], rgba[0], rgba[3]])
 }
 
 fn rgba_fingerprint_from_bgra(frame: &CaptureFrame) -> u64 {
     frame
         .pixels
         .chunks_exact(frame.stride)
-        .flat_map(|row| row[..frame.width as usize * 4].chunks_exact(4))
+        .flat_map(|row| row[..frame.width as usize * 4].as_chunks::<4>().0.iter())
         .flat_map(|pixel| [pixel[2], pixel[1], pixel[0], pixel[3]])
         .fold(0xcbf29ce484222325_u64, fnv1a64_byte)
 }

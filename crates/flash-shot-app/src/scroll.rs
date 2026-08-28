@@ -443,7 +443,9 @@ mod tests {
         let values: Vec<_> = stitched
             .frame
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|pixel| pixel[0])
             .collect();
         assert_eq!(values, (0..16).collect::<Vec<_>>());

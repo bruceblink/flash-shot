@@ -6628,7 +6628,7 @@ fn frame_content_metrics(frame: &CaptureFrame) -> io::Result<FrameContentMetrics
     let mut luma_max = u8::MIN;
     for row in 0..frame.height as usize {
         let start = row * frame.stride;
-        for pixel in frame.pixels[start..start + row_bytes].chunks_exact(4) {
+        for pixel in frame.pixels[start..start + row_bytes].as_chunks::<4>().0 {
             for byte in pixel {
                 fingerprint = (fingerprint ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
             }

@@ -93,7 +93,7 @@ fn frame_from_rgba(width: usize, height: usize, rgba: &[u8]) -> io::Result<Captu
     }
 
     let mut bgra = Vec::with_capacity(expected);
-    for pixel in rgba.chunks_exact(4) {
+    for pixel in rgba.as_chunks::<4>().0 {
         bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
     }
     let frame = CaptureFrame {
