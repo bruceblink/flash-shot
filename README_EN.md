@@ -160,6 +160,14 @@ Use fewer iterations for a quick development smoke test:
 .\scripts\run-dev-tool.ps1 capture-stress --iterations 5
 ```
 
+To verify bounded Library thumbnail resource flow, use a Release build to expand 300 isolated
+fixtures. The report records the default five previews, cache/loading/queue peaks after expansion,
+working-set and private-commit samples, and fixture cleanup; decode concurrency is capped at two:
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release history-resource-acceptance --output-dir target\history-resource-acceptance\release-gate-current
+```
+
 The app also retains the latest 500 startup and shortcut-to-overlay samples at
 `<application data directory>\metrics\performance.jsonl`. Summarize a representative release
 run and enforce the default p95 thresholds with:

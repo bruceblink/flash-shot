@@ -124,6 +124,12 @@ PNG 文件 Save 使用逐行 BGRA 到 RGBA 的流式编码，并通过原子临�
 新的资源探针会在指定输出目录下创建独立的 `session-<timestamp>-<pid>` 目录，并将报告、两张截图、
 设置和指标写入其中；临时 history fixture 同样受该目录约束并在清理阶段删除，避免并行或重试会话覆盖彼此的证据。
 
+2026-08-29 当前源码的 Release 资源样本位于
+`target/history-resource-acceptance/release-gate-current-20260829-r2/session-1787981887900-8096/report.json`：
+报告为 `passed=true`，默认 5 条与展开 300 条均完成，`peak_loading=2`、`thumbnails_cached=300`，并确认
+`fixture_files_removed=true`、`history_root_exists=false`。Windows runner 会在发送 GPUI Quit 前写入报告并删除
+隔离 fixture，因为 GPUI 的退出路径会直接结束进程；该顺序保证报告和清理证据不会丢失。
+
 常规视觉切片选择“拖选 -> Save 取消/保存 -> Pin -> Copy -> 清理”主流程。通过条件是同一 Release
 会话同时具备真实 `--allow-input` 报告、关键步骤原生截图、Save/Pin/Copy 逐像素结果和最终
 `capture_teardown_pending=false`、overlay/Pin/可见窗口为零；Save 完成后必须经过桌面稳定屏障再开始下一次采集。

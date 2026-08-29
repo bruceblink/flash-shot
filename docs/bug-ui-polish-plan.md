@@ -262,8 +262,12 @@ Save 取消/重试 -> Pin -> Copy -> Escape 清理。报告 schema 18 为 More/L
   留成无说明的空白预览；队列仍保持有界 FIFO，并继续丢弃目录切换或删除后的陈旧结果；
 - 失败条目提供 `Retry preview`，仅在条目仍被保留、Capture 会话空闲且历史读取、图片打开和删除等互斥操作
   均结束时重新排队，重试复用现有最多两个并行解码任务；
-- 已补充失败/重试条件和 English/简体中文占位文案测试。损坏 PNG、目录切换和显式 300 条资源样本的
-  Release 报告仍待执行，因此 B3 继续保持“进行中”。
+- 已补充失败/重试条件和 English/简体中文占位文案测试；损坏 PNG 与目录切换的 Release 故障报告仍待执行。
+- 2026-08-29 在当前源码上完成显式 300 条资源样本：Release 报告
+  `target/history-resource-acceptance/release-gate-current-20260829-r2/session-1787981887900-8096/report.json`
+  为 `passed=true`，默认 5 条和展开 300 条均收敛，峰值解码任务为 2，300 个缩略图全部缓存，fixture/history
+  根目录清理成功。验收 runner 已在 GPUI Windows `ExitProcess(0)` 退出前写入最终报告并清理 fixture；B3 仍保持“进行中”，
+  直到损坏 PNG、目录切换和历史删除的真实 Release 故障路径补齐。
 
 ### B4：标注回归保护
 

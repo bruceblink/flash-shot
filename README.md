@@ -111,6 +111,13 @@ cargo test --workspace --all-features
 .\scripts\run-dev-tool.ps1 capture-stress --iterations 5
 ```
 
+验证 Library 历史缩略图的有界资源流控时，使用 Release 构建展开 300 条隔离 fixture。报告会记录
+默认 5 条预览、显式展开后的缓存/加载/队列峰值、工作集与私有提交，以及 fixture 清理结果；解码并发上限为 2：
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release history-resource-acceptance --output-dir target\history-resource-acceptance\release-gate-current
+```
+
 使用固定 4K 场景测量 CPU 导出合成器。该指标衡量导出性能，不是 GPUI 交互帧门禁；
 只有在建立具有代表性的 Release 基线后，才应显式设置上限：
 
