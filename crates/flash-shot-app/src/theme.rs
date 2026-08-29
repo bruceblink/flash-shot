@@ -50,6 +50,9 @@ pub struct ThemeColors {
     pub warning: Hsla,
     pub danger: Hsla,
     pub info: Hsla,
+    /// Foregrounds for the dark capture scrim, which stays dark even in the light app theme.
+    pub overlay_text: Hsla,
+    pub overlay_muted: Hsla,
 }
 
 /// Fixed geometry tokens keep compact windows stable while allowing localized text to wrap safely.
@@ -71,21 +74,57 @@ pub struct ThemeMetrics {
     pub radius_md: f32,
 }
 
+impl ThemeMetrics {
+    // Shared overlay and Pin geometry keeps the same interaction surface stable across views.
+    pub const SPACE_1: f32 = 4.0;
+    pub const SPACE_2: f32 = 8.0;
+    pub const SPACE_3: f32 = 12.0;
+    pub const SPACE_4: f32 = 16.0;
+    pub const HEADER_HEIGHT: f32 = 76.0;
+    pub const STATUS_HEIGHT: f32 = 48.0;
+    pub const NAVIGATION_WIDTH: f32 = 164.0;
+    pub const ROW_MIN_HEIGHT: f32 = 40.0;
+    pub const TOGGLE_WIDTH: f32 = 36.0;
+    pub const TOGGLE_HEIGHT: f32 = 20.0;
+    pub const CONTROL_HEIGHT: f32 = 36.0;
+    pub const TOOLBAR_HEIGHT: f32 = 44.0;
+    pub const OVERLAY_EDGE_INSET: f32 = 18.0;
+    pub const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
+    pub const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
+    pub const OVERLAY_ACTION_BAR_GAP: f32 = 12.0;
+    pub const OVERLAY_ACTION_ITEM_GAP: f32 = 6.0;
+    pub const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 36.0;
+    pub const OVERLAY_ACTION_BAR_PADDING: f32 = 6.0;
+    pub const OVERLAY_ACTION_BAR_BORDER: f32 = 1.0;
+    pub const OVERLAY_SECONDARY_MENU_GAP: f32 = 8.0;
+    pub const ANNOTATION_ACTION_HEIGHT: f32 = 32.0;
+    pub const ANNOTATION_TOOL_ROW_HEIGHT: f32 = 34.0;
+    pub const ANNOTATION_TOOL_GAP: f32 = 8.0;
+    pub const ANNOTATION_TOOLBAR_PADDING: f32 = 4.0;
+    pub const PIN_CONTROL_HEIGHT: f32 = 30.0;
+    pub const PIN_TOOLBAR_PADDING: f32 = 8.0;
+    pub const PIN_TOOLBAR_GAP: f32 = 8.0;
+    pub const PIN_CONTROL_GAP: f32 = 4.0;
+    pub const PIN_TOOLBAR_CLOSE_INSET: f32 = 48.0;
+    pub const PIN_CLOSE_SIZE: f32 = 32.0;
+    pub const PIN_TOP_CONTROLS_HEIGHT: f32 = 62.0;
+}
+
 impl Default for ThemeMetrics {
     fn default() -> Self {
         Self {
-            space_1: 4.0,
-            space_2: 8.0,
-            space_3: 12.0,
-            space_4: 16.0,
-            header_height: 76.0,
-            status_height: 48.0,
-            navigation_width: 164.0,
-            row_min_height: 40.0,
-            toggle_width: 36.0,
-            toggle_height: 20.0,
-            control_height: 36.0,
-            toolbar_height: 44.0,
+            space_1: Self::SPACE_1,
+            space_2: Self::SPACE_2,
+            space_3: Self::SPACE_3,
+            space_4: Self::SPACE_4,
+            header_height: Self::HEADER_HEIGHT,
+            status_height: Self::STATUS_HEIGHT,
+            navigation_width: Self::NAVIGATION_WIDTH,
+            row_min_height: Self::ROW_MIN_HEIGHT,
+            toggle_width: Self::TOGGLE_WIDTH,
+            toggle_height: Self::TOGGLE_HEIGHT,
+            control_height: Self::CONTROL_HEIGHT,
+            toolbar_height: Self::TOOLBAR_HEIGHT,
             radius_sm: 4.0,
             radius_md: 8.0,
         }
@@ -121,6 +160,8 @@ impl ThemeColors {
                 warning: Hsla::from(rgb(0xffd166)),
                 danger: Hsla::from(rgb(0xff7078)),
                 info: Hsla::from(rgb(0x7ad8ff)),
+                overlay_text: Hsla::from(rgb(0xf4f7fa)),
+                overlay_muted: Hsla::from(rgb(0xa7b5c1)),
             },
             ThemeMode::Light => Self {
                 canvas: Hsla::from(rgb(0xf3f7fa)),
@@ -142,6 +183,8 @@ impl ThemeColors {
                 warning: Hsla::from(rgb(0x8a5b00)),
                 danger: Hsla::from(rgb(0xb0263d)),
                 info: Hsla::from(rgb(0x126b9a)),
+                overlay_text: Hsla::from(rgb(0xffffff)),
+                overlay_muted: Hsla::from(rgb(0xd2dfe6)),
             },
         }
     }
@@ -149,7 +192,7 @@ impl ThemeColors {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Hsla, Rgba};
+    use gpui::{Hsla, Rgba, rgb};
 
     use super::{ThemeColors, ThemeMetrics, ThemeMode};
 
@@ -231,6 +274,16 @@ mod tests {
     }
 
     #[test]
+    fn overlay_foregrounds_remain_readable_on_the_capture_scrim() {
+        let scrim = Hsla::from(rgb(0x0b0d10));
+        for mode in [ThemeMode::Dark, ThemeMode::Light] {
+            let colors = ThemeColors::for_mode(mode);
+            assert!(contrast_ratio(colors.overlay_text, scrim) >= 4.5);
+            assert!(contrast_ratio(colors.overlay_muted, scrim) >= 4.5);
+        }
+    }
+
+    #[test]
     fn geometry_tokens_keep_controls_on_a_four_pixel_grid() {
         let metrics = ThemeMetrics::default();
         assert_eq!(metrics.space_1, 4.0);
@@ -244,5 +297,19 @@ mod tests {
         assert_eq!(metrics.control_height, 36.0);
         assert_eq!(metrics.toolbar_height, 44.0);
         assert!(metrics.radius_md <= 8.0);
+    }
+
+    #[test]
+    fn overlay_and_pin_controls_share_stable_geometry_tokens() {
+        let metrics = ThemeMetrics::default();
+        assert_eq!(
+            ThemeMetrics::OVERLAY_ACTION_ITEM_HEIGHT,
+            metrics.control_height
+        );
+        assert_eq!(ThemeMetrics::PIN_CLOSE_SIZE, 32.0);
+        assert_eq!(ThemeMetrics::PIN_CONTROL_GAP, metrics.space_1);
+        assert_eq!(ThemeMetrics::PIN_TOOLBAR_GAP, metrics.space_2);
+        assert_eq!(ThemeMetrics::PIN_CONTROL_HEIGHT, 30.0);
+        assert_eq!(ThemeMetrics::PIN_TOP_CONTROLS_HEIGHT, 62.0);
     }
 }

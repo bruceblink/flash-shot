@@ -12,11 +12,12 @@ use super::FlashShotApp;
 use crate::{
     i18n::{Locale, UiText},
     platform::{capture::CaptureFrame, clipboard::ClipboardService},
+    theme::ThemeMetrics,
 };
 
 const PIN_OPACITY_STEPS: [u8; 4] = [255, 191, 128, 64];
 const PIN_FEEDBACK_VISIBLE_FOR: Duration = Duration::from_secs(3);
-const PIN_TOP_CONTROLS_HEIGHT: f32 = 62.0;
+const PIN_TOP_CONTROLS_HEIGHT: f32 = ThemeMetrics::PIN_TOP_CONTROLS_HEIGHT;
 
 struct PinnedTooltip(&'static str, crate::theme::ThemeColors);
 
@@ -431,7 +432,7 @@ fn pinned_tool_button(
     let destructive = matches!(tone, PinnedButtonTone::Destructive);
     div()
         .id(id)
-        .h(px(30.0))
+        .h(px(ThemeMetrics::PIN_CONTROL_HEIGHT))
         .px_3()
         .flex()
         .items_center()
@@ -448,7 +449,7 @@ fn pinned_tool_button(
         .bg(if emphasized {
             colors.accent
         } else {
-            colors.background
+            colors.surface_elevated
         })
         .text_color(if emphasized {
             colors.background
@@ -464,14 +465,42 @@ fn pinned_tool_button(
         .cursor_pointer()
         .hover(move |style| {
             style
-                .bg(colors.panel)
+                .bg(if emphasized {
+                    colors.accent_hover
+                } else {
+                    colors.surface_hover
+                })
                 .border_color(if destructive {
                     colors.danger
+                } else if emphasized {
+                    colors.accent_hover
                 } else {
                     colors.accent
                 })
-                .text_color(if destructive {
+                .text_color(if emphasized {
+                    colors.background
+                } else if destructive {
                     colors.danger
+                } else {
+                    colors.text
+                })
+        })
+        .active(move |style| {
+            style
+                .bg(if destructive {
+                    colors.danger
+                } else if emphasized {
+                    colors.accent_pressed
+                } else {
+                    colors.surface_hover
+                })
+                .border_color(if destructive {
+                    colors.danger
+                } else {
+                    colors.accent_pressed
+                })
+                .text_color(if destructive || emphasized {
+                    colors.background
                 } else {
                     colors.text
                 })
@@ -510,16 +539,16 @@ impl Render for PinnedImage {
         let toolbar = div()
             .id("pinned-toolbar")
             .absolute()
-            .top(px(8.0))
-            .left(px(8.0))
+            .top(px(ThemeMetrics::PIN_TOOLBAR_PADDING))
+            .left(px(ThemeMetrics::PIN_TOOLBAR_PADDING))
             // Keep the hover toolbar clear of the persistent close button at the top right.
-            .right(px(48.0))
-            .p_2()
+            .right(px(ThemeMetrics::PIN_TOOLBAR_CLOSE_INSET))
+            .p(px(ThemeMetrics::PIN_TOOLBAR_PADDING))
             .flex()
             .flex_wrap()
             .items_center()
-            .gap_2()
-            .bg(colors.panel)
+            .gap(px(ThemeMetrics::PIN_TOOLBAR_GAP))
+            .bg(colors.surface_elevated)
             .border_1()
             .border_color(colors.border)
             .rounded_lg()
@@ -534,11 +563,11 @@ impl Render for PinnedImage {
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .gap_1()
+                    .gap(px(ThemeMetrics::PIN_CONTROL_GAP))
                     .child(
                         div()
-                            .h(px(30.0))
-                            .px_2()
+                            .h(px(ThemeMetrics::PIN_CONTROL_HEIGHT))
+                            .px(px(ThemeMetrics::PIN_TOOLBAR_GAP))
                             .flex()
                             .items_center()
                             .rounded_md()
@@ -628,22 +657,26 @@ impl Render for PinnedImage {
             );
         // A Pin has no native title bar, so closing it must never depend on discovering the
         // hover-only toolbar. This compact control remains reachable whenever input is enabled.
-        let close_button = div().absolute().top(px(8.0)).right(px(8.0)).child(
-            pinned_tool_button(
-                "pinned-close",
-                "X",
-                "close",
-                colors,
-                locale,
-                PinnedButtonTone::Destructive,
-                cx.listener(|this, _, window, cx| this.close(window, cx)),
-            )
-            .w(px(32.0))
-            .px_0()
-            // Expose the client control as native close chrome so borderless Windows delivers
-            // the same close gesture instead of treating it as an unhandled title-bar click.
-            .window_control_area(WindowControlArea::Close),
-        );
+        let close_button = div()
+            .absolute()
+            .top(px(ThemeMetrics::PIN_TOOLBAR_PADDING))
+            .right(px(ThemeMetrics::PIN_TOOLBAR_PADDING))
+            .child(
+                pinned_tool_button(
+                    "pinned-close",
+                    "X",
+                    "close",
+                    colors,
+                    locale,
+                    PinnedButtonTone::Destructive,
+                    cx.listener(|this, _, window, cx| this.close(window, cx)),
+                )
+                .w(px(ThemeMetrics::PIN_CLOSE_SIZE))
+                .px_0()
+                // Expose the client control as native close chrome so borderless Windows delivers
+                // the same close gesture instead of treating it as an unhandled title-bar click.
+                .window_control_area(WindowControlArea::Close),
+            );
         let image = div()
             .id("pinned-image")
             .size_full()

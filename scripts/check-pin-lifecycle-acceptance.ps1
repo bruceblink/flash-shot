@@ -26,17 +26,19 @@ $outputPath = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
     [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $OutputDirectory))
 }
 $startedAt = (Get-Date).AddSeconds(-1)
-$runnerArguments = @("pin-lifecycle-acceptance")
-if (-not $DebugBuild) {
-    $runnerArguments += "-Release"
+$runnerArguments = @{
+    Tool = "pin-lifecycle-acceptance"
+    ToolArguments = @(
+        "--output-dir", $outputPath,
+        "--timeout-ms", $TimeoutMilliseconds,
+        "--settle-ms", $SettleMilliseconds
+    )
 }
-$runnerArguments += @(
-    "--output-dir", $outputPath,
-    "--timeout-ms", $TimeoutMilliseconds,
-    "--settle-ms", $SettleMilliseconds
-)
+if (-not $DebugBuild) {
+    $runnerArguments["Release"] = $true
+}
 if ($SoakMilliseconds -gt 0) {
-    $runnerArguments += @("--soak-ms", $SoakMilliseconds)
+    $runnerArguments["ToolArguments"] += @("--soak-ms", $SoakMilliseconds)
 }
 
 Push-Location $repositoryRoot

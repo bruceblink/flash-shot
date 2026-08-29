@@ -38,20 +38,20 @@ use crate::{
         window_inspector::{InspectionKind, InspectionTarget},
     },
     settings::UserSettings,
-    theme::ThemeColors,
+    theme::{ThemeColors, ThemeMetrics},
 };
 
-const OVERLAY_EDGE_INSET: f32 = 18.0;
+const OVERLAY_EDGE_INSET: f32 = ThemeMetrics::OVERLAY_EDGE_INSET;
 // Keep fallback controls above a scaled Windows taskbar when the borderless
 // overlay extends over the full display rather than the working area.
-const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
-const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
-const OVERLAY_ACTION_BAR_GAP: f32 = 12.0;
-const OVERLAY_ACTION_ITEM_GAP: f32 = 6.0;
-const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 36.0;
-const OVERLAY_ACTION_BAR_PADDING: f32 = 6.0;
-const OVERLAY_ACTION_BAR_BORDER: f32 = 1.0;
-const OVERLAY_SECONDARY_MENU_GAP: f32 = 8.0;
+const OVERLAY_BOTTOM_SAFE_INSET: f32 = ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET;
+const OVERLAY_ACTION_BAR_WIDTH: f32 = ThemeMetrics::OVERLAY_ACTION_BAR_WIDTH;
+const OVERLAY_ACTION_BAR_GAP: f32 = ThemeMetrics::OVERLAY_ACTION_BAR_GAP;
+const OVERLAY_ACTION_ITEM_GAP: f32 = ThemeMetrics::OVERLAY_ACTION_ITEM_GAP;
+const OVERLAY_ACTION_ITEM_HEIGHT: f32 = ThemeMetrics::OVERLAY_ACTION_ITEM_HEIGHT;
+const OVERLAY_ACTION_BAR_PADDING: f32 = ThemeMetrics::OVERLAY_ACTION_BAR_PADDING;
+const OVERLAY_ACTION_BAR_BORDER: f32 = ThemeMetrics::OVERLAY_ACTION_BAR_BORDER;
+const OVERLAY_SECONDARY_MENU_GAP: f32 = ThemeMetrics::OVERLAY_SECONDARY_MENU_GAP;
 const OVERLAY_RECOGNITION_PREVIEW_HEIGHT: f32 = 64.0;
 const OVERLAY_RECOGNITION_STATUS_HEIGHT: f32 = 30.0;
 const OVERLAY_RECOGNITION_PREVIEW_LIMIT: usize = 240;
@@ -62,9 +62,10 @@ const OVERLAY_SMART_TARGET_HUD_WIDTH: f32 = 224.0;
 const OVERLAY_SMART_TARGET_HUD_HEIGHT: f32 = 26.0;
 const OVERLAY_SMART_TARGET_HUD_GAP: f32 = 8.0;
 const ANNOTATION_TOOL_ESTIMATED_WIDTH: f32 = 104.0;
-const ANNOTATION_TOOL_ROW_HEIGHT: f32 = 34.0;
-const ANNOTATION_TOOL_GAP: f32 = 8.0;
-const ANNOTATION_TOOLBAR_PADDING: f32 = 4.0;
+const ANNOTATION_ACTION_HEIGHT: f32 = ThemeMetrics::ANNOTATION_ACTION_HEIGHT;
+const ANNOTATION_TOOL_ROW_HEIGHT: f32 = ThemeMetrics::ANNOTATION_TOOL_ROW_HEIGHT;
+const ANNOTATION_TOOL_GAP: f32 = ThemeMetrics::ANNOTATION_TOOL_GAP;
+const ANNOTATION_TOOLBAR_PADDING: f32 = ThemeMetrics::ANNOTATION_TOOLBAR_PADDING;
 // Context sections add a visible divider and breathing room without making the
 // stable drawing palette move when an annotation is selected.
 const ANNOTATION_CONTEXT_SECTION_GAP: f32 =
@@ -267,6 +268,32 @@ fn secondary_action_button(
                 colors.accent
             })
         })
+        .hover(move |style| {
+            style
+                .bg(if primary {
+                    colors.accent_hover
+                } else {
+                    colors.surface_hover
+                })
+                .border_color(if primary {
+                    colors.accent_hover
+                } else {
+                    colors.accent
+                })
+        })
+        .active(move |style| {
+            style
+                .bg(if primary {
+                    colors.accent_pressed
+                } else {
+                    colors.surface_hover
+                })
+                .border_color(if primary {
+                    colors.accent_pressed
+                } else {
+                    colors.accent
+                })
+        })
         .cursor_pointer()
         .when_some(tooltip, |button, tooltip| {
             button.tooltip(move |_, cx| cx.new(|_| OverlayTooltip(tooltip, colors)).into())
@@ -442,7 +469,7 @@ fn annotation_action_button(
     };
     div()
         .id(id)
-        .h(px(32.0))
+        .h(px(ANNOTATION_ACTION_HEIGHT))
         .px_3()
         .flex()
         .items_center()
@@ -461,13 +488,36 @@ fn annotation_action_button(
                 .cursor_pointer()
                 .hover(move |style| {
                     style
-                        .bg(colors.background)
+                        .bg(match tone {
+                            AnnotationActionTone::Primary => colors.accent_hover,
+                            AnnotationActionTone::Destructive => colors.panel,
+                            AnnotationActionTone::Neutral => colors.surface_hover,
+                        })
                         .border_color(if matches!(tone, AnnotationActionTone::Destructive) {
                             colors.danger
+                        } else if matches!(tone, AnnotationActionTone::Primary) {
+                            colors.accent_hover
                         } else {
                             colors.accent
                         })
-                        .text_color(colors.text)
+                        .text_color(match tone {
+                            AnnotationActionTone::Primary => colors.background,
+                            AnnotationActionTone::Destructive => colors.danger,
+                            AnnotationActionTone::Neutral => colors.text,
+                        })
+                })
+                .active(move |style| {
+                    style
+                        .bg(match tone {
+                            AnnotationActionTone::Primary => colors.accent_pressed,
+                            AnnotationActionTone::Destructive => colors.danger,
+                            AnnotationActionTone::Neutral => colors.surface_hover,
+                        })
+                        .border_color(if matches!(tone, AnnotationActionTone::Destructive) {
+                            colors.danger
+                        } else {
+                            colors.accent_pressed
+                        })
                 })
                 .on_click(on_click)
         })
@@ -1494,7 +1544,7 @@ impl Render for CaptureOverlay {
                         .bg(rgba(0x0B0D10E6))
                         .border_1()
                         .border_color(colors.accent)
-                        .text_color(colors.text)
+                        .text_color(colors.overlay_text)
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .shadow_lg()
@@ -1518,7 +1568,7 @@ impl Render for CaptureOverlay {
                         .border_1()
                         .border_color(colors.accent)
                         .bg(rgba(0x0B0D10E6))
-                        .text_color(colors.text)
+                        .text_color(colors.overlay_text)
                         .text_xs()
                         .font_weight(FontWeight::SEMIBOLD)
                         .shadow_lg()
@@ -1903,11 +1953,11 @@ impl Render for CaptureOverlay {
                                     .gap_2()
                                     .child(
                                         div()
-                                            .h(px(32.0))
+                                            .h(px(ANNOTATION_ACTION_HEIGHT))
                                             .px_2()
                                             .flex()
                                             .items_center()
-                                            .text_color(colors.muted)
+                                            .text_color(colors.overlay_muted)
                                             .text_xs()
                                             .child(locale.text(UiText::OverlaySelected)),
                                     )
@@ -1962,7 +2012,7 @@ impl Render for CaptureOverlay {
                                             ))
                                             .child(
                                                 div()
-                                                    .h(px(32.0))
+                                                    .h(px(ANNOTATION_ACTION_HEIGHT))
                                                     .px_2()
                                                     .flex()
                                                     .items_center()
@@ -2041,11 +2091,11 @@ impl Render for CaptureOverlay {
                                     .gap_2()
                                     .child(
                                         div()
-                                            .h(px(32.0))
+                                            .h(px(ANNOTATION_ACTION_HEIGHT))
                                             .px_2()
                                             .flex()
                                             .items_center()
-                                            .text_color(colors.muted)
+                                            .text_color(colors.overlay_muted)
                                             .text_xs()
                                             .child(locale.text(UiText::OverlayArrange)),
                                     )
@@ -2323,7 +2373,7 @@ impl Render for CaptureOverlay {
                     .border_1()
                     .border_color(rgba(0xFFFFFF24))
                     .bg(rgba(0x0B0D10E6))
-                    .text_color(colors.text)
+                    .text_color(colors.overlay_text)
                     .text_sm()
                     .shadow_lg()
                     .child(status),
@@ -2396,10 +2446,29 @@ impl Render for CaptureOverlay {
                                     .hover(move |style| {
                                         style
                                             .bg(if show_annotation_controls {
-                                                colors.accent
+                                                colors.accent_hover
                                             } else {
-                                                colors.background
+                                                colors.surface_hover
                                             })
+                                            .border_color(if show_annotation_controls {
+                                                colors.accent_hover
+                                            } else {
+                                                colors.accent
+                                            })
+                                            .text_color(if show_annotation_controls {
+                                                colors.background
+                                            } else {
+                                                colors.text
+                                            })
+                                    })
+                                    .active(move |style| {
+                                        style
+                                            .bg(if show_annotation_controls {
+                                                colors.accent_pressed
+                                            } else {
+                                                colors.surface_hover
+                                            })
+                                            .border_color(colors.accent_pressed)
                                             .text_color(if show_annotation_controls {
                                                 colors.background
                                             } else {
@@ -2443,7 +2512,14 @@ impl Render for CaptureOverlay {
                                     .focus_visible(|style| style.border_color(colors.accent))
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(colors.background))
+                                    .hover(|style| {
+                                        style.bg(colors.surface_hover).border_color(colors.accent)
+                                    })
+                                    .active(|style| {
+                                        style
+                                            .bg(colors.surface_hover)
+                                            .border_color(colors.accent_pressed)
+                                    })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(
@@ -2495,7 +2571,16 @@ impl Render for CaptureOverlay {
                                     .when(!selection_copy_in_progress, |button| {
                                         button
                                             .cursor_pointer()
-                                            .hover(|style| style.bg(colors.accent))
+                                            .hover(|style| {
+                                                style
+                                                    .bg(colors.accent_hover)
+                                                    .border_color(colors.accent_hover)
+                                            })
+                                            .active(|style| {
+                                                style
+                                                    .bg(colors.accent_pressed)
+                                                    .border_color(colors.accent_pressed)
+                                            })
                                     })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
@@ -2538,7 +2623,14 @@ impl Render for CaptureOverlay {
                                     .focus_visible(|style| style.border_color(colors.accent))
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(colors.background))
+                                    .hover(|style| {
+                                        style.bg(colors.surface_hover).border_color(colors.accent)
+                                    })
+                                    .active(|style| {
+                                        style
+                                            .bg(colors.surface_hover)
+                                            .border_color(colors.accent_pressed)
+                                    })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(
@@ -2569,18 +2661,53 @@ impl Render for CaptureOverlay {
                                     .border_1()
                                     .border_color(rgba(0xFFFFFF00))
                                     .bg(if show_more_actions {
-                                        colors.background
+                                        colors.accent
                                     } else {
                                         colors.panel
                                     })
-                                    .text_color(colors.text)
+                                    .text_color(if show_more_actions {
+                                        colors.background
+                                    } else {
+                                        colors.text
+                                    })
                                     .track_focus(&self.more_actions_focus_handle)
                                     .aria_keyshortcuts("Alt+M")
                                     .aria_expanded(show_more_actions)
                                     .focus_visible(|style| style.border_color(colors.accent))
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(colors.background))
+                                    .hover(move |style| {
+                                        style
+                                            .bg(if show_more_actions {
+                                                colors.accent_hover
+                                            } else {
+                                                colors.surface_hover
+                                            })
+                                            .border_color(if show_more_actions {
+                                                colors.accent_hover
+                                            } else {
+                                                colors.accent
+                                            })
+                                            .text_color(if show_more_actions {
+                                                colors.background
+                                            } else {
+                                                colors.text
+                                            })
+                                    })
+                                    .active(move |style| {
+                                        style
+                                            .bg(if show_more_actions {
+                                                colors.accent_pressed
+                                            } else {
+                                                colors.surface_hover
+                                            })
+                                            .border_color(colors.accent_pressed)
+                                            .text_color(if show_more_actions {
+                                                colors.background
+                                            } else {
+                                                colors.text
+                                            })
+                                    })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(
@@ -2630,7 +2757,18 @@ impl Render for CaptureOverlay {
                                     .focus_visible(|style| style.border_color(colors.background))
                                     .text_sm()
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(colors.panel).text_color(colors.danger))
+                                    .hover(|style| {
+                                        style
+                                            .bg(colors.surface_hover)
+                                            .border_color(colors.danger)
+                                            .text_color(colors.danger)
+                                    })
+                                    .active(|style| {
+                                        style
+                                            .bg(colors.danger)
+                                            .border_color(colors.danger)
+                                            .text_color(colors.background)
+                                    })
                                     .tooltip(move |_, cx| {
                                         cx.new(|_| {
                                             OverlayTooltip(
@@ -2941,13 +3079,13 @@ impl Render for CaptureOverlay {
                                                         .child(
                                                             div()
                                                                 .text_xs()
-                                                                .text_color(colors.muted)
+                                                                .text_color(colors.overlay_muted)
                                                                 .child(result.title.clone()),
                                                         )
                                                         .child(
                                                             div()
                                                                 .text_sm()
-                                                                .text_color(colors.text)
+                                                                .text_color(colors.overlay_text)
                                                                 .child(recognition_result_preview(
                                                                     &result.text,
                                                                 )),
