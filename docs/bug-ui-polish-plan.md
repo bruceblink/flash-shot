@@ -44,7 +44,7 @@ Release 证据。本轮审查没有从静态代码和既有报告中确认新的
 | 国际化 | `Locale`/`UiText` 已覆盖设置、Capture、标注、Library 和 Pin 工具栏 | `workflow.rs`、`workflow/recognition.rs` 和 Record/更新状态仍有可见硬编码英文或动态拼接 | P1 |
 | UI 信息层级 | Capture 主动作、More 菜单和部分 Library 视觉复核已完成 | 收敛 Record、App、诊断和错误状态的重复入口，明确每个区域的主操作 | P1 |
 | 视觉一致性 | 已有 420x420、520x640、980x760 的部分设置/Library 截图 | 统一颜色、间距、字号、圆角、焦点态、禁用态、状态栏和工具栏命中区，并补齐中英文/深浅主题 | P1 |
-| 资源与异步任务 | 历史缩略图有界 FIFO、Pin 生命周期和 generation 保护已有实现 | 为损坏 PNG、目录切换、晚到结果、FFmpeg 失败和剪贴板占用补充确定性故障场景 | P1 |
+| 资源与异步任务 | 历史缩略图有界 FIFO、Pin 生命周期和 generation 保护已有实现 | 为历史删除/窗口关闭、晚到结果、FFmpeg 失败和剪贴板占用补充确定性故障场景 | P1 |
 | 可维护性 | workspace crate 已拆分，但 `overlay.rs` 约 240 KB、`view.rs` 约 116 KB | 先稳定行为和 UI，再按职责拆分 overlay 与原生验收 runner；重构不得改变用户行为 | P1 |
 | 高 DPI/多显示器 | 当前机器已有单屏 100% 证据 | 150%/200% 需要真实硬件；双屏按既有决定暂缓 | P2 |
 
@@ -262,12 +262,18 @@ Save 取消/重试 -> Pin -> Copy -> Escape 清理。报告 schema 18 为 More/L
   留成无说明的空白预览；队列仍保持有界 FIFO，并继续丢弃目录切换或删除后的陈旧结果；
 - 失败条目提供 `Retry preview`，仅在条目仍被保留、Capture 会话空闲且历史读取、图片打开和删除等互斥操作
   均结束时重新排队，重试复用现有最多两个并行解码任务；
-- 已补充失败/重试条件和 English/简体中文占位文案测试；损坏 PNG 与目录切换的 Release 故障报告仍待执行。
+- 已补充失败/重试条件和 English/简体中文占位文案测试；`history-resource-acceptance --exercise-failures`
+  现在会在同一 Release 会话中注入损坏 PNG、缺失文件、恢复重试并切换到第二个历史目录，报告记录每个阶段的
+  `thumbnails_failed`、缓存数、三张故障截图和两个历史根目录的清理结果。
 - 2026-08-29 在当前源码上完成显式 300 条资源样本：Release 报告
-  `target/history-resource-acceptance/release-gate-current-20260829-r2/session-1787981887900-8096/report.json`
+  `target/history-resource-acceptance/release-normal-20260829/session-1787983224655-16012/report.json`
   为 `passed=true`，默认 5 条和展开 300 条均收敛，峰值解码任务为 2，300 个缩略图全部缓存，fixture/history
-  根目录清理成功。验收 runner 已在 GPUI Windows `ExitProcess(0)` 退出前写入最终报告并清理 fixture；B3 仍保持“进行中”，
-  直到损坏 PNG、目录切换和历史删除的真实 Release 故障路径补齐。
+  根目录清理成功，两个阶段均为 `thumbnails_failed=0`。验收 runner 已在 GPUI Windows `ExitProcess(0)` 退出前写入最终报告并清理 fixture；B3 仍保持“进行中”，
+  直到历史删除和窗口关闭期间的真实 Release 故障路径补齐。
+- 2026-08-29 当前源码的故障恢复 Release 报告
+  `target/history-resource-acceptance/release-fault-20260829/session-1787982960787-31984/report.json` 为
+  `passed=true`：`failures_2` 收敛为 298 个缓存和 2 个失败条目，恢复阶段回到 300 个缓存，目录切换阶段加载
+  3 个新条目；五张窗口截图、采样和报告属于同一会话，原始与切换后的 history 根目录均已删除。
 
 ### B4：标注回归保护
 

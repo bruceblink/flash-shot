@@ -41,6 +41,23 @@ struct Options {
     output_dir: PathBuf,
     timeout: Duration,
     sample_interval: Duration,
+    exercise_failures: bool,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct FailureScenarioEvidence {
+    failures_2: HistoryResourceAcceptanceState,
+    recovered_300: HistoryResourceAcceptanceState,
+    directory_switch_3: HistoryResourceAcceptanceState,
+    switched_history_root: String,
+    screenshots: FailureScenarioScreenshots,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct FailureScenarioScreenshots {
+    failures_2: &'static str,
+    recovered_300: &'static str,
+    directory_switch_3: &'static str,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -87,6 +104,7 @@ fn run() -> io::Result<serde_json::Value> {
     fs::create_dir_all(session_root.join("screenshots"))?;
     let report_path = session_root.join("report.json");
     let fixture_paths = create_history_fixtures(&history_root)?;
+    let mut additional_history_roots = Vec::new();
     let mut history = ScreenshotHistory::open_with_limit(&history_root, FIXTURE_COUNT)?;
     for path in &fixture_paths {
         history.record_with_source(path.clone(), HistorySource::Selection)?;
@@ -148,6 +166,21 @@ fn run() -> io::Result<serde_json::Value> {
             )?;
             let expanded_screenshot = session_root.join("screenshots/expanded-300-preview.png");
             capture_window(&window, &expanded_screenshot)?;
+            let failure_evidence = if options.exercise_failures {
+                Some(exercise_thumbnail_failures(
+                    &command_tx,
+                    options.timeout,
+                    options.sample_interval,
+                    started,
+                    &mut samples,
+                    &fixture_paths,
+                    &session_root,
+                    &mut additional_history_roots,
+                    &window,
+                )?)
+            } else {
+                None
+            };
             let peak = peak_for_phase(baseline, &samples, "expanded_300");
             let peak_loading = samples
                 .iter()
@@ -166,7 +199,7 @@ fn run() -> io::Result<serde_json::Value> {
                 .find(|sample| sample.state.thumbnails_cached > 0)
                 .map(|sample| sample.elapsed_ms);
             let report = serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "test": "history_thumbnail_resource_acceptance",
                 "passed": build_profile() == "release"
                     && default_state.total_entries == FIXTURE_COUNT
@@ -174,13 +207,16 @@ fn run() -> io::Result<serde_json::Value> {
                     && default_state.thumbnails_cached >= DEFAULT_VISIBLE_COUNT
                     && default_state.thumbnails_loading == 0
                     && default_state.thumbnails_pending == 0
+                    && default_state.thumbnails_failed == 0
                     && expanded_state.total_entries == FIXTURE_COUNT
                     && expanded_state.visible_entries == FIXTURE_COUNT
                     && expanded_state.thumbnails_cached >= FIXTURE_COUNT
                     && expanded_state.thumbnails_loading == 0
                     && expanded_state.thumbnails_pending == 0
+                    && expanded_state.thumbnails_failed == 0
                     && peak_loading <= 2
-                    && first_thumbnail_elapsed_ms.is_some(),
+                    && first_thumbnail_elapsed_ms.is_some()
+                    && (!options.exercise_failures || failure_evidence.is_some()),
                 "measurement_mode": "release_resource",
                 "build_profile": build_profile(),
                 "session_root": session_root.to_string_lossy().into_owned(),
@@ -198,6 +234,10 @@ fn run() -> io::Result<serde_json::Value> {
                 "phases": {
                     "default_5": default_state,
                     "expanded_300": expanded_state,
+                },
+                "failure_scenario": {
+                    "enabled": options.exercise_failures,
+                    "evidence": failure_evidence,
                 },
                 "resources": {
                     "baseline_after_default_5": baseline,
@@ -234,10 +274,16 @@ fn run() -> io::Result<serde_json::Value> {
     // request_quit would never run on the Windows release build.
     thread::sleep(Duration::from_millis(250));
     let cleanup_result = remove_history_root(&history_root);
+    let mut additional_cleanup_errors = Vec::new();
+    for root in &additional_history_roots {
+        if let Err(error) = remove_history_root(root) {
+            additional_cleanup_errors.push(format!("{}: {error}", root.display()));
+        }
+    }
     let mut report = match result {
         Ok(report) => report,
         Err(error) => serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "test": "history_thumbnail_resource_acceptance",
             "passed": false,
             "error": error.to_string(),
@@ -258,10 +304,28 @@ fn run() -> io::Result<serde_json::Value> {
         .err()
         .map(|error| serde_json::Value::String(error.to_string()))
         .unwrap_or(serde_json::Value::Null);
+    report["cleanup"]["additional_history_roots"] = serde_json::json!(
+        additional_history_roots
+            .iter()
+            .map(|root| root.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    );
+    report["cleanup"]["additional_roots_removed"] = serde_json::Value::Bool(
+        additional_cleanup_errors.is_empty()
+            && additional_history_roots.iter().all(|root| !root.exists()),
+    );
+    report["cleanup"]["additional_cleanup_errors"] = serde_json::json!(additional_cleanup_errors);
+    report["cleanup"]["all_history_roots_removed"] = serde_json::Value::Bool(
+        cleanup_result.is_ok()
+            && !history_root_exists
+            && additional_history_roots.iter().all(|root| !root.exists()),
+    );
     report["passed"] = serde_json::Value::Bool(
         report["passed"].as_bool().unwrap_or(false)
             && cleanup_result.is_ok()
-            && !history_root_exists,
+            && !history_root_exists
+            && additional_cleanup_errors.is_empty()
+            && additional_history_roots.iter().all(|root| !root.exists()),
     );
     fs::write(
         &report_path,
@@ -349,6 +413,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
         output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
         timeout: DEFAULT_TIMEOUT,
         sample_interval: DEFAULT_SAMPLE_INTERVAL,
+        exercise_failures: false,
     };
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
@@ -382,6 +447,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
                 }
                 options.sample_interval = Duration::from_millis(milliseconds);
             }
+            "--exercise-failures" => options.exercise_failures = true,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -418,8 +484,12 @@ fn peak_for_phase(
 }
 
 fn create_history_fixtures(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut paths = Vec::with_capacity(FIXTURE_COUNT);
-    for index in 0..FIXTURE_COUNT {
+    create_history_fixtures_with_count(root, FIXTURE_COUNT)
+}
+
+fn create_history_fixtures_with_count(root: &Path, count: usize) -> io::Result<Vec<PathBuf>> {
+    let mut paths = Vec::with_capacity(count);
+    for index in 0..count {
         let path = root.join(format!("fixture-{index:03}.png"));
         fixture_frame(index).save_png(&path)?;
         paths.push(path);
@@ -516,6 +586,189 @@ fn set_expanded_and_wait(
                 && state.thumbnails_pending == 0
         },
     )
+}
+
+#[cfg(windows)]
+/// Corrupts and removes two retained files, verifies per-entry failures, restores them, and then
+/// swaps to a second history root to prove retry and directory ownership recovery.
+fn exercise_thumbnail_failures(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    timeout: Duration,
+    interval: Duration,
+    started: Instant,
+    samples: &mut Vec<ResourceSample>,
+    fixture_paths: &[PathBuf],
+    session_root: &Path,
+    additional_history_roots: &mut Vec<PathBuf>,
+    window: &NativeWindow,
+) -> io::Result<FailureScenarioEvidence> {
+    let corrupted_path = fixture_paths
+        .first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing corruption fixture"))?;
+    let missing_path = fixture_paths
+        .get(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing deletion fixture"))?;
+    fs::write(corrupted_path, b"not a png")?;
+    fs::remove_file(missing_path)?;
+
+    reset_thumbnail_cache(commands, timeout)?;
+    let failures = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "failures_2",
+        |state| {
+            state.total_entries == FIXTURE_COUNT
+                && state.visible_entries == FIXTURE_COUNT
+                && state.thumbnails_cached == FIXTURE_COUNT.saturating_sub(2)
+                && state.thumbnails_failed == 2
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+        },
+    )?;
+    capture_window(
+        window,
+        &session_root.join("screenshots/failures-2-failed.png"),
+    )?;
+
+    fixture_frame(0).save_png(corrupted_path)?;
+    fixture_frame(1).save_png(missing_path)?;
+    retry_thumbnail(commands, corrupted_path.clone(), timeout)?;
+    retry_thumbnail(commands, missing_path.clone(), timeout)?;
+    let recovered = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "recovered_300",
+        |state| {
+            state.total_entries == FIXTURE_COUNT
+                && state.visible_entries == FIXTURE_COUNT
+                && state.thumbnails_cached == FIXTURE_COUNT
+                && state.thumbnails_failed == 0
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+        },
+    )?;
+    capture_window(window, &session_root.join("screenshots/recovered-300.png"))?;
+
+    let switched_root = session_root.join("history-switched");
+    fs::create_dir_all(&switched_root)?;
+    additional_history_roots.push(switched_root.clone());
+    let switched_paths = create_history_fixtures_with_count(&switched_root, 3)?;
+    let mut switched_history = ScreenshotHistory::open_with_limit(&switched_root, 3)?;
+    for path in switched_paths {
+        switched_history.record_with_source(path, HistorySource::Selection)?;
+    }
+    replace_history(commands, switched_history, timeout)?;
+    let directory_switch = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "directory_switch_3",
+        |state| {
+            state.total_entries == 3
+                && state.visible_entries == 3
+                && state.thumbnails_cached == 3
+                && state.thumbnails_failed == 0
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+        },
+    )?;
+    capture_window(
+        window,
+        &session_root.join("screenshots/directory-switch-3-preview.png"),
+    )?;
+
+    Ok(FailureScenarioEvidence {
+        failures_2: failures,
+        recovered_300: recovered,
+        directory_switch_3: directory_switch,
+        switched_history_root: switched_root.to_string_lossy().into_owned(),
+        screenshots: FailureScenarioScreenshots {
+            failures_2: "screenshots/failures-2-failed.png",
+            recovered_300: "screenshots/recovered-300.png",
+            directory_switch_3: "screenshots/directory-switch-3-preview.png",
+        },
+    })
+}
+
+#[cfg(windows)]
+fn reset_thumbnail_cache(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    timeout: Duration,
+) -> io::Result<HistoryResourceAcceptanceState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(HistoryResourceAcceptanceCommand::ResetThumbnailCache(
+            reply_tx,
+        ))
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "resource app closed"))?;
+    reply_rx.recv_timeout(timeout).map_err(|error| match error {
+        RecvTimeoutError::Timeout => {
+            io::Error::new(io::ErrorKind::TimedOut, "thumbnail reset reply timed out")
+        }
+        RecvTimeoutError::Disconnected => {
+            io::Error::new(io::ErrorKind::BrokenPipe, "resource state channel closed")
+        }
+    })
+}
+
+#[cfg(windows)]
+fn retry_thumbnail(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    path: PathBuf,
+    timeout: Duration,
+) -> io::Result<HistoryResourceAcceptanceState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(HistoryResourceAcceptanceCommand::RetryThumbnail {
+            path,
+            reply: reply_tx,
+        })
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "resource app closed"))?;
+    reply_rx.recv_timeout(timeout).map_err(|error| match error {
+        RecvTimeoutError::Timeout => {
+            io::Error::new(io::ErrorKind::TimedOut, "thumbnail retry reply timed out")
+        }
+        RecvTimeoutError::Disconnected => {
+            io::Error::new(io::ErrorKind::BrokenPipe, "resource state channel closed")
+        }
+    })
+}
+
+#[cfg(windows)]
+fn replace_history(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    history: ScreenshotHistory,
+    timeout: Duration,
+) -> io::Result<HistoryResourceAcceptanceState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(HistoryResourceAcceptanceCommand::ReplaceHistory {
+            history,
+            reply: reply_tx,
+        })
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "resource app closed"))?;
+    match reply_rx
+        .recv_timeout(timeout)
+        .map_err(|error| match error {
+            RecvTimeoutError::Timeout => io::Error::new(
+                io::ErrorKind::TimedOut,
+                "history replacement reply timed out",
+            ),
+            RecvTimeoutError::Disconnected => {
+                io::Error::new(io::ErrorKind::BrokenPipe, "resource state channel closed")
+            }
+        })? {
+        Ok(state) => Ok(state),
+        Err(error) => Err(io::Error::other(error)),
+    }
 }
 
 #[cfg(windows)]
@@ -699,7 +952,14 @@ mod tests {
             PathBuf::from("target/history-resource-acceptance")
         );
         assert_eq!(options.timeout.as_secs(), 60);
+        assert!(!options.exercise_failures);
         assert_eq!(FIXTURE_COUNT, 300);
+    }
+
+    #[test]
+    fn parser_can_enable_fault_recovery_evidence() {
+        let options = parse_args(["--exercise-failures".to_owned()]).unwrap();
+        assert!(options.exercise_failures);
     }
 
     #[test]
@@ -717,6 +977,7 @@ mod tests {
             thumbnails_cached: 5,
             thumbnails_loading: 0,
             thumbnails_pending: 0,
+            thumbnails_failed: 0,
         };
         let baseline = ResourceSnapshot {
             working_set_bytes: 100,

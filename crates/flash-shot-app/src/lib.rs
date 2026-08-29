@@ -255,6 +255,15 @@ pub enum HistoryResourceAcceptanceCommand {
         expanded: bool,
         reply: SyncSender<HistoryResourceAcceptanceState>,
     },
+    ResetThumbnailCache(SyncSender<HistoryResourceAcceptanceState>),
+    RetryThumbnail {
+        path: PathBuf,
+        reply: SyncSender<HistoryResourceAcceptanceState>,
+    },
+    ReplaceHistory {
+        history: ScreenshotHistory,
+        reply: SyncSender<Result<HistoryResourceAcceptanceState, String>>,
+    },
     Quit(SyncSender<()>),
 }
 
@@ -267,6 +276,7 @@ pub struct HistoryResourceAcceptanceState {
     pub thumbnails_cached: usize,
     pub thumbnails_loading: usize,
     pub thumbnails_pending: usize,
+    pub thumbnails_failed: usize,
 }
 
 impl OverlayInteractionAcceptanceOptions {

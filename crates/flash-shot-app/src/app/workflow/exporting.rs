@@ -1017,7 +1017,7 @@ impl FlashShotApp {
     }
 
     /// Drops decoded previews and stale batch selections as soon as history entries disappear.
-    pub(super) fn synchronize_history_preview_cache(&mut self) {
+    pub(in crate::app) fn synchronize_history_preview_cache(&mut self) {
         let retained = self
             .history
             .entries()

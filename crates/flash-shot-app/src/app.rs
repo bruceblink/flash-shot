@@ -33,7 +33,7 @@ use crate::{
         },
         geometry::PhysicalPoint,
         selection::SelectionDrag,
-        session::CaptureSession,
+        session::{CaptureSession, CaptureSessionState},
     },
     history::ScreenshotHistory,
     i18n::UiText,
@@ -1069,6 +1069,21 @@ impl FlashShotApp {
                             cx.notify();
                             let _ = reply.send(this.history_resource_acceptance_state());
                         }
+                        crate::HistoryResourceAcceptanceCommand::ResetThumbnailCache(reply) => {
+                            let state = this.reset_history_thumbnail_cache_for_acceptance(cx);
+                            let _ = reply.send(state);
+                        }
+                        crate::HistoryResourceAcceptanceCommand::RetryThumbnail { path, reply } => {
+                            this.retry_history_thumbnail(path, cx);
+                            let _ = reply.send(this.history_resource_acceptance_state());
+                        }
+                        crate::HistoryResourceAcceptanceCommand::ReplaceHistory {
+                            history,
+                            reply,
+                        } => {
+                            let result = this.replace_history_for_acceptance(history, cx);
+                            let _ = reply.send(result);
+                        }
                         crate::HistoryResourceAcceptanceCommand::Quit(reply) => {
                             let _ = reply.send(());
                             cx.quit();
@@ -1101,7 +1116,55 @@ impl FlashShotApp {
             thumbnails_cached: self.history_thumbnails.len(),
             thumbnails_loading: self.history_thumbnail_loading.len(),
             thumbnails_pending: self.history_thumbnail_pending.len(),
+            thumbnails_failed: self.history_thumbnail_failed.len(),
         }
+    }
+
+    /// Clears all preview state for a deterministic fault-injection run, but only while the
+    /// production history workflow is idle so no background completion can be stranded.
+    fn reset_history_thumbnail_cache_for_acceptance(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> crate::HistoryResourceAcceptanceState {
+        if self.session.state() != CaptureSessionState::Idle
+            || self.history_file_read_in_flight()
+            || self.history_mutation_pending()
+        {
+            log::warn!(
+                target: "flash_shot::history",
+                "history_acceptance_reset_rejected reason=history_busy"
+            );
+            return self.history_resource_acceptance_state();
+        }
+        self.invalidate_history_thumbnails();
+        self.history_thumbnails.clear();
+        self.history_thumbnail_failed.clear();
+        cx.notify();
+        self.history_resource_acceptance_state()
+    }
+
+    /// Swaps the isolated history root only after all readers and mutations have released their
+    /// leases, then invalidates previews so the next render belongs to the new directory.
+    fn replace_history_for_acceptance(
+        &mut self,
+        history: crate::history::ScreenshotHistory,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::HistoryResourceAcceptanceState, String> {
+        if self.session.state() != CaptureSessionState::Idle
+            || self.history_file_read_in_flight()
+            || self.history_mutation_pending()
+        {
+            return Err("history workflow is busy".to_owned());
+        }
+        self.invalidate_history_thumbnails();
+        self.history = history;
+        self.history_thumbnails.clear();
+        self.history_thumbnail_failed.clear();
+        self.history_thumbnail_pending.clear();
+        self.history_expanded = true;
+        self.synchronize_history_preview_cache();
+        cx.notify();
+        Ok(self.history_resource_acceptance_state())
     }
 
     fn listen_for_shortcut(events: async_channel::Receiver<ShortcutEvent>, cx: &mut Context<Self>) {

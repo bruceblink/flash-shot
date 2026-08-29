@@ -102,7 +102,7 @@ impl FlashShotApp {
     }
 
     /// Invalidates queued or completed thumbnail work before a history file set changes.
-    pub(super) fn invalidate_history_thumbnails(&mut self) {
+    pub(in crate::app) fn invalidate_history_thumbnails(&mut self) {
         self.history_thumbnail_revision = self.history_thumbnail_revision.wrapping_add(1);
         self.history_thumbnail_pending.clear();
     }

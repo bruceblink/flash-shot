@@ -121,14 +121,21 @@ PNG 文件 Save 使用逐行 BGRA 到 RGBA 的流式编码，并通过原子临�
 资源样本须记录构建 profile、显示器/DPI、默认 5 条与显式 300 条展开、首批缩略图时间、峰值私有字节、
 截图和报告路径。当前实现已通过代码/全库回归；Release 单屏样本已完成并归档在
 `target/history-resource-acceptance/release-gate-clean-20260813/report.json`，默认预览条数保持不变。
-新的资源探针会在指定输出目录下创建独立的 `session-<timestamp>-<pid>` 目录，并将报告、两张截图、
-设置和指标写入其中；临时 history fixture 同样受该目录约束并在清理阶段删除，避免并行或重试会话覆盖彼此的证据。
+新的资源探针会在指定输出目录下创建独立的 `session-<timestamp>-<pid>` 目录，并将报告、基线截图、
+设置和指标写入其中；启用 `--exercise-failures` 时还会追加三张故障/恢复/目录切换截图。临时 history fixture
+同样受该目录约束并在清理阶段删除，避免并行或重试会话覆盖彼此的证据。
 
 2026-08-29 当前源码的 Release 资源样本位于
-`target/history-resource-acceptance/release-gate-current-20260829-r2/session-1787981887900-8096/report.json`：
-报告为 `passed=true`，默认 5 条与展开 300 条均完成，`peak_loading=2`、`thumbnails_cached=300`，并确认
+`target/history-resource-acceptance/release-normal-20260829/session-1787983224655-16012/report.json`：
+报告为 `passed=true`，默认 5 条与展开 300 条均完成，`peak_loading=2`、`thumbnails_cached=300`、`thumbnails_failed=0`，并确认
 `fixture_files_removed=true`、`history_root_exists=false`。Windows runner 会在发送 GPUI Quit 前写入报告并删除
 隔离 fixture，因为 GPUI 的退出路径会直接结束进程；该顺序保证报告和清理证据不会丢失。
+
+故障恢复样本位于
+`target/history-resource-acceptance/release-fault-20260829/session-1787982960787-31984/report.json`：
+`--exercise-failures` 在同一窗口中验证损坏/缺失文件、两个条目重试和 3 条新目录切换，报告的
+`failures_2`、`recovered_300`、`directory_switch_3` 均收敛，原始与切换目录均清理成功。历史删除和窗口关闭期间
+的真实 Release 故障路径仍需单独验收。
 
 常规视觉切片选择“拖选 -> Save 取消/保存 -> Pin -> Copy -> 清理”主流程。通过条件是同一 Release
 会话同时具备真实 `--allow-input` 报告、关键步骤原生截图、Save/Pin/Copy 逐像素结果和最终

@@ -112,11 +112,20 @@ cargo test --workspace --all-features
 ```
 
 验证 Library 历史缩略图的有界资源流控时，使用 Release 构建展开 300 条隔离 fixture。报告会记录
-默认 5 条预览、显式展开后的缓存/加载/队列峰值、工作集与私有提交，以及 fixture 清理结果；解码并发上限为 2：
+默认 5 条预览、显式展开后的缓存/加载/失败/队列峰值、工作集与私有提交，以及 fixture 清理结果；解码并发上限为 2：
 
 ```powershell
 .\scripts\run-dev-tool.ps1 -Release history-resource-acceptance --output-dir target\history-resource-acceptance\release-gate-current
 ```
+
+需要覆盖损坏/缺失文件、预览重试和历史目录切换时，在同一 Release 会话追加故障场景：
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release history-resource-acceptance --exercise-failures `
+  --output-dir target\history-resource-acceptance\release-fault
+```
+
+该场景会在报告中记录两个失败条目、恢复后的 300 条缓存、3 条新目录记录、故障截图和全部临时 history 根目录的清理结果。
 
 使用固定 4K 场景测量 CPU 导出合成器。该指标衡量导出性能，不是 GPUI 交互帧门禁；
 只有在建立具有代表性的 Release 基线后，才应显式设置上限：
