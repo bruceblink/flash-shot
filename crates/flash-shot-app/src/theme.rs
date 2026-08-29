@@ -72,6 +72,18 @@ pub struct ThemeMetrics {
     pub toolbar_height: f32,
     pub radius_sm: f32,
     pub radius_md: f32,
+    pub library_thumbnail_width: f32,
+    pub library_thumbnail_height: f32,
+    pub library_row_padding: f32,
+    pub library_row_gap: f32,
+    pub library_action_gap: f32,
+    pub library_selection_min_width: f32,
+    pub search_clear_size: f32,
+    pub settings_section_gap: f32,
+    pub settings_row_gap: f32,
+    pub settings_label_min_width: f32,
+    pub settings_label_max_width: f32,
+    pub settings_control_column_min_width: f32,
 }
 
 impl ThemeMetrics {
@@ -88,6 +100,18 @@ impl ThemeMetrics {
     pub const TOGGLE_HEIGHT: f32 = 20.0;
     pub const CONTROL_HEIGHT: f32 = 36.0;
     pub const TOOLBAR_HEIGHT: f32 = 44.0;
+    pub const LIBRARY_THUMBNAIL_WIDTH: f32 = 72.0;
+    pub const LIBRARY_THUMBNAIL_HEIGHT: f32 = 46.0;
+    pub const LIBRARY_ROW_PADDING: f32 = 12.0;
+    pub const LIBRARY_ROW_GAP: f32 = 8.0;
+    pub const LIBRARY_ACTION_GAP: f32 = 8.0;
+    pub const LIBRARY_SELECTION_MIN_WIDTH: f32 = 100.0;
+    pub const SEARCH_CLEAR_SIZE: f32 = 24.0;
+    pub const SETTINGS_SECTION_GAP: f32 = 12.0;
+    pub const SETTINGS_ROW_GAP: f32 = 12.0;
+    pub const SETTINGS_LABEL_MIN_WIDTH: f32 = 160.0;
+    pub const SETTINGS_LABEL_MAX_WIDTH: f32 = 220.0;
+    pub const SETTINGS_CONTROL_COLUMN_MIN_WIDTH: f32 = 160.0;
     pub const OVERLAY_EDGE_INSET: f32 = 18.0;
     pub const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
     pub const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
@@ -127,6 +151,18 @@ impl Default for ThemeMetrics {
             toolbar_height: Self::TOOLBAR_HEIGHT,
             radius_sm: 4.0,
             radius_md: 8.0,
+            library_thumbnail_width: Self::LIBRARY_THUMBNAIL_WIDTH,
+            library_thumbnail_height: Self::LIBRARY_THUMBNAIL_HEIGHT,
+            library_row_padding: Self::LIBRARY_ROW_PADDING,
+            library_row_gap: Self::LIBRARY_ROW_GAP,
+            library_action_gap: Self::LIBRARY_ACTION_GAP,
+            library_selection_min_width: Self::LIBRARY_SELECTION_MIN_WIDTH,
+            search_clear_size: Self::SEARCH_CLEAR_SIZE,
+            settings_section_gap: Self::SETTINGS_SECTION_GAP,
+            settings_row_gap: Self::SETTINGS_ROW_GAP,
+            settings_label_min_width: Self::SETTINGS_LABEL_MIN_WIDTH,
+            settings_label_max_width: Self::SETTINGS_LABEL_MAX_WIDTH,
+            settings_control_column_min_width: Self::SETTINGS_CONTROL_COLUMN_MIN_WIDTH,
         }
     }
 }
@@ -284,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn geometry_tokens_keep_controls_on_a_four_pixel_grid() {
+    fn geometry_tokens_keep_default_layout_stable() {
         let metrics = ThemeMetrics::default();
         assert_eq!(metrics.space_1, 4.0);
         assert_eq!(metrics.space_2, 8.0);
@@ -297,6 +333,23 @@ mod tests {
         assert_eq!(metrics.control_height, 36.0);
         assert_eq!(metrics.toolbar_height, 44.0);
         assert!(metrics.radius_md <= 8.0);
+    }
+
+    #[test]
+    fn library_and_settings_metrics_keep_compact_layout_stable() {
+        let metrics = ThemeMetrics::default();
+        assert_eq!(metrics.library_thumbnail_width, 72.0);
+        assert_eq!(metrics.library_thumbnail_height, 46.0);
+        assert_eq!(metrics.library_row_padding, 12.0);
+        assert_eq!(metrics.library_row_gap, 8.0);
+        assert_eq!(metrics.library_action_gap, 8.0);
+        assert_eq!(metrics.library_selection_min_width, 100.0);
+        assert_eq!(metrics.search_clear_size, 24.0);
+        assert_eq!(metrics.settings_section_gap, 12.0);
+        assert_eq!(metrics.settings_row_gap, 12.0);
+        assert_eq!(metrics.settings_label_min_width, 160.0);
+        assert_eq!(metrics.settings_label_max_width, 220.0);
+        assert_eq!(metrics.settings_control_column_min_width, 160.0);
     }
 
     #[test]

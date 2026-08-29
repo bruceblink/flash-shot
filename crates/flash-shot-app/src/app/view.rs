@@ -978,6 +978,7 @@ fn recording_settings(
     directory: RecordingDirectoryViewState<'_>,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
     let directory_check_in_flight = directory.check_in_flight;
     let source_discovery_busy = recording_source_discovery_busy(state);
     let lifecycle_busy = state.active || state.starting || state.stopping;
@@ -1026,10 +1027,10 @@ fn recording_settings(
             settings_row(locale.text(UiText::RecordingSettingsVideoFolder), colors).child(
                 div()
                     .flex_1()
-                    .min_w(px(160.0))
+                    .min_w(px(metrics.settings_control_column_min_width))
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap(px(metrics.space_2))
                     .child(
                         div()
                             .w_full()
@@ -1044,7 +1045,7 @@ fn recording_settings(
                             .w_full()
                             .flex()
                             .flex_wrap()
-                            .gap_2()
+                            .gap(px(metrics.space_2))
                             .child(settings_button(
                                 "settings-recording-folder-choose",
                                 locale.text(UiText::RecordingChooseFolderAction),
@@ -1111,7 +1112,7 @@ fn recording_settings(
                 .w_full()
                 .flex()
                 .flex_wrap()
-                .gap_2()
+                .gap(px(metrics.space_2))
                 .child(settings_button(
                     "settings-check-recording-support",
                     recording_support_check_label(locale, state.support_check_in_flight),
@@ -1159,7 +1160,7 @@ fn recording_settings(
                 settings_row(locale.text(UiText::RecordingStatusLabel), colors).child(
                     div()
                         .flex_1()
-                        .min_w(px(160.0))
+                        .min_w(px(metrics.settings_control_column_min_width))
                         .text_sm()
                         .text_color(colors.text)
                         .child(recording_progress_label(
@@ -1378,6 +1379,7 @@ fn history_settings(
         search_focus,
         selected_entries,
     } = state;
+    let metrics = ThemeMetrics::default();
     let now_ms = current_timestamp_ms();
     let is_empty = entries.is_empty();
     settings_section(locale.text(UiText::LibraryRecentCaptures), colors)
@@ -1394,7 +1396,7 @@ fn history_settings(
                 .w_full()
                 .flex()
                 .flex_wrap()
-                .gap_1()
+                .gap(px(metrics.space_1))
                 .children(HistoryFilter::ALL.map(|candidate| {
                     let selected = candidate == filter;
                     let filter_app = app.clone();
@@ -1439,10 +1441,10 @@ fn history_settings(
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .gap_2()
+                    .gap(px(metrics.library_action_gap))
                     .child(
                         div()
-                            .min_w(px(100.0))
+                            .min_w(px(metrics.library_selection_min_width))
                             .text_xs()
                             .text_color(colors.muted)
                             .child(history_selected_count_label(locale, selected_entries)),
@@ -1491,7 +1493,7 @@ fn history_settings(
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .gap_2()
+                    .gap(px(metrics.library_action_gap))
                     .child(div().text_sm().text_color(colors.muted).child(
                         history_clear_confirmation_label(locale, clear_count, clear_scope),
                     ))
@@ -1532,7 +1534,7 @@ fn history_settings(
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .gap_2()
+                    .gap(px(metrics.library_action_gap))
                     .child(
                         div()
                             .text_sm()
@@ -1614,13 +1616,14 @@ fn history_settings(
                     selected,
                     focused,
                     colors,
+                    metrics,
                 )
                 .child(
                     div()
                         .w_full()
                         .flex()
                         .flex_wrap()
-                        .gap_2()
+                        .gap(px(metrics.library_action_gap))
                         .child(history_selection_button(
                             format!("settings-select-history-{}", entry.created_at_ms),
                             if selected {
@@ -1773,10 +1776,10 @@ fn history_search_box(
         .h(px(metrics.control_height))
         .w_full()
         .relative()
-        .px_3()
+        .px(px(metrics.space_3))
         .flex()
         .items_center()
-        .gap_2()
+        .gap(px(metrics.space_2))
         .rounded_md()
         .border_1()
         .border_color(if active { colors.accent } else { colors.border })
@@ -1826,8 +1829,8 @@ fn history_search_box(
             search.child(
                 div()
                     .id("settings-clear-history-search")
-                    .w(px(24.0))
-                    .h(px(24.0))
+                    .w(px(metrics.search_clear_size))
+                    .h(px(metrics.search_clear_size))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -1921,12 +1924,13 @@ fn history_row(
     selected: bool,
     focused: bool,
     colors: crate::theme::ThemeColors,
+    metrics: ThemeMetrics,
 ) -> gpui::Div {
     div()
-        .p_3()
+        .p(px(metrics.library_row_padding))
         .flex()
         .flex_col()
-        .gap_2()
+        .gap(px(metrics.library_row_gap))
         .rounded_md()
         .border_1()
         .border_color(if focused {
@@ -1942,11 +1946,11 @@ fn history_row(
             div()
                 .flex()
                 .items_center()
-                .gap_3()
+                .gap(px(metrics.library_row_gap))
                 .child(
                     div()
-                        .w(px(72.0))
-                        .h(px(46.0))
+                        .w(px(metrics.library_thumbnail_width))
+                        .h(px(metrics.library_thumbnail_height))
                         .flex_none()
                         .overflow_hidden()
                         .border_1()
@@ -2008,8 +2012,9 @@ fn empty_history_message(
 
 /// Gives an empty or filtered history result a deliberate visual state instead of a loose label.
 fn empty_history_state(message: String, colors: crate::theme::ThemeColors) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
     div()
-        .p_4()
+        .p(px(metrics.space_4))
         .flex()
         .items_center()
         .rounded_md()
@@ -2458,13 +2463,14 @@ fn settings_page_copy_for_locale(
 }
 
 fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
     div()
         .pb_5()
         .border_b_1()
         .border_color(colors.border)
         .flex()
         .flex_col()
-        .gap_3()
+        .gap(px(metrics.settings_section_gap))
         .child(
             div()
                 .text_xs()
@@ -2482,14 +2488,14 @@ fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
         .flex()
         .flex_wrap()
         .items_center()
-        .gap_3()
+        .gap(px(metrics.settings_row_gap))
         .min_h(px(metrics.row_min_height))
         .py_1()
         .child(
             div()
                 .flex_1()
-                .min_w(px(160.0))
-                .max_w(px(220.0))
+                .min_w(px(metrics.settings_label_min_width))
+                .max_w(px(metrics.settings_label_max_width))
                 .text_sm()
                 .text_color(colors.muted)
                 .child(label.to_owned()),

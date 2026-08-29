@@ -440,6 +440,12 @@ Record、App、Pin 中使用一致的颜色和层级；关键步骤截图与 JSO
   深色/浅色与 420x420、520x640、980x760 的选区、More、右下边缘 More 和 Pin 保存反馈，全部记录
   `scale_match=true`；`scripts/check-pin-lifecycle-acceptance.ps1` 已修正 Release 参数绑定，
   `target/pin-lifecycle-u31-final/session-1787974248268-25328/report.json` 的 Release 生命周期报告通过；
+- 本轮将 Library/Record 共用的标签列宽、操作间距、历史缩略图尺寸、搜索清除按钮尺寸和设置分组间距
+  收敛到 `ThemeMetrics`，保留窄窗口的换行与内容滚动策略；对应的几何默认值由 `theme` 单元测试锁定。
+- 当前 Release 设置探针已生成 `target/ui-acceptance/u32/u32-library-*.png`/JSON 与
+  `u32-record-*.png`/JSON 各 12 组，覆盖 English/简体中文、深色/浅色和 420x420、520x640、980x760，
+  全部记录 `scale_match=true`；Library 缩略图队列的 300 条历史、失败/重试和目录切换证据位于
+  `target/history-resource-acceptance-u32/session-1787984629624-23464/report.json`，报告及清理结果通过。
 - Library、Record 以及真实中英文 Pin 输入和 150%/200% DPI 的完整视觉矩阵仍待后续切片，不能由本轮隔离
   探针替代。
 
