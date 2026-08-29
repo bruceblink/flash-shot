@@ -294,7 +294,7 @@ impl gpui::Render for FlashShotApp {
             )
             .child(
                 div()
-                    .h(px(48.0))
+                    .h(px(metrics.status_height))
                     .flex_none()
                     .px_5()
                     .flex()
@@ -419,15 +419,17 @@ fn settings_header(
 ) -> gpui::Div {
     let metrics = ThemeMetrics::default();
     div()
-        .h(px(76.0))
+        .h(px(metrics.header_height))
         .flex_none()
         .px_6()
         .flex()
         .items_center()
         .justify_between()
+        .border_t_1()
         .border_b_1()
         .border_color(colors.border)
         .bg(colors.surface)
+        .shadow_sm()
         .child(
             div()
                 .flex()
@@ -442,8 +444,8 @@ fn settings_header(
                         .rounded_sm()
                         .border_1()
                         .border_color(colors.accent)
-                        .bg(colors.surface_elevated)
-                        .text_color(colors.accent)
+                        .bg(colors.accent)
+                        .text_color(colors.canvas)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("F"),
                 )
@@ -1761,13 +1763,14 @@ fn history_search_box(
     app: gpui::Entity<FlashShotApp>,
     locale: Locale,
 ) -> gpui::Stateful<gpui::Div> {
+    let metrics = ThemeMetrics::default();
     let input_app = app.clone();
     let input_focus = focus_handle.clone();
     let activate_app = app.clone();
     let activate_focus = focus_handle.clone();
     div()
         .id("settings-history-search")
-        .h(px(36.0))
+        .h(px(metrics.control_height))
         .w_full()
         .relative()
         .px_3()
@@ -2193,6 +2196,7 @@ fn settings_navigation(
     focus_handles: &[FocusHandle; 4],
     locale: Locale,
 ) -> gpui::Stateful<gpui::Div> {
+    let metrics = ThemeMetrics::default();
     div()
         .id("settings-navigation")
         .bg(colors.surface)
@@ -2210,7 +2214,7 @@ fn settings_navigation(
         })
         .when(!compact, |navigation| {
             navigation
-                .w(px(164.0))
+                .w(px(metrics.navigation_width))
                 .p_4()
                 .border_r_1()
                 .border_color(colors.border)
@@ -2290,6 +2294,7 @@ fn settings_navigation_item(
     compact: bool,
     focus_handles: [FocusHandle; 4],
 ) -> gpui::Stateful<gpui::Div> {
+    let metrics = ThemeMetrics::default();
     let active = selected == item.section;
     let keyboard_app = app.clone();
     let item_focus = focus_handles[settings_section_index(item.section)].clone();
@@ -2299,14 +2304,14 @@ fn settings_navigation_item(
         .when(compact, |item| {
             item.flex_1()
                 .min_w(px(0.0))
-                .h(px(36.0))
+                .h(px(metrics.control_height))
                 .px_2()
                 .items_center()
                 .justify_center()
         })
         .when(!compact, |item| {
             item.w_full()
-                .min_h(px(52.0))
+                .min_h(px(metrics.row_min_height + metrics.space_3))
                 .px_3()
                 .py_2()
                 .flex_col()
@@ -2336,6 +2341,12 @@ fn settings_navigation_item(
                 .bg(colors.surface_hover)
                 .border_color(if active { colors.accent } else { colors.border })
                 .text_color(if active { colors.accent } else { colors.text })
+        })
+        .active(move |style| {
+            style
+                .bg(colors.accent_pressed)
+                .border_color(colors.accent_pressed)
+                .text_color(colors.canvas)
         })
         .on_key_down(move |event, window, cx| {
             if settings_navigation_activation(&event.keystroke) {
@@ -2465,13 +2476,14 @@ fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div
 
 /// Keeps labels in a stable column so controls stay nearby on wide windows and wrap below on narrow ones.
 fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
     div()
         .w_full()
         .flex()
         .flex_wrap()
         .items_center()
         .gap_3()
-        .min_h(px(40.0))
+        .min_h(px(metrics.row_min_height))
         .py_1()
         .child(
             div()
@@ -2515,7 +2527,13 @@ fn settings_button(
                 .focusable()
                 .focus_visible(|style| style.border_color(colors.focus))
                 .cursor_pointer()
-                .hover(|style| style.bg(colors.surface_hover))
+                .hover(|style| style.bg(colors.surface_hover).border_color(colors.accent))
+                .active(|style| {
+                    style
+                        .bg(colors.accent_pressed)
+                        .border_color(colors.accent_pressed)
+                        .text_color(colors.canvas)
+                })
                 .on_click(on_click)
         })
         .child(label.to_owned())
@@ -2538,6 +2556,14 @@ fn settings_danger_button(
             colors.danger
         } else {
             colors.text_disabled
+        })
+        .when(enabled, |button| {
+            button.active(|style| {
+                style
+                    .bg(colors.danger)
+                    .border_color(colors.danger)
+                    .text_color(colors.canvas)
+            })
         })
 }
 
@@ -2594,6 +2620,15 @@ fn quick_action_button(
                         })
                         .text_color(if primary { colors.canvas } else { colors.text })
                 })
+                .active(move |style| {
+                    style
+                        .bg(if primary {
+                            colors.accent_pressed
+                        } else {
+                            colors.surface_hover
+                        })
+                        .text_color(if primary { colors.canvas } else { colors.text })
+                })
                 .on_click(on_click)
         })
         .child(label.to_owned())
@@ -2606,13 +2641,14 @@ fn settings_toggle(
     enabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    let metrics = ThemeMetrics::default();
     // A fixed-size track keeps binary preferences easy to scan without letting
     // the label change shift adjacent settings rows.
     div()
         .id(id)
-        .w(px(36.0))
-        .h(px(20.0))
-        .p(px(2.0))
+        .w(px(metrics.toggle_width))
+        .h(px(metrics.toggle_height))
+        .p(px(metrics.space_1 / 2.0))
         .flex()
         .items_center()
         .when(enabled_value, |toggle| toggle.justify_end())
@@ -2629,7 +2665,8 @@ fn settings_toggle(
                 .focusable()
                 .focus_visible(|style| style.border_color(colors.focus))
                 .cursor_pointer()
-                .hover(|style| style.bg(colors.surface_hover))
+                .hover(|style| style.bg(colors.surface_hover).border_color(colors.accent))
+                .active(|style| style.bg(colors.accent_pressed))
                 .on_click(on_click)
         })
         .child(div().size(px(14.0)).rounded_full().bg(colors.text))

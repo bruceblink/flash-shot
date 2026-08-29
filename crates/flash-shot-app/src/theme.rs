@@ -59,6 +59,12 @@ pub struct ThemeMetrics {
     pub space_2: f32,
     pub space_3: f32,
     pub space_4: f32,
+    pub header_height: f32,
+    pub status_height: f32,
+    pub navigation_width: f32,
+    pub row_min_height: f32,
+    pub toggle_width: f32,
+    pub toggle_height: f32,
     pub control_height: f32,
     pub toolbar_height: f32,
     pub radius_sm: f32,
@@ -72,6 +78,12 @@ impl Default for ThemeMetrics {
             space_2: 8.0,
             space_3: 12.0,
             space_4: 16.0,
+            header_height: 76.0,
+            status_height: 48.0,
+            navigation_width: 164.0,
+            row_min_height: 40.0,
+            toggle_width: 36.0,
+            toggle_height: 20.0,
             control_height: 36.0,
             toolbar_height: 44.0,
             radius_sm: 4.0,
@@ -223,6 +235,12 @@ mod tests {
         let metrics = ThemeMetrics::default();
         assert_eq!(metrics.space_1, 4.0);
         assert_eq!(metrics.space_2, 8.0);
+        assert_eq!(metrics.header_height, 76.0);
+        assert_eq!(metrics.status_height, 48.0);
+        assert_eq!(metrics.navigation_width, 164.0);
+        assert_eq!(metrics.row_min_height, 40.0);
+        assert_eq!(metrics.toggle_width, 36.0);
+        assert_eq!(metrics.toggle_height, 20.0);
         assert_eq!(metrics.control_height, 36.0);
         assert_eq!(metrics.toolbar_height, 44.0);
         assert!(metrics.radius_md <= 8.0);
