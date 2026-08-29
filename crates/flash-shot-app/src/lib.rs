@@ -215,6 +215,10 @@ pub struct OverlayInteractionCaptureState {
     pub pinned_source_bounds: Option<domain::geometry::PhysicalRect>,
     /// Whether a previously visible capture overlay is still waiting for deferred native teardown.
     pub capture_teardown_pending: bool,
+    /// Monotonic token used to reject callbacks that belong to an older capture lifecycle.
+    pub operation_generation: u64,
+    /// Whether capture-related background work has reached a quiescent state.
+    pub background_tasks_idle: bool,
     pub capture_preflight_ready: bool,
     pub status: String,
 }

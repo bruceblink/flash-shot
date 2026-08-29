@@ -1411,7 +1411,20 @@ struct CaptureActionReport {
     save: Option<SaveReport>,
     pin: Option<PinReport>,
     copy: CopyReport,
+    lifecycle: Option<CaptureLifecycleReport>,
     cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct CaptureLifecycleReport {
+    initial_operation_generation: u64,
+    recapture_operation_generation: u64,
+    after_cancel_operation_generation: u64,
+    final_operation_generation: u64,
+    recapture_advanced_generation: bool,
+    cancel_advanced_generation: bool,
+    background_tasks_idle: bool,
+    input_released: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -2043,9 +2056,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 17 records the
-        // persistent Pin close button separately from the existing Escape cleanup route.
-        schema_version: 17,
+        // Increment when the machine-readable report shape changes. Schema 18 records capture
+        // generation and background-input cleanup evidence for the continuous lifecycle scenario.
+        schema_version: 18,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -5548,11 +5561,13 @@ fn execute_capture_interactions(
         Some(&selected),
     )?;
 
-    let before_nudge = wait_for_capture_state(context, "initial selection state", |state| {
+    let initial_state = wait_for_capture_state(context, "initial selection state", |state| {
         state.session_state == "selecting" && state.selection.is_some() && state.overlay_count == 1
-    })?
-    .selection
-    .ok_or_else(|| io::Error::other("selection disappeared before keyboard nudge"))?;
+    })?;
+    let initial_operation_generation = initial_state.operation_generation;
+    let before_nudge = initial_state
+        .selection
+        .ok_or_else(|| io::Error::other("selection disappeared before keyboard nudge"))?;
     validate_selection_geometry(
         first_drag.selection,
         before_nudge,
@@ -5577,6 +5592,9 @@ fn execute_capture_interactions(
     )?;
 
     let foreground = inject_mouse_click(first_overlay.handle, plan.more)?;
+    wait_for_capture_state(context, "More open", |state| {
+        state.more_actions_visible && state.overlay_count == 1
+    })?;
     thread::sleep(context.settle_delay);
     let more = capture_evidence(context, "03-more.png", first_overlay)?;
     ensure_evidence_changed(&nudged, &more, "More did not change the overlay")?;
@@ -5588,7 +5606,11 @@ fn execute_capture_interactions(
         Some(&more),
     )?;
 
+    focus_owned_window(first_overlay, context.timeout)?;
     let foreground = inject_mouse_click(first_overlay.handle, plan.more)?;
+    wait_for_capture_state(context, "Less close", |state| {
+        !state.more_actions_visible && state.overlay_count == 1
+    })?;
     thread::sleep(context.settle_delay);
     let less = capture_evidence(context, "04-less.png", first_overlay)?;
     ensure_evidence_changed(&more, &less, "Less did not close the expanded actions")?;
@@ -5643,11 +5665,18 @@ fn execute_capture_interactions(
         foreground,
         Some(&restarted),
     )?;
-    let recapture_selection = wait_for_capture_state(context, "recapture selection", |state| {
+    let recapture_state = wait_for_capture_state(context, "recapture selection", |state| {
         state.session_state == "selecting" && state.selection.is_some() && state.overlay_count == 1
-    })?
-    .selection
-    .ok_or_else(|| io::Error::other("recapture selection disappeared"))?;
+    })?;
+    let recapture_operation_generation = recapture_state.operation_generation;
+    if recapture_operation_generation == initial_operation_generation {
+        return Err(io::Error::other(
+            "recapture did not advance the capture operation generation",
+        ));
+    }
+    let recapture_selection = recapture_state
+        .selection
+        .ok_or_else(|| io::Error::other("recapture selection disappeared"))?;
     validate_selection_geometry(
         second_drag.selection,
         recapture_selection,
@@ -5663,6 +5692,20 @@ fn execute_capture_interactions(
         foreground,
         None,
     )?;
+    let after_cancel = wait_for_capture_state(context, "second cancel teardown", |state| {
+        state.overlay_count == 0
+            && state.pinned_count == 0
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+            && matches!(state.session_state.as_str(), "idle" | "cancelled")
+    })?;
+    let after_cancel_operation_generation = after_cancel.operation_generation;
+    if after_cancel_operation_generation == recapture_operation_generation {
+        return Err(io::Error::other(
+            "cancel did not advance the capture operation generation",
+        ));
+    }
 
     let nudge = NudgeReport {
         before: before_nudge,
@@ -5676,12 +5719,14 @@ fn execute_capture_interactions(
     let final_state = wait_for_capture_state(context, "final capture cleanup", |state| {
         state.overlay_count == 0
             && state.pinned_count == 0
+            && state.background_tasks_idle
             && state.capture_preflight_ready
             && matches!(
                 state.session_state.as_str(),
                 "idle" | "completed" | "cancelled"
             )
     })?;
+    ensure_capture_input_released()?;
     let visible_process_windows = process_windows()?.len();
     if visible_process_windows != 0 {
         return Err(io::Error::other(format!(
@@ -5695,6 +5740,18 @@ fn execute_capture_interactions(
         save: Some(save),
         pin: Some(pin),
         copy,
+        lifecycle: Some(CaptureLifecycleReport {
+            initial_operation_generation,
+            recapture_operation_generation,
+            after_cancel_operation_generation,
+            final_operation_generation: final_state.operation_generation,
+            recapture_advanced_generation: recapture_operation_generation
+                != initial_operation_generation,
+            cancel_advanced_generation: after_cancel_operation_generation
+                != recapture_operation_generation,
+            background_tasks_idle: final_state.background_tasks_idle,
+            input_released: true,
+        }),
         cleanup: CleanupReport {
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
@@ -5749,6 +5806,7 @@ fn execute_copy_only_interactions(
         save: None,
         pin: None,
         copy,
+        lifecycle: None,
         cleanup: CleanupReport {
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
@@ -9198,12 +9256,28 @@ fn ensure_input_keys_released(keys: &[(u16, &str)]) -> io::Result<()> {
     } else {
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!(
-                "scroll roundtrip left injected input held: {}",
-                held.join(", ")
-            ),
+            format!("injected input remained held: {}", held.join(", ")),
         ))
     }
+}
+
+#[cfg(windows)]
+/// Verifies every key and mouse button used by the standard capture scenario is released.
+fn ensure_capture_input_released() -> io::Result<()> {
+    ensure_input_keys_released(&[
+        (VK_CONTROL, "Control"),
+        (VK_MENU, "Alt"),
+        (VK_F24, "F24"),
+        (VK_SHIFT, "Shift"),
+        (VK_SPACE, "Space"),
+        (VK_RETURN, "Enter"),
+        (VK_ESCAPE, "Escape"),
+        (VK_LBUTTON, "left mouse button"),
+        (VK_RIGHT, "Right"),
+        (VK_S, "S"),
+        (VK_C, "C"),
+        (VK_A, "A"),
+    ])
 }
 
 #[cfg(windows)]
@@ -10925,6 +10999,8 @@ mod tests {
             pinned_count: 0,
             pinned_source_bounds: None,
             capture_teardown_pending: false,
+            operation_generation: 0,
+            background_tasks_idle: true,
             capture_preflight_ready: true,
             status: "Selection copied to clipboard".to_owned(),
         };

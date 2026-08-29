@@ -397,6 +397,26 @@ impl FlashShotApp {
             && !self.history_root_change_in_flight
     }
 
+    /// Reports whether all capture-owned asynchronous work is quiescent for acceptance probes.
+    ///
+    /// This read-only aggregate intentionally includes workers that are independent from the
+    /// restart guard, such as a frozen selection Copy or a Pin save, so a report cannot call a
+    /// lifecycle clean while a late callback may still update the UI.
+    pub(in crate::app) fn capture_background_tasks_idle(&self) -> bool {
+        self.capture_restart_operations_idle()
+            && self.delayed_capture_generation.is_none()
+            && !self.manual_scroll_capture_in_flight
+            && self.manual_scroll_auto_capture_generation.is_none()
+            && self.selection_copy.is_none()
+            && self.clipboard_write_lease.is_none()
+            && !self.pinned_save_in_flight
+            && !self.recognition_in_flight
+            && !self.translation_service_test_in_flight
+            && !self.ocr_support_check_in_flight
+            && !self.recording_start_in_flight
+            && !self.recording_stopping
+    }
+
     /// Starts a new capture only after tasks that still depend on the editable session finish.
     ///
     /// A selection Copy is intentionally absent: it owns a frozen clone and must not make Save,

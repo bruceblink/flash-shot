@@ -1007,6 +1007,8 @@ impl FlashShotApp {
                                 pinned_count: this.pinned_windows.len(),
                                 pinned_source_bounds,
                                 capture_teardown_pending: this.capture_teardown_pending,
+                                operation_generation: this.operation_generation,
+                                background_tasks_idle: this.capture_background_tasks_idle(),
                                 capture_preflight_ready: this.capture_preflight_ready(),
                                 status: this.status.clone(),
                             });
