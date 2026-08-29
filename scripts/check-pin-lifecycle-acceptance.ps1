@@ -1,5 +1,9 @@
 param(
     [string]$OutputDirectory = "target\pin-lifecycle-acceptance",
+    [ValidateSet("en", "zh-CN")]
+    [string]$Locale = "en",
+    [ValidateSet("dark", "light")]
+    [string]$Theme = "dark",
     [ValidateRange(3000, 900000)]
     [int]$TimeoutMilliseconds = 20000,
     [ValidateRange(100, 3000)]
@@ -30,6 +34,8 @@ $runnerArguments = @{
     Tool = "pin-lifecycle-acceptance"
     ToolArguments = @(
         "--output-dir", $outputPath,
+        "--locale", $Locale,
+        "--theme", $Theme,
         "--timeout-ms", $TimeoutMilliseconds,
         "--settle-ms", $SettleMilliseconds
     )
@@ -66,6 +72,9 @@ if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
 $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
 if ($report.status -ne "passed" -or $null -ne $report.error) {
     throw "Pin lifecycle acceptance report did not pass: $($report.error)"
+}
+if ($report.schema_version -ne 5 -or $report.locale -ne $Locale -or $report.theme -ne $Theme) {
+    throw "Pin lifecycle acceptance report does not match locale/theme $Locale/$Theme"
 }
 if (-not $report.system_services_disabled -or $report.windows.Count -ne 3) {
     throw "Pin lifecycle acceptance did not preserve its isolated three-window boundary"

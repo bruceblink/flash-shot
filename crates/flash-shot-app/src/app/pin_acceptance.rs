@@ -36,12 +36,14 @@ mod windows {
         PinLifecycleAcceptanceOptions,
         domain::geometry::PhysicalRect,
         history::{HistorySource, ScreenshotHistory},
+        i18n::Locale,
         performance::PerformanceRecorder,
         platform::{
             capture::{CaptureBackend, CaptureFrame, PixelFormat, SystemCaptureBackend},
             clipboard::ClipboardService,
         },
         settings::UserSettings,
+        theme::ThemeMode,
     };
 
     const PIN_COUNT: usize = 3;
@@ -61,6 +63,8 @@ mod windows {
         process_id: u32,
         isolated_profile: String,
         system_services_disabled: bool,
+        locale: &'static str,
+        theme: &'static str,
         display: DisplayReport,
         windows: Vec<PinWindowReport>,
         zoom: Option<GeometryChangeReport>,
@@ -319,12 +323,14 @@ mod windows {
     impl PinLifecycleReport {
         fn new(acceptance: &PinLifecycleAcceptanceOptions) -> Self {
             Self {
-                schema_version: 4,
+                schema_version: 5,
                 test: "pin_lifecycle_acceptance",
                 status: "running".to_owned(),
                 process_id: unsafe { GetCurrentProcessId() },
                 isolated_profile: acceptance.session_root.to_string_lossy().into_owned(),
                 system_services_disabled: false,
+                locale: locale_report_value(acceptance.locale),
+                theme: theme_report_value(acceptance.theme_mode),
                 display: DisplayReport {
                     id: acceptance.display.id.clone(),
                     bounds: acceptance.display.physical_bounds,
@@ -348,6 +354,20 @@ mod windows {
                 screenshots: Vec::new(),
                 error: None,
             }
+        }
+    }
+
+    fn locale_report_value(locale: Locale) -> &'static str {
+        match locale {
+            Locale::English => "en",
+            Locale::SimplifiedChinese => "zh-CN",
+        }
+    }
+
+    fn theme_report_value(theme: ThemeMode) -> &'static str {
+        match theme {
+            ThemeMode::Dark => "dark",
+            ThemeMode::Light => "light",
         }
     }
 

@@ -11,12 +11,16 @@ use std::{
 use flash_shot::{
     PinLifecycleAcceptanceOptions,
     history::ScreenshotHistory,
+    i18n::Locale,
     performance::PerformanceRecorder,
     platform::display::{DisplayProvider, SystemDisplayProvider},
     settings::UserSettings,
+    theme::ThemeMode,
 };
 
 const DEFAULT_OUTPUT_DIR: &str = "target/pin-lifecycle-acceptance";
+const DEFAULT_LOCALE: Locale = Locale::English;
+const DEFAULT_THEME: ThemeMode = ThemeMode::Dark;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_SETTLE_DELAY: Duration = Duration::from_millis(350);
 const DEFAULT_SOAK_DURATION: Duration = Duration::ZERO;
@@ -31,6 +35,8 @@ const SOAK_WATCHDOG_OVERHEAD: Duration = Duration::from_secs(10);
 #[derive(Debug, Eq, PartialEq)]
 struct Options {
     output_dir: PathBuf,
+    locale: Locale,
+    theme_mode: ThemeMode,
     timeout: Duration,
     settle_delay: Duration,
     soak_duration: Duration,
@@ -45,12 +51,16 @@ impl Options {
     fn parse_from(arguments: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
         let mut options = Self {
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
+            locale: DEFAULT_LOCALE,
+            theme_mode: DEFAULT_THEME,
             timeout: DEFAULT_TIMEOUT,
             settle_delay: DEFAULT_SETTLE_DELAY,
             soak_duration: DEFAULT_SOAK_DURATION,
         };
         let mut arguments = arguments.into_iter();
         let mut output_seen = false;
+        let mut locale_seen = false;
+        let mut theme_seen = false;
         let mut timeout_seen = false;
         let mut settle_seen = false;
         let mut soak_seen = false;
@@ -68,6 +78,14 @@ impl Options {
                             .map_err(|_| "output directory must be valid Unicode".to_owned())?,
                     );
                     output_seen = true;
+                }
+                "--locale" if !locale_seen => {
+                    options.locale = parse_locale(arguments.next())?;
+                    locale_seen = true;
+                }
+                "--theme" if !theme_seen => {
+                    options.theme_mode = parse_theme(arguments.next())?;
+                    theme_seen = true;
                 }
                 "--timeout-ms" if !timeout_seen => {
                     options.timeout =
@@ -92,7 +110,8 @@ impl Options {
                     )?;
                     soak_seen = true;
                 }
-                "--output-dir" | "--timeout-ms" | "--settle-ms" | "--soak-ms" => {
+                "--output-dir" | "--locale" | "--theme" | "--timeout-ms" | "--settle-ms"
+                | "--soak-ms" => {
                     return Err(format!("{argument} may only be supplied once"));
                 }
                 _ => return Err(usage()),
@@ -110,6 +129,30 @@ impl Options {
             ));
         }
         Ok(options)
+    }
+}
+
+/// Parses the stable locale identifiers accepted by the Windows evidence scripts.
+fn parse_locale(value: Option<OsString>) -> Result<Locale, String> {
+    let value = value
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(usage)?;
+    match value.as_str() {
+        "en" => Ok(Locale::English),
+        "zh-CN" => Ok(Locale::SimplifiedChinese),
+        _ => Err("locale must be en or zh-CN".to_owned()),
+    }
+}
+
+/// Parses the stable theme identifiers accepted by the Windows evidence scripts.
+fn parse_theme(value: Option<OsString>) -> Result<ThemeMode, String> {
+    let value = value
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(usage)?;
+    match value.as_str() {
+        "dark" => Ok(ThemeMode::Dark),
+        "light" => Ok(ThemeMode::Light),
+        _ => Err("theme must be dark or light".to_owned()),
     }
 }
 
@@ -136,7 +179,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: pin-lifecycle-acceptance [--output-dir <path>] [--timeout-ms <3000-900000>] [--settle-ms <100-3000>] [--soak-ms <10000-600000>]".to_owned()
+    "usage: pin-lifecycle-acceptance [--output-dir <path>] [--locale <en|zh-CN>] [--theme <dark|light>] [--timeout-ms <3000-900000>] [--settle-ms <100-3000>] [--soak-ms <10000-600000>]".to_owned()
 }
 
 pub(super) fn entrypoint() {
@@ -189,6 +232,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         unsafe { std::env::set_var("FLASH_SHOT_PROFILE_DIR", &session_root) };
         let settings_path = session_root.join("settings.json");
         let mut settings = UserSettings::default();
+        settings.locale = options.locale;
+        settings.theme_mode = options.theme_mode;
         settings.capture_shortcut_enabled = false;
         settings.full_screen_shortcut = None;
         settings.focused_window_shortcut = None;
@@ -210,6 +255,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 timeout: options.timeout,
                 settle_delay: options.settle_delay,
                 soak_duration: options.soak_duration,
+                locale: options.locale,
+                theme_mode: options.theme_mode,
             },
         )
     }
@@ -217,7 +264,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_OUTPUT_DIR, Options};
+    use super::{DEFAULT_LOCALE, DEFAULT_OUTPUT_DIR, DEFAULT_THEME, Options};
+    use flash_shot::{i18n::Locale, theme::ThemeMode};
     use std::{ffi::OsString, path::PathBuf, time::Duration};
 
     fn arguments(values: &[&str]) -> Vec<OsString> {
@@ -228,12 +276,18 @@ mod tests {
     fn parser_uses_safe_defaults_and_accepts_bounded_overrides() {
         let defaults = Options::parse_from(arguments(&[])).unwrap();
         assert_eq!(defaults.output_dir, PathBuf::from(DEFAULT_OUTPUT_DIR));
+        assert_eq!(defaults.locale, DEFAULT_LOCALE);
+        assert_eq!(defaults.theme_mode, DEFAULT_THEME);
         assert_eq!(defaults.timeout, Duration::from_secs(15));
         assert_eq!(defaults.soak_duration, Duration::ZERO);
 
         let options = Options::parse_from(arguments(&[
             "--output-dir",
             "evidence",
+            "--locale",
+            "zh-CN",
+            "--theme",
+            "light",
             "--timeout-ms",
             "20000",
             "--settle-ms",
@@ -243,6 +297,8 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(options.output_dir, PathBuf::from("evidence"));
+        assert_eq!(options.locale, Locale::SimplifiedChinese);
+        assert_eq!(options.theme_mode, ThemeMode::Light);
         assert_eq!(options.timeout, Duration::from_secs(20));
         assert_eq!(options.settle_delay, Duration::from_millis(500));
         assert_eq!(options.soak_duration, Duration::from_secs(10));
@@ -253,6 +309,10 @@ mod tests {
         assert!(
             Options::parse_from(arguments(&["--output-dir", "a", "--output-dir", "b"])).is_err()
         );
+        assert!(Options::parse_from(arguments(&["--locale", "en", "--locale", "zh-CN"])).is_err());
+        assert!(Options::parse_from(arguments(&["--locale", "fr"])).is_err());
+        assert!(Options::parse_from(arguments(&["--theme", "blue"])).is_err());
+        assert!(Options::parse_from(arguments(&["--theme", "dark", "--theme", "light"])).is_err());
         assert!(Options::parse_from(arguments(&["--timeout-ms", "2999"])).is_err());
         assert!(Options::parse_from(arguments(&["--settle-ms", "3001"])).is_err());
         assert!(Options::parse_from(arguments(&["--soak-ms", "9999"])).is_err());

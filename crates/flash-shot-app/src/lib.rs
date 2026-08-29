@@ -424,6 +424,10 @@ pub struct PinLifecycleAcceptanceOptions {
     pub timeout: Duration,
     pub settle_delay: Duration,
     pub soak_duration: Duration,
+    /// Locale used by the Pin windows and recorded in the acceptance report.
+    pub locale: crate::i18n::Locale,
+    /// Theme used by the Pin windows and recorded in the acceptance report.
+    pub theme_mode: crate::theme::ThemeMode,
 }
 
 /// Runs three real Pin windows without the production tray, hotkeys, or single-instance mutex.
