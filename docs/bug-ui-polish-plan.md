@@ -412,7 +412,16 @@ Record、App、Pin 中使用一致的颜色和层级；关键步骤截图与 JSO
 - 设置页标题栏采用统一的表面层级、细边界、实色品牌标记和轻量阴影；导航、按钮、开关和主要动作补齐
   hover、按下与键盘焦点的语义状态，破坏性按钮保持独立危险色；
 - Release 设置探针已在 English/简体中文、深色/浅色和 420x420、520x640、980x760 组合下生成 12 组
-  `u3-shell-*.png`/JSON，全部记录 `scale_match=true`；覆盖层、Pin 和非设置页的完整视觉矩阵仍待后续切片。
+  `u3-shell-*.png`/JSON，全部记录 `scale_match=true`；
+- 提交 `709808f` 将覆盖层和 Pin 工具栏接入同一组 `ThemeMetrics` 几何 token，并统一主要动作、次要动作、
+  破坏性动作的 hover、按下、焦点和浅色主题覆盖层文字前景；覆盖层状态、尺寸标签、标注上下文和识别预览
+  在深色覆盖层背景上不再因浅色主题使用低对比度文字；
+- 同一 Release 构建生成 `target/ui-acceptance/u31-final-*.png`/JSON 共 48 组，覆盖 English/简体中文、
+  深色/浅色与 420x420、520x640、980x760 的选区、More、右下边缘 More 和 Pin 保存反馈，全部记录
+  `scale_match=true`；`scripts/check-pin-lifecycle-acceptance.ps1` 已修正 Release 参数绑定，
+  `target/pin-lifecycle-u31-final/session-1787974248268-25328/report.json` 的 Release 生命周期报告通过；
+- Library、Record 以及真实中英文 Pin 输入和 150%/200% DPI 的完整视觉矩阵仍待后续切片，不能由本轮隔离
+  探针替代。
 
 ### U4：Pin 中英文实时证据
 
