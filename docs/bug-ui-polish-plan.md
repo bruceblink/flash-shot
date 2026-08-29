@@ -142,7 +142,7 @@ U0 设计基线完成前，必须保留一组“当前版本 vs 新基线”的�
 | 1 | U0 | 冻结现代科技工具视觉语言和验收基线 | `theme.rs`、App 壳层、设计文档 | 已完成 |
 | 2 | B0 | 建立可复现的 Bug 与可见文案基线 | `flash-shot-app`、验收脚本、文档 | 已完成 |
 | 3 | B1 | 剪贴板、保存、录屏失败后可立即恢复 | workflow、Windows 基础设施、录屏模块 | 进行中 |
-| 4 | B2 | Capture/Save/Pin/Close 重复操作无残留 | overlay、pinned、窗口生命周期、runner | 待开始 |
+| 4 | B2 | Capture/Save/Pin/Close 重复操作无残留 | overlay、pinned、窗口生命周期、runner | 已完成 |
 | 5 | B3 | 历史异步任务有界且不写回陈旧结果 | Library/history workflow | 进行中 |
 | 6 | B4 | 水印、文字、箭头编辑与导出回归保护 | overlay、annotation、image | 进行中 |
 | 7 | U1 | 完成 Record/OCR/更新/错误/忙状态国际化 | `i18n.rs`、workflow、Record UI | 进行中 |
@@ -229,6 +229,16 @@ Capture 可以完成。
 
 **失败处理**：只要桌面仍有残留、任务未结束或下一次 Capture 被拒绝，就保留报告和步骤截图，回到具体
 生命周期分支修复，不扩大到视觉重构。
+
+**完成记录（2026-08-29）**：当前源码的 Release `overlay-interaction-acceptance --allow-input` 已在单屏
+2560x1440、DPI 96 环境完成一轮连续 Capture -> 选区微调 -> More/Less -> 再次 Capture -> Cancel ->
+Save 取消/重试 -> Pin -> Copy -> Escape 清理。报告 schema 18 为 More/Less 增加了显式状态等待，避免只凭
+截图变化误判菜单状态；同时记录 Capture operation generation、后台任务静默和输入释放。报告
+`target/overlay-interaction-b2-current/session-1787977807963-24596/report.json` 为 `passed`：generation
+从 `1` 推进到 `5`（再次 Capture）和 `7`（取消），最终为 `16`；`recapture_advanced_generation`、
+`cancel_advanced_generation`、`background_tasks_idle`、`input_released` 均为 `true`，并且最终
+`capture_teardown_pending=false`、overlay/Pin/可见窗口均为 `0`、`capture_preflight_ready=true`。该证据覆盖
+单屏 100% 真实输入，不替代 150%/200% DPI 或双屏矩阵。
 
 ### B3：历史异步流控
 
