@@ -143,8 +143,8 @@ U0 设计基线完成前，必须保留一组“当前版本 vs 新基线”的�
 | 2 | B0 | 建立可复现的 Bug 与可见文案基线 | `flash-shot-app`、验收脚本、文档 | 已完成 |
 | 3 | B1 | 剪贴板、保存、录屏失败后可立即恢复 | workflow、Windows 基础设施、录屏模块 | 进行中 |
 | 4 | B2 | Capture/Save/Pin/Close 重复操作无残留 | overlay、pinned、窗口生命周期、runner | 待开始 |
-| 5 | B3 | 历史异步任务有界且不写回陈旧结果 | Library/history workflow | 待开始 |
-| 6 | B4 | 水印、文字、箭头编辑与导出回归保护 | overlay、annotation、image | 待开始 |
+| 5 | B3 | 历史异步任务有界且不写回陈旧结果 | Library/history workflow | 进行中 |
+| 6 | B4 | 水印、文字、箭头编辑与导出回归保护 | overlay、annotation、image | 进行中 |
 | 7 | U1 | 完成 Record/OCR/更新/错误/忙状态国际化 | `i18n.rs`、workflow、Record UI | 进行中 |
 | 8 | U2 | 收敛 Capture/Library/Record/App 的动作层级 | GPUI view、settings、Library、Record | 待开始 |
 | 9 | U3 | 实现视觉 token 和中英文双主题布局 | GPUI theme、view、overlay、Pin | 待开始 |
@@ -246,6 +246,15 @@ Capture 可以完成。
 **失败处理**：解码失败只影响对应条目，Library 仍能继续浏览、筛选和删除；若任务持续增长或目录归属
 无法判断，停止扩大样本并先修复取消/generation 条件。
 
+**当前进度（2026-08-29）**：
+
+- 历史缩略图解码失败现在按条目保留失败状态，Library 显示本地化的加载中/不可用反馈，不再把失败条目
+  留成无说明的空白预览；队列仍保持有界 FIFO，并继续丢弃目录切换或删除后的陈旧结果；
+- 失败条目提供 `Retry preview`，仅在条目仍被保留、Capture 会话空闲且历史读取、图片打开和删除等互斥操作
+  均结束时重新排队，重试复用现有最多两个并行解码任务；
+- 已补充失败/重试条件和 English/简体中文占位文案测试。损坏 PNG、目录切换和显式 300 条资源样本的
+  Release 报告仍待执行，因此 B3 继续保持“进行中”。
+
 ### B4：标注回归保护
 
 **负责组件**：`crates/flash-shot-app/src/app/overlay.rs`、annotation 状态、`flash-shot-image` 导出。
@@ -262,6 +271,13 @@ Capture 可以完成。
 
 **失败处理**：任何崩溃、方向错位、文字截断或导出差异都按最小复现输入登记，禁止在同一提交中加入
 无关视觉调整。
+
+**当前进度（2026-08-29）**：
+
+- 文字与水印内容继续经过有界的单行归一化和显式字体尺寸路径，导出使用与预览相同的箭头头部几何；
+- 箭头头部计算已下沉到领域 crate，明确以逻辑终点为箭头尖端，正向与反向拖动都不会把箭头画到起点；
+- 已补充中文、英文、emoji、换行、文字/水印并存、两个相反方向箭头和 PNG 像素指纹的确定性测试。
+  Release 原生输入与进程退出码复核仍待执行，因此 B4 继续保持“进行中”。
 
 ## 6. UI 与国际化主线
 
