@@ -134,6 +134,13 @@ FFmpeg 能力快照：
 .\scripts\check-pin-lifecycle-acceptance.ps1
 ```
 
+需要复核 Pin 的界面国际化和主题组合时，使用同一 Release 构建串行生成 English/简体中文与深色/浅色四个
+隔离会话；每份 schema 5 报告会记录并校验实际 locale/theme：
+
+```powershell
+.\scripts\check-pin-lifecycle-matrix.ps1 -OutputDirectory target\pin-lifecycle-u4-release -TimeoutMilliseconds 30000 -SettleMilliseconds 700
+```
+
 需要持续观察同一组三个 Pin 时，可显式运行 60 秒 soak。它会轮流执行生产 Solo/Show all，
 持续校验窗口注册表、不可变源帧、原生边界、前台焦点和 Capture preflight，并记录工作集与私有
 提交量；该模式仍不注入全局输入或写入系统剪贴板：

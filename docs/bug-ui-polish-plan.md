@@ -148,7 +148,7 @@ U0 设计基线完成前，必须保留一组“当前版本 vs 新基线”的�
 | 7 | U1 | 完成 Record/OCR/更新/错误/忙状态国际化 | `i18n.rs`、workflow、Record UI | 进行中 |
 | 8 | U2 | 收敛 Capture/Library/Record/App 的动作层级 | GPUI view、settings、Library、Record | 待开始 |
 | 9 | U3 | 实现视觉 token 和中英文双主题布局 | GPUI theme、view、overlay、Pin | 进行中 |
-| 10 | U4 | 补齐 Pin 中英文实时窗口与生命周期证据 | pinned、Pin runner、验收文档 | 待开始 |
+| 10 | U4 | 补齐 Pin 中英文实时窗口与生命周期证据 | pinned、Pin runner、验收文档 | 进行中 |
 | 11 | M1 | 在行为稳定后拆分大型 overlay/runner | `overlay.rs`、原生验收工具 | 待开始 |
 | 12 | D1 | 执行可用硬件上的 150%/200% 单屏矩阵 | Windows 原生验收 | 待开始，依赖硬件 |
 
@@ -438,6 +438,16 @@ Record、App、Pin 中使用一致的颜色和层级；关键步骤截图与 JSO
 真实中英文截图证据写入 [Windows 手工验收记录](windows-manual-acceptance.md)。
 
 **失败处理**：语言切换造成旧窗口混用文案或生命周期异常时，先恢复一致的窗口策略，再继续视觉微调。
+
+**当前进度（2026-08-29）**：
+
+- 提交 `b98ae31` 为 Pin lifecycle runner 新增显式 `--locale en|zh-CN` 与 `--theme dark|light` 参数，启动前写入隔离设置，
+  报告 schema 升级为 5 并记录实际组合，脚本会拒绝报告与请求组合不一致的结果；
+- `scripts/check-pin-lifecycle-matrix.ps1` 已按四种语言/主题组合串行运行同一 Release 构建，
+  `target/pin-lifecycle-u4-release/matrix-report.json` 及四个子目录报告均为 `passed`；每组保留初始/最终
+  Pin 截图，并验证缩放、透明度、内存 Copy、隔离 Save、Solo、Show all、关闭和 Capture preflight；
+- 本轮证明的是可重复的真实 Pin 窗口和生产控制调用，不把程序化 runner 当作真实鼠标/键盘输入；已打开窗口
+  的语言切换策略、真实工具栏点击/tooltip 和 150%/200% DPI 仍待后续原生手工切片。
 
 ## 7. 可维护性与硬件阶段
 

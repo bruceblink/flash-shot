@@ -295,6 +295,14 @@ bounds the complete native lifecycle with a watchdog:
 .\scripts\check-pin-lifecycle-acceptance.ps1
 ```
 
+To verify Pin localization and theme combinations, run the same Release build serially for English/
+Simplified Chinese and dark/light in disposable sessions. Each schema 5 report records and validates
+the requested locale and theme:
+
+```powershell
+.\scripts\check-pin-lifecycle-matrix.ps1 -OutputDirectory target\pin-lifecycle-u4-release -TimeoutMilliseconds 30000 -SettleMilliseconds 700
+```
+
 For a sustained three-Pin observation, opt into a 60-second soak. It rotates the production Solo
 and Show all paths while continuously checking the registry, immutable source frames, native
 bounds, foreground focus, and Capture preflight, and records working-set/private-commit samples.

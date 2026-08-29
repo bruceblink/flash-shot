@@ -118,6 +118,10 @@ powershell -NoProfile -File scripts/test-verify-bug-ui-baseline.ps1
 .\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --record-target window --output-dir target/overlay-recording-interaction-acceptance
 # 无全局输入验收：打开三个真实 Pin，复制使用内存实现，所有保存和截图写入隔离 profile。
 .\scripts\check-pin-lifecycle-acceptance.ps1
+# Pin 国际化/主题矩阵：四个组合串行运行同一 Release 构建，每个组合使用独立 profile 和 JSON 报告。
+.\scripts\check-pin-lifecycle-matrix.ps1 -OutputDirectory target\pin-lifecycle-u4-release -TimeoutMilliseconds 30000 -SettleMilliseconds 700
+# 单个组合可用以下参数复核；脚本会校验报告中的 locale/theme 与请求一致。
+.\scripts\check-pin-lifecycle-acceptance.ps1 -Locale zh-CN -Theme light -OutputDirectory target\pin-lifecycle-u4-zh-light
 # 可选 60 秒长时间 Pin 验收：循环 Solo/Show all，并采样 HWND、源帧、焦点、Capture preflight 与内存。
 .\scripts\check-pin-lifecycle-acceptance.ps1 -SoakMilliseconds 60000 -TimeoutMilliseconds 90000 -SettleMilliseconds 500 -OutputDirectory target\pin-lifecycle-soak-60s
 .\scripts\run-dev-tool.ps1 -Release scroll-acceptance --output target/ui-acceptance/scroll-acceptance.json
@@ -183,8 +187,10 @@ profile，注册 `Ctrl+Alt+F24`，并在每批输入前确认前台 HWND 属于�
 提交选区；窗口目标会在点击前独立解析标题和边界，二者都必须与生产录制状态精确一致。最后从
 MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验。`Stopping` 只记录机器可读状态，
 避免把可能已经进入 Saved 的下一帧误标为停止中。
-`pin-lifecycle-acceptance` 不注册生产托盘、全局快捷键或单实例 mutex，也不注入全局输入。
-它打开三个生产 `PinnedImage` 窗口，只在确认 HWND 属于探针进程后进行程序化移动，随后走真实
+`pin-lifecycle-acceptance` 不注册生产托盘、全局快捷键或单实例 mutex，也不注入全局输入。`-Locale en|zh-CN`
+和 `-Theme dark|light` 会在创建隔离 profile 前固定 Pin 的界面语言和主题；报告 schema 5 的 `locale`、`theme`
+字段必须与请求一致，四组合矩阵可使用 `check-pin-lifecycle-matrix.ps1` 一次生成。它打开三个生产
+`PinnedImage` 窗口，只在确认 HWND 属于探针进程后进行程序化移动，随后走真实
 缩放、透明度、保存、Solo、Show all 和 Close 路径；Copy 使用内存 `ClipboardService` 验证完整
 像素帧，不污染系统剪贴板。布局使用实测原生外框和显示器缩放比例，截图前拒绝越界或重叠；
 报告还会实测系统服务确已禁用、Show all 未改变前台 HWND、关闭一个 Pin 后仍保留两个可响应句柄，
@@ -332,6 +338,7 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 
 | 2026-08-12 | `2e07cdc` | 当前提交重建 Release `recognition-acceptance`，使用含文字设置页 PNG 执行真实 PNG -> Tesseract OCR，并通过 `--require-ocr` 门禁。 | 通过 | `target/ui-acceptance/recognition-acceptance-ocr-current-2e07cdc.json`：schema 4，Tesseract `v5.5.3.20260724`，`ocr.available=true`，`ocr_exercise.passed=true`，文本长度 391，报告 `passed=true`；同一报告明确记录 `translation.configured=false`，因此翻译服务仍按独立矩阵行保持待执行。 |
 | 2026-08-29 | `u31-overlay-pin-visual-matrix-single-100` | 在提交 `709808f` 的 Release 构建中，以 `settings-ui-acceptance` 隔离探针覆盖选区工具栏、More、右下边缘 More 和 Pin 保存反馈；组合 English/简体中文、深色/浅色与 420x420、520x640、980x760，并运行 Pin lifecycle Release 验收。 | 通过（单屏 100%） | `target/ui-acceptance/u31-final-*.png` 与同名 JSON 共 48 组，全部 `scale_match=true`；关键截图目视复核确认浅色覆盖层文字、状态/尺寸标签、More/Less 按压态和 Pin 工具栏前景清晰。Pin lifecycle 报告 `target/pin-lifecycle-u31-final/session-1787974248268-25328/report.json` 通过；150%/200% DPI、真实双语 Pin 输入和多屏仍待 U4/D1。 |
+| 2026-08-29 | `b98ae31` / `u4-pin-lifecycle-locale-theme-matrix` | 提交 `b98ae31` 的 Release `pin-lifecycle-acceptance` 以 `--locale`/`--theme` 显式运行 `en/dark`、`en/light`、`zh-CN/dark`、`zh-CN/light` 四个隔离会话；每组打开三个真实 Pin，执行缩放、透明度、内存 Copy、隔离 Save、Solo、Show all、关闭和 Capture preflight。 | 通过（单屏 100%，无输入 runner） | `target/pin-lifecycle-u4-release/matrix-report.json` 为 `passed`，四份 schema 5 报告的 locale/theme 与请求一致，全部保留初始/最终 PNG、窗口边界和清理字段；代表报告 `target/pin-lifecycle-u4-release/zh-CN-light/session-1787975422919-6984/report.json`。该切片不替代真实鼠标/键盘 Pin 点击、已打开窗口语言切换或 150%/200% DPI。 |
 
 B0 基线盘点（2026-08-26）不属于原生桌面交互矩阵：在源代码提交 `f801e28` 上运行
 `scripts/test-verify-bug-ui-baseline.ps1` 两次生成报告，7 个稳定场景、317 个直接 `self.status` 赋值和
