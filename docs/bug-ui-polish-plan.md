@@ -147,7 +147,7 @@ U0 设计基线完成前，必须保留一组“当前版本 vs 新基线”的�
 | 6 | B4 | 水印、文字、箭头编辑与导出回归保护 | overlay、annotation、image | 进行中 |
 | 7 | U1 | 完成 Record/OCR/更新/错误/忙状态国际化 | `i18n.rs`、workflow、Record UI | 进行中 |
 | 8 | U2 | 收敛 Capture/Library/Record/App 的动作层级 | GPUI view、settings、Library、Record | 待开始 |
-| 9 | U3 | 实现视觉 token 和中英文双主题布局 | GPUI theme、view、overlay、Pin | 待开始 |
+| 9 | U3 | 实现视觉 token 和中英文双主题布局 | GPUI theme、view、overlay、Pin | 进行中 |
 | 10 | U4 | 补齐 Pin 中英文实时窗口与生命周期证据 | pinned、Pin runner、验收文档 | 待开始 |
 | 11 | M1 | 在行为稳定后拆分大型 overlay/runner | `overlay.rs`、原生验收工具 | 待开始 |
 | 12 | D1 | 执行可用硬件上的 150%/200% 单屏矩阵 | Windows 原生验收 | 待开始，依赖硬件 |
@@ -404,6 +404,15 @@ U3 处理容器尺寸，不能截断文案或隐藏错误。
 Record、App、Pin 中使用一致的颜色和层级；关键步骤截图与 JSON 报告属于同一会话。
 
 **失败处理**：只要一个尺寸或语言出现溢出，先修复该容器的稳定尺寸/滚动边界，不通过减小全局字号来掩盖。
+
+**当前进度（2026-08-29）**：
+
+- `ThemeMetrics` 已集中管理设置壳层的标题栏、状态栏、导航栏、设置行、开关和通用控件尺寸，避免页面之间
+  出现相互漂移的固定值；
+- 设置页标题栏采用统一的表面层级、细边界、实色品牌标记和轻量阴影；导航、按钮、开关和主要动作补齐
+  hover、按下与键盘焦点的语义状态，破坏性按钮保持独立危险色；
+- Release 设置探针已在 English/简体中文、深色/浅色和 420x420、520x640、980x760 组合下生成 12 组
+  `u3-shell-*.png`/JSON，全部记录 `scale_match=true`；覆盖层、Pin 和非设置页的完整视觉矩阵仍待后续切片。
 
 ### U4：Pin 中英文实时证据
 
