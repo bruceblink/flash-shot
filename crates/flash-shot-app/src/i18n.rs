@@ -748,6 +748,10 @@ pub enum UiText {
     LibraryShowMore,
     LibraryDeleteFiltered,
     LibraryWorking,
+    LibraryPreviewLoading,
+    LibraryPreviewUnavailable,
+    LibraryRetryPreview,
+    LibraryPreviewRetrying,
     LibraryRemoving,
     LibraryRemove,
     LibraryClearing,
@@ -1554,6 +1558,10 @@ impl UiText {
             Self::LibraryShowMore => "Show {count} more",
             Self::LibraryDeleteFiltered => "Delete {count} filtered",
             Self::LibraryWorking => "Working...",
+            Self::LibraryPreviewLoading => "Loading preview...",
+            Self::LibraryPreviewUnavailable => "Preview unavailable",
+            Self::LibraryRetryPreview => "Retry preview",
+            Self::LibraryPreviewRetrying => "Retrying preview...",
             Self::LibraryRemoving => "Removing...",
             Self::LibraryRemove => "Remove",
             Self::LibraryClearing => "Clearing...",
@@ -2268,6 +2276,10 @@ impl UiText {
             Self::LibraryShowMore => "再显示 {count} 项",
             Self::LibraryDeleteFiltered => "删除 {count} 项筛选结果",
             Self::LibraryWorking => "正在处理...",
+            Self::LibraryPreviewLoading => "正在加载预览...",
+            Self::LibraryPreviewUnavailable => "预览不可用",
+            Self::LibraryRetryPreview => "重试预览",
+            Self::LibraryPreviewRetrying => "正在重试预览...",
             Self::LibraryRemoving => "正在移除...",
             Self::LibraryRemove => "移除",
             Self::LibraryClearing => "正在清除...",
@@ -2407,6 +2419,14 @@ mod tests {
         assert_eq!(
             Locale::English.text(UiText::OverlayCopyTooltip),
             "Copy selection to clipboard (Enter)"
+        );
+        assert_eq!(
+            Locale::English.text(UiText::LibraryPreviewUnavailable),
+            "Preview unavailable"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::LibraryRetryPreview),
+            "重试预览"
         );
         assert_eq!(
             Locale::SimplifiedChinese.text(UiText::OverlayFreehand),

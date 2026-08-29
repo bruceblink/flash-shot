@@ -503,6 +503,45 @@ impl FlashShotApp {
         None
     }
 
+    /// Clears one failed preview and schedules a bounded decode so a repaired or temporarily
+    /// unavailable history file can recover without changing the saved capture list.
+    pub(in crate::app) fn retry_history_thumbnail(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let retained = self
+            .history
+            .entries()
+            .iter()
+            .any(|entry| entry.path == path);
+        if !history_thumbnail_retry_can_start(
+            self.history_thumbnail_failed.contains(&path),
+            self.history_thumbnail_loading.contains(&path),
+            self.history_reader.is_some(),
+            self.generic_open_generation.is_some(),
+            self.history_mutation_pending(),
+            retained,
+            self.session.state(),
+        ) {
+            return;
+        }
+
+        self.history_thumbnail_failed.remove(&path);
+        let _ = enqueue_history_thumbnail_path(
+            path,
+            &mut self.history_thumbnail_pending,
+            &self.history_thumbnail_loading,
+        );
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::LibraryPreviewRetrying)
+            .to_owned();
+        self.pump_history_thumbnail_queue(cx);
+        cx.notify();
+    }
+
     /// Starts at most two PNG decodes at once so expanding a long history cannot flood the
     /// background executor or compete with a user-initiated capture/export.
     fn pump_history_thumbnail_queue(&mut self, cx: &mut Context<Self>) {
@@ -796,6 +835,25 @@ fn thumbnail_completion_can_cache(
     completion_revision == current_revision && !mutation_pending && path_is_still_retained
 }
 
+/// Allows a retry only for a failed retained file while every competing history reader is idle.
+fn history_thumbnail_retry_can_start(
+    failed: bool,
+    loading: bool,
+    history_reader_in_flight: bool,
+    generic_open_in_flight: bool,
+    mutation_pending: bool,
+    path_is_still_retained: bool,
+    session_state: CaptureSessionState,
+) -> bool {
+    failed
+        && !loading
+        && !history_reader_in_flight
+        && !generic_open_in_flight
+        && !mutation_pending
+        && path_is_still_retained
+        && session_state == CaptureSessionState::Idle
+}
+
 /// Adds a thumbnail request once, preserving FIFO order across repeated UI renders.
 fn enqueue_history_thumbnail_path(
     path: PathBuf,
@@ -829,8 +887,8 @@ mod tests {
         HISTORY_THUMBNAIL_MAX_IN_FLIGHT, claim_generic_open_completion,
         claim_history_reader_completion, claim_history_write_completion,
         enqueue_history_thumbnail_path, history_mutation_can_start, history_reader_can_start,
-        retain_history_thumbnail_pending, take_next_history_thumbnail,
-        thumbnail_completion_can_cache,
+        history_thumbnail_retry_can_start, retain_history_thumbnail_pending,
+        take_next_history_thumbnail, thumbnail_completion_can_cache,
     };
     use crate::app::{HistoryReaderKind, HistoryReaderLease};
     use crate::domain::session::CaptureSessionState;
@@ -923,6 +981,41 @@ mod tests {
         assert!(!thumbnail_completion_can_cache(7, 8, false, true));
         assert!(!thumbnail_completion_can_cache(8, 8, true, true));
         assert!(!thumbnail_completion_can_cache(8, 8, false, false));
+    }
+
+    #[test]
+    fn thumbnail_retry_requires_a_failed_retained_idle_entry() {
+        let idle = CaptureSessionState::Idle;
+        assert!(history_thumbnail_retry_can_start(
+            true, false, false, false, false, true, idle,
+        ));
+        assert!(!history_thumbnail_retry_can_start(
+            false, false, false, false, false, true, idle,
+        ));
+        assert!(!history_thumbnail_retry_can_start(
+            true, true, false, false, false, true, idle,
+        ));
+        assert!(!history_thumbnail_retry_can_start(
+            true, false, true, false, false, true, idle,
+        ));
+        assert!(!history_thumbnail_retry_can_start(
+            true, false, false, true, false, true, idle,
+        ));
+        assert!(!history_thumbnail_retry_can_start(
+            true, false, false, false, true, true, idle,
+        ));
+        assert!(!history_thumbnail_retry_can_start(
+            true, false, false, false, false, false, idle,
+        ));
+        assert!(!history_thumbnail_retry_can_start(
+            true,
+            false,
+            false,
+            false,
+            false,
+            true,
+            CaptureSessionState::Selecting,
+        ));
     }
 
     #[test]

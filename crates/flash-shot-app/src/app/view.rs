@@ -24,6 +24,8 @@ const COMPACT_SETTINGS_NAVIGATION_BREAKPOINT: f32 = 640.0;
 type HistoryEntryView = (
     crate::history::HistoryEntry,
     Option<std::sync::Arc<gpui::RenderImage>>,
+    Option<&'static str>,
+    bool,
     bool,
     bool,
     bool,
@@ -113,10 +115,25 @@ impl gpui::Render for FlashShotApp {
             .into_iter()
             .map(|entry| {
                 let thumbnail = self.history_thumbnail(&entry.path, cx);
+                let thumbnail_failed = self.history_thumbnail_failed.contains(&entry.path);
+                let thumbnail_status = history_thumbnail_status(
+                    locale,
+                    thumbnail.is_some(),
+                    thumbnail_failed,
+                    self.history_thumbnail_loading.contains(&entry.path),
+                );
                 let deleting = self.history_deletions_in_flight.contains(&entry.path);
                 let selected = self.history_selected_paths.contains(&entry.path);
                 let focused = self.history_keyboard_focus.as_ref() == Some(&entry.path);
-                (entry, thumbnail, deleting, selected, focused)
+                (
+                    entry,
+                    thumbnail,
+                    thumbnail_status,
+                    thumbnail_failed,
+                    deleting,
+                    selected,
+                    focused,
+                )
             })
             .collect();
         let app = cx.entity();
@@ -1562,129 +1579,158 @@ fn history_settings(
                 colors,
             ))
         })
-        .children(
-            entries
-                .into_iter()
-                .map(|(entry, thumbnail, deleting, selected, focused)| {
-                    let label = history_entry_label(locale, &entry, now_ms);
-                    let selection_enabled = is_idle
-                        && !deleting
-                        && !clear_confirmation
-                        && !clear_in_flight
-                        && !retention_in_flight
-                        && !deletion_in_flight
-                        && !mutation_pending;
-                    let reader_enabled = is_idle
-                        && !reader_in_flight
-                        && !deleting
-                        && !clear_confirmation
-                        && !clear_in_flight
-                        && !retention_in_flight
-                        && !deletion_in_flight
-                        && !mutation_pending;
-                    history_row(&label, thumbnail, selected, focused, colors).child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .child(history_selection_button(
-                                format!("settings-select-history-{}", entry.created_at_ms),
-                                if selected {
-                                    locale.text(UiText::OverlaySelected)
-                                } else {
-                                    locale.text(UiText::OverlaySelect)
-                                },
-                                selected,
-                                colors,
-                                selection_enabled,
-                                {
-                                    let app = app.clone();
-                                    let path = entry.path.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| {
-                                            this.toggle_history_selection(path.clone(), cx)
-                                        })
-                                    }
-                                },
-                            ))
-                            .child(settings_button(
-                                format!("settings-open-history-{}", entry.created_at_ms),
-                                locale.text(UiText::LibraryOpen),
+        .children(entries.into_iter().map(
+            |(
+                entry,
+                thumbnail,
+                thumbnail_status,
+                thumbnail_failed,
+                deleting,
+                selected,
+                focused,
+            )| {
+                let label = history_entry_label(locale, &entry, now_ms);
+                let selection_enabled = is_idle
+                    && !deleting
+                    && !clear_confirmation
+                    && !clear_in_flight
+                    && !retention_in_flight
+                    && !deletion_in_flight
+                    && !mutation_pending;
+                let reader_enabled = is_idle
+                    && !reader_in_flight
+                    && !deleting
+                    && !clear_confirmation
+                    && !clear_in_flight
+                    && !retention_in_flight
+                    && !deletion_in_flight
+                    && !mutation_pending;
+                history_row(
+                    &label,
+                    thumbnail,
+                    thumbnail_status,
+                    selected,
+                    focused,
+                    colors,
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(history_selection_button(
+                            format!("settings-select-history-{}", entry.created_at_ms),
+                            if selected {
+                                locale.text(UiText::OverlaySelected)
+                            } else {
+                                locale.text(UiText::OverlaySelect)
+                            },
+                            selected,
+                            colors,
+                            selection_enabled,
+                            {
+                                let app = app.clone();
+                                let path = entry.path.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| {
+                                        this.toggle_history_selection(path.clone(), cx)
+                                    })
+                                }
+                            },
+                        ))
+                        .child(settings_button(
+                            format!("settings-open-history-{}", entry.created_at_ms),
+                            locale.text(UiText::LibraryOpen),
+                            colors,
+                            reader_enabled,
+                            {
+                                let app = app.clone();
+                                let path = entry.path.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| {
+                                        this.open_history_image(path.clone(), cx)
+                                    })
+                                }
+                            },
+                        ))
+                        .child(settings_button(
+                            format!("settings-copy-history-{}", entry.created_at_ms),
+                            if reader_in_flight {
+                                locale.text(UiText::LibraryWorking)
+                            } else {
+                                locale.text(UiText::OverlayCopy)
+                            },
+                            colors,
+                            reader_enabled,
+                            {
+                                let app = app.clone();
+                                let path = entry.path.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| {
+                                        this.copy_history_image(path.clone(), cx)
+                                    })
+                                }
+                            },
+                        ))
+                        .child(settings_button(
+                            format!("settings-pin-history-{}", entry.created_at_ms),
+                            locale.text(UiText::OverlayPin),
+                            colors,
+                            reader_enabled,
+                            {
+                                let app = app.clone();
+                                let path = entry.path.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| {
+                                        this.pin_history_image(path.clone(), cx)
+                                    })
+                                }
+                            },
+                        ))
+                        .when(thumbnail_failed, |actions| {
+                            let retry_app = app.clone();
+                            let retry_path = entry.path.clone();
+                            actions.child(settings_button(
+                                format!("settings-retry-history-preview-{}", entry.created_at_ms),
+                                locale.text(UiText::LibraryRetryPreview),
                                 colors,
                                 reader_enabled,
-                                {
-                                    let app = app.clone();
-                                    let path = entry.path.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| {
-                                            this.open_history_image(path.clone(), cx)
-                                        })
-                                    }
+                                move |_, _, cx| {
+                                    retry_app.update(cx, |this, cx| {
+                                        this.retry_history_thumbnail(retry_path.clone(), cx)
+                                    })
                                 },
                             ))
-                            .child(settings_button(
-                                format!("settings-copy-history-{}", entry.created_at_ms),
-                                if reader_in_flight {
-                                    locale.text(UiText::LibraryWorking)
-                                } else {
-                                    locale.text(UiText::OverlayCopy)
-                                },
-                                colors,
-                                reader_enabled,
-                                {
-                                    let app = app.clone();
-                                    let path = entry.path.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| {
-                                            this.copy_history_image(path.clone(), cx)
-                                        })
-                                    }
-                                },
-                            ))
-                            .child(settings_button(
-                                format!("settings-pin-history-{}", entry.created_at_ms),
-                                locale.text(UiText::OverlayPin),
-                                colors,
-                                reader_enabled,
-                                {
-                                    let app = app.clone();
-                                    let path = entry.path.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| {
-                                            this.pin_history_image(path.clone(), cx)
-                                        })
-                                    }
-                                },
-                            ))
-                            .child(settings_danger_button(
-                                format!("settings-remove-history-{}", entry.created_at_ms),
-                                if deleting {
-                                    locale.text(UiText::LibraryRemoving)
-                                } else {
-                                    locale.text(UiText::LibraryRemove)
-                                },
-                                colors,
-                                is_idle
-                                    && !file_read_in_flight
-                                    && !deleting
-                                    && !clear_confirmation
-                                    && !clear_in_flight
-                                    && !retention_in_flight
-                                    && !mutation_pending,
-                                {
-                                    let app = app.clone();
-                                    let path = entry.path.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| {
-                                            this.remove_history_image(path.clone(), cx)
-                                        })
-                                    }
-                                },
-                            )),
-                    )
-                }),
-        )
+                        })
+                        .child(settings_danger_button(
+                            format!("settings-remove-history-{}", entry.created_at_ms),
+                            if deleting {
+                                locale.text(UiText::LibraryRemoving)
+                            } else {
+                                locale.text(UiText::LibraryRemove)
+                            },
+                            colors,
+                            is_idle
+                                && !file_read_in_flight
+                                && !deleting
+                                && !clear_confirmation
+                                && !clear_in_flight
+                                && !retention_in_flight
+                                && !mutation_pending,
+                            {
+                                let app = app.clone();
+                                let path = entry.path.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| {
+                                        this.remove_history_image(path.clone(), cx)
+                                    })
+                                }
+                            },
+                        )),
+                )
+            },
+        ))
         .when(!clear_confirmation, |section| {
             let clear_app = app.clone();
             section.child(settings_danger_button(
@@ -1845,11 +1891,30 @@ fn history_selected_count_label(locale: Locale, count: usize) -> String {
     locale.format_template(UiText::LibrarySelectedCount, &[("count", &count)])
 }
 
+/// Chooses a localized placeholder for a history preview without hiding a successfully decoded image.
+fn history_thumbnail_status(
+    locale: Locale,
+    has_thumbnail: bool,
+    failed: bool,
+    loading: bool,
+) -> Option<&'static str> {
+    if has_thumbnail {
+        None
+    } else if failed {
+        Some(locale.text(UiText::LibraryPreviewUnavailable))
+    } else if loading {
+        Some(locale.text(UiText::LibraryPreviewLoading))
+    } else {
+        None
+    }
+}
+
 /// Separates preview metadata from its commands so narrow settings windows wrap actions safely.
 /// The metadata column may shrink, but it uses an ellipsis instead of clipping a filename mid-word.
 fn history_row(
     label: &str,
     thumbnail: Option<std::sync::Arc<gpui::RenderImage>>,
+    thumbnail_status: Option<&str>,
     selected: bool,
     focused: bool,
     colors: crate::theme::ThemeColors,
@@ -1887,6 +1952,16 @@ fn history_row(
                         .bg(colors.panel)
                         .when_some(thumbnail, |preview, thumbnail| {
                             preview.child(img(thumbnail).size_full().object_fit(ObjectFit::Contain))
+                        })
+                        .when_some(thumbnail_status, |preview, status| {
+                            preview
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .p_1()
+                                .text_xs()
+                                .text_color(colors.muted)
+                                .child(status.to_owned())
                         }),
                 )
                 .child(
@@ -2684,13 +2759,14 @@ mod tests {
         RecordingViewState, adjacent_settings_section, capture_command_label,
         capture_shortcut_summary, history_clear_confirmation_label, history_entry_label,
         history_entry_matches, history_result_summary, history_retention_label,
-        history_visibility_label, ocr_support_check_label, recording_progress_label,
-        recording_source_discovery_busy, recording_status_visible, recording_support_check_label,
-        recording_toggle_enabled, recording_toggle_label, relative_timestamp_label,
-        settings_actions_available, settings_navigation_activation, settings_navigation_direction,
-        settings_navigation_items_for_locale, settings_page_copy_for_locale, settings_page_intro,
-        settings_path_label, status_indicator_color, translation_service_test_label,
-        update_check_label_for_locale, uses_compact_settings_navigation, visible_history_entries,
+        history_thumbnail_status, history_visibility_label, ocr_support_check_label,
+        recording_progress_label, recording_source_discovery_busy, recording_status_visible,
+        recording_support_check_label, recording_toggle_enabled, recording_toggle_label,
+        relative_timestamp_label, settings_actions_available, settings_navigation_activation,
+        settings_navigation_direction, settings_navigation_items_for_locale,
+        settings_page_copy_for_locale, settings_page_intro, settings_path_label,
+        status_indicator_color, translation_service_test_label, update_check_label_for_locale,
+        uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2706,6 +2782,26 @@ mod tests {
         assert_eq!(
             capture_command_label(Locale::English, Some(3)),
             "Cancel delay"
+        );
+    }
+
+    #[test]
+    fn history_thumbnail_status_prefers_success_then_failure_then_loading() {
+        assert_eq!(
+            history_thumbnail_status(Locale::English, true, true, true),
+            None
+        );
+        assert_eq!(
+            history_thumbnail_status(Locale::English, false, true, true),
+            Some("Preview unavailable")
+        );
+        assert_eq!(
+            history_thumbnail_status(Locale::SimplifiedChinese, false, false, true),
+            Some("正在加载预览...")
+        );
+        assert_eq!(
+            history_thumbnail_status(Locale::SimplifiedChinese, false, false, false),
+            None
         );
     }
 
