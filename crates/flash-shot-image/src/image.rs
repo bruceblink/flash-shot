@@ -18,7 +18,7 @@ use pathfinder_geometry::transform2d::Transform2F;
 
 use flash_shot_domain::domain::{
     annotation::{
-        Annotation, AnnotationDocument, AnnotationKind, SEQUENCE_MARKER_RADIUS,
+        Annotation, AnnotationDocument, AnnotationKind, SEQUENCE_MARKER_RADIUS, arrow_head_points,
         normalized_text_annotation_content,
     },
     geometry::{PhysicalPoint, PhysicalRect},
@@ -575,24 +575,11 @@ fn draw_arrow_head(
     color: [u8; 4],
     radius: i32,
 ) {
-    let dx = f64::from(end.x) - f64::from(start.x);
-    let dy = f64::from(end.y) - f64::from(start.y);
-    let length = dx.hypot(dy);
-    if length == 0.0 {
-        return;
-    }
+    // Keep export geometry identical to the on-screen preview and draw both wings from the
+    // logical endpoint, so reverse drags cannot accidentally point at the start.
     let size = f64::from(radius.max(3) * 4);
-    let unit_x = dx / length;
-    let unit_y = dy / length;
-    for angle in [0.55_f64, -0.55_f64] {
-        let cosine = angle.cos();
-        let sine = angle.sin();
-        let backward_x = -unit_x * cosine + unit_y * sine;
-        let backward_y = -unit_x * sine - unit_y * cosine;
-        let point = PhysicalPoint {
-            x: (f64::from(end.x) + backward_x * size).round() as i32,
-            y: (f64::from(end.y) + backward_y * size).round() as i32,
-        };
+    let (left, right) = arrow_head_points(start, end, size);
+    for point in [left, right].into_iter().flatten() {
         draw_line(pixels, frame, end, point, color, radius);
     }
 }
@@ -1994,6 +1981,120 @@ mod tests {
                 .iter()
                 .any(|pixel| pixel[2] > 0)
         );
+    }
+
+    #[test]
+    fn composite_export_keeps_text_watermark_and_two_arrow_directions_aligned() {
+        const WIDTH: u32 = 160;
+        const HEIGHT: u32 = 128;
+        let frame = CaptureFrame {
+            bounds: PhysicalRect {
+                left: 0,
+                top: 0,
+                right: WIDTH as i32,
+                bottom: HEIGHT as i32,
+            },
+            width: WIDTH,
+            height: HEIGHT,
+            stride: WIDTH as usize * 4,
+            format: PixelFormat::Bgra8,
+            pixels: Arc::from(vec![0; WIDTH as usize * HEIGHT as usize * 4]),
+            capture_duration: Duration::ZERO,
+            cpu_copy_count: 1,
+        };
+        let mut document = AnnotationDocument::new(frame.bounds).unwrap();
+        let mut history = CommandHistory::default();
+        let annotations = [
+            Annotation {
+                id: AnnotationId::new(30),
+                kind: AnnotationKind::Text {
+                    origin: PhysicalPoint { x: 8, y: 4 },
+                    content: "Hello, 中文 😀\nignored".to_owned(),
+                },
+                style: AnnotationStyle {
+                    stroke_rgba: 0x00FF00FF,
+                    text_font_size: 32,
+                    ..AnnotationStyle::default()
+                },
+            },
+            Annotation {
+                id: AnnotationId::new(31),
+                kind: AnnotationKind::Watermark {
+                    origin: PhysicalPoint { x: 8, y: 96 },
+                    content: "Confidential".to_owned(),
+                },
+                style: AnnotationStyle {
+                    stroke_rgba: 0xFF0000FF,
+                    text_font_size: 24,
+                    ..AnnotationStyle::default()
+                },
+            },
+            Annotation {
+                id: AnnotationId::new(32),
+                kind: AnnotationKind::Arrow {
+                    start: PhysicalPoint { x: 20, y: 48 },
+                    end: PhysicalPoint { x: 80, y: 48 },
+                },
+                style: AnnotationStyle::default(),
+            },
+            Annotation {
+                id: AnnotationId::new(33),
+                kind: AnnotationKind::Arrow {
+                    start: PhysicalPoint { x: 140, y: 80 },
+                    end: PhysicalPoint { x: 100, y: 80 },
+                },
+                style: AnnotationStyle::default(),
+            },
+        ];
+        for annotation in annotations {
+            history
+                .apply(&mut document, AnnotationCommand::Insert(annotation))
+                .unwrap();
+        }
+
+        let composited = frame.composite_annotations(&document).unwrap();
+        let has_pixel = |x: i32, y: i32| {
+            composited
+                .pixel_at(PhysicalPoint { x, y })
+                .is_some_and(|pixel| pixel.alpha > 0)
+        };
+        assert!((0..64).any(|x| (0..40).any(|y| has_pixel(x, y))));
+        assert!((0..64).any(|x| (88..128).any(|y| has_pixel(x, y))));
+        // The first arrow points right: its wings are behind x=80, not behind its start.
+        assert!(has_pixel(70, 42));
+        assert!(has_pixel(70, 54));
+        assert!(!has_pixel(30, 42));
+        // The second arrow was dragged right-to-left and must point at its x=100 endpoint.
+        assert!(has_pixel(110, 74));
+        assert!(has_pixel(110, 86));
+        assert!(!has_pixel(130, 74));
+
+        let directory = std::env::temp_dir().join(format!(
+            "flash-shot-annotation-export-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("annotated.png");
+        composited.save_png(&path).unwrap();
+        assert!(path.is_file());
+        assert!(!path.with_extension("png.tmp").exists());
+
+        let decoder = png::Decoder::new(BufReader::new(fs::File::open(&path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut output = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut output).unwrap();
+        output.truncate(info.buffer_size());
+        let expected: Vec<u8> = composited
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|pixel| [pixel[2], pixel[1], pixel[0], pixel[3]])
+            .collect();
+        assert_eq!((info.width, info.height), (WIDTH, HEIGHT));
+        assert_eq!(output, expected);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub const SEQUENCE_MARKER_RADIUS: i32 = 14;
 pub const TEXT_ANNOTATION_HEIGHT: i32 = 28;
 pub const TEXT_ANNOTATION_ADVANCE: i32 = 16;
 pub const WATERMARK_CONTENT: &str = "Flash Shot";
+const ARROW_HEAD_ANGLE_RADIANS: f64 = 0.55;
 /// Keeps text annotation layout bounded for every renderer and serialized document.
 pub const MAX_TEXT_ANNOTATION_CHARACTERS: usize = 256;
 pub const MAX_ANNOTATION_STROKE_WIDTH: u32 = 64;
@@ -41,6 +42,38 @@ pub fn normalized_text_annotation_content(content: &str) -> String {
         .filter(|character| !character.is_control())
         .take(MAX_TEXT_ANNOTATION_CHARACTERS)
         .collect()
+}
+
+/// Calculates the two arrow-head wing endpoints shared by the preview and export renderers.
+///
+/// The endpoint is always the arrow's `end` point, so reversing a drag reverses the head without
+/// changing either renderer's coordinate convention. Invalid or zero-length geometry produces no
+/// wings instead of feeding non-finite values into a native drawing API.
+pub fn arrow_head_points(
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+    size: f64,
+) -> (Option<PhysicalPoint>, Option<PhysicalPoint>) {
+    let dx = (i64::from(end.x) - i64::from(start.x)) as f64;
+    let dy = (i64::from(end.y) - i64::from(start.y)) as f64;
+    let length = dx.hypot(dy);
+    if !length.is_finite() || length == 0.0 || !size.is_finite() || size <= 0.0 {
+        return (None, None);
+    }
+    let unit_x = dx / length;
+    let unit_y = dy / length;
+    let point_for = |angle: f64| {
+        let cosine = angle.cos();
+        let sine = angle.sin();
+        PhysicalPoint {
+            x: (f64::from(end.x) + (-unit_x * cosine + unit_y * sine) * size).round() as i32,
+            y: (f64::from(end.y) + (-unit_x * sine - unit_y * cosine) * size).round() as i32,
+        }
+    };
+    (
+        Some(point_for(ARROW_HEAD_ANGLE_RADIANS)),
+        Some(point_for(-ARROW_HEAD_ANGLE_RADIANS)),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -1425,7 +1458,7 @@ mod tests {
         ANNOTATION_DOCUMENT_VERSION, Annotation, AnnotationCommand, AnnotationDocument,
         AnnotationEditor, AnnotationError, AnnotationId, AnnotationKind, AnnotationStyle,
         AnnotationTool, CommandHistory, DEFAULT_TEXT_FONT_SIZE, MAX_ANNOTATION_STROKE_WIDTH,
-        MAX_TEXT_ANNOTATION_CHARACTERS, MAX_TEXT_FONT_SIZE, WATERMARK_CONTENT,
+        MAX_TEXT_ANNOTATION_CHARACTERS, MAX_TEXT_FONT_SIZE, WATERMARK_CONTENT, arrow_head_points,
         normalized_text_annotation_content,
     };
     use crate::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -1503,6 +1536,57 @@ mod tests {
                 .chars()
                 .count(),
             MAX_TEXT_ANNOTATION_CHARACTERS
+        );
+    }
+
+    #[test]
+    fn arrow_head_points_follow_the_drag_endpoint_in_both_directions() {
+        assert_eq!(
+            arrow_head_points(
+                PhysicalPoint { x: 10, y: 20 },
+                PhysicalPoint { x: 30, y: 20 },
+                12.0,
+            ),
+            (
+                Some(PhysicalPoint { x: 20, y: 14 }),
+                Some(PhysicalPoint { x: 20, y: 26 }),
+            )
+        );
+        assert_eq!(
+            arrow_head_points(
+                PhysicalPoint { x: 30, y: 20 },
+                PhysicalPoint { x: 10, y: 20 },
+                12.0,
+            ),
+            (
+                Some(PhysicalPoint { x: 20, y: 26 }),
+                Some(PhysicalPoint { x: 20, y: 14 }),
+            )
+        );
+        assert_eq!(
+            arrow_head_points(
+                PhysicalPoint { x: 10, y: 10 },
+                PhysicalPoint { x: 10, y: 30 },
+                12.0,
+            ),
+            (
+                Some(PhysicalPoint { x: 16, y: 20 }),
+                Some(PhysicalPoint { x: 4, y: 20 }),
+            )
+        );
+    }
+
+    #[test]
+    fn arrow_head_points_reject_zero_and_non_finite_size() {
+        let point = PhysicalPoint { x: 10, y: 10 };
+        assert_eq!(arrow_head_points(point, point, 12.0), (None, None));
+        assert_eq!(
+            arrow_head_points(point, PhysicalPoint { x: 20, y: 10 }, 0.0),
+            (None, None)
+        );
+        assert_eq!(
+            arrow_head_points(point, PhysicalPoint { x: 20, y: 10 }, f64::NAN),
+            (None, None)
         );
     }
 

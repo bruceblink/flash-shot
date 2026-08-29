@@ -23,7 +23,7 @@ use crate::{
     domain::{
         annotation::{
             Annotation, AnnotationId, AnnotationKind, AnnotationTool, SEQUENCE_MARKER_RADIUS,
-            normalized_text_annotation_content,
+            arrow_head_points, normalized_text_annotation_content,
         },
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
@@ -3620,8 +3620,8 @@ fn paint_arrow(
     stroke_width: u32,
 ) {
     paint_line(window, transform, start, end, color, stroke_width);
-    let arrow_head_size = stroke_width.div_ceil(2).max(3) as f32 * 4.0;
-    let (left, right) = arrow_head_points(start, end, arrow_head_size, 0.55);
+    let arrow_head_size = f64::from(stroke_width.div_ceil(2).max(3)) * 4.0;
+    let (left, right) = arrow_head_points(start, end, arrow_head_size);
     for point in [left, right].into_iter().flatten() {
         paint_line(window, transform, end, point, color, stroke_width);
     }
@@ -3644,27 +3644,6 @@ fn paint_freehand(
             stroke_width,
         );
     }
-}
-
-fn arrow_head_points(
-    start: PhysicalPoint,
-    end: PhysicalPoint,
-    size: f32,
-    angle: f32,
-) -> (Option<PhysicalPoint>, Option<PhysicalPoint>) {
-    let dx = (end.x - start.x) as f32;
-    let dy = (end.y - start.y) as f32;
-    let length = dx.hypot(dy);
-    if length == 0.0 {
-        return (None, None);
-    }
-    let unit_x = dx / length;
-    let unit_y = dy / length;
-    let point_for = |angle: f32| PhysicalPoint {
-        x: (end.x as f32 + (-unit_x * angle.cos() + unit_y * angle.sin()) * size).round() as i32,
-        y: (end.y as f32 + (-unit_x * angle.sin() - unit_y * angle.cos()) * size).round() as i32,
-    };
-    (Some(point_for(angle)), Some(point_for(-angle)))
 }
 
 fn paint_ellipse_outline(
@@ -4954,21 +4933,31 @@ mod tests {
     fn arrow_head_uses_two_symmetric_wings_and_skips_zero_length_arrows() {
         let start = PhysicalPoint { x: 10, y: 20 };
         let end = PhysicalPoint { x: 30, y: 20 };
-        let (left, right) = arrow_head_points(start, end, 12.0, 0.55);
+        let (left, right) = arrow_head_points(start, end, 12.0);
 
         assert_eq!(left, Some(PhysicalPoint { x: 20, y: 14 }));
         assert_eq!(right, Some(PhysicalPoint { x: 20, y: 26 }));
-        assert_eq!(arrow_head_points(end, end, 12.0, 0.55), (None, None));
+        assert_eq!(arrow_head_points(end, end, 12.0), (None, None));
     }
 
     #[test]
     fn vertical_arrow_heads_stay_behind_the_endpoint() {
         let start = PhysicalPoint { x: 10, y: 10 };
         let end = PhysicalPoint { x: 10, y: 30 };
-        let (left, right) = arrow_head_points(start, end, 12.0, 0.55);
+        let (left, right) = arrow_head_points(start, end, 12.0);
 
         assert_eq!(left, Some(PhysicalPoint { x: 16, y: 20 }));
         assert_eq!(right, Some(PhysicalPoint { x: 4, y: 20 }));
+    }
+
+    #[test]
+    fn reversed_arrow_heads_still_point_at_the_logical_endpoint() {
+        let start = PhysicalPoint { x: 30, y: 20 };
+        let end = PhysicalPoint { x: 10, y: 20 };
+        let (left, right) = arrow_head_points(start, end, 12.0);
+
+        assert_eq!(left, Some(PhysicalPoint { x: 20, y: 26 }));
+        assert_eq!(right, Some(PhysicalPoint { x: 20, y: 14 }));
     }
 
     #[test]
