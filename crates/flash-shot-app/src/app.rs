@@ -1084,6 +1084,14 @@ impl FlashShotApp {
                             let result = this.replace_history_for_acceptance(history, cx);
                             let _ = reply.send(result);
                         }
+                        crate::HistoryResourceAcceptanceCommand::RemoveHistory { path, reply } => {
+                            let result = this.remove_history_for_acceptance(path, cx);
+                            let _ = reply.send(result);
+                        }
+                        crate::HistoryResourceAcceptanceCommand::ClearHistory { paths, reply } => {
+                            let result = this.clear_history_for_acceptance(paths, cx);
+                            let _ = reply.send(result);
+                        }
                         crate::HistoryResourceAcceptanceCommand::Quit(reply) => {
                             let _ = reply.send(());
                             cx.quit();
@@ -1117,7 +1125,72 @@ impl FlashShotApp {
             thumbnails_loading: self.history_thumbnail_loading.len(),
             thumbnails_pending: self.history_thumbnail_pending.len(),
             thumbnails_failed: self.history_thumbnail_failed.len(),
+            history_mutation_in_flight: self.history_mutation_pending(),
+            history_file_read_in_flight: self.history_file_read_in_flight(),
         }
+    }
+
+    /// Starts the production single-entry deletion workflow and returns its initial busy state.
+    /// The acceptance runner polls later snapshots for the asynchronous completion.
+    fn remove_history_for_acceptance(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::HistoryResourceAcceptanceState, String> {
+        if !self.history_mutation_can_start() {
+            return Err("history workflow is busy".to_owned());
+        }
+        if !self
+            .history
+            .entries()
+            .iter()
+            .any(|entry| entry.path == path)
+        {
+            return Err("history entry is not managed by the active history root".to_owned());
+        }
+        self.remove_history_image(path.clone(), cx);
+        if !self.history_deletions_in_flight.contains(&path) {
+            return Err("history deletion could not be started".to_owned());
+        }
+        Ok(self.history_resource_acceptance_state())
+    }
+
+    /// Starts the production batch-clear workflow from an explicit deletion snapshot.
+    /// Validation keeps the acceptance-only command from widening its destructive scope.
+    fn clear_history_for_acceptance(
+        &mut self,
+        paths: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::HistoryResourceAcceptanceState, String> {
+        if paths.is_empty() {
+            return Err("history deletion snapshot is empty".to_owned());
+        }
+        if !self.history_mutation_can_start() {
+            return Err("history workflow is busy".to_owned());
+        }
+        let unique_paths = paths.iter().cloned().collect::<HashSet<_>>();
+        if unique_paths.len() != paths.len()
+            || paths.iter().any(|path| {
+                !self
+                    .history
+                    .entries()
+                    .iter()
+                    .any(|entry| entry.path == *path)
+            })
+        {
+            return Err(
+                "history deletion snapshot is not retained by the active history root".to_owned(),
+            );
+        }
+        self.history_clear_scope = HistoryClearScope::Selected;
+        self.history_clear_count = paths.len();
+        self.history_clear_paths = paths;
+        self.history_clear_confirmation = true;
+        self.clear_history(cx);
+        if !self.history_clear_in_flight {
+            return Err("history batch deletion could not be started".to_owned());
+        }
+        Ok(self.history_resource_acceptance_state())
     }
 
     /// Clears all preview state for a deterministic fault-injection run, but only while the

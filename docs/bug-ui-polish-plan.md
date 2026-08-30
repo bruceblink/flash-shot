@@ -274,6 +274,10 @@ Save 取消/重试 -> Pin -> Copy -> Escape 清理。报告 schema 18 为 More/L
   `target/history-resource-acceptance/release-fault-20260829/session-1787982960787-31984/report.json` 为
   `passed=true`：`failures_2` 收敛为 298 个缓存和 2 个失败条目，恢复阶段回到 300 个缓存，目录切换阶段加载
   3 个新条目；五张窗口截图、采样和报告属于同一会话，原始与切换后的 history 根目录均已删除。
+- 2026-08-30 已为 `history-resource-acceptance` 增加 `--exercise-deletions` 专项：在隔离的 6 条记录目录中，
+  通过生产单项删除和批量清理流程分别移除 1 条和 2 条记录；报告会在 `deletion_initial_6`、`deletion_single_5`、
+  `deletion_batch_3` 阶段等待索引、缩略图队列以及文件读取/删除互斥状态收敛，并记录删除结果截图和实际文件清理。
+  该切片仍不宣称窗口关闭期间的真实 Release 故障路径已完成，因此 B3 保持“进行中”。
 
 ### B4：标注回归保护
 

@@ -264,6 +264,14 @@ pub enum HistoryResourceAcceptanceCommand {
         history: ScreenshotHistory,
         reply: SyncSender<Result<HistoryResourceAcceptanceState, String>>,
     },
+    RemoveHistory {
+        path: PathBuf,
+        reply: SyncSender<Result<HistoryResourceAcceptanceState, String>>,
+    },
+    ClearHistory {
+        paths: Vec<PathBuf>,
+        reply: SyncSender<Result<HistoryResourceAcceptanceState, String>>,
+    },
     Quit(SyncSender<()>),
 }
 
@@ -277,6 +285,8 @@ pub struct HistoryResourceAcceptanceState {
     pub thumbnails_loading: usize,
     pub thumbnails_pending: usize,
     pub thumbnails_failed: usize,
+    pub history_mutation_in_flight: bool,
+    pub history_file_read_in_flight: bool,
 }
 
 impl OverlayInteractionAcceptanceOptions {

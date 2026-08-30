@@ -35,6 +35,7 @@ const FIXTURE_COUNT: usize = 300;
 const DEFAULT_VISIBLE_COUNT: usize = 5;
 const FIXTURE_WIDTH: u32 = 320;
 const FIXTURE_HEIGHT: u32 = 200;
+const DELETION_FIXTURE_COUNT: usize = 6;
 
 #[derive(Clone, Debug)]
 struct Options {
@@ -42,6 +43,7 @@ struct Options {
     timeout: Duration,
     sample_interval: Duration,
     exercise_failures: bool,
+    exercise_deletions: bool,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -58,6 +60,23 @@ struct FailureScenarioScreenshots {
     failures_2: &'static str,
     recovered_300: &'static str,
     directory_switch_3: &'static str,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct DeletionScenarioEvidence {
+    initial: HistoryResourceAcceptanceState,
+    single_removed: HistoryResourceAcceptanceState,
+    batch_cleared: HistoryResourceAcceptanceState,
+    removed_path: String,
+    batch_paths: Vec<String>,
+    history_root: String,
+    screenshots: DeletionScenarioScreenshots,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct DeletionScenarioScreenshots {
+    single_removed: &'static str,
+    batch_cleared: &'static str,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -181,6 +200,20 @@ fn run() -> io::Result<serde_json::Value> {
             } else {
                 None
             };
+            let deletion_evidence = if options.exercise_deletions {
+                Some(exercise_history_deletions(
+                    &command_tx,
+                    options.timeout,
+                    options.sample_interval,
+                    started,
+                    &mut samples,
+                    &session_root,
+                    &mut additional_history_roots,
+                    &window,
+                )?)
+            } else {
+                None
+            };
             let peak = peak_for_phase(baseline, &samples, "expanded_300");
             let peak_loading = samples
                 .iter()
@@ -216,7 +249,8 @@ fn run() -> io::Result<serde_json::Value> {
                     && expanded_state.thumbnails_failed == 0
                     && peak_loading <= 2
                     && first_thumbnail_elapsed_ms.is_some()
-                    && (!options.exercise_failures || failure_evidence.is_some()),
+                    && (!options.exercise_failures || failure_evidence.is_some())
+                    && (!options.exercise_deletions || deletion_evidence.is_some()),
                 "measurement_mode": "release_resource",
                 "build_profile": build_profile(),
                 "session_root": session_root.to_string_lossy().into_owned(),
@@ -238,6 +272,10 @@ fn run() -> io::Result<serde_json::Value> {
                 "failure_scenario": {
                     "enabled": options.exercise_failures,
                     "evidence": failure_evidence,
+                },
+                "deletion_scenario": {
+                    "enabled": options.exercise_deletions,
+                    "evidence": deletion_evidence,
                 },
                 "resources": {
                     "baseline_after_default_5": baseline,
@@ -414,6 +452,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
         timeout: DEFAULT_TIMEOUT,
         sample_interval: DEFAULT_SAMPLE_INTERVAL,
         exercise_failures: false,
+        exercise_deletions: false,
     };
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
@@ -448,6 +487,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
                 options.sample_interval = Duration::from_millis(milliseconds);
             }
             "--exercise-failures" => options.exercise_failures = true,
+            "--exercise-deletions" => options.exercise_deletions = true,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -523,6 +563,128 @@ fn fixture_frame(index: usize) -> CaptureFrame {
         capture_duration: Duration::ZERO,
         cpu_copy_count: 1,
     }
+}
+
+#[cfg(windows)]
+/// Exercises the production single-entry and batch history deletion workflows on a fresh root.
+/// The runner waits for both the index mutation and thumbnail queue to settle before capturing
+/// each result, so the report proves that no deleted entry or stale preview remains visible.
+fn exercise_history_deletions(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    timeout: Duration,
+    interval: Duration,
+    started: Instant,
+    samples: &mut Vec<ResourceSample>,
+    session_root: &Path,
+    additional_history_roots: &mut Vec<PathBuf>,
+    window: &NativeWindow,
+) -> io::Result<DeletionScenarioEvidence> {
+    let history_root = session_root.join("history-deletions");
+    fs::create_dir_all(&history_root)?;
+    additional_history_roots.push(history_root.clone());
+    let fixture_paths = create_history_fixtures_with_count(&history_root, DELETION_FIXTURE_COUNT)?;
+    let mut history = ScreenshotHistory::open_with_limit(&history_root, DELETION_FIXTURE_COUNT)?;
+    for path in &fixture_paths {
+        history.record_with_source(path.clone(), HistorySource::Selection)?;
+    }
+    replace_history(commands, history, timeout)?;
+    let initial = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "deletion_initial_6",
+        |state| {
+            state.total_entries == DELETION_FIXTURE_COUNT
+                && state.visible_entries == DELETION_FIXTURE_COUNT
+                && state.thumbnails_cached == DELETION_FIXTURE_COUNT
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+                && state.thumbnails_failed == 0
+                && !state.history_mutation_in_flight
+                && !state.history_file_read_in_flight
+        },
+    )?;
+
+    let removed_path = fixture_paths
+        .first()
+        .cloned()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing deletion fixture"))?;
+    remove_history(commands, removed_path.clone(), timeout)?;
+    let single_removed = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "deletion_single_5",
+        |state| {
+            state.total_entries == DELETION_FIXTURE_COUNT - 1
+                && state.visible_entries == DELETION_FIXTURE_COUNT - 1
+                && state.thumbnails_cached == DELETION_FIXTURE_COUNT - 1
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+                && state.thumbnails_failed == 0
+                && !state.history_mutation_in_flight
+                && !state.history_file_read_in_flight
+        },
+    )?;
+    if removed_path.exists() {
+        return Err(io::Error::other(
+            "single history deletion left its file behind",
+        ));
+    }
+    capture_window(
+        window,
+        &session_root.join("screenshots/history-single-removed.png"),
+    )?;
+
+    let batch_paths = fixture_paths[1..3].to_vec();
+    clear_history(commands, batch_paths.clone(), timeout)?;
+    let batch_cleared = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "deletion_batch_3",
+        |state| {
+            state.total_entries == DELETION_FIXTURE_COUNT - 3
+                && state.visible_entries == DELETION_FIXTURE_COUNT - 3
+                && state.thumbnails_cached == DELETION_FIXTURE_COUNT - 3
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+                && state.thumbnails_failed == 0
+                && !state.history_mutation_in_flight
+                && !state.history_file_read_in_flight
+        },
+    )?;
+    if batch_paths.iter().any(|path| path.exists()) {
+        return Err(io::Error::other(
+            "batch history deletion left a file behind",
+        ));
+    }
+    capture_window(
+        window,
+        &session_root.join("screenshots/history-batch-cleared.png"),
+    )?;
+
+    Ok(DeletionScenarioEvidence {
+        initial,
+        single_removed,
+        batch_cleared,
+        removed_path: removed_path.to_string_lossy().into_owned(),
+        batch_paths: batch_paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        history_root: history_root.to_string_lossy().into_owned(),
+        screenshots: DeletionScenarioScreenshots {
+            single_removed: "screenshots/history-single-removed.png",
+            batch_cleared: "screenshots/history-batch-cleared.png",
+        },
+    })
 }
 
 #[cfg(windows)]
@@ -743,6 +905,64 @@ fn retry_thumbnail(
 }
 
 #[cfg(windows)]
+fn remove_history(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    path: PathBuf,
+    timeout: Duration,
+) -> io::Result<HistoryResourceAcceptanceState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(HistoryResourceAcceptanceCommand::RemoveHistory {
+            path,
+            reply: reply_tx,
+        })
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "resource app closed"))?;
+    match reply_rx
+        .recv_timeout(timeout)
+        .map_err(|error| match error {
+            RecvTimeoutError::Timeout => io::Error::new(
+                io::ErrorKind::TimedOut,
+                "single history deletion reply timed out",
+            ),
+            RecvTimeoutError::Disconnected => {
+                io::Error::new(io::ErrorKind::BrokenPipe, "resource state channel closed")
+            }
+        })? {
+        Ok(state) => Ok(state),
+        Err(error) => Err(io::Error::other(error)),
+    }
+}
+
+#[cfg(windows)]
+fn clear_history(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    paths: Vec<PathBuf>,
+    timeout: Duration,
+) -> io::Result<HistoryResourceAcceptanceState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(HistoryResourceAcceptanceCommand::ClearHistory {
+            paths,
+            reply: reply_tx,
+        })
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "resource app closed"))?;
+    match reply_rx
+        .recv_timeout(timeout)
+        .map_err(|error| match error {
+            RecvTimeoutError::Timeout => io::Error::new(
+                io::ErrorKind::TimedOut,
+                "batch history deletion reply timed out",
+            ),
+            RecvTimeoutError::Disconnected => {
+                io::Error::new(io::ErrorKind::BrokenPipe, "resource state channel closed")
+            }
+        })? {
+        Ok(state) => Ok(state),
+        Err(error) => Err(io::Error::other(error)),
+    }
+}
+
+#[cfg(windows)]
 fn replace_history(
     commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
     history: ScreenshotHistory,
@@ -953,6 +1173,7 @@ mod tests {
         );
         assert_eq!(options.timeout.as_secs(), 60);
         assert!(!options.exercise_failures);
+        assert!(!options.exercise_deletions);
         assert_eq!(FIXTURE_COUNT, 300);
     }
 
@@ -960,6 +1181,12 @@ mod tests {
     fn parser_can_enable_fault_recovery_evidence() {
         let options = parse_args(["--exercise-failures".to_owned()]).unwrap();
         assert!(options.exercise_failures);
+    }
+
+    #[test]
+    fn parser_can_enable_history_deletion_evidence() {
+        let options = parse_args(["--exercise-deletions".to_owned()]).unwrap();
+        assert!(options.exercise_deletions);
     }
 
     #[test]
@@ -978,6 +1205,8 @@ mod tests {
             thumbnails_loading: 0,
             thumbnails_pending: 0,
             thumbnails_failed: 0,
+            history_mutation_in_flight: false,
+            history_file_read_in_flight: false,
         };
         let baseline = ResourceSnapshot {
             working_set_bytes: 100,

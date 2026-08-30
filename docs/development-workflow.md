@@ -137,6 +137,16 @@ PNG 文件 Save 使用逐行 BGRA 到 RGBA 的流式编码，并通过原子临�
 `failures_2`、`recovered_300`、`directory_switch_3` 均收敛，原始与切换目录均清理成功。历史删除和窗口关闭期间
 的真实 Release 故障路径仍需单独验收。
 
+历史删除专项使用 `--exercise-deletions`。runner 会切换到隔离的 6 条记录目录，调用生产单项删除流程移除 1 条，
+再调用生产批量清理流程移除 2 条；`deletion_initial_6`、`deletion_single_5`、`deletion_batch_3` 会同时等待
+历史索引、缩略图队列和文件读取/删除互斥状态收敛，并为两个结果保存同一会话的窗口截图。报告的
+`deletion_scenario` 还会记录实际删除路径和隔离目录清理结果。该专项只证明删除期间的异步结果不会写回陈旧条目，
+窗口关闭期间的 Release 故障路径仍需单独验收。可与 `--exercise-failures` 组合运行：
+
+```powershell
+.\scripts\run-dev-tool.ps1 history-resource-acceptance -Release --exercise-failures --exercise-deletions
+```
+
 常规视觉切片选择“拖选 -> Save 取消/保存 -> Pin -> Copy -> 清理”主流程。通过条件是同一 Release
 会话同时具备真实 `--allow-input` 报告、关键步骤原生截图、Save/Pin/Copy 逐像素结果和最终
 `capture_teardown_pending=false`、overlay/Pin/可见窗口为零；Save 完成后必须经过桌面稳定屏障再开始下一次采集。
