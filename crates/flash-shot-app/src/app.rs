@@ -981,11 +981,96 @@ impl FlashShotApp {
                                 }
                                 crate::domain::session::CaptureSessionState::Failed => "failed",
                             };
+                            let annotations = this
+                                .annotation_document
+                                .as_ref()
+                                .map(|document| {
+                                    document
+                                        .annotations()
+                                        .iter()
+                                        .map(|annotation| {
+                                            let (kind, origin, start, end, content) =
+                                                match &annotation.kind {
+                                                    crate::domain::annotation::AnnotationKind::Watermark {
+                                                        origin,
+                                                        content,
+                                                    } => ("watermark", Some(*origin), None, None, Some(content.clone())),
+                                                    crate::domain::annotation::AnnotationKind::Text {
+                                                        origin,
+                                                        content,
+                                                    } => ("text", Some(*origin), None, None, Some(content.clone())),
+                                                    crate::domain::annotation::AnnotationKind::Line {
+                                                        start,
+                                                        end,
+                                                    } => ("line", None, Some(*start), Some(*end), None),
+                                                    crate::domain::annotation::AnnotationKind::Arrow {
+                                                        start,
+                                                        end,
+                                                    } => ("arrow", None, Some(*start), Some(*end), None),
+                                                    crate::domain::annotation::AnnotationKind::Number { center, .. } => {
+                                                        ("number", Some(*center), None, None, None)
+                                                    }
+                                                    crate::domain::annotation::AnnotationKind::Blur { bounds } => (
+                                                        "blur",
+                                                        None,
+                                                        Some(PhysicalPoint { x: bounds.left, y: bounds.top }),
+                                                        Some(PhysicalPoint { x: bounds.right, y: bounds.bottom }),
+                                                        None,
+                                                    ),
+                                                    crate::domain::annotation::AnnotationKind::Mosaic { bounds } => (
+                                                        "mosaic",
+                                                        None,
+                                                        Some(PhysicalPoint { x: bounds.left, y: bounds.top }),
+                                                        Some(PhysicalPoint { x: bounds.right, y: bounds.bottom }),
+                                                        None,
+                                                    ),
+                                                    crate::domain::annotation::AnnotationKind::Highlight { bounds } => (
+                                                        "highlight",
+                                                        None,
+                                                        Some(PhysicalPoint { x: bounds.left, y: bounds.top }),
+                                                        Some(PhysicalPoint { x: bounds.right, y: bounds.bottom }),
+                                                        None,
+                                                    ),
+                                                    crate::domain::annotation::AnnotationKind::Rectangle { bounds } => (
+                                                        "rectangle",
+                                                        None,
+                                                        Some(PhysicalPoint { x: bounds.left, y: bounds.top }),
+                                                        Some(PhysicalPoint { x: bounds.right, y: bounds.bottom }),
+                                                        None,
+                                                    ),
+                                                    crate::domain::annotation::AnnotationKind::Ellipse { bounds } => (
+                                                        "ellipse",
+                                                        None,
+                                                        Some(PhysicalPoint { x: bounds.left, y: bounds.top }),
+                                                        Some(PhysicalPoint { x: bounds.right, y: bounds.bottom }),
+                                                        None,
+                                                    ),
+                                                    crate::domain::annotation::AnnotationKind::Freehand { points } => (
+                                                        "freehand",
+                                                        None,
+                                                        points.first().copied(),
+                                                        points.last().copied(),
+                                                        None,
+                                                    ),
+                                                };
+                                            crate::OverlayInteractionAnnotationState {
+                                                id: annotation.id.value(),
+                                                kind: kind.to_owned(),
+                                                origin,
+                                                start,
+                                                end,
+                                                content,
+                                            }
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
                             let _ = reply.send(crate::OverlayInteractionCaptureState {
                                 session_state: session_state.to_owned(),
                                 // Report the committed session rectangle used by Save, Pin, and
                                 // Copy, never an in-flight mouse-move preview awaiting mouse-up.
                                 selection: this.session.selection(),
+                                annotations,
                                 selection_copy_active: this.selection_copy_is_active(),
                                 clipboard_write_active: this.clipboard_write_lease.is_some(),
                                 manual_scroll_state: manual_scroll_state_label(

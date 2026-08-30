@@ -77,6 +77,31 @@ workflow 回到 `Selecting` 并保留原选区，允许用户选择其他位置�
 任何一项缺失、消费者未回收、键盘或鼠标按键未释放、或超时后仍有残留，都只能记录为失败/待执行，不能
 通过“剪贴板格式已注册”或应用内提示降级为成功。
 
+### 标注回归场景
+
+`--capture-scenario annotation-regression` 是现有 `overlay-interaction-acceptance` 的标注专项，不是
+独立的二进制入口。它只在显式 `--allow-input` 后注入真实 Windows 鼠标和键盘输入，并固定使用单屏 100%
+DPI 的隔离会话：
+
+- 真实拖选后依次提交 Text、Watermark、Line 和两个相反方向的 Arrow；文字通过 Unicode 键盘事件输入，
+  不借用系统剪贴板；
+- 每次提交都等待生产状态和标注文档中的类型、内容、起点/终点或原点与注入坐标匹配，再保存同一会话的
+  `screenshots/*.png` 与 JSON 步骤记录；报告还会记录未标注源帧和已标注导出帧的像素指纹；
+- 最后用生产 `Shift+Enter` Quick Save 写入隔离 history，解码唯一 PNG 并校验物理尺寸、标注导致的像素变化、
+  `.tmp` 清理、`capture_preflight_ready` 和可见窗口/按键清理；
+- 报告的 `annotation_regression` 字段是结构化验收结果，失败或超时仍保留当前步骤和 cleanup 状态，不能
+  仅凭截图或进程退出码判定通过。
+
+执行命令：
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance `
+  --allow-input --capture-scenario annotation-regression `
+  --output-dir target\overlay-interaction-acceptance\annotation-regression
+```
+
+该场景只证明单屏 100% 的真实输入和导出闭环，不覆盖高 DPI、多屏或外部翻译服务；这些矩阵仍需单独记录。
+
 ## 4. 截图、像素和视觉证据
 
 每个真实场景至少保留以下三类产物，并使用同一会话目录和时间戳关联：

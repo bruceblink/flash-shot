@@ -11,8 +11,8 @@ use std::{
 
 use flash_shot::{
     OverlayInteractionAcceptanceCommand, OverlayInteractionAcceptanceOptions,
-    OverlayInteractionCaptureContent, OverlayInteractionCaptureState,
-    OverlayInteractionRecordingState,
+    OverlayInteractionAnnotationState, OverlayInteractionCaptureContent,
+    OverlayInteractionCaptureState, OverlayInteractionRecordingState,
     domain::geometry::{PhysicalPoint, PhysicalRect},
     domain::selection::{ResizeHandle, SelectionDrag},
     history::ScreenshotHistory,
@@ -196,6 +196,7 @@ enum CaptureScenarioOption {
     PinsCoexist,
     SelectionTransform,
     ScrollRoundtrip,
+    AnnotationRegression,
 }
 
 impl CaptureScenarioOption {
@@ -207,13 +208,18 @@ impl CaptureScenarioOption {
             Self::PinsCoexist => "capture_pins_coexist",
             Self::SelectionTransform => "capture_selection_transform",
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
+            Self::AnnotationRegression => "capture_annotation_regression",
         }
     }
 
     const fn requires_100_percent_display(self) -> bool {
         matches!(
             self,
-            Self::NarrowEdge | Self::PinsCoexist | Self::SelectionTransform | Self::ScrollRoundtrip
+            Self::NarrowEdge
+                | Self::PinsCoexist
+                | Self::SelectionTransform
+                | Self::ScrollRoundtrip
+                | Self::AnnotationRegression
         )
     }
 }
@@ -353,9 +359,10 @@ impl Options {
                         "pins-coexist" => CaptureScenarioOption::PinsCoexist,
                         "selection-transform" => CaptureScenarioOption::SelectionTransform,
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
+                        "annotation-regression" => CaptureScenarioOption::AnnotationRegression,
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'narrow-edge', 'pins-coexist', 'selection-transform', or 'scroll-roundtrip'"
+                                "capture scenario must be 'copy-only', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', or 'annotation-regression'"
                                     .to_owned(),
                             );
                         }
@@ -476,7 +483,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1282,6 +1289,7 @@ struct AcceptanceReport {
     pins_coexist: Option<PinsCoexistReport>,
     selection_transform: Option<SelectionTransformReport>,
     scroll_roundtrip: Option<ScrollRoundtripReport>,
+    annotation_regression: Option<AnnotationRegressionReport>,
     error: Option<String>,
 }
 
@@ -1506,6 +1514,44 @@ struct SelectionTransformReport {
 }
 
 #[derive(serde::Serialize)]
+struct AnnotationRegressionReport {
+    requested_selection: PhysicalRect,
+    committed_selection: PhysicalRect,
+    text: AnnotationInputReport,
+    watermark: AnnotationInputReport,
+    line: AnnotationGestureReport,
+    arrows: Vec<AnnotationGestureReport>,
+    exported_png: String,
+    exported_width: u32,
+    exported_height: u32,
+    exported_bytes: u64,
+    source_pixel_fingerprint: String,
+    exported_pixel_fingerprint: String,
+    export_content_changed: bool,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct AnnotationInputReport {
+    kind: &'static str,
+    content: String,
+    origin: PhysicalPoint,
+    annotation_id: u64,
+    screenshot: String,
+    pixel_fingerprint: String,
+}
+
+#[derive(serde::Serialize)]
+struct AnnotationGestureReport {
+    kind: &'static str,
+    annotation_id: u64,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+    screenshot: String,
+    pixel_fingerprint: String,
+}
+
+#[derive(serde::Serialize)]
 struct SelectionTransformGestureReport {
     gesture: &'static str,
     shift: bool,
@@ -1711,6 +1757,8 @@ struct NativeWindow {
 struct InjectedDrag {
     foreground: NativeWindow,
     selection: PhysicalRect,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
 }
 
 #[cfg(windows)]
@@ -1981,7 +2029,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::CopyOnly
             | CaptureScenarioOption::PinsCoexist
             | CaptureScenarioOption::SelectionTransform
-            | CaptureScenarioOption::ScrollRoundtrip,
+            | CaptureScenarioOption::ScrollRoundtrip
+            | CaptureScenarioOption::AnnotationRegression,
         ) => (520.0, 640.0),
     };
 
@@ -2056,9 +2105,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 18 records capture
-        // generation and background-input cleanup evidence for the continuous lifecycle scenario.
-        schema_version: 18,
+        // Increment when the machine-readable report shape changes. Schema 19 adds the
+        // annotation regression report and source/export pixel fingerprints.
+        schema_version: 19,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2085,6 +2134,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         pins_coexist: None,
         selection_transform: None,
         scroll_roundtrip: None,
+        annotation_regression: None,
         error: None,
     }
 }
@@ -3524,6 +3574,9 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::ScrollRoundtrip) => {
             execute_scroll_roundtrip_interactions(context, report)
         }
+        (None, CaptureScenarioOption::AnnotationRegression) => {
+            execute_annotation_regression_interactions(context, report)
+        }
         (None, CaptureScenarioOption::CopyOnly) => execute_copy_only_interactions(context, report),
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
@@ -4625,6 +4678,446 @@ fn execute_selection_transform_interactions(
         },
     });
     write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Drives real Text/Watermark input and Line/Arrow drags, then quick-saves the annotated image.
+fn execute_annotation_regression_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_controller_ready",
+        controller,
+        None,
+    )?;
+
+    let foreground = inject_capture_shortcut(controller.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_capture_shortcut",
+        foreground,
+        None,
+    )?;
+    let overlay = wait_for_overlay(
+        controller.handle,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "annotation capture overlay hides Settings",
+    )?;
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let plan = interaction_plan_for_window(overlay.handle)?;
+    let drag = inject_mouse_drag(
+        overlay.handle,
+        plan.drag_start,
+        plan.drag_end,
+        context.display.physical_bounds,
+    )?;
+    let selected_state = wait_for_capture_state(context, "annotation selection", |state| {
+        state.session_state == "selecting"
+            && state.selection.is_some()
+            && state.overlay_count == 1
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+    })?;
+    let selection = selected_state
+        .selection
+        .ok_or_else(|| io::Error::other("annotation selection disappeared"))?;
+    validate_selection_geometry(drag.selection, selection, "annotation selection")?;
+    let source = query_capture_content(context, context.timeout.min(Duration::from_secs(1)))?
+        .selection
+        .ok_or_else(|| io::Error::other("annotation selection did not expose source pixels"))?;
+    validate_frame_dimensions(&source, selection, "annotation source frame")?;
+
+    let client = client_bounds_for_window(overlay.handle)?;
+    let to_screen = |point: PhysicalPoint| {
+        map_capture_point_to_screen(point, client, context.display.physical_bounds)
+    };
+    let evidence_rest = to_screen(PhysicalPoint {
+        x: context.display.physical_bounds.left + 24,
+        y: context.display.physical_bounds.top + 24,
+    })?;
+
+    let foreground = inject_mouse_click(overlay.handle, plan.mark)?;
+    let _marking_state = wait_for_capture_state(context, "annotation controls", |state| {
+        state.selection == Some(selection)
+            && state.overlay_count == 1
+            && state.annotation_controls_visible
+            && !state.more_actions_visible
+    })?;
+    let mut previous = capture_evidence(context, "00-annotation-tools.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_controls_open",
+        foreground,
+        Some(&previous),
+    )?;
+
+    let text_origin = PhysicalPoint {
+        x: selection.left.saturating_add(24),
+        y: selection.top.saturating_add(24),
+    };
+    let text_content = "B4 Text 中文";
+    focus_owned_window(overlay, context.timeout)?;
+    inject_key(overlay.handle, b'T' as u16)?;
+    inject_mouse_click(overlay.handle, to_screen(text_origin)?)?;
+    wait_for_capture_state(context, "Text editor", |state| {
+        state.annotation_controls_visible && state.status.starts_with("Type Text")
+    })?;
+    inject_unicode_text(overlay.handle, text_content)?;
+    inject_key(overlay.handle, VK_RETURN)?;
+    let text_state = wait_for_capture_state(context, "Text annotation", |state| {
+        state.annotations.len() == 1
+            && state.annotations[0].kind == "text"
+            && state.annotations[0].content.as_deref() == Some(text_content)
+    })?;
+    let text_annotation = text_state
+        .annotations
+        .last()
+        .ok_or_else(|| io::Error::other("Text annotation did not commit"))?;
+    if text_annotation.origin != Some(text_origin) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Text annotation origin {:?} did not match {:?}",
+                text_annotation.origin, text_origin
+            ),
+        ));
+    }
+    let foreground = inject_mouse_move(overlay.handle, evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let text_evidence = capture_evidence(context, "01-annotation-text.png", overlay)?;
+    ensure_evidence_changed(&previous, &text_evidence, "Text did not change the overlay")?;
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_text_committed",
+        foreground,
+        Some(&text_evidence),
+    )?;
+    previous = text_evidence;
+    let text_report = AnnotationInputReport {
+        kind: "text",
+        content: text_content.to_owned(),
+        origin: text_origin,
+        annotation_id: text_annotation.id,
+        screenshot: previous.file_name.clone(),
+        pixel_fingerprint: format!("{:016x}", previous.fingerprint),
+    };
+
+    let watermark_origin = PhysicalPoint {
+        x: selection.left.saturating_add(24),
+        y: selection.top.saturating_add(68),
+    };
+    let watermark_content = "B4 Watermark 中文";
+    focus_owned_window(overlay, context.timeout)?;
+    inject_key(overlay.handle, b'W' as u16)?;
+    inject_mouse_click(overlay.handle, to_screen(watermark_origin)?)?;
+    wait_for_capture_state(context, "Watermark editor", |state| {
+        state.annotation_controls_visible && state.status.starts_with("Type Watermark")
+    })?;
+    inject_unicode_text(overlay.handle, watermark_content)?;
+    inject_key(overlay.handle, VK_RETURN)?;
+    let watermark_state = wait_for_capture_state(context, "Watermark annotation", |state| {
+        state.annotations.len() == 2
+            && state.annotations[1].kind == "watermark"
+            && state.annotations[1].content.as_deref() == Some(watermark_content)
+    })?;
+    let watermark_annotation = watermark_state
+        .annotations
+        .last()
+        .ok_or_else(|| io::Error::other("Watermark annotation did not commit"))?;
+    if watermark_annotation.origin != Some(watermark_origin) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Watermark annotation origin {:?} did not match {:?}",
+                watermark_annotation.origin, watermark_origin
+            ),
+        ));
+    }
+    let foreground = inject_mouse_move(overlay.handle, evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let watermark_evidence = capture_evidence(context, "02-annotation-watermark.png", overlay)?;
+    ensure_evidence_changed(
+        &previous,
+        &watermark_evidence,
+        "Watermark did not change the overlay",
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_watermark_committed",
+        foreground,
+        Some(&watermark_evidence),
+    )?;
+    previous = watermark_evidence;
+    let watermark_report = AnnotationInputReport {
+        kind: "watermark",
+        content: watermark_content.to_owned(),
+        origin: watermark_origin,
+        annotation_id: watermark_annotation.id,
+        screenshot: previous.file_name.clone(),
+        pixel_fingerprint: format!("{:016x}", previous.fingerprint),
+    };
+
+    let line_start = PhysicalPoint {
+        x: selection.left.saturating_add(24),
+        y: selection.top.saturating_add(118),
+    };
+    let line_end = PhysicalPoint {
+        x: selection.right.saturating_sub(24),
+        y: selection.top.saturating_add(118),
+    };
+    focus_owned_window(overlay, context.timeout)?;
+    inject_key(overlay.handle, b'L' as u16)?;
+    let line_drag = inject_mouse_drag(
+        overlay.handle,
+        to_screen(line_start)?,
+        to_screen(line_end)?,
+        context.display.physical_bounds,
+    )?;
+    let line_state = wait_for_capture_state(context, "Line annotation", |state| {
+        state.annotations.len() == 3 && state.annotations[2].kind == "line"
+    })?;
+    let line_annotation = line_state
+        .annotations
+        .last()
+        .ok_or_else(|| io::Error::other("Line annotation did not commit"))?;
+    validate_annotation_segment(line_annotation, &line_drag, "Line")?;
+    let foreground = inject_mouse_move(overlay.handle, evidence_rest)?;
+    thread::sleep(context.settle_delay);
+    let line_evidence = capture_evidence(context, "03-annotation-line.png", overlay)?;
+    ensure_evidence_changed(&previous, &line_evidence, "Line did not change the overlay")?;
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_line_committed",
+        foreground,
+        Some(&line_evidence),
+    )?;
+    previous = line_evidence;
+    let line_report = AnnotationGestureReport {
+        kind: "line",
+        annotation_id: line_annotation.id,
+        start: line_drag.start,
+        end: line_drag.end,
+        screenshot: previous.file_name.clone(),
+        pixel_fingerprint: format!("{:016x}", previous.fingerprint),
+    };
+
+    let arrow_points = [
+        (
+            PhysicalPoint {
+                x: selection.left.saturating_add(32),
+                y: selection.bottom.saturating_sub(34),
+            },
+            PhysicalPoint {
+                x: selection.right.saturating_sub(24),
+                y: selection.top.saturating_add(92),
+            },
+            "04-annotation-arrow-forward.png",
+            "annotation_arrow_forward",
+        ),
+        (
+            PhysicalPoint {
+                x: selection.right.saturating_sub(32),
+                y: selection.top.saturating_add(108),
+            },
+            PhysicalPoint {
+                x: selection.left.saturating_add(24),
+                y: selection.bottom.saturating_sub(20),
+            },
+            "05-annotation-arrow-reverse.png",
+            "annotation_arrow_reverse",
+        ),
+    ];
+    let mut arrows = Vec::with_capacity(arrow_points.len());
+    for (index, (start, end, screenshot, action)) in arrow_points.into_iter().enumerate() {
+        focus_owned_window(overlay, context.timeout)?;
+        if index == 0 {
+            inject_key(overlay.handle, b'A' as u16)?;
+        }
+        let arrow_drag = inject_mouse_drag(
+            overlay.handle,
+            to_screen(start)?,
+            to_screen(end)?,
+            context.display.physical_bounds,
+        )?;
+        let expected_count = 4 + index;
+        let arrow_state = wait_for_capture_state(context, "Arrow annotation", |state| {
+            state.annotations.len() == expected_count
+                && state
+                    .annotations
+                    .last()
+                    .is_some_and(|annotation| annotation.kind == "arrow")
+        })?;
+        let arrow_annotation = arrow_state
+            .annotations
+            .last()
+            .ok_or_else(|| io::Error::other("Arrow annotation did not commit"))?;
+        validate_annotation_segment(arrow_annotation, &arrow_drag, "Arrow")?;
+        let foreground = inject_mouse_move(overlay.handle, evidence_rest)?;
+        thread::sleep(context.settle_delay);
+        let evidence = capture_evidence(context, screenshot, overlay)?;
+        ensure_evidence_changed(&previous, &evidence, "Arrow did not change the overlay")?;
+        record_step(
+            report,
+            &context.report_path,
+            action,
+            foreground,
+            Some(&evidence),
+        )?;
+        previous = evidence;
+        arrows.push(AnnotationGestureReport {
+            kind: "arrow",
+            annotation_id: arrow_annotation.id,
+            start: arrow_drag.start,
+            end: arrow_drag.end,
+            screenshot: previous.file_name.clone(),
+            pixel_fingerprint: format!("{:016x}", previous.fingerprint),
+        });
+    }
+
+    focus_owned_window(overlay, context.timeout)?;
+    let foreground = inject_quick_save(overlay.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_quick_save",
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(overlay.handle, context.timeout, "annotation quick save")?;
+    let final_state = wait_for_capture_state(context, "annotation export cleanup", |state| {
+        state.session_state == "completed"
+            && state.selection == Some(selection)
+            && state.overlay_count == 0
+            && state.pinned_count == 0
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+            && state.status.starts_with("Selection saved to ")
+    })?;
+    let (export_path, exported, exported_bytes) =
+        wait_for_single_png(&context.session_root.join("history"), context.timeout)?;
+    validate_frame_dimensions(&exported, selection, "annotated export")?;
+    let source_metrics = frame_content_metrics(&source)?;
+    let exported_metrics = frame_content_metrics(&exported)?;
+    let export_content_changed = source_metrics.fingerprint != exported_metrics.fingerprint;
+    if !export_content_changed {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "annotated export pixels did not differ from the clean source frame",
+        ));
+    }
+    ensure_path_within(&export_path, &context.session_root)?;
+    let temporary_exports = fs::read_dir(context.session_root.join("history"))?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                == Some("tmp")
+        })
+        .count();
+    if temporary_exports != 0 {
+        return Err(io::Error::other(
+            "annotated quick save left temporary files",
+        ));
+    }
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_export_verified",
+        controller,
+        None,
+    )?;
+
+    unsafe { ShowWindow(controller.handle, SW_HIDE) };
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "annotation controller hide",
+    )?;
+    ensure_capture_input_released()?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "annotation cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.annotation_regression = Some(AnnotationRegressionReport {
+        requested_selection: drag.selection,
+        committed_selection: selection,
+        text: text_report,
+        watermark: watermark_report,
+        line: line_report,
+        arrows,
+        exported_png: export_path
+            .strip_prefix(&context.session_root)
+            .unwrap_or(&export_path)
+            .to_string_lossy()
+            .into_owned(),
+        exported_width: exported.width,
+        exported_height: exported.height,
+        exported_bytes,
+        source_pixel_fingerprint: format!("{:016x}", source_metrics.fingerprint),
+        exported_pixel_fingerprint: format!("{:016x}", exported_metrics.fingerprint),
+        export_content_changed,
+        cleanup: CleanupReport {
+            session_state: final_state.session_state,
+            overlay_count: final_state.overlay_count,
+            pinned_count: final_state.pinned_count,
+            capture_teardown_pending: final_state.capture_teardown_pending,
+            visible_process_windows,
+            capture_preflight_ready: final_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Confirms a committed line or arrow preserves both injected endpoints and direction.
+fn validate_annotation_segment(
+    annotation: &OverlayInteractionAnnotationState,
+    drag: &InjectedDrag,
+    label: &str,
+) -> io::Result<()> {
+    let Some(start) = annotation.start else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{label} annotation did not report a start point"),
+        ));
+    };
+    let Some(end) = annotation.end else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{label} annotation did not report an end point"),
+        ));
+    };
+    validate_point_geometry(drag.start, start, &format!("{label} start"))?;
+    validate_point_geometry(drag.end, end, &format!("{label} end"))?;
+    if start == end {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{label} annotation has zero-length geometry"),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -6568,6 +7061,55 @@ fn wait_for_saved_png(path: &Path, timeout: Duration) -> io::Result<(CaptureFram
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("saved PNG did not become readable: {last_error}"),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+/// Waits for the isolated quick-save folder to contain exactly one readable PNG.
+fn wait_for_single_png(
+    directory: &Path,
+    timeout: Duration,
+) -> io::Result<(PathBuf, CaptureFrame, u64)> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let mut paths = fs::read_dir(directory)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.extension()
+                            .and_then(|extension| extension.to_str())
+                            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        paths.sort();
+        if paths.len() == 1 {
+            let path = paths.pop().expect("one PNG path was checked");
+            if let Ok(metadata) = fs::metadata(&path)
+                && metadata.len() > 0
+                && let Ok(frame) = CaptureFrame::open_png(&path)
+            {
+                return Ok((path, frame, metadata.len()));
+            }
+        } else if paths.len() > 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("quick-save folder contains {} PNG files", paths.len()),
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "annotated quick-save PNG did not become readable in {}",
+                    directory.display()
+                ),
             ));
         }
         thread::sleep(Duration::from_millis(25));
@@ -9801,6 +10343,29 @@ fn inject_scroll_auto_capture(expected: *mut c_void) -> io::Result<NativeWindow>
 }
 
 #[cfg(windows)]
+/// Commits the current annotated selection through the production Shift+Enter quick-save path.
+fn inject_quick_save(expected: *mut c_void) -> io::Result<NativeWindow> {
+    let foreground = guard_foreground(expected)?;
+    ensure_input_keys_released(&[(VK_SHIFT, "Shift"), (VK_RETURN, "Enter")])?;
+    let inputs = [
+        keyboard_input(VK_SHIFT, false),
+        keyboard_input(VK_RETURN, false),
+        keyboard_input(VK_RETURN, true),
+        keyboard_input(VK_SHIFT, true),
+    ];
+    let cleanup = [
+        keyboard_input(VK_RETURN, true),
+        keyboard_input(VK_SHIFT, true),
+    ];
+    send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    wait_for_input_keys_released(
+        &[(VK_SHIFT, "Shift"), (VK_RETURN, "Enter")],
+        Duration::from_millis(250),
+    )?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
 /// Selects all text in the focused native edit without relying on clipboard paste.
 fn inject_select_all(expected: *mut c_void) -> io::Result<NativeWindow> {
     let foreground = guard_foreground(expected)?;
@@ -9816,14 +10381,14 @@ fn inject_select_all(expected: *mut c_void) -> io::Result<NativeWindow> {
 }
 
 #[cfg(windows)]
-/// Types UTF-16 code units directly so Save acceptance never borrows the system clipboard.
+/// Types UTF-16 code units directly so acceptance never borrows the system clipboard.
 fn inject_unicode_text(expected: *mut c_void, text: &str) -> io::Result<NativeWindow> {
     let foreground = guard_foreground(expected)?;
     let code_units = text.encode_utf16().collect::<Vec<_>>();
     if code_units.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "injected Save path must not be empty",
+            "injected Unicode text must not be empty",
         ));
     }
     let mut inputs = Vec::with_capacity(code_units.len() * 2);
@@ -10262,13 +10827,18 @@ fn inject_mouse_drag(
         (Ok(_), Err(error)) => return Err(error),
     };
     let screen_selection = PhysicalRect::new(actual_start, actual_end);
+    let client_bounds = client_bounds_for_window(expected)?;
+    let capture_start = map_screen_point_to_capture(actual_start, client_bounds, capture_bounds)?;
+    let capture_end = map_screen_point_to_capture(actual_end, client_bounds, capture_bounds)?;
     Ok(InjectedDrag {
         foreground,
         selection: map_screen_selection_to_capture(
             screen_selection,
-            client_bounds_for_window(expected)?,
+            client_bounds,
             capture_bounds,
         )?,
+        start: capture_start,
+        end: capture_end,
     })
 }
 
@@ -10806,6 +11376,26 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_annotation_regression_scenario() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "annotation-regression",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::AnnotationRegression
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_annotation_regression"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+    }
+
+    #[test]
     fn parser_accepts_scroll_roundtrip_scenario() {
         let options = Options::parse_from(arguments(&[
             "--allow-input",
@@ -10984,6 +11574,7 @@ mod tests {
         let clean = OverlayInteractionCaptureState {
             session_state: "completed".to_owned(),
             selection: Some(selection),
+            annotations: Vec::new(),
             selection_copy_active: false,
             clipboard_write_active: false,
             manual_scroll_state: "idle".to_owned(),

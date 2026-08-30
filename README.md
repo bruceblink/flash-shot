@@ -136,6 +136,21 @@ cargo test --workspace --all-features
 
 该场景会在报告中记录窗口隐藏时的加载/排队状态、隐藏期间的收敛状态、重新打开后的缓存状态、恢复截图和临时 history 根目录清理结果。
 
+验证截图标注的原生输入闭环时，使用隔离的标注回归场景。该场景从真实 Capture 开始，以鼠标拖选选区，
+再通过原生键盘/鼠标输入依次提交 Text、Watermark、Line 和两个相反方向的 Arrow；每个步骤都会保存原生
+截图，并在报告中记录标注类型、内容、物理坐标和像素指纹；报告同时保留源帧与导出帧指纹。最后用生产 `Shift+Enter` Quick Save 写入隔离
+history，校验导出尺寸、导出像素已包含标注、临时文件清理和窗口/按键清理结果：
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance `
+  --allow-input --capture-scenario annotation-regression `
+  --output-dir target\overlay-interaction-acceptance\annotation-regression
+```
+
+该场景要求单显示器 100% DPI，并且必须使用可丢弃的桌面会话；它不读取或改写系统剪贴板。报告位于生成的
+`session-<timestamp>-<pid>\report.json`，步骤截图位于同一会话的 `screenshots` 目录。未在真实 Windows
+桌面执行的结果只能标记为待执行，不能用 Linux 单元测试替代原生输入证据。
+
 使用固定 4K 场景测量 CPU 导出合成器。该指标衡量导出性能，不是 GPUI 交互帧门禁；
 只有在建立具有代表性的 Release 基线后，才应显式设置上限：
 

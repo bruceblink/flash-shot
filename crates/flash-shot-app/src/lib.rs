@@ -190,6 +190,9 @@ pub struct OverlayInteractionRecordingState {
 pub struct OverlayInteractionCaptureState {
     pub session_state: String,
     pub selection: Option<domain::geometry::PhysicalRect>,
+    /// Current committed annotations, exposed as stable kind/geometry/content summaries for
+    /// native regression probes without leaking the mutable editor document.
+    pub annotations: Vec<OverlayInteractionAnnotationState>,
     /// Whether the editor currently owns a background selection Copy worker.
     pub selection_copy_active: bool,
     /// Whether any production image writer currently owns the shared clipboard lease.
@@ -221,6 +224,17 @@ pub struct OverlayInteractionCaptureState {
     pub background_tasks_idle: bool,
     pub capture_preflight_ready: bool,
     pub status: String,
+}
+
+/// Renderer-independent annotation details returned to the isolated real-input acceptance probe.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OverlayInteractionAnnotationState {
+    pub id: u64,
+    pub kind: String,
+    pub origin: Option<domain::geometry::PhysicalPoint>,
+    pub start: Option<domain::geometry::PhysicalPoint>,
+    pub end: Option<domain::geometry::PhysicalPoint>,
+    pub content: Option<String>,
 }
 
 /// Exact process-local frames used to prove Save, Copy, and Pin content without global state.

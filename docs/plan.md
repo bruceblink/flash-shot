@@ -1,6 +1,6 @@
 # 下一阶段开发计划
 
-更新日期：2026-08-29
+更新日期：2026-08-30
 规划范围：`v0.1.2` 已发布稳定基线与 `v0.2.0` 质量阶段
 
 本计划的 Bug 修复与 UI 打磨执行清单见 [Bug 修复与 UI 打磨开发计划](bug-ui-polish-plan.md)。
@@ -26,6 +26,9 @@ Flash Shot 的功能主线已经完成。Windows 单显示器、100% 缩放环�
 - 负坐标双屏与混合 DPI 双屏仍按既有决定暂缓，不纳入当前阶段承诺；
 - 配置真实 HTTPS 端点后的翻译成功、失败与重试闭环尚未执行，已与双屏验收一起移出当前阶段；
 - 4K 标注的真实交互帧时间尚未形成可重复的目标硬件基线；
+- B4 已将 Text、Watermark、Line 和正向/反向 Arrow 的真实输入回归接入现有
+  `overlay-interaction-acceptance --capture-scenario annotation-regression`，该场景会把标注状态、步骤截图和
+  Quick Save 导出校验写入同一会话；Windows Release 原生会话尚待执行，不能用静态测试替代；
 - 项目已拆成领域、图像、Windows 基础设施、应用与唯一二进制五个 workspace crate；
   `flash-shot-app::platform` 只保留兼容导出；当前列出的 Windows 基础设施迁移切片已经完成，但仍嵌在
   应用用例中的系统集成契约、`overlay.rs` 与原生验收 runner 需要继续按职责拆分。
