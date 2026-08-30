@@ -127,6 +127,15 @@ cargo test --workspace --all-features
 
 该场景会在报告中记录两个失败条目、恢复后的 300 条缓存、3 条新目录记录、故障截图和全部临时 history 根目录的清理结果。
 
+验证缩略图加载期间关闭并重新打开 Library 窗口时的队列收敛和资源清理：
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release history-resource-acceptance --exercise-window-close `
+  --output-dir target\history-resource-acceptance\release-window-close
+```
+
+该场景会在报告中记录窗口隐藏时的加载/排队状态、隐藏期间的收敛状态、重新打开后的缓存状态、恢复截图和临时 history 根目录清理结果。
+
 使用固定 4K 场景测量 CPU 导出合成器。该指标衡量导出性能，不是 GPUI 交互帧门禁；
 只有在建立具有代表性的 Release 基线后，才应显式设置上限：
 

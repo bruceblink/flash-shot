@@ -168,6 +168,17 @@ working-set and private-commit samples, and fixture cleanup; decode concurrency 
 .\scripts\run-dev-tool.ps1 -Release history-resource-acceptance --output-dir target\history-resource-acceptance\release-gate-current
 ```
 
+To verify queue convergence and cleanup when the Library window is closed and reopened during
+thumbnail loading, run the dedicated Release scenario:
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release history-resource-acceptance --exercise-window-close `
+  --output-dir target\history-resource-acceptance\release-window-close
+```
+
+The report records loading and pending work while the window is hidden, the settled state before
+reopening, the restored cache state, a recovery screenshot, and temporary history-root cleanup.
+
 The app also retains the latest 500 startup and shortcut-to-overlay samples at
 `<application data directory>\metrics\performance.jsonl`. Summarize a representative release
 run and enforce the default p95 thresholds with:

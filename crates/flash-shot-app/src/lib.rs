@@ -272,6 +272,8 @@ pub enum HistoryResourceAcceptanceCommand {
         paths: Vec<PathBuf>,
         reply: SyncSender<Result<HistoryResourceAcceptanceState, String>>,
     },
+    CloseWindow(SyncSender<HistoryResourceAcceptanceState>),
+    ReopenWindow(SyncSender<HistoryResourceAcceptanceState>),
     Quit(SyncSender<()>),
 }
 

@@ -1092,6 +1092,14 @@ impl FlashShotApp {
                             let result = this.clear_history_for_acceptance(paths, cx);
                             let _ = reply.send(result);
                         }
+                        crate::HistoryResourceAcceptanceCommand::CloseWindow(reply) => {
+                            this.hide_settings_window();
+                            let _ = reply.send(this.history_resource_acceptance_state());
+                        }
+                        crate::HistoryResourceAcceptanceCommand::ReopenWindow(reply) => {
+                            this.show_settings_window(cx);
+                            let _ = reply.send(this.history_resource_acceptance_state());
+                        }
                         crate::HistoryResourceAcceptanceCommand::Quit(reply) => {
                             let _ = reply.send(());
                             cx.quit();

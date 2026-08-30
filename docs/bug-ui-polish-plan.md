@@ -1,7 +1,7 @@
 # Bug 修复与 UI 打磨开发计划
 
-更新日期：2026-08-27
-源代码基线：`f801e28`、应用版本 `0.1.2`
+更新日期：2026-08-30
+源代码基线：`92a1499`、应用版本 `0.1.2`
 计划状态：执行中
 
 本文档把 [下一阶段开发计划](plan.md) 中的可靠性、可维护性、信息架构、视觉系统和国际化工作拆成可执行
@@ -44,7 +44,7 @@ Release 证据。本轮审查没有从静态代码和既有报告中确认新的
 | 国际化 | `Locale`/`UiText` 已覆盖设置、Capture、标注、Library 和 Pin 工具栏 | `workflow.rs`、`workflow/recognition.rs` 和 Record/更新状态仍有可见硬编码英文或动态拼接 | P1 |
 | UI 信息层级 | Capture 主动作、More 菜单和部分 Library 视觉复核已完成 | 收敛 Record、App、诊断和错误状态的重复入口，明确每个区域的主操作 | P1 |
 | 视觉一致性 | 已有 420x420、520x640、980x760 的部分设置/Library 截图 | 统一颜色、间距、字号、圆角、焦点态、禁用态、状态栏和工具栏命中区，并补齐中英文/深浅主题 | P1 |
-| 资源与异步任务 | 历史缩略图有界 FIFO、Pin 生命周期和 generation 保护已有实现 | 为历史删除/窗口关闭、晚到结果、FFmpeg 失败和剪贴板占用补充确定性故障场景 | P1 |
+| 资源与异步任务 | 历史缩略图有界 FIFO、Pin 生命周期和 generation 保护已有实现 | 为晚到结果、FFmpeg 失败和剪贴板占用等跨模块场景补充确定性故障场景 | P1 |
 | 可维护性 | workspace crate 已拆分，但 `overlay.rs` 约 240 KB、`view.rs` 约 116 KB | 先稳定行为和 UI，再按职责拆分 overlay 与原生验收 runner；重构不得改变用户行为 | P1 |
 | 高 DPI/多显示器 | 当前机器已有单屏 100% 证据 | 150%/200% 需要真实硬件；双屏按既有决定暂缓 | P2 |
 
@@ -143,7 +143,7 @@ U0 设计基线完成前，必须保留一组“当前版本 vs 新基线”的�
 | 2 | B0 | 建立可复现的 Bug 与可见文案基线 | `flash-shot-app`、验收脚本、文档 | 已完成 |
 | 3 | B1 | 剪贴板、保存、录屏失败后可立即恢复 | workflow、Windows 基础设施、录屏模块 | 进行中 |
 | 4 | B2 | Capture/Save/Pin/Close 重复操作无残留 | overlay、pinned、窗口生命周期、runner | 已完成 |
-| 5 | B3 | 历史异步任务有界且不写回陈旧结果 | Library/history workflow | 进行中 |
+| 5 | B3 | 历史异步任务有界且不写回陈旧结果 | Library/history workflow | 已完成 |
 | 6 | B4 | 水印、文字、箭头编辑与导出回归保护 | overlay、annotation、image | 进行中 |
 | 7 | U1 | 完成 Record/OCR/更新/错误/忙状态国际化 | `i18n.rs`、workflow、Record UI | 进行中 |
 | 8 | U2 | 收敛 Capture/Library/Record/App 的动作层级 | GPUI view、settings、Library、Record | 待开始 |
@@ -256,7 +256,7 @@ Save 取消/重试 -> Pin -> Copy -> Escape 清理。报告 schema 18 为 More/L
 **失败处理**：解码失败只影响对应条目，Library 仍能继续浏览、筛选和删除；若任务持续增长或目录归属
 无法判断，停止扩大样本并先修复取消/generation 条件。
 
-**当前进度（2026-08-29）**：
+**当前进度（2026-08-30）**：
 
 - 历史缩略图解码失败现在按条目保留失败状态，Library 显示本地化的加载中/不可用反馈，不再把失败条目
   留成无说明的空白预览；队列仍保持有界 FIFO，并继续丢弃目录切换或删除后的陈旧结果；
@@ -268,8 +268,7 @@ Save 取消/重试 -> Pin -> Copy -> Escape 清理。报告 schema 18 为 More/L
 - 2026-08-29 在当前源码上完成显式 300 条资源样本：Release 报告
   `target/history-resource-acceptance/release-normal-20260829/session-1787983224655-16012/report.json`
   为 `passed=true`，默认 5 条和展开 300 条均收敛，峰值解码任务为 2，300 个缩略图全部缓存，fixture/history
-  根目录清理成功，两个阶段均为 `thumbnails_failed=0`。验收 runner 已在 GPUI Windows `ExitProcess(0)` 退出前写入最终报告并清理 fixture；B3 仍保持“进行中”，
-  直到历史删除和窗口关闭期间的真实 Release 故障路径补齐。
+  根目录清理成功，两个阶段均为 `thumbnails_failed=0`。验收 runner 已在 GPUI Windows `ExitProcess(0)` 退出前写入最终报告并清理 fixture。
 - 2026-08-29 当前源码的故障恢复 Release 报告
   `target/history-resource-acceptance/release-fault-20260829/session-1787982960787-31984/report.json` 为
   `passed=true`：`failures_2` 收敛为 298 个缓存和 2 个失败条目，恢复阶段回到 300 个缓存，目录切换阶段加载
@@ -277,7 +276,14 @@ Save 取消/重试 -> Pin -> Copy -> Escape 清理。报告 schema 18 为 More/L
 - 2026-08-30 已为 `history-resource-acceptance` 增加 `--exercise-deletions` 专项：在隔离的 6 条记录目录中，
   通过生产单项删除和批量清理流程分别移除 1 条和 2 条记录；报告会在 `deletion_initial_6`、`deletion_single_5`、
   `deletion_batch_3` 阶段等待索引、缩略图队列以及文件读取/删除互斥状态收敛，并记录删除结果截图和实际文件清理。
-  该切片仍不宣称窗口关闭期间的真实 Release 故障路径已完成，因此 B3 保持“进行中”。
+  报告 `target/history-resource-acceptance/release-fault-delete-20260830/session-1788050901859-28280/report.json`
+  为 `passed=true`，并确认所有隔离 history 根目录已删除。
+- 2026-08-30 已增加 `--exercise-window-close` 专项：在 60 条隔离记录的缩略图仍处于加载/排队时，沿生产窗口
+  隐藏路径关闭 Library，再等待隐藏期间队列收敛，随后重新打开窗口并验证 60 条缩略图完整恢复。Release 报告
+  `target/history-resource-acceptance/release-window-close-20260830/session-1788051874767-11368/report.json`
+  为 `passed=true`，记录 `window_hidden_while_loading=true`、`window_reopened=true`、`thumbnails_cached=60` 和
+  `all_history_roots_removed=true`，截图与 JSON 属于同一 session。至此 B3 的历史失败、目录切换、删除和窗口生命周期
+  场景均有确定性测试或 Release 证据；真实鼠标/键盘输入与高 DPI 矩阵仍按独立计划项执行。
 
 ### B4：标注回归保护
 

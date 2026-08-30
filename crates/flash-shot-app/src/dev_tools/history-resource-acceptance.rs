@@ -36,6 +36,7 @@ const DEFAULT_VISIBLE_COUNT: usize = 5;
 const FIXTURE_WIDTH: u32 = 320;
 const FIXTURE_HEIGHT: u32 = 200;
 const DELETION_FIXTURE_COUNT: usize = 6;
+const CLOSE_FIXTURE_COUNT: usize = 60;
 
 #[derive(Clone, Debug)]
 struct Options {
@@ -44,6 +45,7 @@ struct Options {
     sample_interval: Duration,
     exercise_failures: bool,
     exercise_deletions: bool,
+    exercise_window_close: bool,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -77,6 +79,18 @@ struct DeletionScenarioEvidence {
 struct DeletionScenarioScreenshots {
     single_removed: &'static str,
     batch_cleared: &'static str,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct WindowCloseScenarioEvidence {
+    initial: HistoryResourceAcceptanceState,
+    loading: HistoryResourceAcceptanceState,
+    settled_while_hidden: HistoryResourceAcceptanceState,
+    reopened: HistoryResourceAcceptanceState,
+    window_hidden_while_loading: bool,
+    window_reopened: bool,
+    history_root: String,
+    screenshot: &'static str,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -214,6 +228,19 @@ fn run() -> io::Result<serde_json::Value> {
             } else {
                 None
             };
+            let window_close_evidence = if options.exercise_window_close {
+                Some(exercise_history_window_close(
+                    &command_tx,
+                    options.timeout,
+                    options.sample_interval,
+                    started,
+                    &mut samples,
+                    &session_root,
+                    &mut additional_history_roots,
+                )?)
+            } else {
+                None
+            };
             let peak = peak_for_phase(baseline, &samples, "expanded_300");
             let peak_loading = samples
                 .iter()
@@ -250,7 +277,8 @@ fn run() -> io::Result<serde_json::Value> {
                     && peak_loading <= 2
                     && first_thumbnail_elapsed_ms.is_some()
                     && (!options.exercise_failures || failure_evidence.is_some())
-                    && (!options.exercise_deletions || deletion_evidence.is_some()),
+                    && (!options.exercise_deletions || deletion_evidence.is_some())
+                    && (!options.exercise_window_close || window_close_evidence.is_some()),
                 "measurement_mode": "release_resource",
                 "build_profile": build_profile(),
                 "session_root": session_root.to_string_lossy().into_owned(),
@@ -276,6 +304,10 @@ fn run() -> io::Result<serde_json::Value> {
                 "deletion_scenario": {
                     "enabled": options.exercise_deletions,
                     "evidence": deletion_evidence,
+                },
+                "window_close_scenario": {
+                    "enabled": options.exercise_window_close,
+                    "evidence": window_close_evidence,
                 },
                 "resources": {
                     "baseline_after_default_5": baseline,
@@ -453,6 +485,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
         sample_interval: DEFAULT_SAMPLE_INTERVAL,
         exercise_failures: false,
         exercise_deletions: false,
+        exercise_window_close: false,
     };
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
@@ -488,6 +521,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> io::Result<Options> {
             }
             "--exercise-failures" => options.exercise_failures = true,
             "--exercise-deletions" => options.exercise_deletions = true,
+            "--exercise-window-close" => options.exercise_window_close = true,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -684,6 +718,133 @@ fn exercise_history_deletions(
             single_removed: "screenshots/history-single-removed.png",
             batch_cleared: "screenshots/history-batch-cleared.png",
         },
+    })
+}
+
+#[cfg(windows)]
+/// Closes the real settings window while thumbnail work is active, then reopens it after the
+/// hidden-period queue settles. This proves the window lifecycle does not strand readers or let a
+/// late decode corrupt the next visible Library render.
+fn exercise_history_window_close(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    timeout: Duration,
+    interval: Duration,
+    started: Instant,
+    samples: &mut Vec<ResourceSample>,
+    session_root: &Path,
+    additional_history_roots: &mut Vec<PathBuf>,
+) -> io::Result<WindowCloseScenarioEvidence> {
+    let history_root = session_root.join("history-window-close");
+    fs::create_dir_all(&history_root)?;
+    additional_history_roots.push(history_root.clone());
+    let fixture_paths = create_history_fixtures_with_count(&history_root, CLOSE_FIXTURE_COUNT)?;
+    let mut history = ScreenshotHistory::open_with_limit(&history_root, CLOSE_FIXTURE_COUNT)?;
+    for path in &fixture_paths {
+        history.record_with_source(path.clone(), HistorySource::Selection)?;
+    }
+    replace_history(commands, history, timeout)?;
+    let initial = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "window_close_initial_60",
+        |state| {
+            state.total_entries == CLOSE_FIXTURE_COUNT
+                && state.visible_entries == CLOSE_FIXTURE_COUNT
+                && state.thumbnails_cached == CLOSE_FIXTURE_COUNT
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+                && state.thumbnails_failed == 0
+                && !state.history_mutation_in_flight
+                && !state.history_file_read_in_flight
+        },
+    )?;
+
+    reset_thumbnail_cache(commands, timeout)?;
+    set_expanded_now(commands, false, timeout)?;
+    set_expanded_now(commands, true, timeout)?;
+    let loading = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "window_close_loading",
+        |state| {
+            state.total_entries == CLOSE_FIXTURE_COUNT
+                && state.visible_entries == CLOSE_FIXTURE_COUNT
+                && (state.thumbnails_loading > 0 || state.thumbnails_pending > 0)
+        },
+    )?;
+    close_history_window(commands, timeout)?;
+    let window_hidden_while_loading = wait_for_window_visibility(false, timeout).is_ok();
+    if !window_hidden_while_loading {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "history window did not become hidden during thumbnail loading",
+        ));
+    }
+    let settled_while_hidden = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "window_close_hidden_settled_60",
+        |state| {
+            state.total_entries == CLOSE_FIXTURE_COUNT
+                && state.visible_entries == CLOSE_FIXTURE_COUNT
+                && state.thumbnails_cached == CLOSE_FIXTURE_COUNT
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+                && state.thumbnails_failed == 0
+                && !state.history_mutation_in_flight
+                && !state.history_file_read_in_flight
+        },
+    )?;
+    reopen_history_window(commands, timeout)?;
+    let window_reopened = wait_for_window_visibility(true, timeout).is_ok();
+    if !window_reopened {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "history window did not reopen after thumbnail loading settled",
+        ));
+    }
+    let reopened = wait_for_state(
+        commands,
+        timeout,
+        interval,
+        started,
+        samples,
+        "window_close_reopened_60",
+        |state| {
+            state.total_entries == CLOSE_FIXTURE_COUNT
+                && state.visible_entries == CLOSE_FIXTURE_COUNT
+                && state.thumbnails_cached == CLOSE_FIXTURE_COUNT
+                && state.thumbnails_loading == 0
+                && state.thumbnails_pending == 0
+                && state.thumbnails_failed == 0
+                && !state.history_mutation_in_flight
+                && !state.history_file_read_in_flight
+        },
+    )?;
+    let reopened_window = visible_process_window()?;
+    capture_window(
+        &reopened_window,
+        &session_root.join("screenshots/history-window-reopened.png"),
+    )?;
+
+    Ok(WindowCloseScenarioEvidence {
+        initial,
+        loading,
+        settled_while_hidden,
+        reopened,
+        window_hidden_while_loading,
+        window_reopened,
+        history_root: history_root.to_string_lossy().into_owned(),
+        screenshot: "screenshots/history-window-reopened.png",
     })
 }
 
@@ -963,6 +1124,73 @@ fn clear_history(
 }
 
 #[cfg(windows)]
+/// Sends an expanded-state command and waits for the UI thread to acknowledge it.
+/// The reply is used to keep the acceptance sequence deterministic before the next action.
+fn set_expanded_now(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    expanded: bool,
+    timeout: Duration,
+) -> io::Result<HistoryResourceAcceptanceState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(HistoryResourceAcceptanceCommand::SetExpanded {
+            expanded,
+            reply: reply_tx,
+        })
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "resource app closed"))?;
+    reply_rx.recv_timeout(timeout).map_err(|error| match error {
+        RecvTimeoutError::Timeout => {
+            io::Error::new(io::ErrorKind::TimedOut, "expanded state reply timed out")
+        }
+        RecvTimeoutError::Disconnected => {
+            io::Error::new(io::ErrorKind::BrokenPipe, "resource state channel closed")
+        }
+    })
+}
+
+#[cfg(windows)]
+/// Hides the settings window through the production command path and waits for its state reply.
+fn close_history_window(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    timeout: Duration,
+) -> io::Result<HistoryResourceAcceptanceState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(HistoryResourceAcceptanceCommand::CloseWindow(reply_tx))
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "resource app closed"))?;
+    reply_rx.recv_timeout(timeout).map_err(|error| match error {
+        RecvTimeoutError::Timeout => io::Error::new(
+            io::ErrorKind::TimedOut,
+            "history window close reply timed out",
+        ),
+        RecvTimeoutError::Disconnected => {
+            io::Error::new(io::ErrorKind::BrokenPipe, "resource state channel closed")
+        }
+    })
+}
+
+#[cfg(windows)]
+/// Shows the settings window through the production command path and waits for its state reply.
+fn reopen_history_window(
+    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    timeout: Duration,
+) -> io::Result<HistoryResourceAcceptanceState> {
+    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+    commands
+        .send_blocking(HistoryResourceAcceptanceCommand::ReopenWindow(reply_tx))
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "resource app closed"))?;
+    reply_rx.recv_timeout(timeout).map_err(|error| match error {
+        RecvTimeoutError::Timeout => io::Error::new(
+            io::ErrorKind::TimedOut,
+            "history window reopen reply timed out",
+        ),
+        RecvTimeoutError::Disconnected => {
+            io::Error::new(io::ErrorKind::BrokenPipe, "resource state channel closed")
+        }
+    })
+}
+
+#[cfg(windows)]
 fn replace_history(
     commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
     history: ScreenshotHistory,
@@ -1050,6 +1278,26 @@ fn wait_for_visible_process_window(timeout: Duration) -> io::Result<NativeWindow
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "visible history resource window did not appear",
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(windows)]
+/// Polls the native process window until its visibility matches the expected lifecycle state.
+fn wait_for_window_visibility(visible: bool, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let currently_visible = visible_process_window().is_ok();
+        if currently_visible == visible {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            let expected = if visible { "visible" } else { "hidden" };
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("history window did not become {expected}"),
             ));
         }
         thread::sleep(Duration::from_millis(50));
@@ -1174,6 +1422,7 @@ mod tests {
         assert_eq!(options.timeout.as_secs(), 60);
         assert!(!options.exercise_failures);
         assert!(!options.exercise_deletions);
+        assert!(!options.exercise_window_close);
         assert_eq!(FIXTURE_COUNT, 300);
     }
 
@@ -1187,6 +1436,12 @@ mod tests {
     fn parser_can_enable_history_deletion_evidence() {
         let options = parse_args(["--exercise-deletions".to_owned()]).unwrap();
         assert!(options.exercise_deletions);
+    }
+
+    #[test]
+    fn parser_can_enable_window_close_evidence() {
+        let options = parse_args(["--exercise-window-close".to_owned()]).unwrap();
+        assert!(options.exercise_window_close);
     }
 
     #[test]
