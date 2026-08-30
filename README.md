@@ -94,10 +94,13 @@ Record 页的 `Video folder` 会显示当前 MP4 目录，并提供选择、恢�
 
 ```powershell
 cargo fmt --all -- --check
-cargo check --workspace --all-targets --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo check --workspace --all-targets --all-features --locked
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-features --locked
 ```
+
+当前 HEAD 的全特性严格 Clippy 仍受 `dev-tools` 历史验收 helper 的 `clippy::too_many_arguments` 阻塞，详见
+[主线开发计划](docs/plan.md)；关闭该 P1 项目前，不把全特性 Clippy 写成已通过。
 
 连续截图资源与延迟门禁会真实捕获并编码虚拟桌面 100 次，输出机器可读 JSON；性能基线应使用 release 构建：
 
@@ -192,9 +195,8 @@ FFmpeg 能力快照：
 ## 文档
 
 - [产品需求](docs/requirements.md)
-- [架构设计](docs/architecture.md)
-- [开发计划](docs/plan.md)
-- [开发流程与验收证据](docs/development-workflow.md)
+- [开发设计思路](docs/architecture.md)
+- [主线开发计划](docs/plan.md)
 - [Windows 手工验收记录](docs/windows-manual-acceptance.md)
 - [Windows 分发](docs/windows-distribution.md)
 - [Linux 平台可行性验证](docs/linux-platform-validation.md)

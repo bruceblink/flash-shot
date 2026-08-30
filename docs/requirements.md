@@ -84,7 +84,7 @@ Snow Shot 是经过实际使用验证的需求来源和边界案例参考，不�
 | 连续截图 100 次 | 句柄、线程、纹理和内存无无界增长 |
 
 以上预算必须通过自动化或可重复基准验证。当前数据、样本边界和仍缺少的真实硬件矩阵以
-[下一阶段开发计划](plan.md) 与 [Windows 手工验收记录](windows-manual-acceptance.md) 为准；不能用单次
+[主线开发计划](plan.md) 与 [Windows 手工验收记录](windows-manual-acceptance.md) 为准；不能用单次
 冒烟结果替代 p95 或跨 DPI 证据。
 
 ### 4.2 稳定性

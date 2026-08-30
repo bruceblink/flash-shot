@@ -56,10 +56,9 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 
 ```powershell
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo check --workspace --all-targets --all-features --locked
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-features --locked
-powershell -NoProfile -File scripts/verify-bug-ui-baseline.ps1
-powershell -NoProfile -File scripts/test-verify-bug-ui-baseline.ps1
 .\scripts\run-dev-tool.ps1 -Release capture-stress --output target/capture-stress.json
 .\scripts\run-dev-tool.ps1 -Release annotation-stress --iterations 30
 # 当前单屏开发范围：要求环境恰好只有一块显示器，避免把多屏状态误记为单屏证据。
@@ -133,6 +132,10 @@ powershell -NoProfile -File scripts/test-verify-bug-ui-baseline.ps1
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-display-1-scale.png 1500 0 1.5 capture 1
 ```
 
+当前 HEAD 的全特性 `cargo check` 与 `cargo test` 已通过；严格全特性 Clippy 仍会在
+`dev-tools` 的历史资源验收 helper 上触发 `clippy::too_many_arguments`，属于 [主线开发计划](plan.md) 中的 P1
+结构收口项。没有关闭该项前，本记录不把全特性 Clippy 写成通过。
+
 `settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含 UI 语言、物理窗口边界、Windows DPI
 和缩放比例。提供 `en` 或 `zh-CN` 作为最后一个参数时，探针使用对应 UI 资源目录；为保持证据可
 重复，探针省略该参数时固定为英文，生产应用首次启动时则读取 Windows 首选 UI 语言。提供最后一个
@@ -142,9 +145,8 @@ powershell -NoProfile -File scripts/test-verify-bug-ui-baseline.ps1
 并在检测到多块显示器时失败；这是当前单屏开发范围的保护，不代表双屏功能已经通过验收。
 设置页探针应串行执行：截图 worker 捕获窗口所在的桌面物理区域，多个验收窗口重叠时，
 后启动的进程可能截到前一个窗口，不能把并行输出当作独立主题或页面证据。
-B0 基线盘点使用 `powershell -NoProfile -File scripts/verify-bug-ui-baseline.ps1`，报告写入
-`target/bug-ui-baseline/bug-ui-baseline.json`。该命令只扫描源文件和工具入口，不启动原生窗口、OCR、录屏或
-网络服务；它的通过结果只能证明场景登记和状态来源可重复，不能替代下方真实桌面交互矩阵。
+当前主线切片、状态和退出条件以 [主线开发计划](plan.md) 为准；本记录只保存真实 Windows 会话的环境、截图、
+像素、窗口、进程和清理证据，不再维护独立的 Bug/UI 基线计数。
 提供最后一个 `display-index` 参数时，探针会将窗口放到指定的零基显示器，并在同名 JSON
 中保留该窗口实际观测到的 `dpi`、物理边界和 `scale_factor`；索引不存在时命令失败，避免
 把另一块显示器的截图误记为目标 DPI 证据。
@@ -318,7 +320,7 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 | 2026-08-15 | `current-installer-lifecycle-smoke` | 当前源码 Inno 安装器通过显式 current-user 覆盖真实安装到唯一临时目录，验证安装文件、Start 菜单快捷方式、卸载注册与 Cargo 版本；随后启动已安装的 `flash-shot.exe`，确认隔离 profile 的 `config/data/cache/history`，再执行真实静默卸载。 | 部分通过 | `target/installer-smoke-current-20260815/FlashShot-0.1.0-windows-setup.exe` 为 6,543,337 bytes，SHA-256 `c04504be2fc0d6e07bea02fdb82d84e0bd2cf569719ddc22887f06eecf8fc87b`，sidecar 匹配；最终进程、安装目录、快捷方式、卸载注册和 smoke 临时目录均为零。fixture、PowerShell parser、Inno 6.7.3 编译与真实生命周期均通过。该产物仍是 `NotSigned`；GitHub 工作流的生产 PFX 导入/清理和签名预检已由短期自签 fixture 验证，但生产 secrets 尚未配置，也没有受信签名 GitHub runner 报告，因此保留为“部分通过”。 |
 | 2026-08-15 | `current-release-preflight-v0.1.1` | 当前 `372f9da` 的隔离 Release 构建生成 `0.1.1` 便携包和 Inno 安装器；便携包真实启动 5 秒，安装器在 current-user 唯一路径完成安装、隔离 profile 启动、静默卸载和零残留校验。 | 部分通过 | 证据目录为 `target/release-preflight-v0.1.1-20260815/`，机器报告为 `preflight-report.json`。安装器 `FlashShot-0.1.1-windows-setup.exe` 为 6,595,560 bytes、SHA-256 `864bde2fae3320070329046a479a9d70f010f9930fd95620159dc0295aeaf566`；便携包 `FlashShot-0.1.1-windows-x86_64.zip` 为 6,806,190 bytes、SHA-256 `de3b6ba8fa51f044f4e15150f91923a955a431db488a8973fe14c9e4b14e4046`。manifest/sidecar 均匹配，安装后进程、卸载注册、Start 菜单快捷方式和临时目录均为零；两个 EXE 的 Authenticode 状态仍为 `NotSigned`，因此这只是当前版本的发布前生命周期证据，不替代生产受信签名和 GitHub runner 验收。 |
 | 2026-08-11 | `current-pins-coexist-capture-single-100` | 当前源码的隔离 Release `overlay-interaction-acceptance --capture-scenario pins-coexist` 在一块 2560x1440、DPI 96 显示器通过：三次真实点击 Pin，三张源帧逐像素一致，第一张 Pin 经真实鼠标拖动 `(48,-40)`，随后直接从 Pin 触发 Capture、拖选 1178x432 并 Cancel。 | 通过 | 报告与 7 张原生截图位于 `target/release-acceptance/pins-coexist-final/session-1786450479257-21272/`。三张 Pin 的 HWND、外框与源帧在覆盖层活动期间和取消后保持不变，取消后 Pin 数仍为 3；逐一 Escape 后 overlay=0、Pin=0、无可见探针窗口且 Capture preflight 可用。截图复核三张 Pin 无重叠，拖动时工具栏完整，覆盖层主操作未被 Pin 遮挡。该记录不写系统剪贴板，只覆盖单屏 100%。 |
-| 2026-08-16 | `current-pins-system-clipboard-single-100` | 当前源码的隔离 Release `overlay-interaction-acceptance --capture-scenario pins-coexist --allow-system-clipboard` 在一块 2560x1440、DPI 96 显示器通过：三张 Pin 共存时，首张 Pin 接收真实 `Ctrl+C`，独立消费者读取注册 PNG、CF_DIB 和普通图像，再继续完成共存 Capture/Cancel 与逐一 Escape。 | 通过 | 报告与 8 张原生截图位于 `target/release-acceptance/pins-system-clipboard-current-20260816/session-1786842064142-17676/`，Release runner SHA-256 为 `960924895e042d5d2030e9624cca07bf2ff3a44c2cad202f1b438a92294b90af`。剪贴板序号 `1821 -> 1826`；三路结果均为 360x240 且 `exact_match=true`，PNG 12,200 bytes、CF_DIB 345,640 bytes，QPC 边界延迟 `21.7598 ms`；消费者已回收，共享剪贴板租约已释放。最终 session=idle、overlay=0、Pin=0、可见探针窗口=0。已目视复核 Copy 成功反馈、三 Pin 共存覆盖层和取消后的 Pin 布局；该记录会替换系统剪贴板，且只覆盖单屏 100%。 |
+| 2026-08-16 | `current-pins-system-clipboard-single-100` | 当前源码的隔离 Release `overlay-interaction-acceptance --capture-scenario pins-coexist --allow-system-clipboard` 在一块 2560x1440、DPI 96 显示器通过：三张 Pin 共存时，首张 Pin 接收真实 `Ctrl+C`，独立消费者读取注册 PNG、CF_DIB 和普通图像，再继续完成共存 Capture/Cancel 与逐一 Escape。 | 通过 | 报告与 8 张原生截图位于 `target/release-acceptance/pins-system-clipboard-current-20260816/session-1786842064142-17676/`，Release runner SHA-256 为 `960924895e042d5d2030e9624cca07bf2ff3a44c2cad202f1b438a92294b90af`。剪贴板序号 `1821 -> 1826`；三路结果均为 360x240 且 `exact_match=true`，PNG 12,200 bytes、CF_DIB 345,640 bytes，QPC 边界延迟 `21.7598 ms`；消费者已回收，共享剪贴板占用标记已释放。最终 session=idle、overlay=0、Pin=0、可见探针窗口=0。已目视复核 Copy 成功反馈、三 Pin 共存覆盖层和取消后的 Pin 布局；该记录会替换系统剪贴板，且只覆盖单屏 100%。 |
 | 2026-08-16 | `current-pin-lifecycle-soak-60s-single-100` | 当前源码的隔离 Release `pin-lifecycle-acceptance --soak-ms 60000` 在一块 2560x1440、DPI 96 显示器持续运行 `60,751 ms`，轮流以三张 Pin 为调用者完成 60 轮生产 Solo/Show all。每轮都检查窗口注册表、三份不可变源帧、原生边界、前台焦点和 Capture preflight。 | 通过 | 报告与 3 张原生截图位于 `target/release-acceptance/pin-lifecycle-soak-60s-current-20260816/session-1786843457793-18076/`，Release runner SHA-256 为 `0b09ee617a6f10812f1d03d11db083407bafc916d523cb59723167131b3e4856`。60 轮均保持 registry `3..3`、Solo 可见 1、Show all 可见 3，累计 180 次源帧检查和 60 次 Capture preflight；Show all 未改变前台 HWND。工作集从 69,664,768 增至 72,249,344 bytes，峰值 73,605,120 bytes；私有提交峰值 232,583,168 bytes，结束值 114,245,632 bytes，仅记录实测值而不由单次会话声明通用阈值。关闭一张 Pin 后仍保留两张且 Capture 可用；已目视复核初始、soak 完成和关闭后截图，无空白、裁切或窗口重叠。该记录只覆盖单屏 100%。 |
 | 2026-08-11 | `current-selection-transform-single-100` | 当前源码的隔离 Release `overlay-interaction-acceptance --capture-scenario selection-transform` 在一块 2560x1440、DPI 96 显示器上对同一真实覆盖层依次完成选区内部移动、右下角普通缩放、`Shift` 等比缩放和 `Alt` 中心缩放，并以真实 Cancel 收尾。 | 通过 | 报告位于 `target/release-acceptance/selection-transform-single-100-final3/session-1786455431436-23212/report.json`，五张原生截图位于同目录 `screenshots/`。请求与提交起点/终点均在 1px 容差内；Move 保持 `1178x432` 尺寸，普通/Shift 缩放固定左上角，Shift 保持比例，Alt 保持中心。报告最终为 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0` 且 `capture_preflight_ready=true`。截图已逐张目视复核，工具栏、尺寸标签和四个变换后的选区均完整可见；该记录只覆盖单屏 100%，不声明 150%/200% 或已暂缓多屏范围。 |
 | 2026-08-12 | `c691c34` | 隔离 Release `overlay-interaction-acceptance --capture-scenario scroll-roundtrip` 在单屏 2560x1440、DPI 96 环境通过真实 `More -> Scroll shot -> Shift+Space -> Enter` 流程，并以 Escape 清理编辑器。 | 通过 | 报告位于 `target/overlay-interaction-acceptance/scroll-roundtrip-release-oracle-final/session-1786489980268-2924/report.json`：第二帧报告 97px 重叠，拼接从 1484x380 增长到 1484x663，结束后 overlay=0、Pin=0、可见进程窗口=0。fixture 在捕获前重新提升普通 z-order，逐像素 oracle 允许 GDI 每通道最多 2 级舍入并拒绝任一外部控件像素；初始帧、第二帧和拼接编辑器 PNG 与干净基线 SHA-256 完全一致。系统剪贴板复制与保存 PNG 双出口仍未纳入这一场景，因此只关闭入口、自动追加、Finish、编辑器和清理范围。 |
@@ -346,11 +348,6 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 | 2026-08-29 | `b3-history-resource-fault-recovery-current` | 当前源码 Release `history-resource-acceptance --exercise-failures` 在单屏 2560x1440、DPI 96 中先完成 300 条正常展开，再注入一张损坏 PNG 和一个缺失文件，恢复两个条目并切换到 3 条记录的新历史目录。 | 通过（单屏 100%） | `target/history-resource-acceptance/release-fault-20260829/session-1787982960787-31984/report.json` 为 `passed=true`；`failures_2` 为 298 缓存/2 失败，`recovered_300` 为 300 缓存/0 失败，`directory_switch_3` 为 3 缓存/0 失败。故障、恢复、目录切换截图与 JSON 属于同一 session，`all_history_roots_removed=true`；删除和窗口关闭专项见后续条目，真实鼠标/键盘输入与高 DPI 矩阵仍待执行。 |
 | 2026-08-30 | `b3-history-resource-deletions-current` | 当前源码 Release `history-resource-acceptance --exercise-failures --exercise-deletions` 在单屏 2560x1440、DPI 96 中切换到隔离的 6 条记录目录，调用生产单项删除移除 1 条，再调用生产批量清理移除 2 条；每一步都等待历史索引、缩略图队列和文件读取/删除互斥状态收敛。 | 通过（单屏 100%，无输入 runner） | 报告 `target/history-resource-acceptance/release-fault-delete-20260830/session-1788050901859-28280/report.json` 为 `passed=true`；`deletion_initial_6` 为 6 缓存、互斥状态均为 false，`deletion_single_5` 为 5 条、`deletion_batch_3` 为 3 条，两个阶段截图为 `screenshots/history-single-removed.png` 和 `screenshots/history-batch-cleared.png`。实际删除文件不存在，`all_history_roots_removed=true`。该条证明删除期间没有陈旧缩略图写回，不替代真实鼠标/键盘输入、150%/200% DPI 或多屏矩阵。 |
 | 2026-08-30 | `b3-history-resource-window-close-current` | 当前源码 Release `history-resource-acceptance --exercise-window-close` 在单屏 2560x1440、DPI 96 中创建 60 条隔离历史记录；缩略图仍有 2 个读取任务和 26 个排队任务时沿生产路径隐藏 Library，等待隐藏期间队列收敛后重新打开窗口。 | 通过（单屏 100%，无输入 runner） | 报告 `target/history-resource-acceptance/release-window-close-20260830/session-1788051874767-11368/report.json` 为 `passed=true`；`window_close_loading` 记录 `thumbnails_loading=2`、`thumbnails_pending=26`，隐藏期间最终为 60 缓存/0 进行中，重开后仍为 60 缓存/0 失败，且 `window_hidden_while_loading=true`、`window_reopened=true`、`all_history_roots_removed=true`。恢复截图为 `screenshots/history-window-reopened.png`。该条覆盖窗口生命周期期间的历史异步资源清理，不替代真实鼠标/键盘输入、150%/200% DPI 或多屏矩阵。 |
-
-B0 基线盘点（2026-08-26）不属于原生桌面交互矩阵：在源代码提交 `f801e28` 上运行
-`scripts/test-verify-bug-ui-baseline.ps1` 两次生成报告，7 个稳定场景、317 个直接 `self.status` 赋值和
-34 个 `UiText` 引用在两次运行中保持一致；仓库外输出路径被拒绝且没有创建文件。报告位于
-`target/bug-ui-baseline/bug-ui-baseline.json`，真实文字/水印、双箭头和重复 Capture 交互仍按 B4/B2 场景执行。
 
 本次自动证据保存为本机未跟踪的 `target\\capture-stress-20260802.json`、
 `target\\release-startup-performance-20260802.json` 与

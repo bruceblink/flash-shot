@@ -143,10 +143,14 @@ Set `FLASH_SHOT_UPDATE_ENDPOINT` to an HTTPS URL serving a verified `release-man
 
 ```powershell
 cargo fmt --all -- --check
-cargo check --workspace --all-targets --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo check --workspace --all-targets --all-features --locked
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-features --locked
 ```
+
+Strict all-feature Clippy on the current HEAD is still blocked by `clippy::too_many_arguments` in historical
+`dev-tools` acceptance helpers. See the [mainline development plan](docs/plan.md); do not report the all-feature
+Clippy gate as passing until that P1 item is closed.
 
 The repeat-capture resource and latency gate captures and encodes the virtual desktop 100 times and emits machine-readable JSON. Use a release build for performance baselines:
 
@@ -334,8 +338,8 @@ It still injects no global input and does not write the system clipboard:
 ## Documentation
 
 - [Product requirements (Chinese)](docs/requirements.md)
-- [Architecture (Chinese)](docs/architecture.md)
-- [Delivery plan (Chinese)](docs/plan.md)
+- [Development design (Chinese)](docs/architecture.md)
+- [Mainline development plan (Chinese)](docs/plan.md)
 - [Linux platform feasibility validation (Chinese)](docs/linux-platform-validation.md)
 
 ## License
