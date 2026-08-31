@@ -1,6 +1,6 @@
 # 主线开发计划
 
-更新日期：2026-08-30
+更新日期：2026-08-31
 当前版本：`0.1.2`
 目标版本：`0.2.0` 质量阶段
 
@@ -22,7 +22,7 @@
 
 ## 1. 代码复审结论
 
-本次复审基于 `main` 的当前 HEAD `377828c`（2026-08-30）以及 workspace 中的五个 crate。复审范围包括 Cargo
+本次复审基于 `main` 当前代码（2026-08-31）以及 workspace 中的五个 crate。复审范围包括 Cargo
 依赖方向、应用生命周期、截图/标注/导出/历史/录屏 workflow、UI 状态和开发工具入口。
 
 当前静态与自动化结果：
@@ -35,8 +35,9 @@
   `clippy::too_many_arguments`；这属于本计划的 P1 结构收口，不在本次文档切片中修改源码；
 - `cargo check --workspace --all-targets --all-features --locked` 与
   `cargo test --workspace --all-features --locked` 均通过；全特性测试结果不能替代上述 Clippy 失败项；
-- `cargo test --workspace` 通过，共 529 项测试：应用 370、领域 67、图像 31、Windows 基础设施 58、
-  唯一二进制 3；
+- `cargo test --workspace` 通过；新增的 Copy 取消竞争场景解析和隔离 sink 检查也在全特性测试中通过；
+- `cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked` 通过，
+  仅证明 Windows 原生分支可编译，不替代真实窗口、输入和像素验收；
 - 当前 workspace 只有 `flash-shot-domain`、`flash-shot-image`、`flash-shot-infra-windows`、
   `flash-shot-app` 和 `flash-shot` 五个成员，只有一个 `flash-shot` 二进制目标；
 - `v0.1.2` 已发布，发布资产、安装器、便携包、manifest 和版本事实保持一致；已有 Windows 单显示器
@@ -46,7 +47,7 @@
 
 | 优先级 | 未完成项 | 当前事实 | 完成所需证据 |
 | --- | --- | --- | --- |
-| P0 | 外部失败恢复 | 保存、历史索引和录屏进程已有确定性恢复测试；剪贴板争用、只读目录和 FFmpeg 用户界面失败仍未在当前 HEAD 的 Release 会话完整执行 | 真实失败触发、可理解反馈、再次操作成功、无窗口/进程/任务/临时文件残留 |
+| P0 | 外部失败恢复 | 保存、历史索引和录屏进程已有确定性恢复测试；`copy-cancellation-race` 的隔离观察器已在当前 Release 会话覆盖工具栏和 Enter 两个入口，但系统剪贴板争用、只读目录和 FFmpeg 用户界面失败仍未完整执行 | 真实失败触发、可理解反馈、再次操作成功、无窗口/进程/任务/临时文件残留 |
 | P1 | 标注原生回归 | Text、Watermark、Line 和双向 Arrow 已接入 `annotation-regression` 场景；当前 HEAD 仍缺少真实鼠标/键盘和导出证据 | 当前 Release、单屏 100%、同会话 JSON、步骤截图、逐像素导出和清理报告 |
 | P1 | 动态文案盘点 | `Locale`/`UiText` 已覆盖大部分设置、Capture、Library、Record、Pin 和 workflow；剩余动态状态需要重新盘点，不能沿用旧的 317 条计数 | 中英文资源覆盖、参数化模板测试、无未登记用户可见硬编码 |
 | P1 | UI 信息层级 | 设置壳层、覆盖层/Pin token 和 Library/Record 尺寸已有部分复核；Record、App、诊断和错误恢复入口仍需收敛 | 420x420、520x640、980x760；中英文、深浅主题；真实入口可达且无重叠 |
@@ -84,7 +85,7 @@
 | 编号 | 主线切片 | 状态 | 说明 |
 | --- | --- | --- | --- |
 | A | `v0.1.2` 发布基线 | 已完成 | 标签、资产、安装器、便携包、manifest 和发布说明已核对 |
-| B1 | 外部失败恢复 | 部分完成 | 保存/历史/录屏进程的确定性恢复已完成；真实剪贴板、目录权限和 FFmpeg UI 注入待补 |
+| B1 | 外部失败恢复 | 部分完成 | 保存/历史/录屏进程的确定性恢复已完成；`copy-cancellation-race` fixture 已接入，真实剪贴板、目录权限和 FFmpeg UI 注入待补 |
 | B2 | Capture/Save/Pin/Close 生命周期 | 已完成（单屏 100%） | 操作代次、拆除屏障、输入释放和下一次 Capture 已有 Release 证据 |
 | B3 | 历史异步流控 | 已完成（单屏 100%） | 300 条队列、失败/重试、删除、目录切换和窗口关闭已有资源证据 |
 | B4 | 标注回归保护 | 部分完成 | 当前 runner 已覆盖 Text、Watermark、Line 和双向 Arrow；真实输入仍待执行 |
@@ -108,6 +109,18 @@ FFmpeg 缺失、启动失败、运行中退出和停止超时。只修改相关 
 **验收**：每个失败都由确定性测试或隔离 Windows Release 探针触发；状态说明下一步；再次操作成功；
 `capture_teardown_pending=false`，覆盖层/Pin/控制窗口、后台任务、FFmpeg 子进程、按键和 `.tmp` 均清零。
 剪贴板场景必须记录消费者 ready/observing/cleanup 和 PNG/CF_DIB 像素结果，不能只检查应用内状态。
+
+**当前切片**：选择复制的后台 worker 在 `ClipboardCommitGate` 检查点等待，runner 使用真实 Copy 输入后立即注入
+Escape，再释放检查点。`copy-cancellation-race` 只使用进程内 `isolated_observer`，不会修改系统剪贴板；schema 20
+报告记录检查点是否在 Escape 前到达、Escape 是否在提交前获胜、选择复制和剪贴板写入是否释放、取消状态和最终清理状态。
+确定性测试、参数解析、Windows 目标编译和真实 Release 会话均已通过。当前单屏 100%、DPI 96 的两份证据为：
+
+- 工具栏 Copy：`target/overlay-copy-cancellation-race-toolbar/session-1788186329822-11284/report.json`；
+- Enter Copy：`target/overlay-copy-cancellation-race-enter/session-1788186375319-19480/report.json`。
+
+两份报告均为 schema 20、`status=passed`，检查点在 Escape 前到达、观察器未收到帧、两类操作状态均释放，最终
+overlay/Pin/任务/按键清零；截图与路径已登记在 [Windows 手工验收记录](windows-manual-acceptance.md)。B1 仍保持
+“部分完成”，下一步只处理系统剪贴板争用、只读目录和 FFmpeg 失败恢复。
 
 **顺序**：先补 deterministic fault fixture，再执行可丢弃桌面上的真实输入/剪贴板/FFmpeg 场景。任何一类
 无法清理都保留失败报告并停止该切片。
@@ -176,6 +189,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 git diff --check
 ```
+
+使用 `dev-tools` 特性的检查还需运行 `cargo check --workspace --all-targets --all-features --locked` 和
+`cargo test --workspace --all-features --locked`；在 Windows 主机可用时再运行
+`cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked`。
+严格全特性 Clippy 的当前未完成项记录在本计划的 P1 表中。
 
 用户可见切片还必须使用同一提交构建的 Release 程序，在 [Windows 手工验收记录](windows-manual-acceptance.md) 中保存
 结构化报告、关键截图、像素产物和清理结果。`--allow-input`、系统剪贴板和 FFmpeg 只在明确授权的可丢弃 Windows

@@ -36,6 +36,7 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | 场景 | 状态 | 操作 | 通过条件 | 证据 |
 | --- | --- | --- | --- | --- |
 | 标注回归（Text/Watermark/Line/Arrow） | 待执行 | 在单屏 100%、DPI 96 的隔离 Release 会话中，以真实鼠标拖选选区；用原生键盘/鼠标依次提交 Text、Watermark、Line、正向 Arrow 和反向 Arrow，再用 `Shift+Enter` Quick Save。 | 每个标注的类型、文字内容和物理坐标与注入记录一致；正向/反向箭头起终点不交换；步骤截图与 `annotation_regression` JSON 同会话；导出 PNG 尺寸等于选区且像素包含标注；`.tmp`、覆盖层、控制窗口和注入按键均清理。 | 使用 `.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario annotation-regression` 生成 `session-<timestamp>-<pid>\report.json` 与 `screenshots\`；本记录尚未在当前 Windows 桌面执行。 |
+| Copy 取消竞争（Copy/Escape） | 通过（单屏 100%，隔离观察器） | 在单屏 100%、DPI 96 的隔离 Release 会话中真实拖选选区；分别用工具栏 Copy 和 Enter Copy 触发 `copy-cancellation-race`，runner 等待隔离观察器到达提交检查点后立即注入 Escape。 | 报告 schema 20 记录检查点在 Escape 前到达；取消在 `EmptyClipboard`/观察器提交前获胜且 sink 未收到帧；选择复制和剪贴板写入状态均释放；状态为本地化取消文案；取消后的选区仍可见，第二次 Escape 可清理覆盖层；覆盖层、控制窗口、后台任务、按键和临时文件均清理。 | 工具栏报告：`target/overlay-copy-cancellation-race-toolbar/session-1788186329822-11284/report.json`；Enter 报告：`target/overlay-copy-cancellation-race-enter/session-1788186375319-19480/report.json`。两份报告均 `status=passed`，对应截图为各 session 下的 `screenshots\12-copy-cancellation-race-selection.png` 和 `screenshots\13-copy-cancellation-race-cancelled.png`；系统剪贴板未被修改。 |
 | 单显示器 100% | 通过 | 触发区域截图，拖动选区并键盘微调；点击工具栏与 More，确认命令不会穿透为新的选区；再次触发 Capture 快捷键；依次复制、保存、Pin、取消。 | 覆盖层只有一组可操作工具栏；工具栏命令只执行一次；再次 Capture 会关闭旧覆盖层并打开新的截图；复制和保存的像素尺寸等于选区物理尺寸；取消不留下窗口。 | `current-overlay-interaction-single-100` 在 2560x1440、DPI 96 下完成真实拖选、1px 微调、More/Less、Capture 重触发、Save/Pin/Copy sink、Cancel 与最终清理；1178x432 的 Save、Pin 和 Copy 均与点击前源帧逐像素一致。系统 PNG/CF_DIB 与普通消费者路径另由 `current-production-copy-contention-fixed` 的 toolbar/Enter 各 30 次当前源码 Release 批次验证；150%/200% 不计入本行。 |
 | 保存失败后重试 | 待执行 | 在同一选区选择只读目录或制造目标写入失败，观察 Save/Quick Save 失败后再次打开 Save；随后选择可写目录完成保存并 Escape 清理。 | 失败状态说明下一步动作；原选区、标注和覆盖层仍可用；没有目标半成品或 `.tmp` 文件；下一次 Save 成功后会话正常清理。 | 确定性状态回归已由 `save_failures_keep_the_existing_selection_available_for_retry` 与 `stale_save_failures_explain_when_a_new_capture_is_required` 覆盖；当前源码 Release 的真实 Windows 只读目录、同步失败和重试证据待 B1 后续。 |
 | 历史索引写入失败 | 部分通过 | 在 Library 中制造 `history.json` 冲突或只读目录，分别触发新增、清空、删除和保留数量更新；随后恢复目录权限并重试。 | 失败后 `.tmp` 清理；历史文件和内存条目不提前丢失；中英文状态说明重试或刷新动作；恢复权限后下一次历史操作成功。 | `record_index_failure_keeps_the_capture_available_for_retry`、`clear_index_failure_keeps_history_files_and_entries_intact`、`remove_index_failure_keeps_the_capture_for_a_later_attempt` 与 `forget_deleted_index_failure_preserves_entries_for_a_retry` 在隔离临时目录通过；真实 Windows 权限、冲突和同步失败证据待执行。 |
@@ -59,6 +60,7 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets --all-features --locked
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-features --locked
+cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked
 .\scripts\run-dev-tool.ps1 -Release capture-stress --output target/capture-stress.json
 .\scripts\run-dev-tool.ps1 -Release annotation-stress --iterations 30
 # 当前单屏开发范围：要求环境恰好只有一块显示器，避免把多屏状态误记为单屏证据。
@@ -105,6 +107,9 @@ cargo test --workspace --all-features --locked
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 1100 760 target/ui-acceptance/overlay-marking-zh-CN.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-marking zh-CN
 # 显式输入验收：会短暂取得焦点并移动全局鼠标，仅在可丢弃的单屏桌面会话中运行。
 .\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --output-dir target/overlay-interaction-acceptance
+# Copy 取消竞争：使用进程内隔离观察器，不写系统剪贴板；分别覆盖工具栏和 Enter 输入。
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario copy-cancellation-race --copy-trigger toolbar --output-dir target/overlay-copy-cancellation-race-toolbar
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario copy-cancellation-race --copy-trigger enter --output-dir target/overlay-copy-cancellation-race-enter
 # 可选窄边场景：要求单屏 100% 缩放，验证真实最小设置窗、右下选区和 More/Mark 命中。
 .\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --capture-scenario narrow-edge --output-dir target/overlay-interaction-narrow-edge-acceptance
 # 可选多 Pin 共存场景：三次真实点击 Pin，真实拖动一张 Pin，并在三张 Pin 存活时截图和取消。
@@ -132,7 +137,7 @@ cargo test --workspace --all-features --locked
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-display-1-scale.png 1500 0 1.5 capture 1
 ```
 
-当前 HEAD 的全特性 `cargo check` 与 `cargo test` 已通过；严格全特性 Clippy 仍会在
+当前代码的全特性 `cargo check` 与 `cargo test` 已通过；Windows 目标 `cargo check` 也已通过；严格全特性 Clippy 仍会在
 `dev-tools` 的历史资源验收 helper 上触发 `clippy::too_many_arguments`，属于 [主线开发计划](plan.md) 中的 P1
 结构收口项。没有关闭该项前，本记录不把全特性 Clippy 写成通过。
 

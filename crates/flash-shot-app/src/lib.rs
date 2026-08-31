@@ -34,6 +34,8 @@ use history::ScreenshotHistory;
 use performance::PerformanceRecorder;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use settings::UserSettings;
+#[cfg(feature = "dev-tools")]
+use std::sync::{Condvar, Mutex};
 use std::{
     path::PathBuf,
     sync::{
@@ -104,6 +106,8 @@ pub fn run_settings_ui_acceptance(
             interaction_shortcut_readiness: None,
             interaction_commands: None,
             interaction_copy_results: None,
+            #[cfg(feature = "dev-tools")]
+            interaction_copy_race: None,
             history_resource_commands: None,
         },
     )
@@ -244,6 +248,62 @@ pub struct OverlayInteractionCaptureContent {
     pub pins: Vec<platform::capture::CaptureFrame>,
 }
 
+/// Pauses the acceptance-only clipboard sink immediately before its reversible commit check.
+///
+/// The worker marks the checkpoint and waits for the runner to inject Escape. This makes the
+/// cancellation probe deterministic without changing the production clipboard implementation.
+#[cfg(feature = "dev-tools")]
+#[derive(Clone, Debug)]
+pub(crate) struct OverlayInteractionCopyRace {
+    state: Arc<(Mutex<OverlayInteractionCopyRaceState>, Condvar)>,
+}
+
+#[cfg(feature = "dev-tools")]
+#[derive(Debug, Default)]
+struct OverlayInteractionCopyRaceState {
+    checkpoint_reached: bool,
+    released: bool,
+}
+
+#[cfg(feature = "dev-tools")]
+impl OverlayInteractionCopyRace {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: Arc::new((
+                Mutex::new(OverlayInteractionCopyRaceState::default()),
+                Condvar::new(),
+            )),
+        }
+    }
+
+    /// Blocks the worker until the runner has delivered the competing Escape input.
+    fn wait_before_commit(&self) {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+        state.checkpoint_reached = true;
+        wake.notify_all();
+        while !state.released {
+            state = wake.wait(state).unwrap_or_else(|error| error.into_inner());
+        }
+    }
+
+    /// Reports whether the worker reached the controlled point without waiting on a timeout.
+    pub(crate) fn checkpoint_reached(&self) -> bool {
+        let (lock, _) = &*self.state;
+        lock.lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .checkpoint_reached
+    }
+
+    /// Releases a worker that reached the checkpoint; repeated calls are harmless.
+    pub(crate) fn release(&self) {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+        state.released = true;
+        wake.notify_all();
+    }
+}
+
 /// Process-local controls for one isolated real-input overlay acceptance session.
 pub struct OverlayInteractionAcceptanceOptions {
     pub window_width: f32,
@@ -322,16 +382,57 @@ impl OverlayInteractionAcceptanceOptions {
 }
 
 /// Process-local clipboard used only by the real-input acceptance entry point.
-struct OverlayInteractionClipboard(Sender<platform::capture::CaptureFrame>);
+struct OverlayInteractionClipboard {
+    sender: Sender<platform::capture::CaptureFrame>,
+    #[cfg(feature = "dev-tools")]
+    copy_race: Option<OverlayInteractionCopyRace>,
+}
+
+impl OverlayInteractionClipboard {
+    fn new(sender: Sender<platform::capture::CaptureFrame>) -> Self {
+        Self {
+            sender,
+            #[cfg(feature = "dev-tools")]
+            copy_race: None,
+        }
+    }
+
+    #[cfg(feature = "dev-tools")]
+    fn with_race(
+        sender: Sender<platform::capture::CaptureFrame>,
+        copy_race: Option<OverlayInteractionCopyRace>,
+    ) -> Self {
+        let mut clipboard = Self::new(sender);
+        clipboard.copy_race = copy_race;
+        clipboard
+    }
+}
 
 impl platform::clipboard::ClipboardService for OverlayInteractionClipboard {
     fn copy_image(&self, frame: &platform::capture::CaptureFrame) -> std::io::Result<()> {
-        self.0.send(frame.clone()).map_err(|_| {
+        self.sender.send(frame.clone()).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "overlay interaction copy receiver was dropped",
             )
         })
+    }
+
+    #[cfg(feature = "dev-tools")]
+    fn copy_image_cancellable(
+        &self,
+        frame: &platform::capture::CaptureFrame,
+        gate: &dyn platform::clipboard::ClipboardCommitGate,
+    ) -> std::io::Result<bool> {
+        if let Some(copy_race) = &self.copy_race {
+            copy_race.wait_before_commit();
+        }
+        if gate.is_cancelled() || !gate.begin_clipboard_commit() {
+            return Ok(false);
+        }
+        let result = self.copy_image(frame);
+        gate.finish_clipboard_commit();
+        result.map(|()| true)
     }
 
     fn copy_text(&self, _text: &str) -> std::io::Result<()> {
@@ -375,7 +476,7 @@ mod overlay_interaction_clipboard_tests {
     #[test]
     fn acceptance_clipboard_sends_the_exact_cropped_frame() {
         let (sender, receiver) = mpsc::channel();
-        let clipboard = OverlayInteractionClipboard(sender);
+        let clipboard = OverlayInteractionClipboard::new(sender);
         let expected = frame();
 
         clipboard.copy_image(&expected).unwrap();
@@ -390,11 +491,26 @@ mod overlay_interaction_clipboard_tests {
     fn acceptance_clipboard_fails_when_the_observer_is_gone() {
         let (sender, receiver) = mpsc::channel();
         drop(receiver);
-        let error = OverlayInteractionClipboard(sender)
+        let error = OverlayInteractionClipboard::new(sender)
             .copy_image(&frame())
             .unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[cfg(feature = "dev-tools")]
+    #[test]
+    fn acceptance_copy_race_releases_a_checkpointed_worker() {
+        let race = super::OverlayInteractionCopyRace::new();
+        let worker_race = race.clone();
+        let worker = std::thread::spawn(move || worker_race.wait_before_commit());
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !race.checkpoint_reached() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(race.checkpoint_reached());
+        race.release();
+        worker.join().expect("copy race worker should be released");
     }
 
     #[test]
@@ -453,6 +569,29 @@ pub fn run_overlay_interaction_acceptance(
         settings,
         settings_path,
         acceptance.into_settings_window_options(),
+    )
+}
+
+/// Starts the real-input acceptance app with an optional deterministic Copy race checkpoint.
+#[cfg(feature = "dev-tools")]
+pub(crate) fn run_overlay_interaction_acceptance_with_copy_race(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    acceptance: OverlayInteractionAcceptanceOptions,
+    copy_race: Option<OverlayInteractionCopyRace>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut window_options = acceptance.into_settings_window_options();
+    window_options.interaction_copy_race = copy_race;
+    run_with_settings_window(
+        started_at,
+        performance,
+        history,
+        settings,
+        settings_path,
+        window_options,
     )
 }
 
@@ -614,6 +753,9 @@ struct SettingsWindowOptions {
     interaction_commands: Option<async_channel::Receiver<OverlayInteractionAcceptanceCommand>>,
     /// `Some` installs the acceptance sink; `None` leaves the production system clipboard active.
     interaction_copy_results: Option<Sender<platform::capture::CaptureFrame>>,
+    /// Optional acceptance-only checkpoint used to order the Copy cancellation race.
+    #[cfg(feature = "dev-tools")]
+    interaction_copy_race: Option<OverlayInteractionCopyRace>,
     /// Receives no-input history expansion and snapshot commands from the resource runner.
     history_resource_commands: Option<async_channel::Receiver<HistoryResourceAcceptanceCommand>>,
 }
@@ -635,6 +777,8 @@ impl Default for SettingsWindowOptions {
             interaction_shortcut_readiness: None,
             interaction_commands: None,
             interaction_copy_results: None,
+            #[cfg(feature = "dev-tools")]
+            interaction_copy_race: None,
             history_resource_commands: None,
         }
     }
@@ -698,6 +842,8 @@ fn run_with_settings_window(
         let interaction_shortcut_readiness = window_options.interaction_shortcut_readiness;
         let interaction_commands = window_options.interaction_commands;
         let interaction_copy_results = window_options.interaction_copy_results;
+        #[cfg(feature = "dev-tools")]
+        let interaction_copy_race = window_options.interaction_copy_race;
         let history_resource_commands = window_options.history_resource_commands;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
@@ -718,12 +864,19 @@ fn run_with_settings_window(
                 app
             } else if let Some(copy_results) = interaction_copy_results {
                 cx.new(|cx| {
+                    #[cfg(feature = "dev-tools")]
+                    let image_clipboard = Arc::new(OverlayInteractionClipboard::with_race(
+                        copy_results,
+                        interaction_copy_race,
+                    ));
+                    #[cfg(not(feature = "dev-tools"))]
+                    let image_clipboard = Arc::new(OverlayInteractionClipboard::new(copy_results));
                     FlashShotApp::new_for_overlay_interaction(
                         performance,
                         history,
                         settings,
                         settings_path,
-                        Arc::new(OverlayInteractionClipboard(copy_results)),
+                        image_clipboard,
                         cx,
                     )
                 })

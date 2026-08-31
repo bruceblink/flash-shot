@@ -23,6 +23,7 @@ use flash_shot::{
 };
 #[cfg(windows)]
 use flash_shot::{
+    OverlayInteractionCopyRace,
     platform::{
         clipboard::SystemClipboard,
         process_group::ProcessGroup,
@@ -197,6 +198,7 @@ enum CaptureScenarioOption {
     SelectionTransform,
     ScrollRoundtrip,
     AnnotationRegression,
+    CopyCancellationRace,
 }
 
 impl CaptureScenarioOption {
@@ -209,6 +211,7 @@ impl CaptureScenarioOption {
             Self::SelectionTransform => "capture_selection_transform",
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
             Self::AnnotationRegression => "capture_annotation_regression",
+            Self::CopyCancellationRace => "capture_copy_cancellation_race",
         }
     }
 
@@ -360,10 +363,11 @@ impl Options {
                         "selection-transform" => CaptureScenarioOption::SelectionTransform,
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
                         "annotation-regression" => CaptureScenarioOption::AnnotationRegression,
+                        "copy-cancellation-race" => CaptureScenarioOption::CopyCancellationRace,
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', or 'annotation-regression'"
-                                    .to_owned(),
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', or 'annotation-regression'"
+                    .to_owned(),
                             );
                         }
                     };
@@ -430,7 +434,9 @@ impl Options {
         }
         let copy_capable_capture = matches!(
             options.capture_scenario,
-            CaptureScenarioOption::Standard | CaptureScenarioOption::CopyOnly
+            CaptureScenarioOption::Standard
+                | CaptureScenarioOption::CopyOnly
+                | CaptureScenarioOption::CopyCancellationRace
         ) && options.record_target.is_none()
             && !scroll_export_seen;
         if copy_trigger_seen && !copy_capable_capture {
@@ -483,7 +489,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1285,6 +1291,7 @@ struct AcceptanceReport {
     recording_states: Vec<RecordingStateReport>,
     recording: Option<RecordingReport>,
     capture_actions: Option<CaptureActionReport>,
+    copy_cancellation_race: Option<CopyCancellationRaceReport>,
     narrow_edge: Option<NarrowEdgeReport>,
     pins_coexist: Option<PinsCoexistReport>,
     selection_transform: Option<SelectionTransformReport>,
@@ -1726,6 +1733,60 @@ struct CopyReport {
 }
 
 #[derive(serde::Serialize)]
+struct CopyCancellationRaceReport {
+    trigger: &'static str,
+    action: &'static str,
+    sink: &'static str,
+    requested_selection: PhysicalRect,
+    selection: PhysicalRect,
+    escape_injected_immediately: bool,
+    checkpoint_reached_before_escape: bool,
+    checkpoint_reached_before_commit: bool,
+    escape_won_before_clipboard_commit: bool,
+    clipboard_frame_received: bool,
+    selection_copy_lease_released: bool,
+    clipboard_write_lease_released: bool,
+    status_reports_cancellation: bool,
+    cancellation_status: String,
+    cancellation_state: CaptureStateEvidence,
+    final_capture_state: CaptureStateEvidence,
+    cleanup_status: String,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct CaptureStateEvidence {
+    session_state: String,
+    selection: Option<PhysicalRect>,
+    selection_copy_active: bool,
+    clipboard_write_active: bool,
+    overlay_count: usize,
+    pinned_count: usize,
+    capture_teardown_pending: bool,
+    background_tasks_idle: bool,
+    capture_preflight_ready: bool,
+    status: String,
+}
+
+impl CaptureStateEvidence {
+    /// Copies only the state-channel fields needed to explain the cancellation result.
+    fn from_state(state: &OverlayInteractionCaptureState) -> Self {
+        Self {
+            session_state: state.session_state.clone(),
+            selection: state.selection,
+            selection_copy_active: state.selection_copy_active,
+            clipboard_write_active: state.clipboard_write_active,
+            overlay_count: state.overlay_count,
+            pinned_count: state.pinned_count,
+            capture_teardown_pending: state.capture_teardown_pending,
+            background_tasks_idle: state.background_tasks_idle,
+            capture_preflight_ready: state.capture_preflight_ready,
+            status: state.status.clone(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
 struct ExactPixelMatchReport {
     source_fingerprint: String,
     result_fingerprint: String,
@@ -1863,6 +1924,7 @@ struct WorkerContext {
     shortcut_readiness: Receiver<bool>,
     interaction_commands: async_channel::Sender<OverlayInteractionAcceptanceCommand>,
     copy_results: Option<Receiver<CaptureFrame>>,
+    copy_race: Option<OverlayInteractionCopyRace>,
     use_system_clipboard: bool,
     copy_trigger: CopyTriggerOption,
     timeout: Duration,
@@ -2020,6 +2082,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let uses_system_clipboard = options.allow_system_clipboard;
     let app_copy_results = (!uses_system_clipboard).then_some(copy_result_tx);
     let worker_copy_results = (!uses_system_clipboard).then_some(copy_result_rx);
+    let copy_race = (options.capture_scenario == CaptureScenarioOption::CopyCancellationRace)
+        .then(OverlayInteractionCopyRace::new);
+    let app_copy_race = copy_race.clone();
     let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
         (Some(_), _) => (980.0, 760.0),
         (None, CaptureScenarioOption::NarrowEdge) => (420.0, 420.0),
@@ -2027,6 +2092,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             None,
             CaptureScenarioOption::Standard
             | CaptureScenarioOption::CopyOnly
+            | CaptureScenarioOption::CopyCancellationRace
             | CaptureScenarioOption::PinsCoexist
             | CaptureScenarioOption::SelectionTransform
             | CaptureScenarioOption::ScrollRoundtrip
@@ -2041,6 +2107,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         shortcut_readiness: shortcut_ready_rx,
         interaction_commands: interaction_tx,
         copy_results: worker_copy_results,
+        copy_race,
         use_system_clipboard: uses_system_clipboard,
         copy_trigger: options.copy_trigger,
         timeout: options.timeout,
@@ -2084,7 +2151,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             process::exit(exit_code);
         })?;
 
-    flash_shot::run_overlay_interaction_acceptance(
+    flash_shot::run_overlay_interaction_acceptance_with_copy_race(
         Instant::now(),
         performance,
         history,
@@ -2097,6 +2164,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             commands: interaction_rx,
             copy_results: app_copy_results,
         },
+        app_copy_race,
     )?;
     Err(io::Error::other("GPUI exited before the interaction worker completed").into())
 }
@@ -2105,9 +2173,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 19 adds the
-        // annotation regression report and source/export pixel fingerprints.
-        schema_version: 19,
+        // Increment when the machine-readable report shape changes. Schema 20 adds the
+        // deterministic Copy cancellation race evidence.
+        schema_version: 20,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2130,6 +2198,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         recording_states: Vec::new(),
         recording: None,
         capture_actions: None,
+        copy_cancellation_race: None,
         narrow_edge: None,
         pins_coexist: None,
         selection_transform: None,
@@ -3578,6 +3647,9 @@ fn run_interaction_sequence(
             execute_annotation_regression_interactions(context, report)
         }
         (None, CaptureScenarioOption::CopyOnly) => execute_copy_only_interactions(context, report),
+        (None, CaptureScenarioOption::CopyCancellationRace) => {
+            execute_copy_cancellation_race_interactions(context, report)
+        }
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
     let cursor_result = cursor.restore();
@@ -6310,6 +6382,296 @@ fn execute_copy_only_interactions(
         },
     });
     write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Sends Copy and Escape back-to-back, then proves cancellation before the injected sink commits.
+fn execute_copy_cancellation_race_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    if context.use_system_clipboard {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Copy cancellation race requires the injected clipboard sink",
+        ));
+    }
+    let copy_results = context.copy_results.as_ref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Copy cancellation race has no injected clipboard sink",
+        )
+    })?;
+    if copy_results.try_recv().is_ok() {
+        return Err(io::Error::other(
+            "Copy cancellation race sink contained an unexpected earlier frame",
+        ));
+    }
+    let copy_race = context.copy_race.as_ref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Copy cancellation race has no deterministic commit checkpoint",
+        )
+    })?;
+
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "controller_ready",
+        controller,
+        None,
+    )?;
+
+    let (overlay, plan, selection, requested_selection, _source) =
+        begin_selected_overlay(context, controller)?;
+    thread::sleep(context.settle_delay);
+    focus_owned_window(overlay, context.timeout)?;
+    let selected = capture_evidence(context, "12-copy-cancellation-race-selection.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "copy_cancellation_race_selection_ready",
+        guard_foreground(overlay.handle)?,
+        Some(&selected),
+    )?;
+
+    // Wait for the worker to reach the reversible checkpoint, then inject Escape without a
+    // reporting write or settle delay between the two real inputs.
+    let (copy_foreground, _copy_started_qpc) =
+        inject_copy_trigger(overlay.handle, plan.copy, context.copy_trigger)?;
+    let checkpoint_reached_before_escape =
+        wait_for_copy_race_checkpoint(context, copy_race, selection, context.timeout)?;
+    let escape_foreground = inject_key(overlay.handle, VK_ESCAPE)?;
+    // Persist both input records only after Escape has been delivered, so report I/O cannot
+    // widen the Copy-to-Escape interval being measured.
+    record_step(
+        report,
+        &context.report_path,
+        "copy_cancellation_race_trigger",
+        copy_foreground,
+        None,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "copy_cancellation_race_escape",
+        escape_foreground,
+        None,
+    )?;
+
+    let checkpoint_reached =
+        wait_for_copy_race_release(context, copy_race, selection, context.timeout)?;
+    let cancellation_status = context
+        .locale
+        .text(UiText::CopyCancelledBeforeClipboardChanged)
+        .to_owned();
+    let cancellation_state =
+        wait_for_capture_state(context, "Copy cancellation completion", |state| {
+            state.session_state == "selecting"
+                && state.selection == Some(selection)
+                && state.overlay_count == 1
+                && !state.selection_copy_active
+                && !state.clipboard_write_active
+                && !state.capture_teardown_pending
+                && state.capture_preflight_ready
+                && state.status == cancellation_status
+        })?;
+    let clipboard_frame_received = match copy_results.try_recv() {
+        Ok(_) => true,
+        Err(mpsc::TryRecvError::Empty) => false,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Copy cancellation race sink disconnected",
+            ));
+        }
+    };
+    if clipboard_frame_received {
+        return Err(io::Error::other(
+            "Escape did not win before the injected clipboard sink commit",
+        ));
+    }
+    let selection_copy_lease_released = !cancellation_state.selection_copy_active;
+    let clipboard_write_lease_released = !cancellation_state.clipboard_write_active;
+    let status_reports_cancellation = cancellation_state.status == cancellation_status
+        && !cancellation_state.status.starts_with("Selection copied")
+        && !cancellation_state.status.starts_with("Copy failed:");
+    if !selection_copy_lease_released
+        || !clipboard_write_lease_released
+        || !status_reports_cancellation
+    {
+        return Err(io::Error::other(
+            "Copy cancellation race did not leave cancellation state cleanly",
+        ));
+    }
+    thread::sleep(context.settle_delay);
+    focus_owned_window(overlay, context.timeout)?;
+    let cancelled = capture_evidence(context, "13-copy-cancellation-race-cancelled.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "copy_cancellation_race_cancelled",
+        guard_foreground(overlay.handle)?,
+        Some(&cancelled),
+    )?;
+
+    let cleanup_foreground = focus_and_inject_key(overlay, VK_ESCAPE, context.timeout)?;
+    wait_for_window_gone(overlay.handle, context.timeout, "Copy cancellation cleanup")?;
+    let cleanup_state = wait_for_capture_state(context, "Copy cancellation cleanup", |state| {
+        state.session_state == "idle"
+            && state.selection.is_none()
+            && state.overlay_count == 0
+            && state.pinned_count == 0
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+    })?;
+    record_step(
+        report,
+        &context.report_path,
+        "copy_cancellation_race_cleanup",
+        cleanup_foreground,
+        None,
+    )?;
+    ensure_capture_input_released()?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "Copy cancellation cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    let final_capture_state = CaptureStateEvidence::from_state(&cleanup_state);
+    let cleanup = CleanupReport {
+        session_state: cleanup_state.session_state,
+        overlay_count: cleanup_state.overlay_count,
+        pinned_count: cleanup_state.pinned_count,
+        capture_teardown_pending: cleanup_state.capture_teardown_pending,
+        visible_process_windows,
+        capture_preflight_ready: cleanup_state.capture_preflight_ready,
+    };
+    let race_report = CopyCancellationRaceReport {
+        trigger: context.copy_trigger.label(),
+        action: match context.copy_trigger {
+            CopyTriggerOption::Toolbar => "toolbar_click",
+            CopyTriggerOption::Enter => "enter_key",
+        },
+        sink: "isolated_observer",
+        requested_selection,
+        selection,
+        escape_injected_immediately: true,
+        checkpoint_reached_before_escape,
+        checkpoint_reached_before_commit: checkpoint_reached,
+        escape_won_before_clipboard_commit: !clipboard_frame_received,
+        clipboard_frame_received,
+        selection_copy_lease_released,
+        clipboard_write_lease_released,
+        status_reports_cancellation,
+        cancellation_status,
+        cancellation_state: CaptureStateEvidence::from_state(&cancellation_state),
+        final_capture_state,
+        cleanup_status: cleanup_state.status,
+        cleanup,
+    };
+    println!(
+        "copy_cancellation_race_evidence: {}",
+        serde_json::to_string(&race_report).map_err(io::Error::other)?
+    );
+    report.copy_cancellation_race = Some(race_report);
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Waits until Copy has reached the injected sink checkpoint before delivering competing Escape.
+fn wait_for_copy_race_checkpoint(
+    context: &WorkerContext,
+    copy_race: &OverlayInteractionCopyRace,
+    selection: PhysicalRect,
+    timeout: Duration,
+) -> io::Result<bool> {
+    let copying_status = context.locale.text(UiText::SelectionCopyInProgress);
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            copy_race.release();
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Copy cancellation race did not reach the commit checkpoint before Escape",
+            ));
+        }
+        let state = match query_capture_state(context, remaining.min(Duration::from_millis(100))) {
+            Ok(state) => state,
+            Err(error) if error.kind() == io::ErrorKind::TimedOut => continue,
+            Err(error) => {
+                copy_race.release();
+                return Err(error);
+            }
+        };
+        if copy_race.checkpoint_reached()
+            && state.session_state == "selecting"
+            && state.selection == Some(selection)
+            && state.overlay_count == 1
+            && state.selection_copy_active
+            && state.status == copying_status
+        {
+            return Ok(true);
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(windows)]
+/// Waits until Escape has reached the cancellation state before releasing a blocked sink worker.
+fn wait_for_copy_race_release(
+    context: &WorkerContext,
+    copy_race: &OverlayInteractionCopyRace,
+    selection: PhysicalRect,
+    timeout: Duration,
+) -> io::Result<bool> {
+    let cancelling_status = context.locale.text(UiText::SelectionCopyCancelling);
+    let waiting_status = context.locale.text(UiText::SelectionCopyWaitingForCommit);
+    let cancelled_status = context
+        .locale
+        .text(UiText::CopyCancelledBeforeClipboardChanged);
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            copy_race.release();
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Copy cancellation race did not reach a safe release point",
+            ));
+        }
+        let state = match query_capture_state(context, remaining.min(Duration::from_millis(100))) {
+            Ok(state) => state,
+            Err(error) if error.kind() == io::ErrorKind::TimedOut => continue,
+            Err(error) => {
+                copy_race.release();
+                return Err(error);
+            }
+        };
+        let cancellation_requested = state.selection == Some(selection)
+            && [cancelling_status, waiting_status, cancelled_status]
+                .into_iter()
+                .any(|status| state.status == status);
+        if copy_race.checkpoint_reached() && cancellation_requested {
+            copy_race.release();
+            return Ok(true);
+        }
+        let worker_finished = state.selection == Some(selection)
+            && !state.selection_copy_active
+            && !state.clipboard_write_active
+            && state.status == cancelled_status;
+        if worker_finished {
+            copy_race.release();
+            return Ok(false);
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 #[cfg(windows)]
@@ -11372,6 +11734,35 @@ mod tests {
         assert_eq!(
             options.capture_scenario.workflow(),
             "capture_selection_transform"
+        );
+    }
+
+    #[test]
+    fn parser_accepts_isolated_copy_cancellation_race_scenario() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "copy-cancellation-race",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::CopyCancellationRace
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_copy_cancellation_race"
+        );
+        assert!(!options.allow_system_clipboard);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "copy-cancellation-race",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
         );
     }
 

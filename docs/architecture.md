@@ -1,6 +1,6 @@
 # 开发设计思路
 
-更新日期：2026-08-30
+更新日期：2026-08-31
 
 ## 术语表与命名约定
 
@@ -21,6 +21,8 @@
 | 拆除屏障 | Teardown Barrier | 在窗口、任务、输入和临时资源清理完成前阻止下一次采集的状态检查 | 不是操作系统同步原语或持久化锁 |
 | 资源所有者 | Resource Owner | 负责提交或释放窗口、文件、剪贴板写入和外部进程资源的当前操作 | 不是业务数据的持久化拥有者 |
 | 界面度量 | ThemeMetrics | 跨页面共享的颜色语义、间距、尺寸和命中区参数 | 不是截图像素或平台 DPI 值 |
+| 剪贴板提交检查点 | Clipboard Commit Checkpoint | `ClipboardCommitGate` 在不可逆剪贴板写入前提供的最后可取消边界 | 不是实际的系统剪贴板写入，也不是消费者确认 |
+| 隔离剪贴板观察器 | Isolated Clipboard Observer | `dev-tools` 验收中接收候选 `CaptureFrame` 的进程内观察通道 | 不是生产系统剪贴板或外部应用消费者 |
 
 正文、目录示例、代码和报告统一使用这些名称；标准协议、Cargo、GPUI、Windows 和 FFmpeg 保留标准大小写。
 
@@ -91,6 +93,14 @@ Cancel 和再次 Capture 共享显式的拆除屏障（Teardown Barrier）：在
 过期结果只释放自己的资源，不写回新的 UI 状态。历史缩略图保持有界 FIFO 和最多两个并行解码任务；单条失败
 显示可重试状态，不阻塞截图主链。
 
+选择复制的后台 worker 先在图像库完成标注合成和物理像素裁切，再通过
+`ClipboardService::copy_image_cancellable` 进入剪贴板提交检查点。`SelectionCopyCancellation` 接收第一个
+Escape：在 `ClipboardCommitGate::begin_clipboard_commit` 成功前，取消只丢弃已准备的帧并释放选择复制与剪贴板写入的
+操作所有权；提交开始后，取消只等待写入完成，不声称可以恢复已经改变的剪贴板。Windows `SystemClipboard` 在
+`OpenClipboard` 成功后、`EmptyClipboard` 之前取得提交资格。`dev-tools` 的 `copy-cancellation-race` 使用隔离
+剪贴板观察器在同一检查点暂停 worker，runner 通过真实 Copy 和 Escape 输入验证取消顺序，既不改变生产实现也不写入
+系统剪贴板。
+
 ### 3.4 录屏与外部进程
 
 FFmpeg 由录屏 workflow 管理，状态使用 `idle/starting/recording/paused/stopping/failed`。启动阶段先建立
@@ -144,7 +154,9 @@ Library 以最近截图和筛选为主，Record 以当前目标和生命周期�
 - workspace 根目录统一运行 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets`、
   `cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace` 和 `git diff --check`。
 - 使用 `dev-tools` 特性的检查还需运行 `cargo check --workspace --all-targets --all-features --locked` 和
-  `cargo test --workspace --all-features --locked`；严格全特性 Clippy 的当前未完成项记录在主线计划的 P1 表中。
+  `cargo test --workspace --all-features --locked`；在 Windows 主机可用时再运行
+  `cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked`。
+  严格全特性 Clippy 的当前未完成项记录在主线计划的 P1 表中。
 
 完成条件以 [主线开发计划](plan.md) 和 [Windows 手工验收记录](windows-manual-acceptance.md) 为准；本设计文档只
 说明职责、依赖和演进规则，不复制逐次运行日志。
