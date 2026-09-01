@@ -38,7 +38,7 @@
 
 ## 1. 代码复审结论
 
-本次复审基于 `main` 提交 `a4e5081`（2026-09-01）以及 workspace 中的五个 crate。复审范围包括 Cargo
+本次复审基于 `main` 提交 `a6f053e`（2026-09-01）以及 workspace 中的五个 crate。复审范围包括 Cargo
 依赖方向、应用生命周期、截图/标注/导出/历史/录屏 workflow、UI 状态和开发工具入口。
 
 当前静态与自动化结果：
@@ -50,7 +50,7 @@
   helper 已使用共享参数上下文，未改变验收行为；
 - `cargo check --workspace --all-targets --all-features --locked` 与
   `cargo test --workspace --all-features --locked` 均通过；
-- `cargo test --workspace` 通过；Copy 取消竞争场景解析、隔离 sink 检查、快速保存失败后重试清理和首选目录失效回退测试也在全特性测试中通过；
+- `cargo test --workspace` 通过；Copy 取消竞争场景解析、隔离 sink 检查、快速保存失败后重试清理、首选目录失效回退和录屏 worker 启动失败释放测试也在全特性测试中通过；
 - `cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked` 通过，
   仅证明 Windows 原生分支可编译，不替代真实窗口、输入和像素验收；
 - 当前 workspace 只有 `flash-shot-domain`、`flash-shot-image`、`flash-shot-infra-windows`、
@@ -135,8 +135,8 @@ Escape，再释放检查点。`copy-cancellation-race` 只使用进程内 `isola
 两份报告均为 schema 20、`status=passed`，检查点在 Escape 前到达、观察器未收到帧、两类操作状态均释放，最终
 overlay/Pin/任务/按键清零；截图与路径已登记在 [Windows 手工验收记录](windows-manual-acceptance.md)。B1 仍保持
 “部分完成”。快速保存确定性 fixture 已在提交 `a4e5081` 覆盖损坏帧失败、最终保留名和 `.tmp` 清理、使用同一
-时间戳/UUID 的再次保存，以及首选目录失效后的全屏 PNG 回退；下一步只处理系统剪贴板争用、真实只读目录和
-FFmpeg 失败恢复。
+时间戳/UUID 的再次保存、首选目录失效后的全屏 PNG 回退，以及录屏 worker 启动失败后的运行标记释放；下一步只处理
+系统剪贴板争用、真实只读目录和 FFmpeg 用户界面失败恢复。
 
 **顺序**：确定性 fault fixture 已完成；接着执行可丢弃桌面上的真实输入、系统剪贴板和 FFmpeg 场景。
 任何一类无法清理都保留失败报告并停止该切片。
