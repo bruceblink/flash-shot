@@ -137,9 +137,8 @@ cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --al
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 520 640 target/ui-acceptance/settings-display-1-scale.png 1500 0 1.5 capture 1
 ```
 
-当前代码的全特性 `cargo check` 与 `cargo test` 已通过；Windows 目标 `cargo check` 也已通过；严格全特性 Clippy 仍会在
-`dev-tools` 的历史资源验收 helper 上触发 `clippy::too_many_arguments`，属于 [主线开发计划](plan.md) 中的 P1
-结构收口项。没有关闭该项前，本记录不把全特性 Clippy 写成通过。
+当前代码的全特性 `cargo check`、`cargo test` 与严格全特性 Clippy 均已通过；Windows 目标 `cargo check` 也已通过。
+历史资源验收 helper 已在提交 `1c41e8a` 收窄为共享参数上下文；该结构调整不改变验收行为。
 
 `settings-ui-acceptance` 为每个 PNG 写入同名 JSON，其中包含 UI 语言、物理窗口边界、Windows DPI
 和缩放比例。提供 `en` 或 `zh-CN` 作为最后一个参数时，探针使用对应 UI 资源目录；为保持证据可

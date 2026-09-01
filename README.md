@@ -99,8 +99,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-features --locked
 ```
 
-当前 HEAD 的全特性严格 Clippy 仍受 `dev-tools` 历史验收 helper 的 `clippy::too_many_arguments` 阻塞，详见
-[主线开发计划](docs/plan.md)；关闭该 P1 项目前，不把全特性 Clippy 写成已通过。
+当前 HEAD 的全特性严格 Clippy 已通过；历史验收 helper 的参数上下文收口见
+[主线开发计划](docs/plan.md)。
 
 连续截图资源与延迟门禁会真实捕获并编码虚拟桌面 100 次，输出机器可读 JSON；性能基线应使用 release 构建：
 

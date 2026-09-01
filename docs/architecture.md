@@ -1,6 +1,6 @@
 # 开发设计思路
 
-更新日期：2026-08-31
+更新日期：2026-09-01
 
 本文档是 Flash Shot 唯一的开发设计来源，说明组件职责、依赖方向、生命周期、验证边界和演进顺序。
 版本目标与切片状态只写入[主线开发计划](plan.md)；产品需求、Windows 验收、分发和 Linux 可行性文档
@@ -160,7 +160,7 @@ Library 以最近截图和筛选为主，Record 以当前目标和生命周期�
 - 使用 `dev-tools` 特性的检查还需运行 `cargo check --workspace --all-targets --all-features --locked` 和
   `cargo test --workspace --all-features --locked`；在 Windows 主机可用时再运行
   `cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked`。
-  严格全特性 Clippy 的当前未完成项记录在主线计划的 P1 表中。
+  严格全特性 Clippy 已通过；后续结构重构仍须保持该检查通过。
 
 完成条件以 [主线开发计划](plan.md) 和 [Windows 手工验收记录](windows-manual-acceptance.md) 为准；本设计文档只
 说明职责、依赖和演进规则，不复制逐次运行日志。

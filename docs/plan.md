@@ -1,6 +1,6 @@
 # 主线开发计划
 
-更新日期：2026-08-31
+更新日期：2026-09-01
 当前版本：`0.1.2`
 目标版本：`0.2.0` 质量阶段
 
@@ -38,7 +38,7 @@
 
 ## 1. 代码复审结论
 
-本次复审基于 `main` 提交 `824a7d4`（2026-08-31）以及 workspace 中的五个 crate。复审范围包括 Cargo
+本次复审基于 `main` 提交 `1c41e8a`（2026-09-01）以及 workspace 中的五个 crate。复审范围包括 Cargo
 依赖方向、应用生命周期、截图/标注/导出/历史/录屏 workflow、UI 状态和开发工具入口。
 
 当前静态与自动化结果：
@@ -46,11 +46,10 @@
 - `cargo fmt --all -- --check` 通过；
 - `cargo clippy --workspace --all-targets -- -D warnings` 通过；依赖仍有 Rust future-incompatibility 提示，
   但没有当前 warning；
-- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` 尚未通过：
-  `exercise_history_deletions`（8 个参数）和 `exercise_thumbnail_failures`（9 个参数）触发
-  `clippy::too_many_arguments`；这属于本计划的 P1 结构收口，不在本次文档切片中修改源码；
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` 通过；历史资源验收
+  helper 已使用共享参数上下文，未改变验收行为；
 - `cargo check --workspace --all-targets --all-features --locked` 与
-  `cargo test --workspace --all-features --locked` 均通过；全特性测试结果不能替代上述 Clippy 失败项；
+  `cargo test --workspace --all-features --locked` 均通过；
 - `cargo test --workspace` 通过；新增的 Copy 取消竞争场景解析和隔离 sink 检查也在全特性测试中通过；
 - `cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked` 通过，
   仅证明 Windows 原生分支可编译，不替代真实窗口、输入和像素验收；
@@ -68,7 +67,6 @@
 | P1 | 动态文案盘点 | `Locale`/`UiText` 已覆盖大部分设置、Capture、Library、Record、Pin 和 workflow；剩余动态状态需要重新盘点，不能沿用旧的 317 条计数 | 中英文资源覆盖、参数化模板测试、无未登记用户可见硬编码 |
 | P1 | UI 信息层级 | 设置壳层、覆盖层/Pin token 和 Library/Record 尺寸已有部分复核；Record、App、诊断和错误恢复入口仍需收敛 | 420x420、520x640、980x760；中英文、深浅主题；真实入口可达且无重叠 |
 | P1 | 大模块维护成本 | `overlay.rs`、`view.rs`、`i18n.rs` 和 `overlay-interaction-acceptance.rs` 仍集中在 `flash-shot-app` | 先冻结行为，再按职责小步拆分；报告 schema、快捷键和用户行为不变 |
-| P1 | 开发工具全特性检查 | `dev-tools` 组合下的历史资源验收函数仍触发 `clippy::too_many_arguments`；默认 workspace 构建不触发这些路径 | 后续以参数上下文或职责拆分消除 lint，并通过 `--all-features --locked` 的 Clippy/测试 |
 | P2 | 环境矩阵 | 当前证据主要是单显示器 100%；150%/200%、负坐标双屏和混合 DPI 双屏没有当前硬件证据 | 对应真实 Windows 环境、物理像素、窗口布局和清理报告 |
 | P2 | 在线翻译与跨平台 | 真实 HTTPS 翻译闭环以及 Linux/macOS 功能对等尚未排期 | 产品范围恢复、可丢弃服务或原生桌面环境，以及独立验收计划 |
 
@@ -209,7 +207,7 @@ git diff --check
 使用 `dev-tools` 特性的检查还需运行 `cargo check --workspace --all-targets --all-features --locked` 和
 `cargo test --workspace --all-features --locked`；在 Windows 主机可用时再运行
 `cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked`。
-严格全特性 Clippy 的当前未完成项记录在本计划的 P1 表中。
+严格全特性 Clippy 已在提交 `1c41e8a` 通过；后续切片仍须重复执行该检查。
 
 用户可见切片还必须使用同一提交构建的 Release 程序，在 [Windows 手工验收记录](windows-manual-acceptance.md) 中保存
 结构化报告、关键截图、像素产物和清理结果。`--allow-input`、系统剪贴板和 FFmpeg 只在明确授权的可丢弃 Windows

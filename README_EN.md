@@ -148,9 +148,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-features --locked
 ```
 
-Strict all-feature Clippy on the current HEAD is still blocked by `clippy::too_many_arguments` in historical
-`dev-tools` acceptance helpers. See the [mainline development plan](docs/plan.md); do not report the all-feature
-Clippy gate as passing until that P1 item is closed.
+Strict all-feature Clippy passes on the current HEAD. The historical `dev-tools` acceptance helpers now share a
+bounded parameter context; see the [mainline development plan](docs/plan.md).
 
 The repeat-capture resource and latency gate captures and encodes the virtual desktop 100 times and emits machine-readable JSON. Use a release build for performance baselines:
 
