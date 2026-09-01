@@ -27,7 +27,7 @@ impl FlashShotApp {
     ) {
         let idle = state == crate::RecordingUiAcceptanceState::Idle;
         let (active, starting, stopping, paused, progress, status) =
-            acceptance_recording_state(state);
+            acceptance_recording_state(self.settings.locale, state);
         self.recording_acceptance_active = active;
         self.recording_start_in_flight = starting;
         self.recording_stopping = stopping;
@@ -1125,7 +1125,13 @@ pub(in crate::app) fn shortcut_option_label(locale: Locale, shortcut: Option<&st
     shortcut.unwrap_or_else(|| locale.text(UiText::ShortcutOff))
 }
 
+/// Builds one deterministic Record-page state for the no-input acceptance probe.
+///
+/// The helper keeps lifecycle flags and progress values aligned with production states while
+/// obtaining every visible status from the active locale, so screenshots never misrepresent a
+/// Simplified Chinese session with English feedback.
 fn acceptance_recording_state(
+    locale: Locale,
     state: crate::RecordingUiAcceptanceState,
 ) -> (
     bool,
@@ -1133,8 +1139,11 @@ fn acceptance_recording_state(
     bool,
     bool,
     crate::recording::RecordingProgress,
-    &'static str,
+    String,
 ) {
+    let target = locale.text(UiText::RecordingTargetDisplay);
+    let seconds = "4";
+    let frames = "60";
     match state {
         crate::RecordingUiAcceptanceState::Idle => (
             false,
@@ -1142,7 +1151,7 @@ fn acceptance_recording_state(
             false,
             false,
             Default::default(),
-            "Ready - Ctrl+Shift+Print Screen",
+            locale.ready_with_shortcut("Ctrl+Shift+Print Screen"),
         ),
         crate::RecordingUiAcceptanceState::Starting => (
             false,
@@ -1150,7 +1159,7 @@ fn acceptance_recording_state(
             false,
             false,
             Default::default(),
-            "Discovering FFmpeg and preparing display recording...",
+            locale.text(UiText::RecordingPreparingDisplay).to_owned(),
         ),
         crate::RecordingUiAcceptanceState::Recording => (
             true,
@@ -1162,7 +1171,10 @@ fn acceptance_recording_state(
                 frame: Some(60),
                 finished: false,
             },
-            "Recording primary display - 4s, 60 frames",
+            locale.format_template(
+                UiText::RecordingProgress,
+                &[("target", target), ("seconds", seconds), ("frames", frames)],
+            ),
         ),
         crate::RecordingUiAcceptanceState::Paused => (
             true,
@@ -1174,7 +1186,7 @@ fn acceptance_recording_state(
                 frame: Some(60),
                 finished: false,
             },
-            "Paused primary display recording - 4s, 60 frames",
+            locale.format_template(UiText::RecordingPaused, &[("target", target)]),
         ),
         crate::RecordingUiAcceptanceState::Stopping => (
             false,
@@ -1186,7 +1198,7 @@ fn acceptance_recording_state(
                 frame: Some(60),
                 finished: false,
             },
-            "Stopping primary display recording...",
+            locale.format_template(UiText::RecordingStopping, &[("target", target)]),
         ),
         crate::RecordingUiAcceptanceState::Cancelled => (
             false,
@@ -1194,7 +1206,7 @@ fn acceptance_recording_state(
             false,
             false,
             Default::default(),
-            "Screen recording startup cancelled",
+            locale.text(UiText::RecordingStartupCancelled).to_owned(),
         ),
         crate::RecordingUiAcceptanceState::Failed => (
             false,
@@ -1202,7 +1214,10 @@ fn acceptance_recording_state(
             false,
             false,
             Default::default(),
-            "Screen recording failed: FFmpeg exited before producing frames",
+            locale.format_template(
+                UiText::RecordingFailed,
+                &[("error", "FFmpeg exited before producing frames")],
+            ),
         ),
     }
 }
@@ -1296,7 +1311,7 @@ mod tests {
                 false,
                 false,
                 Some(4_000_000),
-                "Recording primary display - 4s, 60 frames",
+                "Recording display: 4s, 60 frames",
             ),
             (
                 RecordingUiAcceptanceState::Paused,
@@ -1305,7 +1320,7 @@ mod tests {
                 false,
                 true,
                 Some(4_000_000),
-                "Paused primary display recording - 4s, 60 frames",
+                "display recording paused",
             ),
             (
                 RecordingUiAcceptanceState::Stopping,
@@ -1314,7 +1329,7 @@ mod tests {
                 true,
                 false,
                 Some(4_000_000),
-                "Stopping primary display recording...",
+                "Stopping display recording...",
             ),
             (
                 RecordingUiAcceptanceState::Cancelled,
@@ -1338,7 +1353,7 @@ mod tests {
 
         for (state, active, starting, stopping, paused, output_time_us, expected_status) in cases {
             let (actual_active, actual_starting, actual_stopping, actual_paused, progress, status) =
-                acceptance_recording_state(state);
+                acceptance_recording_state(Locale::English, state);
 
             assert_eq!(actual_active, active);
             assert_eq!(actual_starting, starting);
@@ -1346,6 +1361,36 @@ mod tests {
             assert_eq!(actual_paused, paused);
             assert_eq!(progress.output_time_us, output_time_us);
             assert_eq!(progress.frame, output_time_us.map(|_| 60));
+            assert_eq!(status, expected_status);
+        }
+    }
+
+    #[test]
+    fn acceptance_recording_statuses_follow_the_active_locale() {
+        let cases = [
+            (
+                RecordingUiAcceptanceState::Starting,
+                "正在检查 FFmpeg 并准备显示器录屏...",
+            ),
+            (
+                RecordingUiAcceptanceState::Recording,
+                "正在录制显示器：4 秒，60 帧",
+            ),
+            (RecordingUiAcceptanceState::Paused, "显示器录屏已暂停"),
+            (
+                RecordingUiAcceptanceState::Stopping,
+                "正在停止显示器录屏...",
+            ),
+            (RecordingUiAcceptanceState::Cancelled, "已取消屏幕录制启动"),
+            (
+                RecordingUiAcceptanceState::Failed,
+                "屏幕录制失败：FFmpeg exited before producing frames",
+            ),
+        ];
+
+        for (state, expected_status) in cases {
+            let (_, _, _, _, _, status) =
+                acceptance_recording_state(Locale::SimplifiedChinese, state);
             assert_eq!(status, expected_status);
         }
     }
