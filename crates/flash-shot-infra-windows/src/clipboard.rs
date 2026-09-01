@@ -534,6 +534,27 @@ mod platform {
             assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
             assert_eq!(attempts.get(), 1);
         }
+
+        #[test]
+        fn clipboard_retry_reports_persistent_contention_after_the_budget() {
+            let attempts = Cell::new(0);
+            // A permanently busy clipboard must return its last native error instead of spinning
+            // forever or converting contention into a false success.
+            let error = retry_clipboard_operation(
+                Duration::from_millis(20),
+                Duration::ZERO,
+                || false,
+                || -> io::Result<()> {
+                    attempts.set(attempts.get() + 1);
+                    Err(io::Error::new(io::ErrorKind::WouldBlock, "clipboard busy"))
+                },
+            )
+            .unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            assert_eq!(error.to_string(), "clipboard busy");
+            assert!(attempts.get() > 1);
+        }
     }
 }
 
