@@ -116,6 +116,22 @@ struct NativeWindow {
     handle: *mut std::ffi::c_void,
 }
 
+#[cfg(windows)]
+/// Shared inputs and mutable evidence used by each optional history recovery scenario.
+/// Keeping them in one context makes the scenario boundaries explicit without widening helper
+/// signatures whenever another sample or isolated history root is added.
+struct HistoryScenarioContext<'a> {
+    commands: &'a async_channel::Sender<HistoryResourceAcceptanceCommand>,
+    timeout: Duration,
+    interval: Duration,
+    started: Instant,
+    samples: &'a mut Vec<ResourceSample>,
+    fixture_paths: &'a [PathBuf],
+    session_root: &'a Path,
+    additional_history_roots: &'a mut Vec<PathBuf>,
+    window: &'a NativeWindow,
+}
+
 pub(super) fn entrypoint() {
     if let Err(error) = run() {
         eprintln!("history resource acceptance failed: {error}");
@@ -199,47 +215,34 @@ fn run() -> io::Result<serde_json::Value> {
             )?;
             let expanded_screenshot = session_root.join("screenshots/expanded-300-preview.png");
             capture_window(&window, &expanded_screenshot)?;
-            let failure_evidence = if options.exercise_failures {
-                Some(exercise_thumbnail_failures(
-                    &command_tx,
-                    options.timeout,
-                    options.sample_interval,
+            let (failure_evidence, deletion_evidence, window_close_evidence) = {
+                let mut context = HistoryScenarioContext {
+                    commands: &command_tx,
+                    timeout: options.timeout,
+                    interval: options.sample_interval,
                     started,
-                    &mut samples,
-                    &fixture_paths,
-                    &session_root,
-                    &mut additional_history_roots,
-                    &window,
-                )?)
-            } else {
-                None
-            };
-            let deletion_evidence = if options.exercise_deletions {
-                Some(exercise_history_deletions(
-                    &command_tx,
-                    options.timeout,
-                    options.sample_interval,
-                    started,
-                    &mut samples,
-                    &session_root,
-                    &mut additional_history_roots,
-                    &window,
-                )?)
-            } else {
-                None
-            };
-            let window_close_evidence = if options.exercise_window_close {
-                Some(exercise_history_window_close(
-                    &command_tx,
-                    options.timeout,
-                    options.sample_interval,
-                    started,
-                    &mut samples,
-                    &session_root,
-                    &mut additional_history_roots,
-                )?)
-            } else {
-                None
+                    samples: &mut samples,
+                    fixture_paths: &fixture_paths,
+                    session_root: &session_root,
+                    additional_history_roots: &mut additional_history_roots,
+                    window: &window,
+                };
+                let failure_evidence = if options.exercise_failures {
+                    Some(exercise_thumbnail_failures(&mut context)?)
+                } else {
+                    None
+                };
+                let deletion_evidence = if options.exercise_deletions {
+                    Some(exercise_history_deletions(&mut context)?)
+                } else {
+                    None
+                };
+                let window_close_evidence = if options.exercise_window_close {
+                    Some(exercise_history_window_close(&mut context)?)
+                } else {
+                    None
+                };
+                (failure_evidence, deletion_evidence, window_close_evidence)
             };
             let peak = peak_for_phase(baseline, &samples, "expanded_300");
             let peak_loading = samples
@@ -604,15 +607,16 @@ fn fixture_frame(index: usize) -> CaptureFrame {
 /// The runner waits for both the index mutation and thumbnail queue to settle before capturing
 /// each result, so the report proves that no deleted entry or stale preview remains visible.
 fn exercise_history_deletions(
-    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
-    timeout: Duration,
-    interval: Duration,
-    started: Instant,
-    samples: &mut Vec<ResourceSample>,
-    session_root: &Path,
-    additional_history_roots: &mut Vec<PathBuf>,
-    window: &NativeWindow,
+    context: &mut HistoryScenarioContext<'_>,
 ) -> io::Result<DeletionScenarioEvidence> {
+    let commands = context.commands;
+    let timeout = context.timeout;
+    let interval = context.interval;
+    let started = context.started;
+    let samples = &mut *context.samples;
+    let session_root = context.session_root;
+    let additional_history_roots = &mut *context.additional_history_roots;
+    let window = context.window;
     let history_root = session_root.join("history-deletions");
     fs::create_dir_all(&history_root)?;
     additional_history_roots.push(history_root.clone());
@@ -726,14 +730,15 @@ fn exercise_history_deletions(
 /// hidden-period queue settles. This proves the window lifecycle does not strand readers or let a
 /// late decode corrupt the next visible Library render.
 fn exercise_history_window_close(
-    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
-    timeout: Duration,
-    interval: Duration,
-    started: Instant,
-    samples: &mut Vec<ResourceSample>,
-    session_root: &Path,
-    additional_history_roots: &mut Vec<PathBuf>,
+    context: &mut HistoryScenarioContext<'_>,
 ) -> io::Result<WindowCloseScenarioEvidence> {
+    let commands = context.commands;
+    let timeout = context.timeout;
+    let interval = context.interval;
+    let started = context.started;
+    let samples = &mut *context.samples;
+    let session_root = context.session_root;
+    let additional_history_roots = &mut *context.additional_history_roots;
     let history_root = session_root.join("history-window-close");
     fs::create_dir_all(&history_root)?;
     additional_history_roots.push(history_root.clone());
@@ -915,16 +920,17 @@ fn set_expanded_and_wait(
 /// Corrupts and removes two retained files, verifies per-entry failures, restores them, and then
 /// swaps to a second history root to prove retry and directory ownership recovery.
 fn exercise_thumbnail_failures(
-    commands: &async_channel::Sender<HistoryResourceAcceptanceCommand>,
-    timeout: Duration,
-    interval: Duration,
-    started: Instant,
-    samples: &mut Vec<ResourceSample>,
-    fixture_paths: &[PathBuf],
-    session_root: &Path,
-    additional_history_roots: &mut Vec<PathBuf>,
-    window: &NativeWindow,
+    context: &mut HistoryScenarioContext<'_>,
 ) -> io::Result<FailureScenarioEvidence> {
+    let commands = context.commands;
+    let timeout = context.timeout;
+    let interval = context.interval;
+    let started = context.started;
+    let samples = &mut *context.samples;
+    let fixture_paths = context.fixture_paths;
+    let session_root = context.session_root;
+    let additional_history_roots = &mut *context.additional_history_roots;
+    let window = context.window;
     let corrupted_path = fixture_paths
         .first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing corruption fixture"))?;
