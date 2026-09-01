@@ -2070,6 +2070,32 @@ mod tests {
         assert!(!commands.running.load(std::sync::atomic::Ordering::Acquire));
     }
 
+    #[test]
+    fn recording_worker_reports_start_failure_and_releases_its_lifecycle() {
+        // A process-start error must become a bounded failure event instead of leaving the
+        // recording workflow marked as running without a child that can be stopped.
+        let command = FfmpegCommand {
+            executable: PathBuf::from("missing\0ffmpeg"),
+            arguments: Vec::new(),
+        };
+        let commands = Arc::new(RecordingCommands::new());
+        let (events, received) = async_channel::bounded(1);
+
+        recording_worker(
+            command,
+            PathBuf::from("failed-start.mp4"),
+            Arc::clone(&commands),
+            events,
+        );
+
+        match received.try_recv().unwrap() {
+            RecordingEvent::Failed { message } => assert!(!message.is_empty()),
+            other => panic!("expected a start failure event, got {other:?}"),
+        }
+        assert!(received.try_recv().is_err());
+        assert!(!commands.running.load(std::sync::atomic::Ordering::Acquire));
+    }
+
     #[cfg(windows)]
     #[test]
     fn process_stop_timeout_terminates_and_reaps_the_child() {
