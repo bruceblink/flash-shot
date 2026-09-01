@@ -17,8 +17,8 @@ use super::{
     ocr_language_label, ocr_support_status, open_annotation_project, open_image_project,
     pinned_size, project_image_path, quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
-    quick_save_full_screen_frame_in_with_prefix, quick_save_with_fallback,
-    recognition_start_conflict_status, recording_audio_selection_label,
+    quick_save_full_screen_frame_in_with_prefix, quick_save_full_screen_frame_with_fallback,
+    quick_save_with_fallback, recognition_start_conflict_status, recording_audio_selection_label,
     recording_directory_candidates, recording_discovery_conflict_status,
     recording_discovery_result_is_applicable, recording_display_selection_label,
     recording_output_path_from_candidates, recording_start_cancellation_generation,
@@ -2289,6 +2289,44 @@ fn failed_full_screen_quick_save_cleans_the_reservation_before_retry() {
     assert!(!retried.with_extension("png.tmp").exists());
 
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn full_screen_quick_save_falls_back_after_the_selected_directory_fails() {
+    // A selected root can disappear between Settings validation and Save. The managed fallback
+    // must receive the complete frame while the failed root remains untouched.
+    let root = std::env::temp_dir().join(format!(
+        "flash-shot-full-screen-quick-save-fallback-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let selected = root.join("selected").join("missing\0root");
+    let fallback = root.join("fallback");
+    let frame = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1,
+            bottom: 1,
+        },
+        width: 1,
+        height: 1,
+        stride: 4,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from([1, 2, 3, 255]),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+
+    let path =
+        quick_save_full_screen_frame_with_fallback(&frame, &selected, Some(&fallback), "FlashShot")
+            .unwrap();
+
+    assert_eq!(path.parent(), Some(fallback.as_path()));
+    assert!(path.is_file());
+    assert!(!selected.exists());
+    assert!(!path.with_extension("png.tmp").exists());
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
