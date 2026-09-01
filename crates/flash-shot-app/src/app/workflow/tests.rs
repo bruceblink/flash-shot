@@ -2233,6 +2233,65 @@ fn full_screen_quick_save_writes_the_entire_png_with_the_managed_name() {
 }
 
 #[test]
+fn failed_full_screen_quick_save_cleans_the_reservation_before_retry() {
+    // A malformed frame must release both reserved paths so the next Save can reuse the same
+    // deterministic name and write a complete capture.
+    let directory = std::env::temp_dir().join(format!(
+        "flash-shot-full-screen-quick-save-retry-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let frame = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2,
+            bottom: 1,
+        },
+        width: 2,
+        height: 1,
+        stride: 8,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from([1, 2, 3, 255, 4, 5, 6, 255]),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    let timestamp = test_image_timestamp();
+    let uuid = test_image_uuid();
+    let expected_path =
+        directory.join("FlashShot20260814123045987018f2b50-7b2d-7cc0-8000-000000000000.png");
+    let mut malformed = frame.clone();
+    malformed.stride = 4;
+
+    assert!(
+        quick_save_full_screen_frame_in_with_prefix(
+            &malformed,
+            &directory,
+            "FlashShot",
+            timestamp,
+            uuid,
+        )
+        .is_err()
+    );
+    assert!(!expected_path.exists());
+    assert!(!expected_path.with_extension("png.tmp").exists());
+
+    let retried = quick_save_full_screen_frame_in_with_prefix(
+        &frame,
+        &directory,
+        "FlashShot",
+        timestamp,
+        uuid,
+    )
+    .unwrap();
+    assert_eq!(retried, expected_path);
+    assert!(retried.is_file());
+    assert!(!retried.with_extension("png.tmp").exists());
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn inspected_targets_are_clipped_to_the_captured_desktop() {
     assert_eq!(
         intersect_rect(
