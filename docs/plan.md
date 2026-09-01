@@ -135,8 +135,9 @@ Escape，再释放检查点。`copy-cancellation-race` 只使用进程内 `isola
 两份报告均为 schema 20、`status=passed`，检查点在 Escape 前到达、观察器未收到帧、两类操作状态均释放，最终
 overlay/Pin/任务/按键清零；截图与路径已登记在 [Windows 手工验收记录](windows-manual-acceptance.md)。B1 仍保持
 “部分完成”。快速保存确定性 fixture 已在提交 `a4e5081` 覆盖损坏帧失败、最终保留名和 `.tmp` 清理、使用同一
-时间戳/UUID 的再次保存、首选目录失效后的全屏 PNG 回退，以及录屏 worker 启动失败后的运行标记释放；下一步只处理
-系统剪贴板争用、真实只读目录和 FFmpeg 用户界面失败恢复。
+时间戳/UUID 的再次保存、首选目录失效后的全屏 PNG 回退；提交 `a6f053e` 又覆盖录屏 worker 启动失败后的运行标记
+释放。当前源码 Release 的 `settings-ui-acceptance` 已以无输入探针生成并目视复核 `failed`/`cancelled` Record
+状态，报告和截图已登记在 Windows 验收记录；下一步只处理系统剪贴板争用、真实只读目录和 FFmpeg 用户界面失败恢复。
 
 **顺序**：确定性 fault fixture 已完成；接着执行可丢弃桌面上的真实输入、系统剪贴板和 FFmpeg 场景。
 任何一类无法清理都保留失败报告并停止该切片。
