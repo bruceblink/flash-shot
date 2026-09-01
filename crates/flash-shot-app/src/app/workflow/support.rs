@@ -3,6 +3,18 @@
 use super::*;
 use crate::i18n::{Locale, UiText};
 
+/// Formats a sidecar-load failure while keeping the technical error detail intact for diagnosis.
+pub(in crate::app) fn annotation_load_warning(
+    locale: Locale,
+    sidecar: &Path,
+    error: &str,
+) -> String {
+    locale.format_template(
+        UiText::OpenImageAnnotationsLoadWarning,
+        &[("path", &sidecar.display().to_string()), ("error", error)],
+    )
+}
+
 /// Maps an annotation tool to the localized label already used by the overlay toolbar.
 fn annotation_tool_label(tool: AnnotationTool) -> UiText {
     match tool {

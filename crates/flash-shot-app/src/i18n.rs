@@ -785,6 +785,7 @@ pub enum UiText {
     PinHistoryInProgress,
     OpenImageCancelled,
     OpenImageOpened,
+    OpenImageAnnotationsLoadWarning,
     OpenImageOpenedWithoutAnnotations,
     OpenImageFailed,
     SettingsHideBeforeEditorFailed,
@@ -1595,6 +1596,9 @@ impl UiText {
             Self::PinHistoryInProgress => "Pinning {path}...",
             Self::OpenImageCancelled => "Open image cancelled",
             Self::OpenImageOpened => "Opened {path} for annotation",
+            Self::OpenImageAnnotationsLoadWarning => {
+                "Could not load annotation sidecar {path}: {error}"
+            }
             Self::OpenImageOpenedWithoutAnnotations => {
                 "Opened {path} without annotations: {warning}"
             }
@@ -2313,6 +2317,7 @@ impl UiText {
             Self::PinHistoryInProgress => "正在固定 {path}...",
             Self::OpenImageCancelled => "已取消打开图片",
             Self::OpenImageOpened => "已打开 {path}，可以开始标注",
+            Self::OpenImageAnnotationsLoadWarning => "无法加载标注附属文件 {path}：{error}",
             Self::OpenImageOpenedWithoutAnnotations => "已打开 {path}，未加载标注：{warning}",
             Self::OpenImageFailed => "无法打开图片：{error}",
             Self::SettingsHideBeforeEditorFailed => "打开编辑器前无法隐藏设置窗口：{error}",

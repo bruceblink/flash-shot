@@ -5,17 +5,18 @@ use super::recognition::recognition_completion_is_current;
 use super::{
     ColorFormat, ImageTimestamp, KeyboardCommand, TranslationOutcome, adjusted_number_value,
     annotation_added_status, annotation_cancelled_status, annotation_document_path,
-    annotation_position, annotation_sidecar_path, capture::focused_window_selection,
-    capture_session_can_restart, capture_start_conflict_status, capture_summary_status,
-    claim_idle_completion, compose_captured_displays, copy_selection_snapshot_cancellable,
-    delayed_capture_status, drawing_status, export_path, fill_alpha, fill_color,
-    focused_window_status, format_hsl, format_recording_progress, format_recording_stopping,
-    frame_dimensions_status, hover_pixel_status, hovered_color, inspection_kind_label,
-    intersect_rect, is_current_operation, keyboard_command, load_annotation_document,
-    manual_scroll_control_bounds, manual_scroll_control_rect, next_annotation_counters,
-    next_annotation_selection, next_recording_audio_selection, next_recording_display_selection,
-    ocr_language_label, ocr_support_status, open_annotation_project, open_image_project,
-    pinned_size, project_image_path, quick_save_annotated_frame_selection_in_with_prefix,
+    annotation_load_warning, annotation_position, annotation_sidecar_path,
+    capture::focused_window_selection, capture_session_can_restart, capture_start_conflict_status,
+    capture_summary_status, claim_idle_completion, compose_captured_displays,
+    copy_selection_snapshot_cancellable, delayed_capture_status, drawing_status, export_path,
+    fill_alpha, fill_color, focused_window_status, format_hsl, format_recording_progress,
+    format_recording_stopping, frame_dimensions_status, hover_pixel_status, hovered_color,
+    inspection_kind_label, intersect_rect, is_current_operation, keyboard_command,
+    load_annotation_document, manual_scroll_control_bounds, manual_scroll_control_rect,
+    next_annotation_counters, next_annotation_selection, next_recording_audio_selection,
+    next_recording_display_selection, ocr_language_label, ocr_support_status,
+    open_annotation_project, open_image_project, pinned_size, project_image_path,
+    quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_full_screen_frame_with_fallback,
     quick_save_with_fallback, recognition_start_conflict_status, recording_audio_selection_label,
@@ -1418,8 +1419,24 @@ fn open_image_project_restores_a_valid_sidecar_and_tolerates_a_bad_one() {
     std::fs::write(annotation_sidecar_path(&image_path), "not json").unwrap();
     let (_, _, loaded, warning) = open_image_project(&image_path).unwrap();
     assert_eq!(loaded, None);
-    assert!(warning.unwrap().contains("could not load"));
+    let warning = warning.unwrap();
+    assert!(!warning.contains("could not load"));
+    assert!(!warning.contains("capture.annotations.json"));
+    assert!(!warning.is_empty());
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn annotation_load_warning_localizes_the_sidecar_context() {
+    let sidecar = std::path::Path::new("capture.annotations.json");
+    assert_eq!(
+        annotation_load_warning(Locale::English, sidecar, "not json"),
+        "Could not load annotation sidecar capture.annotations.json: not json"
+    );
+    assert_eq!(
+        annotation_load_warning(Locale::SimplifiedChinese, sidecar, "not json"),
+        "无法加载标注附属文件 capture.annotations.json：not json"
+    );
 }
 
 #[test]

@@ -657,10 +657,15 @@ impl FlashShotApp {
                 match result {
                     Ok(()) => {
                         self.status = match document_warning {
-                            Some(warning) => self.settings.locale.format_template(
-                                crate::i18n::UiText::OpenImageOpenedWithoutAnnotations,
-                                &[("path", &path.display().to_string()), ("warning", &warning)],
-                            ),
+                            Some(error) => {
+                                let sidecar = annotation_sidecar_path(&path);
+                                let warning =
+                                    annotation_load_warning(self.settings.locale, &sidecar, &error);
+                                self.settings.locale.format_template(
+                                    crate::i18n::UiText::OpenImageOpenedWithoutAnnotations,
+                                    &[("path", &path.display().to_string()), ("warning", &warning)],
+                                )
+                            }
                             None => self.settings.locale.format_template(
                                 crate::i18n::UiText::OpenImageOpened,
                                 &[("path", &path.display().to_string())],

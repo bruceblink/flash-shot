@@ -430,12 +430,7 @@ pub(super) fn open_image_project(
     }
     match load_annotation_document(&sidecar, frame.bounds) {
         Ok(document) => Ok((path.to_owned(), frame, Some(document), None)),
-        Err(error) => Ok((
-            path.to_owned(),
-            frame,
-            None,
-            Some(format!("could not load {}: {error}", sidecar.display())),
-        )),
+        Err(error) => Ok((path.to_owned(), frame, None, Some(error.to_string()))),
     }
 }
 
