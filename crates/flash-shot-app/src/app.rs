@@ -46,7 +46,7 @@ use crate::{
             CaptureShortcut, GlobalShortcutService, ShortcutAction, ShortcutBinding, ShortcutEvent,
         },
         tray::{
-            TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState,
+            TrayAutoStartState, TrayEvent, TrayLocale, TrayNotification, TrayRecordingState,
             TrayRecordingTarget, TrayService,
         },
         window_inspector::InspectionTarget,
@@ -549,6 +549,16 @@ impl FlashShotApp {
         }
     }
 
+    /// Mirrors the active UI language into the native tray before its next menu opens.
+    pub(super) fn set_tray_locale(&self, locale: crate::i18n::Locale) {
+        if let Some(tray) = self._tray.as_ref() {
+            tray.set_locale(match locale {
+                crate::i18n::Locale::English => TrayLocale::English,
+                crate::i18n::Locale::SimplifiedChinese => TrayLocale::SimplifiedChinese,
+            });
+        }
+    }
+
     /// Mirrors the active recording target into the tray's pause and stop labels.
     pub(super) fn set_tray_recording_target(&self, target: TrayRecordingTarget) {
         if let Some(tray) = self._tray.as_ref() {
@@ -786,6 +796,10 @@ impl FlashShotApp {
             tray.set_auto_start_state(state);
         }
         if let Some(tray) = tray.as_ref() {
+            tray.set_locale(match settings.locale {
+                crate::i18n::Locale::English => TrayLocale::English,
+                crate::i18n::Locale::SimplifiedChinese => TrayLocale::SimplifiedChinese,
+            });
             tray.set_capture_cursor_enabled(settings.include_cursor);
             tray.set_capture_shortcut_enabled(capture_shortcut_enabled);
         }

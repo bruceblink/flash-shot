@@ -988,6 +988,7 @@ impl FlashShotApp {
             cx.notify();
             return;
         }
+        self.set_tray_locale(next);
         self.status = next.language_changed(next.label());
         cx.notify();
     }

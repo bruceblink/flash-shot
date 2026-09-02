@@ -26,6 +26,33 @@ pub enum TrayEvent {
     QuitRequested,
 }
 
+/// The UI language used by recording actions in the native notification-area menu.
+///
+/// This platform-facing enum mirrors the application's supported locales without making the
+/// Windows infrastructure depend on the GPUI application crate.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TrayLocale {
+    #[default]
+    English,
+    SimplifiedChinese,
+}
+
+impl TrayLocale {
+    const fn as_u8(self) -> u8 {
+        match self {
+            Self::English => 0,
+            Self::SimplifiedChinese => 1,
+        }
+    }
+
+    const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::SimplifiedChinese,
+            _ => Self::English,
+        }
+    }
+}
+
 /// The recording lifecycle that determines the tray menu's available command.
 ///
 /// The UI updates this value as FFmpeg changes state; the tray thread reads it only when it opens
@@ -131,11 +158,14 @@ impl TrayRecordingTarget {
         }
     }
 
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Display => "display",
-            Self::Region => "selected area",
-            Self::Window => "window",
+    const fn label(self, locale: TrayLocale) -> &'static str {
+        match (locale, self) {
+            (TrayLocale::English, Self::Display) => "display",
+            (TrayLocale::English, Self::Region) => "selected area",
+            (TrayLocale::English, Self::Window) => "window",
+            (TrayLocale::SimplifiedChinese, Self::Display) => "屏幕",
+            (TrayLocale::SimplifiedChinese, Self::Region) => "选定区域",
+            (TrayLocale::SimplifiedChinese, Self::Window) => "窗口",
         }
     }
 }
@@ -183,6 +213,11 @@ impl TrayService {
         self.listener.set_recording_target(target);
     }
 
+    /// Updates the language used for recording actions in the next tray menu.
+    pub fn set_locale(&self, locale: TrayLocale) {
+        self.listener.set_locale(locale);
+    }
+
     /// Updates the ownership-aware sign-in command shown the next time the tray menu opens.
     pub fn set_auto_start_state(&self, state: TrayAutoStartState) {
         self.listener.set_auto_start_state(state);
@@ -202,7 +237,8 @@ impl TrayService {
 #[cfg(windows)]
 mod platform {
     use super::{
-        TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState, TrayRecordingTarget,
+        TrayAutoStartState, TrayEvent, TrayLocale, TrayNotification, TrayRecordingState,
+        TrayRecordingTarget,
     };
     use async_channel::Receiver;
     use std::{
@@ -305,6 +341,7 @@ mod platform {
     struct TrayMenuState {
         recording_state: Arc<AtomicU8>,
         recording_target: Arc<AtomicU8>,
+        locale: Arc<AtomicU8>,
         auto_start_state: Arc<AtomicU8>,
         capture_cursor_enabled: Arc<AtomicBool>,
         capture_shortcut_enabled: Arc<AtomicBool>,
@@ -324,6 +361,7 @@ mod platform {
             let menu_state = TrayMenuState {
                 recording_state: Arc::new(AtomicU8::new(TrayRecordingState::Idle.as_u8())),
                 recording_target: Arc::new(AtomicU8::new(TrayRecordingTarget::Display.as_u8())),
+                locale: Arc::new(AtomicU8::new(TrayLocale::English.as_u8())),
                 auto_start_state: Arc::new(AtomicU8::new(TrayAutoStartState::Disabled.as_u8())),
                 capture_cursor_enabled: Arc::new(AtomicBool::new(false)),
                 capture_shortcut_enabled: Arc::new(AtomicBool::new(true)),
@@ -400,6 +438,13 @@ mod platform {
             self.menu_state
                 .recording_target
                 .store(target.as_u8(), Ordering::Release);
+        }
+
+        /// Shares the active UI locale with the tray thread without blocking application work.
+        pub fn set_locale(&self, locale: TrayLocale) {
+            self.menu_state
+                .locale
+                .store(locale.as_u8(), Ordering::Release);
         }
 
         /// Shares the latest sign-in entry ownership with the tray thread without blocking UI work.
@@ -605,6 +650,7 @@ mod platform {
                 TrayRecordingTarget::from_u8(
                     context.menu_state.recording_target.load(Ordering::Acquire),
                 ),
+                TrayLocale::from_u8(context.menu_state.locale.load(Ordering::Acquire)),
                 TrayAutoStartState::from_u8(
                     context.menu_state.auto_start_state.load(Ordering::Acquire),
                 ),
@@ -633,6 +679,7 @@ mod platform {
         window: HWND,
         recording_state: TrayRecordingState,
         recording_target: TrayRecordingTarget,
+        locale: TrayLocale,
         auto_start_state: TrayAutoStartState,
         capture_cursor_enabled: bool,
         capture_shortcut_enabled: bool,
@@ -640,6 +687,7 @@ mod platform {
         let menu = build_menu(
             recording_state,
             recording_target,
+            locale,
             auto_start_state,
             capture_cursor_enabled,
             capture_shortcut_enabled,
@@ -673,6 +721,7 @@ mod platform {
     pub(super) fn build_menu(
         recording_state: TrayRecordingState,
         recording_target: TrayRecordingTarget,
+        locale: TrayLocale,
         auto_start_state: TrayAutoStartState,
         capture_cursor_enabled: bool,
         capture_shortcut_enabled: bool,
@@ -708,10 +757,10 @@ mod platform {
         let delayed_capture_5_seconds = wide("Capture in 5 seconds");
         let delayed_capture_10_seconds = wide("Capture in 10 seconds");
         let (recording_label, recording_enabled) =
-            recording_menu_presentation(recording_state, recording_target);
+            recording_menu_presentation(recording_state, recording_target, locale);
         let toggle_display_recording = wide(&recording_label);
         let toggle_recording_pause =
-            recording_pause_menu_presentation(recording_state, recording_target)
+            recording_pause_menu_presentation(recording_state, recording_target, locale)
                 .map(|label| wide(&label));
         let (auto_start_label, auto_start_enabled) = auto_start_menu_presentation(auto_start_state);
         let toggle_auto_start = wide(auto_start_label);
@@ -915,16 +964,52 @@ mod platform {
     pub(super) fn recording_menu_presentation(
         state: TrayRecordingState,
         target: TrayRecordingTarget,
+        locale: TrayLocale,
     ) -> (String, bool) {
-        let target = target.label();
-        match state {
-            TrayRecordingState::Idle => ("Start display recording".to_owned(), true),
-            TrayRecordingState::Starting => (format!("Starting {target} recording..."), false),
-            TrayRecordingState::Recording => (format!("Stop {target} recording"), true),
-            TrayRecordingState::Stopping => (format!("Stopping {target} recording..."), false),
-            TrayRecordingState::Paused => (format!("Stop {target} recording"), true),
-            TrayRecordingState::Pausing => (format!("Pausing {target} recording..."), false),
-            TrayRecordingState::Resuming => (format!("Resuming {target} recording..."), false),
+        let target = target.label(locale);
+        match (locale, state) {
+            (TrayLocale::English, TrayRecordingState::Idle) => {
+                ("Start display recording".to_owned(), true)
+            }
+            (TrayLocale::English, TrayRecordingState::Starting) => {
+                (format!("Starting {target} recording..."), false)
+            }
+            (TrayLocale::English, TrayRecordingState::Recording) => {
+                (format!("Stop {target} recording"), true)
+            }
+            (TrayLocale::English, TrayRecordingState::Stopping) => {
+                (format!("Stopping {target} recording..."), false)
+            }
+            (TrayLocale::English, TrayRecordingState::Paused) => {
+                (format!("Stop {target} recording"), true)
+            }
+            (TrayLocale::English, TrayRecordingState::Pausing) => {
+                (format!("Pausing {target} recording..."), false)
+            }
+            (TrayLocale::English, TrayRecordingState::Resuming) => {
+                (format!("Resuming {target} recording..."), false)
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Idle) => {
+                ("开始录制屏幕".to_owned(), true)
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Starting) => {
+                (format!("正在开始录制{target}..."), false)
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Recording) => {
+                (format!("停止录制{target}"), true)
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Stopping) => {
+                (format!("正在停止录制{target}..."), false)
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Paused) => {
+                (format!("停止录制{target}"), true)
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Pausing) => {
+                (format!("正在暂停录制{target}..."), false)
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Resuming) => {
+                (format!("正在恢复录制{target}..."), false)
+            }
         }
     }
 
@@ -932,16 +1017,30 @@ mod platform {
     pub(super) fn recording_pause_menu_presentation(
         state: TrayRecordingState,
         target: TrayRecordingTarget,
+        locale: TrayLocale,
     ) -> Option<String> {
-        let target = target.label();
-        match state {
-            TrayRecordingState::Recording => Some(format!("Pause {target} recording")),
-            TrayRecordingState::Paused => Some(format!("Resume {target} recording")),
-            TrayRecordingState::Idle
-            | TrayRecordingState::Starting
-            | TrayRecordingState::Stopping
-            | TrayRecordingState::Pausing
-            | TrayRecordingState::Resuming => None,
+        let target = target.label(locale);
+        match (locale, state) {
+            (TrayLocale::English, TrayRecordingState::Recording) => {
+                Some(format!("Pause {target} recording"))
+            }
+            (TrayLocale::English, TrayRecordingState::Paused) => {
+                Some(format!("Resume {target} recording"))
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Recording) => {
+                Some(format!("暂停录制{target}"))
+            }
+            (TrayLocale::SimplifiedChinese, TrayRecordingState::Paused) => {
+                Some(format!("恢复录制{target}"))
+            }
+            (
+                _,
+                TrayRecordingState::Idle
+                | TrayRecordingState::Starting
+                | TrayRecordingState::Stopping
+                | TrayRecordingState::Pausing
+                | TrayRecordingState::Resuming,
+            ) => None,
         }
     }
 
@@ -979,7 +1078,8 @@ mod platform {
 #[cfg(not(windows))]
 mod platform {
     use super::{
-        TrayAutoStartState, TrayEvent, TrayNotification, TrayRecordingState, TrayRecordingTarget,
+        TrayAutoStartState, TrayEvent, TrayLocale, TrayNotification, TrayRecordingState,
+        TrayRecordingTarget,
     };
     use async_channel::Receiver;
     use std::io;
@@ -1008,6 +1108,8 @@ mod platform {
         pub fn set_recording_state(&self, _state: TrayRecordingState) {}
 
         pub fn set_recording_target(&self, _target: TrayRecordingTarget) {}
+
+        pub fn set_locale(&self, _locale: TrayLocale) {}
 
         pub fn set_auto_start_state(&self, _state: TrayAutoStartState) {}
 
@@ -1071,7 +1173,7 @@ mod tests {
     #[test]
     fn native_tray_menu_places_capture_before_all_submenus() {
         use super::platform::build_menu;
-        use super::{TrayAutoStartState, TrayRecordingState, TrayRecordingTarget};
+        use super::{TrayAutoStartState, TrayLocale, TrayRecordingState, TrayRecordingTarget};
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             DestroyMenu, GetMenuItemCount, GetMenuItemID, GetSubMenu,
         };
@@ -1079,6 +1181,7 @@ mod tests {
         let menu = build_menu(
             TrayRecordingState::Idle,
             TrayRecordingTarget::Display,
+            TrayLocale::English,
             TrayAutoStartState::Disabled,
             false,
             true,
@@ -1089,6 +1192,43 @@ mod tests {
         assert_eq!(unsafe { GetMenuItemID(menu, 0) }, 1);
         assert!(!unsafe { GetSubMenu(menu, 1) }.is_null());
         assert_eq!(unsafe { GetMenuItemCount(menu) }, 9);
+        unsafe { DestroyMenu(menu) };
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_tray_menu_uses_the_selected_locale_for_recording_actions() {
+        use super::platform::build_menu;
+        use super::{TrayAutoStartState, TrayLocale, TrayRecordingState, TrayRecordingTarget};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            DestroyMenu, GetMenuStringW, GetSubMenu, MF_BYCOMMAND,
+        };
+
+        let menu = build_menu(
+            TrayRecordingState::Recording,
+            TrayRecordingTarget::Region,
+            TrayLocale::SimplifiedChinese,
+            TrayAutoStartState::Disabled,
+            false,
+            true,
+        )
+        .expect("native tray popup should allocate");
+        let recording_menu = unsafe { GetSubMenu(menu, 3) };
+        assert!(!recording_menu.is_null());
+        let mut buffer = [0u16; 128];
+        let length = unsafe {
+            GetMenuStringW(
+                recording_menu,
+                7,
+                buffer.as_mut_ptr(),
+                buffer.len() as i32,
+                MF_BYCOMMAND,
+            )
+        };
+        assert_eq!(
+            String::from_utf16_lossy(&buffer[..length as usize]),
+            "停止录制选定区域"
+        );
         unsafe { DestroyMenu(menu) };
     }
 
@@ -1258,7 +1398,7 @@ mod tests {
     #[test]
     fn recording_menu_labels_prevent_conflicting_lifecycle_operations() {
         use super::{
-            TrayAutoStartState, TrayRecordingState, TrayRecordingTarget,
+            TrayAutoStartState, TrayLocale, TrayRecordingState, TrayRecordingTarget,
             platform::{
                 auto_start_menu_presentation, recording_menu_presentation,
                 recording_pause_menu_presentation,
@@ -1317,11 +1457,11 @@ mod tests {
 
             for (state, expected_label, expected_enabled, expected_pause) in states {
                 assert_eq!(
-                    recording_menu_presentation(state, target),
+                    recording_menu_presentation(state, target, TrayLocale::English),
                     (expected_label, expected_enabled)
                 );
                 assert_eq!(
-                    recording_pause_menu_presentation(state, target),
+                    recording_pause_menu_presentation(state, target, TrayLocale::English),
                     expected_pause
                 );
             }
@@ -1337,6 +1477,54 @@ mod tests {
         assert_eq!(
             auto_start_menu_presentation(TrayAutoStartState::ManagedByAnotherExecutable),
             ("Start with Windows managed by another install", false)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recording_menu_labels_follow_the_selected_locale() {
+        use super::platform::{recording_menu_presentation, recording_pause_menu_presentation};
+        use super::{TrayLocale, TrayRecordingState, TrayRecordingTarget};
+
+        assert_eq!(
+            recording_menu_presentation(
+                TrayRecordingState::Idle,
+                TrayRecordingTarget::Display,
+                TrayLocale::SimplifiedChinese,
+            ),
+            ("开始录制屏幕".to_owned(), true)
+        );
+        assert_eq!(
+            recording_menu_presentation(
+                TrayRecordingState::Starting,
+                TrayRecordingTarget::Window,
+                TrayLocale::SimplifiedChinese,
+            ),
+            ("正在开始录制窗口...".to_owned(), false)
+        );
+        assert_eq!(
+            recording_menu_presentation(
+                TrayRecordingState::Recording,
+                TrayRecordingTarget::Region,
+                TrayLocale::SimplifiedChinese,
+            ),
+            ("停止录制选定区域".to_owned(), true)
+        );
+        assert_eq!(
+            recording_pause_menu_presentation(
+                TrayRecordingState::Recording,
+                TrayRecordingTarget::Display,
+                TrayLocale::SimplifiedChinese,
+            ),
+            Some("暂停录制屏幕".to_owned())
+        );
+        assert_eq!(
+            recording_pause_menu_presentation(
+                TrayRecordingState::Paused,
+                TrayRecordingTarget::Window,
+                TrayLocale::SimplifiedChinese,
+            ),
+            Some("恢复录制窗口".to_owned())
         );
     }
 }
