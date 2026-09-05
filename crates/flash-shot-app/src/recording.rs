@@ -451,8 +451,11 @@ impl Drop for RecordingWorkerLifecycle {
 /// Launches the FFmpeg process on a dedicated worker and returns non-blocking lifecycle events.
 pub fn start_recording(
     capabilities: FfmpegCapabilities,
-    request: RecordingRequest,
+    mut request: RecordingRequest,
 ) -> io::Result<RecordingControl> {
+    let output = request.output.clone();
+    let staging_output = staging_recording_output_path(&output);
+    request.output = staging_output.clone();
     let command = build_recording_command(&capabilities, &request)?;
     let target = request.target.clone();
     let commands = Arc::new(RecordingCommands::new());
@@ -460,7 +463,7 @@ pub fn start_recording(
     let worker_commands = Arc::clone(&commands);
     std::thread::Builder::new()
         .name("flash-shot-recording".to_owned())
-        .spawn(move || recording_worker(command, request.output, worker_commands, event_tx))
+        .spawn(move || recording_worker(command, output, staging_output, worker_commands, event_tx))
         .map_err(|error| {
             io::Error::new(
                 error.kind(),
@@ -481,46 +484,69 @@ pub fn start_recording(
 fn recording_worker(
     command: FfmpegCommand,
     output: PathBuf,
+    staging_output: PathBuf,
     commands: Arc<RecordingCommands>,
     events: async_channel::Sender<RecordingEvent>,
 ) {
     let _lifecycle = RecordingWorkerLifecycle(Arc::clone(&commands));
-    let mut process = match RecordingProcess::start(command) {
+    let process = match RecordingProcess::start(command) {
         Ok(process) => process,
         Err(error) => {
-            let _ = events.try_send(RecordingEvent::Failed {
-                message: error.to_string(),
-            });
+            emit_recording_failure(&events, &staging_output, error.to_string());
             return;
         }
     };
     if events.try_send(RecordingEvent::Started).is_err() {
+        drop(process);
+        log_failed_recording_cleanup(&staging_output);
         return;
     }
+    let outcome = run_recording_process(process, commands, &events);
+    match outcome {
+        RecordingWorkerOutcome::Completed => {
+            match publish_recording_output(&staging_output, &output) {
+                Ok(()) => {
+                    let _ = events.try_send(RecordingEvent::Finished { output });
+                }
+                Err(error) => emit_recording_failure(
+                    &events,
+                    &staging_output,
+                    format!("could not finalize recording output: {error}"),
+                ),
+            }
+        }
+        RecordingWorkerOutcome::Failed(message) => {
+            emit_recording_failure(&events, &staging_output, message);
+        }
+    }
+}
+
+/// Runs one already-started process and returns only after its child and reader threads are owned
+/// by this scope. Returning the outcome lets the caller clean a failed staging file after this
+/// function drops the process and releases Windows file handles.
+fn run_recording_process(
+    mut process: RecordingProcess,
+    commands: Arc<RecordingCommands>,
+    events: &async_channel::Sender<RecordingEvent>,
+) -> RecordingWorkerOutcome {
     let mut last_progress = RecordingProgress::default();
     let mut paused = false;
     loop {
         if commands.stop_requested() {
             match process.stop_gracefully(GRACEFUL_STOP_TIMEOUT) {
                 Ok(exit) if exit.success => {
-                    if let Err(error) = emit_final_progress(&process, &mut last_progress, &events) {
-                        let _ = events.try_send(RecordingEvent::Failed {
-                            message: error.to_string(),
-                        });
-                        return;
+                    if let Err(error) = emit_final_progress(&process, &mut last_progress, events) {
+                        return RecordingWorkerOutcome::Failed(error.to_string());
                     }
-                    let _ = events.try_send(RecordingEvent::Finished { output });
+                    return RecordingWorkerOutcome::Completed;
                 }
                 Ok(_) => {
                     unreachable!("successful recording exits are represented by RecordingExit")
                 }
                 Err(error) => {
-                    let _ = events.try_send(RecordingEvent::Failed {
-                        message: error.to_string(),
-                    });
+                    return RecordingWorkerOutcome::Failed(error.to_string());
                 }
             }
-            return;
         }
         if let Some(requested_pause) = commands.take_pause_request()
             && requested_pause != paused
@@ -535,23 +561,16 @@ fn recording_worker(
                     });
                 }
                 Err(error) => {
-                    let _ = events.try_send(RecordingEvent::Failed {
-                        message: error.to_string(),
-                    });
-                    return;
+                    return RecordingWorkerOutcome::Failed(error.to_string());
                 }
             }
         }
         match process.try_wait_for_exit() {
             Ok(Some(exit)) if exit.success => {
-                if let Err(error) = emit_final_progress(&process, &mut last_progress, &events) {
-                    let _ = events.try_send(RecordingEvent::Failed {
-                        message: error.to_string(),
-                    });
-                    return;
+                if let Err(error) = emit_final_progress(&process, &mut last_progress, events) {
+                    return RecordingWorkerOutcome::Failed(error.to_string());
                 }
-                let _ = events.try_send(RecordingEvent::Finished { output });
-                return;
+                return RecordingWorkerOutcome::Completed;
             }
             Ok(Some(exit)) => {
                 let message = if exit.diagnostic.is_empty() {
@@ -559,14 +578,10 @@ fn recording_worker(
                 } else {
                     format!("FFmpeg exited unsuccessfully: {}", exit.diagnostic)
                 };
-                let _ = events.try_send(RecordingEvent::Failed { message });
-                return;
+                return RecordingWorkerOutcome::Failed(message);
             }
             Err(error) => {
-                let _ = events.try_send(RecordingEvent::Failed {
-                    message: error.to_string(),
-                });
-                return;
+                return RecordingWorkerOutcome::Failed(error.to_string());
             }
             Ok(None) => {}
         }
@@ -577,13 +592,76 @@ fn recording_worker(
             }
             Ok(_) => {}
             Err(error) => {
-                let _ = events.try_send(RecordingEvent::Failed {
-                    message: error.to_string(),
-                });
-                return;
+                return RecordingWorkerOutcome::Failed(error.to_string());
             }
         }
         thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[derive(Debug)]
+enum RecordingWorkerOutcome {
+    Completed,
+    Failed(String),
+}
+
+/// Uses a separate MP4 staging path so a failed FFmpeg process can never leave a partial final
+/// recording or cause cleanup to remove a pre-existing user file.
+fn staging_recording_output_path(output: &Path) -> PathBuf {
+    let file_name = output
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("recording.mp4"));
+    let mut staging_name = OsString::from(".");
+    staging_name.push(file_name);
+    staging_name.push(".part-");
+    staging_name.push(uuid::Uuid::now_v7().to_string());
+    staging_name.push(".mp4");
+    output.with_file_name(staging_name)
+}
+
+/// Publishes a completed staging file without replacing a file that appeared at the requested
+/// final path while FFmpeg was running.
+fn publish_recording_output(staging: &Path, output: &Path) -> io::Result<()> {
+    if output.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("recording output already exists: {}", output.display()),
+        ));
+    }
+    std::fs::rename(staging, output)
+}
+
+/// Removes only the current recording's staging file; a missing file means FFmpeg never wrote it.
+fn cleanup_partial_recording_output(staging: &Path) -> io::Result<()> {
+    match std::fs::remove_file(staging) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Adds cleanup failure details to the user-visible recording error instead of hiding a leftover
+/// staging file behind the original FFmpeg diagnostic.
+fn emit_recording_failure(
+    events: &async_channel::Sender<RecordingEvent>,
+    staging: &Path,
+    message: String,
+) {
+    let message = match cleanup_partial_recording_output(staging) {
+        Ok(()) => message,
+        Err(error) => format!("{message}; partial recording cleanup failed: {error}"),
+    };
+    let _ = events.try_send(RecordingEvent::Failed { message });
+}
+
+/// Records cleanup failures when the event receiver is already gone and cannot receive details.
+fn log_failed_recording_cleanup(staging: &Path) {
+    if let Err(error) = cleanup_partial_recording_output(staging) {
+        log::warn!(
+            target: "flash_shot::recording",
+            "recording output cleanup failed after event receiver closed: path={} error={error}",
+            staging.display()
+        );
     }
 }
 
@@ -1436,9 +1514,11 @@ mod tests {
         RecordingAudioConfig, RecordingCommands, RecordingEvent, RecordingProcess,
         RecordingProgress, RecordingRequest, RecordingSession, RecordingState, RecordingTarget,
         StartupChildCleanup, VERSION_ARGUMENTS, audio_source_from_config, build_recording_command,
-        diagnostic_suffix, executable_from, first_diagnostic_line, graceful_stop_input,
-        last_diagnostic_line, parse_dshow_audio_devices, parse_input_formats, parse_version,
-        read_bounded_diagnostics, recording_worker, wait_for_probe_child,
+        cleanup_partial_recording_output, diagnostic_suffix, executable_from,
+        first_diagnostic_line, graceful_stop_input, last_diagnostic_line,
+        parse_dshow_audio_devices, parse_input_formats, parse_version, publish_recording_output,
+        read_bounded_diagnostics, recording_worker, staging_recording_output_path,
+        wait_for_probe_child,
     };
     use crate::domain::geometry::PhysicalRect;
     use std::{
@@ -2045,18 +2125,32 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn recording_worker_reports_an_abnormal_exit_without_panicking() {
+        let root = std::env::temp_dir().join(format!(
+            "flash-shot-recording-worker-failure-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let output = root.join("failed.mp4");
+        let staging = root.join(".failed.mp4.part.mp4");
         let command = FfmpegCommand {
             executable: PathBuf::from("cmd.exe"),
-            arguments: ["/C", "echo encoder failed 1>&2 & exit /b 7"]
-                .map(OsString::from)
-                .into(),
+            arguments: [
+                OsString::from("/C"),
+                OsString::from(format!(
+                    r#"echo partial > "{}" & echo encoder failed 1>&2 & exit /b 7"#,
+                    staging.display()
+                )),
+            ]
+            .into(),
         };
         let commands = Arc::new(RecordingCommands::new());
         let (events, received) = async_channel::bounded(4);
 
         recording_worker(
             command,
-            PathBuf::from("failed.mp4"),
+            output.clone(),
+            staging.clone(),
             Arc::clone(&commands),
             events,
         );
@@ -2068,6 +2162,9 @@ mod tests {
             other => panic!("expected a failure event, got {other:?}"),
         }
         assert!(!commands.running.load(std::sync::atomic::Ordering::Acquire));
+        assert!(!staging.exists());
+        assert!(!output.exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2084,6 +2181,7 @@ mod tests {
         recording_worker(
             command,
             PathBuf::from("failed-start.mp4"),
+            PathBuf::from("failed-start.part.mp4"),
             Arc::clone(&commands),
             events,
         );
@@ -2094,6 +2192,67 @@ mod tests {
         }
         assert!(received.try_recv().is_err());
         assert!(!commands.running.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn staging_recording_output_is_hidden_and_keeps_the_mp4_extension() {
+        let output = PathBuf::from("captures").join("FlashShot.mp4");
+        let staging = staging_recording_output_path(&output);
+        let name = staging.file_name().unwrap().to_string_lossy();
+
+        assert!(name.starts_with(".FlashShot.mp4.part-"));
+        assert_eq!(
+            staging.extension().and_then(|extension| extension.to_str()),
+            Some("mp4")
+        );
+        assert_ne!(staging, output);
+    }
+
+    #[test]
+    fn failed_recording_cleanup_only_removes_the_current_staging_file() {
+        let root = std::env::temp_dir().join(format!(
+            "flash-shot-recording-cleanup-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let staging = root.join(".recording.part.mp4");
+        let retained = root.join("recording.mp4");
+        std::fs::write(&staging, b"partial recording").unwrap();
+        std::fs::write(&retained, b"pre-existing recording").unwrap();
+
+        cleanup_partial_recording_output(&staging).unwrap();
+        cleanup_partial_recording_output(&staging).unwrap();
+
+        assert!(!staging.exists());
+        assert_eq!(std::fs::read(&retained).unwrap(), b"pre-existing recording");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_recording_is_published_without_replacing_an_existing_file() {
+        let root = std::env::temp_dir().join(format!(
+            "flash-shot-recording-publish-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let staging = root.join(".recording.part.mp4");
+        let output = root.join("recording.mp4");
+        std::fs::write(&staging, b"completed recording").unwrap();
+
+        publish_recording_output(&staging, &output).unwrap();
+        assert!(!staging.exists());
+        assert_eq!(std::fs::read(&output).unwrap(), b"completed recording");
+
+        let second_staging = root.join(".recording-second.part.mp4");
+        std::fs::write(&second_staging, b"must not replace").unwrap();
+        let error = publish_recording_output(&second_staging, &output).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&second_staging).unwrap(), b"must not replace");
+        assert_eq!(std::fs::read(&output).unwrap(), b"completed recording");
+        cleanup_partial_recording_output(&second_staging).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]
