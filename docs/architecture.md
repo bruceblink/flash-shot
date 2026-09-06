@@ -1,6 +1,6 @@
 # 开发设计思路
 
-更新日期：2026-09-01
+更新日期：2026-09-06
 
 本文档是 Flash Shot 唯一的开发设计来源，说明组件职责、依赖方向、生命周期、验证边界和演进顺序。
 版本目标与切片状态只写入[主线开发计划](plan.md)；产品需求、Windows 验收、分发和 Linux 可行性文档
@@ -16,6 +16,12 @@
 | Windows 基础设施库 | Windows Infrastructure Crate / `flash-shot-infra-windows` | 显示器、捕获、快捷键、托盘、剪贴板、自启动、目录、进程、窗口、光标和辅助滚轮的 Windows 实现 | 不是应用用例、界面或组合根 |
 | 应用库 | Application Crate / `flash-shot-app` | GPUI 装配、产品用例、持久化策略、状态反馈和迁移期兼容导出 | 不是 Cargo 应用入口或 Windows 服务 |
 | 开发工具模块 | Development Tool Modules / `dev-tools` | 库内可选的 Release 验收、压力和资源探针，由唯一二进制调度 | 不是发布包中的独立 EXE 或普通用户入口 |
+| 插件宿主 | Plugin Host | 在主程序内登记插件、检查清单与权限、转发请求、进度、取消和错误，并负责资源清理 | 不是插件实现、第三方市场或操作系统服务 |
+| 插件清单 | Plugin Manifest | 描述插件 ID、API 版本、能力、权限、入口和资源限制的版本化元数据 | 不是插件代码签名本身，也不是用户数据或运行时状态 |
+| 插件接口约定 | Plugin API / API | 宿主与插件之间稳定的请求、响应、错误、进度和取消字段 | 不是 Rust 私有模块调用或未经版本化的动态库 ABI |
+| 有界帧流 | Bounded Frame Stream | 在固定帧率、时长和内存预算内向导出能力提供带时间戳的 `CaptureFrame` | 不是无限缓存、完整桌面历史或可由插件任意修改的截图帧 |
+| 导出插件 | Export Plugin | 消费宿主提供的帧或单帧并生成 GIF、WebP 等可选产物 | 不是屏幕采集后端、窗口控制器或系统剪贴板所有者 |
+| 进程外插件 | Out-of-process Plugin | 通过版本化 IPC/stdio 与宿主隔离运行的独立插件进程 | 不是当前主程序内的 Rust trait 实现或无权限的任意脚本 |
 | 应用入口 | Application Entry / `flash-shot` | `crates/flash-shot-bin` 中唯一的二进制目标，负责启动桌面应用并装配具体服务 | 不是压力测试命令集合 |
 | 界面层 | UI Surface | 当前位于 `flash-shot-app/src/app` 的 GPUI 页面、覆盖层、Pin 和设置视图；未来可按稳定边界提取 | 不是业务规则、平台实现或截图像素源 |
 | 本地化资源 | Locale / `UiText` | 与 OCR/外部翻译无关的 English/简体中文 UI 资源和参数化模板 | 不是翻译服务响应或报告字段 |
@@ -62,6 +68,29 @@ flash-shot-bin
 
 未来是否提取独立 `flash-shot-ui` 或 `flash-shot-acceptance`，取决于稳定的依赖和发布边界；当前先在应用库内按职责
 拆分模块，不预先增加 crate 或二进制。开发工具继续作为库模块，避免把验收路径误发布为用户程序。
+
+### 2.1 `0.3.0+` 插件扩展方向
+
+插件扩展建立在稳定的截图会话和资源所有权之上，不改变当前 Windows 主链的窗口、输入、剪贴板和 FFmpeg 清理规则。
+插件宿主只暴露版本化的插件接口约定；插件清单先经过 API 版本、能力、权限和资源限制检查，再决定是否加载。
+
+```mermaid
+flowchart LR
+    Session["截图会话（Capture Session）"] --> Host["插件宿主（Plugin Host）"]
+    Host -->|录屏请求、取消和进度| Recording["内置录屏插件（Built-in Recording Plugin）"]
+    Recording -->|进程启动和回收| FFmpeg["FFmpeg 进程（FFmpeg Process）"]
+    Host -->|导出请求、取消和结果| Gif["内置 GIF 导出插件（Built-in GIF Export Plugin）"]
+    Frame["不可变截图帧（CaptureFrame）"] --> Stream["有界帧流（Bounded Frame Stream）"]
+    Stream -->|帧和时间戳| Gif
+    Host -->|清单、权限和 IPC| External["进程外插件（Out-of-process Plugin）"]
+    Stream -->|按请求发送帧| External
+    External -->|进度、产物和错误| Host
+```
+
+内置录屏插件先复用现有 FFmpeg 进程边界；GIF 插件只消费有界帧流，负责帧率、时长、尺寸和调色板限制，不直接采集
+桌面。第三方能力首选进程外插件，以便宿主对崩溃、超时、取消、文件产物和安装包可选组件做隔离；不把 Rust 动态库
+ABI 当作第一版公共接口。主程序仍负责 `CaptureSession`、`CaptureFrame`、HWND、全局快捷键、系统剪贴板和清理，
+插件只能通过宿主请求访问这些能力。
 
 ## 3. 数据与生命周期
 
@@ -146,7 +175,8 @@ Library 以最近截图和筛选为主，Record 以当前目标和生命周期�
 2. 完成 `Locale`/`UiText` 动态状态盘点，再收敛 App、Library、Record 的信息层级和三种窗口尺寸。
 3. 先拆原生验收 runner 的一个职责，再拆 `overlay.rs` 的一个职责；每步使用同一场景对照测试和 Release 报告。
 4. 有真实硬件时执行 150%/200% 单显示器矩阵；双屏、真实翻译和跨平台另立范围，不混入当前切片。
-5. 只有前述证据稳定且全量门禁通过，才准备 `v0.2.0` 候选版或评估 GPUI 依赖升级。
+5. 只有前述证据稳定且全量门禁通过，才准备 `v0.2.0` 候选版或评估 GPUI 依赖升级；插件平台另按 `0.3.0+` 路线
+   设计和验收，不与当前稳定性切片混合。
 
 ## 7. 验证策略
 
