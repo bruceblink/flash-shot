@@ -1348,7 +1348,7 @@ mod tests {
                 false,
                 false,
                 None,
-                "Screen recording failed: FFmpeg exited before producing frames",
+                "Screen recording failed: FFmpeg exited before producing frames. Check FFmpeg and the output folder, then try again.",
             ),
         ];
 
@@ -1385,7 +1385,7 @@ mod tests {
             (RecordingUiAcceptanceState::Cancelled, "已取消屏幕录制启动"),
             (
                 RecordingUiAcceptanceState::Failed,
-                "屏幕录制失败：FFmpeg exited before producing frames",
+                "屏幕录制失败：FFmpeg exited before producing frames。请检查 FFmpeg 和输出目录，然后重试。",
             ),
         ];
 

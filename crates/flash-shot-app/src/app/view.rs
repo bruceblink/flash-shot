@@ -313,10 +313,13 @@ impl gpui::Render for FlashShotApp {
                             .bg(status_indicator_color(&self.status, is_idle, colors)),
                     )
                     .child(
+                        // Failure diagnostics include actionable retry guidance; the fixed status
+                        // height is deliberately allowed to wrap it instead of hiding the tail.
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .text_ellipsis()
+                            .whitespace_normal()
+                            .line_height(px(18.0))
                             .child(self.status.clone()),
                     ),
             )

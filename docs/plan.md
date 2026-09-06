@@ -1,6 +1,6 @@
 # 主线开发计划
 
-更新日期：2026-09-02
+更新日期：2026-09-06
 当前版本：`0.1.2`
 目标版本：`0.2.0` 质量阶段
 
@@ -99,7 +99,7 @@
 | 编号 | 主线切片 | 状态 | 说明 |
 | --- | --- | --- | --- |
 | A | `v0.1.2` 发布基线 | 已完成 | 标签、资产、安装器、便携包、manifest 和发布说明已核对 |
-| B1 | 外部失败恢复 | 部分完成 | 保存/历史/录屏进程的确定性恢复已完成；`copy-cancellation-race` fixture 已接入，真实剪贴板、目录权限和 FFmpeg UI 注入待补 |
+| B1 | 外部失败恢复 | 部分完成 | 保存/历史/录屏进程的确定性恢复和录屏失败可重试反馈已完成；`copy-cancellation-race` fixture 已接入，真实剪贴板、目录权限和 FFmpeg UI 注入待补 |
 | B2 | Capture/Save/Pin/Close 生命周期 | 已完成（单屏 100%） | 操作代次、拆除屏障、输入释放和下一次 Capture 已有 Release 证据 |
 | B3 | 历史异步流控 | 已完成（单屏 100%） | 300 条队列、失败/重试、删除、目录切换和窗口关闭已有资源证据 |
 | B4 | 标注回归保护 | 部分完成 | 当前 runner 已覆盖 Text、Watermark、Line 和双向 Arrow；真实输入仍待执行 |
@@ -139,6 +139,13 @@ overlay/Pin/任务/按键清零；截图与路径已登记在 [Windows 手工验
 释放；提交 `a62461d` 覆盖持续系统剪贴板争用在固定预算后返回最后错误。当前源码 Release 的
 `settings-ui-acceptance` 已以无输入探针生成并目视复核 `failed`/`cancelled` Record 状态，报告和截图已登记在
 Windows 验收记录；下一步只处理真实系统剪贴板争用、真实只读目录和 FFmpeg 用户界面失败恢复。
+
+本次 B1 子切片补齐录屏 worker 失败后的可重试反馈：失败状态保留 FFmpeg 原始诊断，并明确提示检查 FFmpeg
+和输出目录后重试；English/简体中文的长状态在固定 48px 状态栏中自动换行，不再以省略号隐藏下一步。
+确定性状态测试与当前 Release 的 520x640 Record 截图均通过，证据见
+`target/ui-acceptance/recording-ui-failed-retry-en.png`、
+`target/ui-acceptance/recording-ui-failed-retry-zh-CN.png` 及同名 JSON。该证据仍不替代真实 FFmpeg
+运行中退出、系统剪贴板争用和目录权限恢复矩阵。
 
 **顺序**：确定性 fault fixture 已完成；接着执行可丢弃桌面上的真实输入、系统剪贴板和 FFmpeg 场景。
 任何一类无法清理都保留失败报告并停止该切片。

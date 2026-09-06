@@ -1039,7 +1039,9 @@ impl UiText {
             Self::RecordingStopping => "Stopping {target} recording...",
             Self::RecordingSaved => "Screen recording saved to {path}",
             Self::RecordingSavedNotification => "Screen recording saved",
-            Self::RecordingFailed => "Screen recording failed: {error}",
+            Self::RecordingFailed => {
+                "Screen recording failed: {error}. Check FFmpeg and the output folder, then try again."
+            }
             Self::RecordingTargetScreen => "screen",
             Self::RecordingTargetDisplay => "display",
             Self::RecordingTargetWindow => "window",
@@ -1832,7 +1834,7 @@ impl UiText {
             Self::RecordingStopping => "正在停止{target}录屏...",
             Self::RecordingSaved => "屏幕录制已保存到 {path}",
             Self::RecordingSavedNotification => "屏幕录制已保存",
-            Self::RecordingFailed => "屏幕录制失败：{error}",
+            Self::RecordingFailed => "屏幕录制失败：{error}。请检查 FFmpeg 和输出目录，然后重试。",
             Self::RecordingTargetScreen => "屏幕",
             Self::RecordingTargetDisplay => "显示器",
             Self::RecordingTargetWindow => "窗口",
