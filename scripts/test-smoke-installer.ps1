@@ -1,9 +1,15 @@
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$metadata = & cargo metadata --no-deps --format-version 1 --manifest-path (Join-Path $root "Cargo.toml") | ConvertFrom-Json
+$package = $metadata.packages | Where-Object { $_.name -eq "flash-shot" } | Select-Object -First 1
+if ($null -eq $package) {
+    throw "Cargo metadata did not contain the flash-shot package."
+}
+$version = $package.version
 $fixture = Join-Path $root "target\smoke-installer-fixture"
 $smokeInstaller = Join-Path $PSScriptRoot "smoke-installer.ps1"
-$expectedInstaller = Join-Path $fixture "FlashShot-0.1.2-windows-setup.exe"
+$expectedInstaller = Join-Path $fixture "FlashShot-$version-windows-setup.exe"
 $wrongNameInstaller = Join-Path $fixture "unexpected-setup.exe"
 
 # Requires a pre-install validation case to fail for the exact release-safety reason under test.
@@ -35,7 +41,7 @@ try {
     [IO.File]::WriteAllText($wrongNameInstaller, "fixture installer")
     Assert-SmokeValidationFails @{
         InstallerPath = $wrongNameInstaller
-    } "Expected installer 'FlashShot-0.1.2-windows-setup.exe'"
+    } "Expected installer 'FlashShot-$version-windows-setup.exe'"
 
     [IO.File]::WriteAllText($expectedInstaller, "unsigned fixture installer")
     Assert-SmokeValidationFails @{

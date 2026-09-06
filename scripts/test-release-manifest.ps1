@@ -1,9 +1,15 @@
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$metadata = & cargo metadata --no-deps --format-version 1 --manifest-path (Join-Path $root "Cargo.toml") | ConvertFrom-Json
+$package = $metadata.packages | Where-Object { $_.name -eq "flash-shot" } | Select-Object -First 1
+if ($null -eq $package) {
+    throw "Cargo metadata did not contain the flash-shot package."
+}
+$version = $package.version
 $fixture = Join-Path $root "target\release-manifest-fixture"
-$asset = Join-Path $fixture "FlashShot-0.1.2-windows-x86_64.zip"
-$installer = Join-Path $fixture "FlashShot-0.1.2-windows-setup.exe"
+$asset = Join-Path $fixture "FlashShot-$version-windows-x86_64.zip"
+$installer = Join-Path $fixture "FlashShot-$version-windows-setup.exe"
 try {
     New-Item -ItemType Directory -Force -Path $fixture | Out-Null
     [IO.File]::WriteAllText($asset, "release-manifest-fixture")
@@ -33,7 +39,7 @@ try {
     [IO.File]::WriteAllText($installer, "release-manifest-installer-fixture")
     "$installerHash  $([IO.Path]::GetFileName($installer))" | Set-Content -LiteralPath "$installer.sha256" -Encoding ascii
 
-    $duplicate = Join-Path $fixture "FlashShot-0.1.2-windows-arm64.zip"
+    $duplicate = Join-Path $fixture "FlashShot-$version-windows-arm64.zip"
     [IO.File]::WriteAllText($duplicate, "duplicate portable fixture")
     $duplicateHash = (Get-FileHash -LiteralPath $duplicate -Algorithm SHA256).Hash.ToLowerInvariant()
     "$duplicateHash  $([IO.Path]::GetFileName($duplicate))" | Set-Content -LiteralPath "$duplicate.sha256" -Encoding ascii
@@ -64,7 +70,7 @@ try {
     }
 
     "$hash  $([IO.Path]::GetFileName($asset))" | Set-Content -LiteralPath "$asset.sha256" -Encoding ascii
-    $unexpected = Join-Path $fixture "FlashShot-0.1.2-windows-x86_64.exe"
+    $unexpected = Join-Path $fixture "FlashShot-$version-windows-x86_64.exe"
     [IO.File]::WriteAllText($unexpected, "unexpected release asset")
     $unexpectedHash = (Get-FileHash -LiteralPath $unexpected -Algorithm SHA256).Hash.ToLowerInvariant()
     "$unexpectedHash  $([IO.Path]::GetFileName($unexpected))" | Set-Content -LiteralPath "$unexpected.sha256" -Encoding ascii

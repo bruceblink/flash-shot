@@ -1,10 +1,16 @@
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$metadata = & cargo metadata --no-deps --format-version 1 --manifest-path (Join-Path $root "Cargo.toml") | ConvertFrom-Json
+$package = $metadata.packages | Where-Object { $_.name -eq "flash-shot" } | Select-Object -First 1
+if ($null -eq $package) {
+    throw "Cargo metadata did not contain the flash-shot package."
+}
+$version = $package.version
 $fixture = Join-Path $root "target\verify-release-assets-fixture"
-$packageRoot = Join-Path $fixture "FlashShot-0.1.2-windows-x86_64"
-$archive = Join-Path $fixture "FlashShot-0.1.2-windows-x86_64.zip"
-$installer = Join-Path $fixture "FlashShot-0.1.2-windows-setup.exe"
+$packageRoot = Join-Path $fixture "FlashShot-$version-windows-x86_64"
+$archive = Join-Path $fixture "FlashShot-$version-windows-x86_64.zip"
+$installer = Join-Path $fixture "FlashShot-$version-windows-setup.exe"
 $verify = Join-Path $PSScriptRoot "verify-release-assets.ps1"
 
 # Rebuilds the fixture manifest so each negative case changes only the asset inventory under test.
@@ -12,7 +18,7 @@ function Write-FixtureManifest([object[]]$Records) {
     [ordered]@{
         schema_version = 1
         product = "Flash Shot"
-        version = "0.1.2"
+        version = $version
         platform = "windows"
         assets = @($Records)
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $fixture "release-manifest.json") -Encoding ascii
@@ -44,7 +50,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $packageRoot "LICENSE.txt"), "fixture license")
     [IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), "fixture readme")
     [IO.File]::WriteAllText((Join-Path $packageRoot "README_EN.md"), "fixture English readme")
-    [IO.File]::WriteAllText((Join-Path $packageRoot "PORTABLE.txt"), "Version: 0.1.2")
+    [IO.File]::WriteAllText((Join-Path $packageRoot "PORTABLE.txt"), "Version: $version")
     Compress-Archive -LiteralPath $packageRoot -DestinationPath $archive
     [IO.File]::WriteAllText($installer, "fixture installer")
 
@@ -85,7 +91,7 @@ try {
     Write-FixtureManifest -Records @($records[1])
     Assert-AssetVerificationFails "exactly one portable ZIP asset; found 0"
 
-    $duplicateArchive = Join-Path $fixture "FlashShot-0.1.2-windows-arm64.zip"
+    $duplicateArchive = Join-Path $fixture "FlashShot-$version-windows-arm64.zip"
     Copy-Item -LiteralPath $archive -Destination $duplicateArchive
     $duplicateHash = (Get-FileHash -LiteralPath $duplicateArchive -Algorithm SHA256).Hash.ToLowerInvariant()
     "$duplicateHash  $([IO.Path]::GetFileName($duplicateArchive))" |
