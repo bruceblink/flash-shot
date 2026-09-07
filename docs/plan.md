@@ -1,6 +1,6 @@
 # 主线开发计划
 
-更新日期：2026-09-06
+更新日期：2026-09-07
 当前版本：`0.1.3`
 目标版本：`0.2.0` 质量阶段
 
@@ -38,7 +38,7 @@
 
 ## 1. 代码复审结论
 
-本次复审基于 `main` 提交 `a374443`（2026-09-06）以及 workspace 中的五个 crate。复审范围包括 Cargo
+本次复审基于 `main` 提交 `4fa4832`（2026-09-06）以及 workspace 中的五个 crate。复审范围包括 Cargo
 依赖方向、应用生命周期、截图/标注/导出/历史/录屏 workflow、UI 状态和开发工具入口。
 
 当前静态与自动化结果：
@@ -111,6 +111,7 @@
 | U3 | 视觉 token 与布局 | 部分完成 | 设置、覆盖层、Pin、Library/Record 已使用部分 token；真实输入和高 DPI 未覆盖 |
 | U4 | Pin 中英文实时输入 | 部分完成 | 四组合无输入 runner 已通过；真实鼠标/键盘与打开窗口切换待执行 |
 | M1 | 模块职责拆分 | 待开始 | B1-B4、U1-U4 行为证据稳定后，先拆 runner，再拆 overlay |
+| R0 | 可复用截图核心 crate 评估 | 已完成（文档决策，2026-09-07） | 已确认 `flash-shot-domain` 与 `flash-shot-image` 是可复用基础；候选 `flash-shot-capture-core` 的边界、API、依赖和许可证门槛已写入[开发设计思路](architecture.md)，当前不宣称已有稳定公共 crate |
 | D1 | 单显示器高 DPI | 暂缓 | 需要真实 150%/200% Windows 硬件；未执行环境不得推断通过 |
 | P3 | 插件扩展平台 | 规划中（`0.3.0+`） | 先冻结插件宿主、清单、接口约定和有界帧流；录屏/GIF 先作为内置插件适配，进程外第三方插件待后续安全与发布决策 |
 
@@ -212,6 +213,24 @@ Starting、Recording、Paused、Stopping、Failed 和 Cancelled；English 与简
 **顺序**：先把 `overlay-interaction-acceptance` 按 Capture/Copy/Pin/Scroll/Recording 和共享 Windows 输入设施拆分，
 再把 `overlay.rs` 按渲染、输入、选择变换、菜单/工具状态和导出生命周期拆分。每次只迁移一个职责，保持 CLI 参数、
 输出目录、报告字段、快捷键和用户行为不变。出现差异立即停止，不与行为修复同一提交。
+
+### R1：提取可复用截图核心 crate
+
+**决策**：可行，但先提取平台无关的请求、截图帧、标注合成、导出和取消边界；不把 `flash-shot-app`、GPUI、Windows 窗口、
+系统剪贴板、FFmpeg、历史和设置一起发布。完整边界、候选 API 和依赖关系见[开发设计思路](architecture.md)的“可复用截图核心
+crate 评估”。
+
+**前置条件**：B1-B4 的失败与清理语义稳定；`flash-shot-app::platform` 的迁移期兼容导出不再被核心流程直接依赖；
+`flash-shot-domain`、`flash-shot-image` 的公共类型和 Cargo feature 已完成 API 审计；许可证、MSRV 和发布仓库策略已确认。
+
+**交付顺序**：
+
+1. 在现有 workspace 内提取私有 `capture-core` 模块，保持 Flash Shot 行为、报告 schema 和 Windows 适配器不变；
+2. 为请求、后端 trait、结构化错误、取消检查点、原子导出和 mock backend 增加独立测试及一个最小示例；
+3. 冻结公共 API 后创建候选 `flash-shot-capture-core` crate，按 Cargo feature 控制编码、字体和二维码等可选能力；
+4. 只有跨平台编译、golden image、资源上限、失败恢复和许可证说明齐全后，才评估发布到 crates.io 或提供 C ABI/IPC。
+
+**当前边界**：R0 只完成架构评估和文档决策，不新增公共 crate、不宣称第三方兼容、不改变 `0.1.3` 稳定版安装包。
 
 ### D1：真实单显示器高 DPI
 
