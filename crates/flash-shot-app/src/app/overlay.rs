@@ -2484,7 +2484,11 @@ impl Render for CaptureOverlay {
                                         })
                                         .into()
                                     })
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        // Return focus to the overlay canvas after opening the
+                                        // annotation palette so keyboard tools remain available
+                                        // without requiring an extra click on the image.
+                                        this.focus_handle.focus(window, cx);
                                         let app = this.app.clone();
                                         cx.defer(move |cx| {
                                             app.update(cx, |app, cx| {

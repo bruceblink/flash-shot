@@ -4796,6 +4796,17 @@ fn execute_annotation_regression_interactions(
         plan.drag_end,
         context.display.physical_bounds,
     )?;
+    // GPUI commits the final mouse-up through a deferred frame callback. Let that callback run
+    // before querying the app entity, otherwise the annotation path can observe a stale drag or
+    // race the overlay's first selection render.
+    thread::sleep(context.settle_delay);
+    record_step(
+        report,
+        &context.report_path,
+        "annotation_selection_drag",
+        drag.foreground,
+        None,
+    )?;
     let selected_state = wait_for_capture_state(context, "annotation selection", |state| {
         state.session_state == "selecting"
             && state.selection.is_some()
@@ -4843,12 +4854,23 @@ fn execute_annotation_regression_interactions(
     };
     let text_content = "B4 Text 中文";
     focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
     inject_key(overlay.handle, b'T' as u16)?;
+    thread::sleep(context.settle_delay);
+    wait_for_capture_state(context, "Text tool selection", |state| {
+        state.status == "Text tool selected"
+    })?;
     inject_mouse_click(overlay.handle, to_screen(text_origin)?)?;
     wait_for_capture_state(context, "Text editor", |state| {
         state.annotation_controls_visible && state.status.starts_with("Type Text")
     })?;
+    thread::sleep(context.settle_delay);
     inject_unicode_text(overlay.handle, text_content)?;
+    wait_for_capture_state(context, "Text input", |state| {
+        state.annotation_controls_visible
+            && state.annotations.is_empty()
+            && state.status == "Editing text..."
+    })?;
     inject_key(overlay.handle, VK_RETURN)?;
     let text_state = wait_for_capture_state(context, "Text annotation", |state| {
         state.annotations.len() == 1
@@ -4895,12 +4917,23 @@ fn execute_annotation_regression_interactions(
     };
     let watermark_content = "B4 Watermark 中文";
     focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
     inject_key(overlay.handle, b'W' as u16)?;
+    thread::sleep(context.settle_delay);
+    wait_for_capture_state(context, "Watermark tool selection", |state| {
+        state.status == "Watermark tool selected"
+    })?;
     inject_mouse_click(overlay.handle, to_screen(watermark_origin)?)?;
     wait_for_capture_state(context, "Watermark editor", |state| {
         state.annotation_controls_visible && state.status.starts_with("Type Watermark")
     })?;
+    thread::sleep(context.settle_delay);
     inject_unicode_text(overlay.handle, watermark_content)?;
+    wait_for_capture_state(context, "Watermark input", |state| {
+        state.annotation_controls_visible
+            && state.annotations.len() == 1
+            && state.status == "Editing text..."
+    })?;
     inject_key(overlay.handle, VK_RETURN)?;
     let watermark_state = wait_for_capture_state(context, "Watermark annotation", |state| {
         state.annotations.len() == 2
@@ -4954,7 +4987,12 @@ fn execute_annotation_regression_interactions(
         y: selection.top.saturating_add(118),
     };
     focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
     inject_key(overlay.handle, b'L' as u16)?;
+    thread::sleep(context.settle_delay);
+    wait_for_capture_state(context, "Line tool selection", |state| {
+        state.status == "Line tool selected"
+    })?;
     let line_drag = inject_mouse_drag(
         overlay.handle,
         to_screen(line_start)?,
@@ -5020,7 +5058,12 @@ fn execute_annotation_regression_interactions(
     for (index, (start, end, screenshot, action)) in arrow_points.into_iter().enumerate() {
         focus_owned_window(overlay, context.timeout)?;
         if index == 0 {
+            thread::sleep(context.settle_delay);
             inject_key(overlay.handle, b'A' as u16)?;
+            thread::sleep(context.settle_delay);
+            wait_for_capture_state(context, "Arrow tool selection", |state| {
+                state.status == "Arrow tool selected"
+            })?;
         }
         let arrow_drag = inject_mouse_drag(
             overlay.handle,
