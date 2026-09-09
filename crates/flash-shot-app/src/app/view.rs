@@ -88,7 +88,9 @@ impl gpui::Render for FlashShotApp {
             .history
             .entries()
             .iter()
-            .filter(|entry| history_entry_matches(entry, self.history_filter, &history_query))
+            .filter(|entry| {
+                history_entry_matches(entry, self.history_filter, &history_query, locale)
+            })
             .count();
         let history_selected_count = self
             .history
@@ -101,6 +103,7 @@ impl gpui::Render for FlashShotApp {
             self.history_expanded,
             self.history_filter,
             &history_query,
+            locale,
         );
         let visible_thumbnail_paths = visible_entries
             .iter()
@@ -2036,6 +2039,7 @@ fn visible_history_entries(
     expanded: bool,
     filter: HistoryFilter,
     query: &str,
+    locale: Locale,
 ) -> Vec<crate::history::HistoryEntry> {
     let limit = if expanded {
         usize::MAX
@@ -2044,7 +2048,7 @@ fn visible_history_entries(
     };
     entries
         .iter()
-        .filter(|entry| history_entry_matches(entry, filter, query))
+        .filter(|entry| history_entry_matches(entry, filter, query, locale))
         .take(limit)
         .cloned()
         .collect()
@@ -2114,13 +2118,7 @@ fn history_entry_label(
 }
 
 fn history_source_label(locale: Locale, source: crate::history::HistorySource) -> &'static str {
-    match source {
-        crate::history::HistorySource::Unknown => locale.text(UiText::LibrarySourceSavedCapture),
-        crate::history::HistorySource::Selection => locale.text(UiText::LibrarySourceSelection),
-        crate::history::HistorySource::Scrolling => locale.text(UiText::LibrarySourceScrolling),
-        crate::history::HistorySource::FullScreen => locale.text(UiText::LibrarySourceFullScreen),
-        crate::history::HistorySource::Pinned => locale.text(UiText::LibrarySourcePinned),
-    }
+    locale.text(source.ui_text())
 }
 
 fn relative_timestamp_label(locale: Locale, created_at_ms: u128, now_ms: u128) -> String {
@@ -3416,11 +3414,11 @@ mod tests {
             .collect::<VecDeque<_>>();
 
         assert_eq!(
-            visible_history_entries(&entries, false, HistoryFilter::All, "").len(),
+            visible_history_entries(&entries, false, HistoryFilter::All, "", Locale::English).len(),
             5
         );
         assert_eq!(
-            visible_history_entries(&entries, true, HistoryFilter::All, "").len(),
+            visible_history_entries(&entries, true, HistoryFilter::All, "", Locale::English).len(),
             7
         );
         assert_eq!(
@@ -3451,7 +3449,8 @@ mod tests {
             })
             .collect::<VecDeque<_>>();
 
-        let preview = visible_history_entries(&entries, false, HistoryFilter::Pinned, "");
+        let preview =
+            visible_history_entries(&entries, false, HistoryFilter::Pinned, "", Locale::English);
         assert_eq!(preview.len(), 5);
         assert!(
             preview
@@ -3459,7 +3458,8 @@ mod tests {
                 .all(|entry| entry.source == HistorySource::Pinned)
         );
         assert_eq!(
-            visible_history_entries(&entries, true, HistoryFilter::Pinned, "").len(),
+            visible_history_entries(&entries, true, HistoryFilter::Pinned, "", Locale::English)
+                .len(),
             6
         );
     }
@@ -3475,23 +3475,38 @@ mod tests {
         assert!(history_entry_matches(
             &entry,
             HistoryFilter::All,
-            "quarterly"
+            "quarterly",
+            Locale::English,
         ));
         assert!(history_entry_matches(
             &entry,
             HistoryFilter::All,
-            "QUARTERLY"
+            "QUARTERLY",
+            Locale::English,
         ));
-        assert!(history_entry_matches(&entry, HistoryFilter::All, "pinned"));
+        assert!(history_entry_matches(
+            &entry,
+            HistoryFilter::All,
+            "pinned",
+            Locale::English,
+        ));
+        assert!(history_entry_matches(
+            &entry,
+            HistoryFilter::All,
+            "贴图",
+            Locale::SimplifiedChinese,
+        ));
         assert!(!history_entry_matches(
             &entry,
             HistoryFilter::Selection,
-            "quarterly"
+            "quarterly",
+            Locale::English,
         ));
         assert!(!history_entry_matches(
             &entry,
             HistoryFilter::All,
-            "invoice"
+            "invoice",
+            Locale::English,
         ));
     }
 }

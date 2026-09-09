@@ -36,7 +36,7 @@ use crate::{
         session::{CaptureSession, CaptureSessionState},
     },
     history::ScreenshotHistory,
-    i18n::UiText,
+    i18n::{Locale, UiText},
     performance::PerformanceRecorder,
     platform::{
         autostart::{AutoStartService, AutoStartState, SystemAutoStart},
@@ -437,6 +437,7 @@ pub(super) fn history_entry_matches(
     entry: &crate::history::HistoryEntry,
     filter: HistoryFilter,
     query: &str,
+    locale: Locale,
 ) -> bool {
     if !filter.matches(entry.source) {
         return false;
@@ -445,12 +446,15 @@ pub(super) fn history_entry_matches(
     if query.is_empty() {
         return true;
     }
+    let localized_source_label = locale.text(entry.source.ui_text()).to_lowercase();
+    let stable_source_label = entry.source.label().to_lowercase();
     entry
         .path
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.to_lowercase().contains(&query))
-        || entry.source.label().to_lowercase().contains(&query)
+        || localized_source_label.contains(&query)
+        || stable_source_label.contains(&query)
 }
 
 /// Returns selected history paths that still belong to the current filtered list.
@@ -461,11 +465,12 @@ pub(super) fn selected_history_paths(
     selected: &HashSet<PathBuf>,
     filter: HistoryFilter,
     query: &str,
+    locale: Locale,
 ) -> Vec<PathBuf> {
     entries
         .iter()
         .filter(|entry| selected.contains(&entry.path))
-        .filter(|entry| history_entry_matches(entry, filter, query))
+        .filter(|entry| history_entry_matches(entry, filter, query, locale))
         .map(|entry| entry.path.clone())
         .collect()
 }
@@ -1217,7 +1222,12 @@ impl FlashShotApp {
             .entries()
             .iter()
             .filter(|entry| {
-                history_entry_matches(entry, self.history_filter, self.history_search_query())
+                history_entry_matches(
+                    entry,
+                    self.history_filter,
+                    self.history_search_query(),
+                    self.settings.locale,
+                )
             })
             .count();
         crate::HistoryResourceAcceptanceState {
@@ -1651,6 +1661,7 @@ mod tests {
         selected_history_paths, utf16_range_to_byte_range,
     };
     use crate::history::{HistoryEntry, HistorySource};
+    use crate::i18n::Locale;
     use crate::scroll::ManualScrollState;
     use std::{
         collections::{HashSet, VecDeque},
@@ -1695,7 +1706,13 @@ mod tests {
         let selected = HashSet::from([first.clone(), stale]);
 
         assert_eq!(
-            selected_history_paths(&entries, &selected, HistoryFilter::All, "invoice"),
+            selected_history_paths(
+                &entries,
+                &selected,
+                HistoryFilter::All,
+                "invoice",
+                Locale::English,
+            ),
             vec![first]
         );
     }
@@ -1708,8 +1725,18 @@ mod tests {
             source: HistorySource::Scrolling,
         };
 
-        assert!(history_entry_matches(&entry, HistoryFilter::Scrolling, ""));
-        assert!(!history_entry_matches(&entry, HistoryFilter::Selection, ""));
+        assert!(history_entry_matches(
+            &entry,
+            HistoryFilter::Scrolling,
+            "",
+            Locale::English,
+        ));
+        assert!(!history_entry_matches(
+            &entry,
+            HistoryFilter::Selection,
+            "",
+            Locale::English,
+        ));
         assert_eq!(HistorySource::Scrolling.label(), "Scrolling screenshot");
     }
 

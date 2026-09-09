@@ -370,6 +370,7 @@ impl FlashShotApp {
             &self.history_selected_paths,
             self.history_filter,
             self.history_search_query(),
+            self.settings.locale,
         );
         let matching_paths = self.filtered_history_paths();
         let previous_count = self.history_selected_paths.len();
@@ -472,7 +473,12 @@ impl FlashShotApp {
             .entries()
             .iter()
             .filter(|entry| {
-                history_entry_matches(entry, self.history_filter, self.history_search_query())
+                history_entry_matches(
+                    entry,
+                    self.history_filter,
+                    self.history_search_query(),
+                    self.settings.locale,
+                )
             })
             .map(|entry| entry.path.clone())
             .collect()

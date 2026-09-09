@@ -96,6 +96,17 @@ impl HistorySource {
             Self::Pinned => "Pinned image",
         }
     }
+
+    /// Returns the catalog key used for this source in visible UI labels and searches.
+    pub const fn ui_text(self) -> crate::i18n::UiText {
+        match self {
+            Self::Unknown => crate::i18n::UiText::LibrarySourceSavedCapture,
+            Self::Selection => crate::i18n::UiText::LibrarySourceSelection,
+            Self::Scrolling => crate::i18n::UiText::LibrarySourceScrolling,
+            Self::FullScreen => crate::i18n::UiText::LibrarySourceFullScreen,
+            Self::Pinned => crate::i18n::UiText::LibrarySourcePinned,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

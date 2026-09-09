@@ -1290,23 +1290,7 @@ impl FlashShotApp {
 
 /// Maps a managed capture source to a localized label for the shared save-success template.
 fn save_source_label(locale: Locale, source: crate::history::HistorySource) -> &'static str {
-    match source {
-        crate::history::HistorySource::Unknown => {
-            locale.text(crate::i18n::UiText::LibrarySourceSavedCapture)
-        }
-        crate::history::HistorySource::Selection => {
-            locale.text(crate::i18n::UiText::LibrarySourceSelection)
-        }
-        crate::history::HistorySource::Scrolling => {
-            locale.text(crate::i18n::UiText::LibrarySourceScrolling)
-        }
-        crate::history::HistorySource::FullScreen => {
-            locale.text(crate::i18n::UiText::LibrarySourceFullScreen)
-        }
-        crate::history::HistorySource::Pinned => {
-            locale.text(crate::i18n::UiText::LibrarySourcePinned)
-        }
-    }
+    locale.text(source.ui_text())
 }
 
 /// Allows Copy feedback only while both its source editor and recognition context remain current.
