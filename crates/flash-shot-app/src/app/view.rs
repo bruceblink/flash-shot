@@ -1134,7 +1134,7 @@ fn recording_settings(
                         }
                     },
                 ))
-                .child(settings_button(
+                .child(settings_primary_button(
                     "settings-record-display",
                     recording_toggle_label(locale, state, directory_check_in_flight),
                     colors,
@@ -2546,6 +2546,36 @@ fn settings_button(
                 .on_click(on_click)
         })
         .child(label.to_owned())
+}
+
+/// Highlights the one action that advances the current workflow while leaving diagnostics and
+/// configuration commands visually secondary. The same control remains available for retry after
+/// a recording failure, so recovery does not require finding another page or reopening the app.
+fn settings_primary_button(
+    id: impl Into<gpui::ElementId>,
+    label: &str,
+    colors: crate::theme::ThemeColors,
+    enabled: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    settings_button(id, label, colors, enabled, on_click).when(enabled, |button| {
+        button
+            .bg(colors.accent)
+            .border_color(colors.accent)
+            .text_color(colors.canvas)
+            .hover(|style| {
+                style
+                    .bg(colors.accent_hover)
+                    .border_color(colors.accent_hover)
+                    .text_color(colors.canvas)
+            })
+            .active(|style| {
+                style
+                    .bg(colors.accent_pressed)
+                    .border_color(colors.accent_pressed)
+                    .text_color(colors.canvas)
+            })
+    })
 }
 
 fn settings_danger_button(
