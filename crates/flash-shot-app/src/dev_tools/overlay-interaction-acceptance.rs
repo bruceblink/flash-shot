@@ -199,6 +199,7 @@ enum CaptureScenarioOption {
     ScrollRoundtrip,
     AnnotationRegression,
     CopyCancellationRace,
+    SaveFailureRetry,
 }
 
 impl CaptureScenarioOption {
@@ -212,6 +213,7 @@ impl CaptureScenarioOption {
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
             Self::AnnotationRegression => "capture_annotation_regression",
             Self::CopyCancellationRace => "capture_copy_cancellation_race",
+            Self::SaveFailureRetry => "capture_save_failure_retry",
         }
     }
 
@@ -223,6 +225,7 @@ impl CaptureScenarioOption {
                 | Self::SelectionTransform
                 | Self::ScrollRoundtrip
                 | Self::AnnotationRegression
+                | Self::SaveFailureRetry
         )
     }
 }
@@ -364,9 +367,10 @@ impl Options {
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
                         "annotation-regression" => CaptureScenarioOption::AnnotationRegression,
                         "copy-cancellation-race" => CaptureScenarioOption::CopyCancellationRace,
+                        "save-failure-retry" => CaptureScenarioOption::SaveFailureRetry,
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', or 'annotation-regression'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', or 'save-failure-retry'"
                     .to_owned(),
                             );
                         }
@@ -489,7 +493,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1297,6 +1301,7 @@ struct AcceptanceReport {
     selection_transform: Option<SelectionTransformReport>,
     scroll_roundtrip: Option<ScrollRoundtripReport>,
     annotation_regression: Option<AnnotationRegressionReport>,
+    save_failure_retry: Option<SaveFailureRetryReport>,
     error: Option<String>,
 }
 
@@ -1556,6 +1561,24 @@ struct AnnotationGestureReport {
     end: PhysicalPoint,
     screenshot: String,
     pixel_fingerprint: String,
+}
+
+#[derive(serde::Serialize)]
+struct SaveFailureRetryReport {
+    requested_selection: PhysicalRect,
+    selection: PhysicalRect,
+    locked_temporary: String,
+    retry_target: String,
+    locked_temporary_preserved: bool,
+    failure_status: String,
+    failure_selection_preserved: bool,
+    failure_temporary_files: usize,
+    retry_width: u32,
+    retry_height: u32,
+    retry_bytes: u64,
+    retry_content: ExactPixelMatchReport,
+    retry_temporary_files: usize,
+    cleanup: CleanupReport,
 }
 
 #[derive(serde::Serialize)]
@@ -2096,7 +2119,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::PinsCoexist
             | CaptureScenarioOption::SelectionTransform
             | CaptureScenarioOption::ScrollRoundtrip
-            | CaptureScenarioOption::AnnotationRegression,
+            | CaptureScenarioOption::AnnotationRegression
+            | CaptureScenarioOption::SaveFailureRetry,
         ) => (520.0, 640.0),
     };
 
@@ -2173,9 +2197,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 20 adds the
-        // deterministic Copy cancellation race evidence.
-        schema_version: 20,
+        // Increment when the machine-readable report shape changes. Schema 21 adds the
+        // real Save failure and retry evidence.
+        schema_version: 21,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2204,6 +2228,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         selection_transform: None,
         scroll_roundtrip: None,
         annotation_regression: None,
+        save_failure_retry: None,
         error: None,
     }
 }
@@ -3645,6 +3670,9 @@ fn run_interaction_sequence(
         }
         (None, CaptureScenarioOption::AnnotationRegression) => {
             execute_annotation_regression_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::SaveFailureRetry) => {
+            execute_save_failure_retry_interactions(context, report)
         }
         (None, CaptureScenarioOption::CopyOnly) => execute_copy_only_interactions(context, report),
         (None, CaptureScenarioOption::CopyCancellationRace) => {
@@ -6966,6 +6994,257 @@ fn execute_save_interaction(
         bytes,
         content,
     })
+}
+
+#[cfg(windows)]
+/// Holds the production PNG temporary path open without write sharing so the encoder fails after
+/// the native Save dialog has returned a valid, writable final path.
+fn lock_save_temporary(path: &Path) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        // Readers may inspect the fixture, but the encoder cannot open it for truncation or
+        // replacement while this handle is alive.
+        .share_mode(0x0000_0001)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn temporary_file_count(directory: &Path) -> io::Result<usize> {
+    Ok(fs::read_dir(directory)?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                == Some("tmp")
+        })
+        .count())
+}
+
+#[cfg(windows)]
+/// Exercises a real temporary-file Save failure, then retries the same selection after releasing
+/// the fixture lock. The native dialog still closes normally, so the application owns the error.
+fn execute_save_failure_retry_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let denied_directory = context.session_root.join("denied-exports");
+    let retry_directory = context.session_root.join("retry-exports");
+    fs::create_dir_all(&denied_directory)?;
+    fs::create_dir_all(&retry_directory)?;
+
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    let (overlay, _plan, selection, requested_selection, source) =
+        begin_selected_overlay(context, controller)?;
+    let denied_target = denied_directory.join("selection.png");
+    let locked_temporary_path = denied_target.with_extension("png.tmp");
+    let locked_temporary_sentinel = b"Flash Shot save failure fixture sentinel\n";
+    fs::write(&locked_temporary_path, locked_temporary_sentinel)?;
+    let locked_temporary = lock_save_temporary(&locked_temporary_path)?;
+    thread::sleep(context.settle_delay);
+    let selected = capture_evidence(context, "01-save-failure-selection.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_failure_selection_ready",
+        guard_foreground(overlay.handle)?,
+        Some(&selected),
+    )?;
+
+    let dialogs_before_save = visible_common_dialogs()?;
+    let foreground = inject_ctrl_s(overlay.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_failure_shortcut",
+        foreground,
+        None,
+    )?;
+    let dialog = wait_for_save_dialog(
+        overlay.handle,
+        controller.handle,
+        &dialogs_before_save,
+        context.timeout,
+    )?;
+    thread::sleep(context.settle_delay);
+    set_save_dialog_path(&dialog, &denied_target, context.timeout)?;
+    let path_evidence = capture_evidence(context, "02-save-failure-locked-path.png", dialog)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_failure_locked_path",
+        guard_foreground(dialog.handle)?,
+        Some(&path_evidence),
+    )?;
+    inject_key(dialog.handle, VK_RETURN)?;
+    wait_for_window_gone(
+        dialog.handle,
+        context.timeout,
+        "Save failure path confirmation",
+    )?;
+    wait_for_no_visible_save_dialogs(context.timeout, "Save failure path confirmation")?;
+
+    let failure_state = wait_for_capture_state(context, "denied Save failure", |state| {
+        state.session_state == "selecting"
+            && state.selection == Some(selection)
+            && state.overlay_count == 1
+            && state.capture_preflight_ready
+            && state.background_tasks_idle
+            && state.status.starts_with("Save failed:")
+    })?;
+    if failure_state.selection != Some(selection) {
+        return Err(io::Error::other(
+            "Save failure did not preserve the editable selection",
+        ));
+    }
+    focus_owned_window(overlay, context.timeout)?;
+    let failure_evidence = capture_evidence(context, "03-save-failure-reported.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_failure_reported",
+        guard_foreground(overlay.handle)?,
+        Some(&failure_evidence),
+    )?;
+
+    let locked_temporary_preserved = fs::read(&locked_temporary_path)? == locked_temporary_sentinel;
+    if !locked_temporary_preserved {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "failed Save changed the locked temporary file",
+        ));
+    }
+    drop(locked_temporary);
+    fs::remove_file(&locked_temporary_path)?;
+    let failure_temporary_files = temporary_file_count(&denied_directory)?;
+    if failure_temporary_files != 0 {
+        return Err(io::Error::other(
+            "failed Save left a temporary file after the fixture was released",
+        ));
+    }
+
+    let retry_target = retry_directory.join("selection.png");
+    let dialogs_before_retry = visible_common_dialogs()?;
+    let foreground = inject_ctrl_s(overlay.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_failure_retry_shortcut",
+        foreground,
+        None,
+    )?;
+    let retry_dialog = wait_for_save_dialog(
+        overlay.handle,
+        controller.handle,
+        &dialogs_before_retry,
+        context.timeout,
+    )?;
+    thread::sleep(context.settle_delay);
+    set_save_dialog_path(&retry_dialog, &retry_target, context.timeout)?;
+    let retry_path_evidence =
+        capture_evidence(context, "04-save-failure-retry-path.png", retry_dialog)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_failure_retry_path",
+        guard_foreground(retry_dialog.handle)?,
+        Some(&retry_path_evidence),
+    )?;
+    inject_key(retry_dialog.handle, VK_RETURN)?;
+    wait_for_window_gone(
+        retry_dialog.handle,
+        context.timeout,
+        "Save retry path confirmation",
+    )?;
+    wait_for_no_visible_save_dialogs(context.timeout, "Save retry path confirmation")?;
+    wait_for_window_gone(
+        overlay.handle,
+        context.timeout,
+        "Save failure retry completion",
+    )?;
+    let retry_state = wait_for_capture_state(context, "Save failure retry completion", |state| {
+        state.session_state == "completed"
+            && state.selection == Some(selection)
+            && state.overlay_count == 0
+            && state.pinned_count == 0
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+            && state.status.starts_with("Selection saved to ")
+    })?;
+    let clean = wait_for_desktop_quiescence(
+        context,
+        "Save failure retry completion",
+        Some("05-save-failure-retry-clean.png"),
+    )?;
+    record_desktop_step(
+        report,
+        &context.report_path,
+        "save_failure_retry_clean",
+        "05-save-failure-retry-clean.png",
+        &clean,
+    )?;
+    let (saved, retry_bytes) = wait_for_saved_png(&retry_target, context.timeout)?;
+    validate_frame_dimensions(&saved, selection, "Save retry PNG")?;
+    let retry_content = validate_same_pixel_content(&source, &saved, "Save retry PNG")?;
+    let retry_temporary_files = temporary_file_count(&retry_directory)?;
+    if retry_temporary_files != 0 {
+        return Err(io::Error::other(
+            "successful Save retry left a temporary file",
+        ));
+    }
+    let locked_path = locked_temporary_path
+        .strip_prefix(&context.session_root)
+        .unwrap_or(&locked_temporary_path)
+        .to_string_lossy()
+        .into_owned();
+    let retry_path = retry_target
+        .strip_prefix(&context.session_root)
+        .unwrap_or(&retry_target)
+        .to_string_lossy()
+        .into_owned();
+
+    unsafe { ShowWindow(controller.handle, SW_HIDE) };
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "Save failure retry controller hide",
+    )?;
+    ensure_capture_input_released()?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "Save failure retry cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.save_failure_retry = Some(SaveFailureRetryReport {
+        requested_selection,
+        selection,
+        locked_temporary: locked_path,
+        retry_target: retry_path,
+        locked_temporary_preserved,
+        failure_status: failure_state.status,
+        failure_selection_preserved: failure_state.selection == Some(selection),
+        failure_temporary_files,
+        retry_width: saved.width,
+        retry_height: saved.height,
+        retry_bytes,
+        retry_content,
+        retry_temporary_files,
+        cleanup: CleanupReport {
+            session_state: retry_state.session_state,
+            overlay_count: retry_state.overlay_count,
+            pinned_count: retry_state.pinned_count,
+            capture_teardown_pending: retry_state.capture_teardown_pending,
+            visible_process_windows,
+            capture_preflight_ready: retry_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
 }
 
 #[cfg(windows)]
@@ -11827,6 +12106,36 @@ mod tests {
             "capture_annotation_regression"
         );
         assert!(options.capture_scenario.requires_100_percent_display());
+    }
+
+    #[test]
+    fn parser_accepts_save_failure_retry_scenario_without_clipboard_access() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "save-failure-retry",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::SaveFailureRetry
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_save_failure_retry"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(!options.allow_system_clipboard);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "save-failure-retry",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
     }
 
     #[test]
