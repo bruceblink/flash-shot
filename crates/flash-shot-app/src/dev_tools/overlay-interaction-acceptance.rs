@@ -1567,9 +1567,10 @@ struct AnnotationGestureReport {
 struct SaveFailureRetryReport {
     requested_selection: PhysicalRect,
     selection: PhysicalRect,
-    locked_temporary: String,
+    unavailable_history: String,
     retry_target: String,
-    locked_temporary_preserved: bool,
+    failure_fixture_preserved: bool,
+    history_restored_before_retry: bool,
     failure_status: String,
     failure_selection_preserved: bool,
     failure_temporary_files: usize,
@@ -2197,9 +2198,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 21 adds the
-        // real Save failure and retry evidence.
-        schema_version: 21,
+        // Increment when the machine-readable report shape changes. Schema 22 records the
+        // real Quick Save destination failure and retry evidence.
+        schema_version: 22,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -6997,20 +6998,6 @@ fn execute_save_interaction(
 }
 
 #[cfg(windows)]
-/// Holds the production PNG temporary path open without write sharing so the encoder fails after
-/// the native Save dialog has returned a valid, writable final path.
-fn lock_save_temporary(path: &Path) -> io::Result<fs::File> {
-    use std::os::windows::fs::OpenOptionsExt;
-
-    fs::OpenOptions::new()
-        .read(true)
-        // Readers may inspect the fixture, but the encoder cannot open it for truncation or
-        // replacement while this handle is alive.
-        .share_mode(0x0000_0001)
-        .open(path)
-}
-
-#[cfg(windows)]
 fn temporary_file_count(directory: &Path) -> io::Result<usize> {
     Ok(fs::read_dir(directory)?
         .filter_map(Result::ok)
@@ -7025,26 +7012,84 @@ fn temporary_file_count(directory: &Path) -> io::Result<usize> {
 }
 
 #[cfg(windows)]
-/// Exercises a real temporary-file Save failure, then retries the same selection after releasing
-/// the fixture lock. The native dialog still closes normally, so the application owns the error.
+/// Replaces the managed history directory with a file so Quick Save reaches a real destination
+/// failure without making the native Save dialog part of the fault fixture.
+struct UnavailableHistoryFixture {
+    directory: PathBuf,
+    backup_directory: PathBuf,
+    sentinel: Vec<u8>,
+    restored: bool,
+}
+
+#[cfg(windows)]
+impl UnavailableHistoryFixture {
+    /// Moves the managed history root aside and leaves a sentinel file at its original path.
+    /// Quick Save must then fail during its real directory preparation step.
+    fn create(directory: &Path) -> io::Result<Self> {
+        let parent = directory
+            .parent()
+            .ok_or_else(|| io::Error::other("history directory has no parent"))?;
+        let backup_directory = parent.join("history-available-for-retry");
+        if backup_directory.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "history retry backup already exists: {}",
+                    backup_directory.display()
+                ),
+            ));
+        }
+        fs::rename(directory, &backup_directory)?;
+        let sentinel = b"Flash Shot unavailable history fixture\n".to_vec();
+        if let Err(error) = fs::write(directory, &sentinel) {
+            let _ = fs::rename(&backup_directory, directory);
+            return Err(error);
+        }
+        Ok(Self {
+            directory: directory.to_owned(),
+            backup_directory,
+            sentinel,
+            restored: false,
+        })
+    }
+
+    fn sentinel_preserved(&self) -> io::Result<bool> {
+        Ok(fs::read(&self.directory)? == self.sentinel)
+    }
+
+    /// Restores the original directory and makes the same Quick Save path usable again.
+    fn restore(&mut self) -> io::Result<()> {
+        if self.restored {
+            return Ok(());
+        }
+        if self.directory.exists() {
+            fs::remove_file(&self.directory)?;
+        }
+        fs::rename(&self.backup_directory, &self.directory)?;
+        self.restored = true;
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for UnavailableHistoryFixture {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+#[cfg(windows)]
+/// Exercises a real Quick Save destination failure, then retries the same selection after the
+/// managed history directory is restored. The worker owns the fixture so cleanup also runs when
+/// an earlier native step fails.
 fn execute_save_failure_retry_interactions(
     context: &WorkerContext,
     report: &mut AcceptanceReport,
 ) -> io::Result<()> {
-    let denied_directory = context.session_root.join("denied-exports");
-    let retry_directory = context.session_root.join("retry-exports");
-    fs::create_dir_all(&denied_directory)?;
-    fs::create_dir_all(&retry_directory)?;
-
     let controller = wait_for_controller(context.timeout)?;
     focus_owned_window(controller, context.timeout)?;
     let (overlay, _plan, selection, requested_selection, source) =
         begin_selected_overlay(context, controller)?;
-    let denied_target = denied_directory.join("selection.png");
-    let locked_temporary_path = denied_target.with_extension("png.tmp");
-    let locked_temporary_sentinel = b"Flash Shot save failure fixture sentinel\n";
-    fs::write(&locked_temporary_path, locked_temporary_sentinel)?;
-    let locked_temporary = lock_save_temporary(&locked_temporary_path)?;
     thread::sleep(context.settle_delay);
     let selected = capture_evidence(context, "01-save-failure-selection.png", overlay)?;
     record_step(
@@ -7055,8 +7100,9 @@ fn execute_save_failure_retry_interactions(
         Some(&selected),
     )?;
 
-    let dialogs_before_save = visible_common_dialogs()?;
-    let foreground = inject_ctrl_s(overlay.handle)?;
+    let history_directory = context.session_root.join("history");
+    let mut unavailable_history = UnavailableHistoryFixture::create(&history_directory)?;
+    let foreground = inject_quick_save(overlay.handle)?;
     record_step(
         report,
         &context.report_path,
@@ -7064,38 +7110,16 @@ fn execute_save_failure_retry_interactions(
         foreground,
         None,
     )?;
-    let dialog = wait_for_save_dialog(
-        overlay.handle,
-        controller.handle,
-        &dialogs_before_save,
-        context.timeout,
-    )?;
-    thread::sleep(context.settle_delay);
-    set_save_dialog_path(&dialog, &denied_target, context.timeout)?;
-    let path_evidence = capture_evidence(context, "02-save-failure-locked-path.png", dialog)?;
-    record_step(
-        report,
-        &context.report_path,
-        "save_failure_locked_path",
-        guard_foreground(dialog.handle)?,
-        Some(&path_evidence),
-    )?;
-    inject_key(dialog.handle, VK_RETURN)?;
-    wait_for_window_gone(
-        dialog.handle,
-        context.timeout,
-        "Save failure path confirmation",
-    )?;
-    wait_for_no_visible_save_dialogs(context.timeout, "Save failure path confirmation")?;
 
-    let failure_state = wait_for_capture_state(context, "denied Save failure", |state| {
-        state.session_state == "selecting"
-            && state.selection == Some(selection)
-            && state.overlay_count == 1
-            && state.capture_preflight_ready
-            && state.background_tasks_idle
-            && state.status.starts_with("Save failed:")
-    })?;
+    let failure_state =
+        wait_for_capture_state(context, "unavailable Quick Save destination", |state| {
+            state.session_state == "selecting"
+                && state.selection == Some(selection)
+                && state.overlay_count == 1
+                && state.capture_preflight_ready
+                && state.background_tasks_idle
+                && state.status.starts_with("Save failed:")
+        })?;
     if failure_state.selection != Some(selection) {
         return Err(io::Error::other(
             "Save failure did not preserve the editable selection",
@@ -7111,25 +7135,28 @@ fn execute_save_failure_retry_interactions(
         Some(&failure_evidence),
     )?;
 
-    let locked_temporary_preserved = fs::read(&locked_temporary_path)? == locked_temporary_sentinel;
-    if !locked_temporary_preserved {
+    let failure_fixture_preserved = unavailable_history.sentinel_preserved()?;
+    if !failure_fixture_preserved {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "failed Save changed the locked temporary file",
+            "failed Quick Save changed the unavailable history fixture",
         ));
     }
-    drop(locked_temporary);
-    fs::remove_file(&locked_temporary_path)?;
-    let failure_temporary_files = temporary_file_count(&denied_directory)?;
+    let failure_temporary_files = temporary_file_count(&unavailable_history.backup_directory)?;
     if failure_temporary_files != 0 {
         return Err(io::Error::other(
-            "failed Save left a temporary file after the fixture was released",
+            "failed Quick Save left a temporary file in the retained history directory",
+        ));
+    }
+    unavailable_history.restore()?;
+    let history_restored_before_retry = history_directory.is_dir();
+    if !history_restored_before_retry {
+        return Err(io::Error::other(
+            "history directory was not restored before Quick Save retry",
         ));
     }
 
-    let retry_target = retry_directory.join("selection.png");
-    let dialogs_before_retry = visible_common_dialogs()?;
-    let foreground = inject_ctrl_s(overlay.handle)?;
+    let foreground = inject_quick_save(overlay.handle)?;
     record_step(
         report,
         &context.report_path,
@@ -7137,48 +7164,25 @@ fn execute_save_failure_retry_interactions(
         foreground,
         None,
     )?;
-    let retry_dialog = wait_for_save_dialog(
-        overlay.handle,
-        controller.handle,
-        &dialogs_before_retry,
-        context.timeout,
-    )?;
-    thread::sleep(context.settle_delay);
-    set_save_dialog_path(&retry_dialog, &retry_target, context.timeout)?;
-    let retry_path_evidence =
-        capture_evidence(context, "04-save-failure-retry-path.png", retry_dialog)?;
-    record_step(
-        report,
-        &context.report_path,
-        "save_failure_retry_path",
-        guard_foreground(retry_dialog.handle)?,
-        Some(&retry_path_evidence),
-    )?;
-    inject_key(retry_dialog.handle, VK_RETURN)?;
-    wait_for_window_gone(
-        retry_dialog.handle,
-        context.timeout,
-        "Save retry path confirmation",
-    )?;
-    wait_for_no_visible_save_dialogs(context.timeout, "Save retry path confirmation")?;
     wait_for_window_gone(
         overlay.handle,
         context.timeout,
-        "Save failure retry completion",
+        "Quick Save failure retry completion",
     )?;
-    let retry_state = wait_for_capture_state(context, "Save failure retry completion", |state| {
-        state.session_state == "completed"
-            && state.selection == Some(selection)
-            && state.overlay_count == 0
-            && state.pinned_count == 0
-            && !state.capture_teardown_pending
-            && state.background_tasks_idle
-            && state.capture_preflight_ready
-            && state.status.starts_with("Selection saved to ")
-    })?;
+    let retry_state =
+        wait_for_capture_state(context, "Quick Save failure retry completion", |state| {
+            state.session_state == "completed"
+                && state.selection == Some(selection)
+                && state.overlay_count == 0
+                && state.pinned_count == 0
+                && !state.capture_teardown_pending
+                && state.background_tasks_idle
+                && state.capture_preflight_ready
+                && state.status.starts_with("Selection saved to ")
+        })?;
     let clean = wait_for_desktop_quiescence(
         context,
-        "Save failure retry completion",
+        "Quick Save failure retry completion",
         Some("05-save-failure-retry-clean.png"),
     )?;
     record_desktop_step(
@@ -7188,18 +7192,19 @@ fn execute_save_failure_retry_interactions(
         "05-save-failure-retry-clean.png",
         &clean,
     )?;
-    let (saved, retry_bytes) = wait_for_saved_png(&retry_target, context.timeout)?;
-    validate_frame_dimensions(&saved, selection, "Save retry PNG")?;
-    let retry_content = validate_same_pixel_content(&source, &saved, "Save retry PNG")?;
-    let retry_temporary_files = temporary_file_count(&retry_directory)?;
+    let (retry_target, saved, retry_bytes) =
+        wait_for_single_png(&history_directory, context.timeout)?;
+    validate_frame_dimensions(&saved, selection, "Quick Save retry PNG")?;
+    let retry_content = validate_same_pixel_content(&source, &saved, "Quick Save retry PNG")?;
+    let retry_temporary_files = temporary_file_count(&history_directory)?;
     if retry_temporary_files != 0 {
         return Err(io::Error::other(
-            "successful Save retry left a temporary file",
+            "successful Quick Save retry left a temporary file",
         ));
     }
-    let locked_path = locked_temporary_path
+    let unavailable_history_path = history_directory
         .strip_prefix(&context.session_root)
-        .unwrap_or(&locked_temporary_path)
+        .unwrap_or(&history_directory)
         .to_string_lossy()
         .into_owned();
     let retry_path = retry_target
@@ -7224,9 +7229,10 @@ fn execute_save_failure_retry_interactions(
     report.save_failure_retry = Some(SaveFailureRetryReport {
         requested_selection,
         selection,
-        locked_temporary: locked_path,
+        unavailable_history: unavailable_history_path,
         retry_target: retry_path,
-        locked_temporary_preserved,
+        failure_fixture_preserved,
+        history_restored_before_retry,
         failure_status: failure_state.status,
         failure_selection_preserved: failure_state.selection == Some(selection),
         failure_temporary_files,

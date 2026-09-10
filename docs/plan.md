@@ -144,6 +144,15 @@ overlay/Pin/任务/按键清零；截图与路径已登记在 [Windows 手工验
 `settings-ui-acceptance` 已以无输入探针生成并目视复核 `failed`/`cancelled` Record 状态，报告和截图已登记在
 Windows 验收记录；下一步只处理真实系统剪贴板争用、真实只读目录和 FFmpeg 用户界面失败恢复。
 
+2026-09-10 的当前源码 Release `overlay-interaction-acceptance --capture-scenario save-failure-retry`
+补齐了 Quick Save 目标失效后的真实输入回归：runner 在同一选区提交 `Shift+Enter` 前临时替换隔离历史目录，
+生产 Quick Save 收到真实文件系统错误后保留选区和覆盖层；恢复原目录后再次 Quick Save 成功。schema 22
+报告为 `status=passed`，1178x432 PNG 与源帧逐像素一致，失败和成功路径的 `.tmp` 均为 0，最终
+`capture_teardown_pending=false`、覆盖层/后台任务/可见 runner 窗口均清零。证据位于
+`target/overlay-save-failure-retry-current-v3/session-1789053581823-18576/report.json` 及其同目录截图。
+该证据只覆盖单屏 100% 的 Quick Save 目标失效与恢复，不替代系统剪贴板争用、原生 Save 对话框目录权限和
+FFmpeg 用户界面失败恢复；B1 仍保持“部分完成”。
+
 本次 B1 子切片补齐录屏 worker 失败后的可重试反馈：失败状态保留 FFmpeg 原始诊断，并明确提示检查 FFmpeg
 和输出目录后重试；English/简体中文的长状态在固定 48px 状态栏中自动换行，不再以省略号隐藏下一步。
 确定性状态测试与当前 Release 的 520x640 Record 截图均通过，证据见
