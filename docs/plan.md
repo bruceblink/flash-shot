@@ -176,6 +176,19 @@ Enter 报告位于 `target/overlay-clipboard-contention-retry-current-enter-v2/s
 runner 窗口均清零。该证据只覆盖 Quick Save 目录权限，不替代原生 Save 对话框目录权限和 FFmpeg 用户界面失败恢复；
 B1 仍保持“部分完成”。
 
+2026-09-11 的当前源码 Release `overlay-interaction-acceptance --capture-scenario save-dialog-permission-retry`
+补齐了原生 Save 对话框目录权限失败后的恢复：runner 在隔离 `exports/read-only` 目录应用当前 Windows 用户的
+真实 `icacls` deny-write ACL，点击生产 Capture 工具栏的 Save，向原生 `另存为` 对话框输入被拒绝路径，并等待
+真实 `#32770` 权限提示。提示关闭后 Save 对话框仍保留，选区没有丢失；恢复 ACL 后再次打开 Save 对话框并保存到
+`exports/retry`。schema 25 报告为 `status=passed`，证据位于
+`target/overlay-save-dialog-permission-retry-current-v3/session-1789139877235-8004/report.json`；同 session 的
+`screenshots/01-save-dialog-permission-selection.png`、`03-save-dialog-permission-error.png`、
+`04-save-dialog-permission-selection-restored.png`、`05-save-dialog-permission-retry-path.png` 和
+`06-save-dialog-permission-retry-clean.png` 已目视复核。报告记录权限 probe、拒绝目标保持不存在、Save 对话框保留、
+选区恢复、失败/重试 `.tmp` 均为 0；重试 PNG 为 1178x432、259556 bytes 且 `exact_match=true`，最终
+`capture_teardown_pending=false`、覆盖层/Pin/后台任务/可见 runner 窗口均清零。该证据只覆盖单屏 100% 的原生
+Save 对话框目录权限，不替代 FFmpeg 用户界面失败恢复；B1 仍保持“部分完成”。
+
 本次 B1 子切片补齐录屏 worker 失败后的可重试反馈：失败状态保留 FFmpeg 原始诊断，并明确提示检查 FFmpeg
 和输出目录后重试；English/简体中文的长状态在固定 48px 状态栏中自动换行，不再以省略号隐藏下一步。
 确定性状态测试与当前 Release 的 520x640 Record 截图均通过，证据见

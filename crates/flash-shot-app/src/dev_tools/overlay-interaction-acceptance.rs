@@ -203,6 +203,7 @@ enum CaptureScenarioOption {
     ClipboardContentionRetry,
     SaveFailureRetry,
     SavePermissionRetry,
+    SaveDialogPermissionRetry,
 }
 
 impl CaptureScenarioOption {
@@ -219,6 +220,7 @@ impl CaptureScenarioOption {
             Self::ClipboardContentionRetry => "capture_clipboard_contention_retry",
             Self::SaveFailureRetry => "capture_save_failure_retry",
             Self::SavePermissionRetry => "capture_save_permission_retry",
+            Self::SaveDialogPermissionRetry => "capture_save_dialog_permission_retry",
         }
     }
 
@@ -233,6 +235,7 @@ impl CaptureScenarioOption {
                 | Self::ClipboardContentionRetry
                 | Self::SaveFailureRetry
                 | Self::SavePermissionRetry
+                | Self::SaveDialogPermissionRetry
         )
     }
 }
@@ -379,9 +382,12 @@ impl Options {
                         }
                         "save-failure-retry" => CaptureScenarioOption::SaveFailureRetry,
                         "save-permission-retry" => CaptureScenarioOption::SavePermissionRetry,
+                        "save-dialog-permission-retry" => {
+                            CaptureScenarioOption::SaveDialogPermissionRetry
+                        }
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'save-failure-retry', or 'save-permission-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
                     .to_owned(),
                             );
                         }
@@ -516,7 +522,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry|save-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1327,6 +1333,7 @@ struct AcceptanceReport {
     annotation_regression: Option<AnnotationRegressionReport>,
     save_failure_retry: Option<SaveFailureRetryReport>,
     save_permission_retry: Option<SavePermissionRetryReport>,
+    save_dialog_permission_retry: Option<SaveDialogPermissionRetryReport>,
     error: Option<String>,
 }
 
@@ -1619,6 +1626,33 @@ struct SavePermissionRetryReport {
     failure_selection_preserved: bool,
     failure_temporary_files: usize,
     permission_restored_before_retry: bool,
+    retry_target: String,
+    retry_width: u32,
+    retry_height: u32,
+    retry_bytes: u64,
+    retry_content: ExactPixelMatchReport,
+    retry_temporary_files: usize,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct SaveDialogPermissionRetryReport {
+    requested_selection: PhysicalRect,
+    selection: PhysicalRect,
+    read_only_directory: String,
+    failure_target: String,
+    account: String,
+    permission_denied_before_input: bool,
+    permission_dialog_title: String,
+    permission_dialog_text: String,
+    permission_dialog_screenshot: String,
+    save_dialog_retained_after_failure: bool,
+    failure_target_preserved: bool,
+    failure_selection_preserved: bool,
+    failure_temporary_files: usize,
+    selection_restored_after_dialog_failure: bool,
+    permission_restored_before_retry: bool,
+    retry_dialog_reopened: bool,
     retry_target: String,
     retry_width: u32,
     retry_height: u32,
@@ -2228,7 +2262,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::ScrollRoundtrip
             | CaptureScenarioOption::AnnotationRegression
             | CaptureScenarioOption::SaveFailureRetry
-            | CaptureScenarioOption::SavePermissionRetry,
+            | CaptureScenarioOption::SavePermissionRetry
+            | CaptureScenarioOption::SaveDialogPermissionRetry,
         ) => (520.0, 640.0),
     };
 
@@ -2305,9 +2340,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 24 records real
-        // read-only-directory Quick Save failure and retry evidence.
-        schema_version: 24,
+        // Increment when the machine-readable report shape changes. Schema 25 records the
+        // native Save dialog's read-only-directory error and retry evidence.
+        schema_version: 25,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2339,6 +2374,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         annotation_regression: None,
         save_failure_retry: None,
         save_permission_retry: None,
+        save_dialog_permission_retry: None,
         error: None,
     }
 }
@@ -4012,6 +4048,9 @@ fn run_interaction_sequence(
         }
         (None, CaptureScenarioOption::SavePermissionRetry) => {
             execute_save_permission_retry_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::SaveDialogPermissionRetry) => {
+            execute_save_dialog_permission_retry_interactions(context, report)
         }
         (None, CaptureScenarioOption::CopyOnly) => execute_copy_only_interactions(context, report),
         (None, CaptureScenarioOption::CopyCancellationRace) => {
@@ -7685,44 +7724,59 @@ fn current_windows_account() -> io::Result<String> {
 }
 
 #[cfg(windows)]
-/// Holds a real deny-write ACL over the isolated history root until the retry is ready.
-struct ReadOnlyHistoryFixture {
+/// Reads an optional fixture file before a deny-write ACL is applied.
+fn snapshot_optional_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+/// Confirms that a failed export did not create or rewrite a file captured before the fixture.
+fn file_snapshot_preserved(path: &Path, snapshot: Option<&[u8]>) -> io::Result<bool> {
+    match snapshot {
+        Some(expected) => Ok(fs::read(path)?.as_slice() == expected),
+        None => Ok(!path.exists()),
+    }
+}
+
+#[cfg(windows)]
+/// Holds a real deny-write ACL over one isolated directory until the retry is ready.
+struct ReadOnlyDirectoryFixture {
     directory: PathBuf,
     account: String,
-    history_index: Option<Vec<u8>>,
     restored: bool,
 }
 
 #[cfg(windows)]
-impl ReadOnlyHistoryFixture {
-    /// Applies a deny-write ACE and probes file creation so the first Quick Save cannot be a false
+impl ReadOnlyDirectoryFixture {
+    /// Applies a deny-write ACE and probes file creation so the first export cannot be a false
     /// positive caused by a merely invalid or replaced destination.
     fn create(directory: &Path) -> io::Result<Self> {
         if !directory.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("history directory is missing: {}", directory.display()),
+                format!(
+                    "read-only fixture directory is missing: {}",
+                    directory.display()
+                ),
             ));
         }
-        let history_index = match fs::read(directory.join("history.json")) {
-            Ok(index) => Some(index),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error),
-        };
         let account = current_windows_account()?;
         let deny = OsString::from(format!("{account}:(OI)(CI)(W)"));
         run_icacls(directory, &[OsString::from("/deny"), deny])?;
         let fixture = Self {
             directory: directory.to_owned(),
             account,
-            history_index,
             restored: false,
         };
         if fixture.probe_write()? {
             let mut fixture = fixture;
             let restore_result = fixture.restore();
             return Err(io::Error::other(format!(
-                "icacls reported a deny ACE but the history directory still accepted writes{}",
+                "icacls reported a deny ACE but the fixture directory still accepted writes{}",
                 restore_result
                     .err()
                     .map(|error| format!("; ACL restore failed: {error}"))
@@ -7759,15 +7813,6 @@ impl ReadOnlyHistoryFixture {
         }
     }
 
-    /// Confirms the failed export did not create or rewrite the managed history index.
-    fn history_index_preserved(&self) -> io::Result<bool> {
-        let path = self.directory.join("history.json");
-        match &self.history_index {
-            Some(index) => Ok(fs::read(path)? == *index),
-            None => Ok(!path.exists()),
-        }
-    }
-
     /// Removes only the fixture's deny ACE, then probes a real file create before allowing retry.
     fn restore(&mut self) -> io::Result<()> {
         if self.restored {
@@ -7780,7 +7825,7 @@ impl ReadOnlyHistoryFixture {
         if !self.probe_write()? {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "history directory remained read-only after ACL restore",
+                "fixture directory remained read-only after ACL restore",
             ));
         }
         self.restored = true;
@@ -7789,10 +7834,10 @@ impl ReadOnlyHistoryFixture {
 }
 
 #[cfg(windows)]
-impl Drop for ReadOnlyHistoryFixture {
+impl Drop for ReadOnlyDirectoryFixture {
     fn drop(&mut self) {
         if let Err(error) = self.restore() {
-            eprintln!("read-only history fixture cleanup failed: {error}");
+            eprintln!("read-only directory fixture cleanup failed: {error}");
         }
     }
 }
@@ -8061,7 +8106,8 @@ fn execute_save_permission_retry_interactions(
     )?;
 
     let history_directory = context.session_root.join("history");
-    let mut read_only_history = ReadOnlyHistoryFixture::create(&history_directory)?;
+    let history_index = snapshot_optional_file(&history_directory.join("history.json"))?;
+    let mut read_only_history = ReadOnlyDirectoryFixture::create(&history_directory)?;
     let permission_denied_before_input = !read_only_history.probe_write()?;
     if !permission_denied_before_input {
         return Err(io::Error::other(
@@ -8101,7 +8147,10 @@ fn execute_save_permission_retry_interactions(
         Some(&failure_evidence),
     )?;
 
-    let history_index_preserved_after_failure = read_only_history.history_index_preserved()?;
+    let history_index_preserved_after_failure = file_snapshot_preserved(
+        &history_directory.join("history.json"),
+        history_index.as_deref(),
+    )?;
     if !history_index_preserved_after_failure {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -8206,6 +8255,334 @@ fn execute_save_permission_retry_interactions(
         failure_selection_preserved: failure_state.selection == Some(selection),
         failure_temporary_files,
         permission_restored_before_retry,
+        retry_target: retry_path,
+        retry_width: saved.width,
+        retry_height: saved.height,
+        retry_bytes,
+        retry_content,
+        retry_temporary_files,
+        cleanup: CleanupReport {
+            session_state: retry_state.session_state,
+            overlay_count: retry_state.overlay_count,
+            pinned_count: retry_state.pinned_count,
+            capture_teardown_pending: retry_state.capture_teardown_pending,
+            visible_process_windows,
+            capture_preflight_ready: retry_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Exercises the native Save dialog's real access-denied message box, then retries the same export.
+fn execute_save_dialog_permission_retry_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    let (overlay, plan, selection, requested_selection, source) =
+        begin_selected_overlay(context, controller)?;
+    thread::sleep(context.settle_delay);
+    let selected = capture_evidence(context, "01-save-dialog-permission-selection.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_selection_ready",
+        guard_foreground(overlay.handle)?,
+        Some(&selected),
+    )?;
+
+    let export_directory = context.session_root.join("exports");
+    let read_only_directory = export_directory.join("read-only");
+    let retry_directory = export_directory.join("retry");
+    fs::create_dir_all(&read_only_directory)?;
+    fs::create_dir_all(&retry_directory)?;
+    let failure_target = read_only_directory.join("selection.png");
+    let retry_target = retry_directory.join("selection.png");
+    for target in [&failure_target, &retry_target] {
+        if target.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("isolated Save target already exists: {}", target.display()),
+            ));
+        }
+    }
+    let failure_target_snapshot = snapshot_optional_file(&failure_target)?;
+    let mut read_only_fixture = ReadOnlyDirectoryFixture::create(&read_only_directory)?;
+    let permission_denied_before_input = !read_only_fixture.probe_write()?;
+    if !permission_denied_before_input {
+        return Err(io::Error::other(
+            "native Save read-only fixture accepted a write before input",
+        ));
+    }
+    let account = read_only_fixture.account.clone();
+
+    let dialogs_before_failure = visible_common_dialogs()?;
+    let foreground = inject_mouse_click(overlay.handle, plan.save)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_save_click",
+        foreground,
+        None,
+    )?;
+    let save_dialog = wait_for_save_dialog(
+        overlay.handle,
+        controller.handle,
+        &dialogs_before_failure,
+        context.timeout,
+    )?;
+    thread::sleep(context.settle_delay);
+    set_save_dialog_path(&save_dialog, &failure_target, context.timeout)?;
+    let failure_path_evidence = capture_evidence(
+        context,
+        "02-save-dialog-permission-denied-path.png",
+        save_dialog,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_denied_path",
+        save_dialog,
+        Some(&failure_path_evidence),
+    )?;
+    inject_key(save_dialog.handle, VK_RETURN)?;
+
+    let permission_dialog =
+        wait_for_save_permission_dialog(overlay.handle, save_dialog.handle, context.timeout)?;
+    // The shell creates the modal HWND before its message text is painted; settle before taking
+    // evidence so the report captures the actual permission prompt rather than a blank frame.
+    thread::sleep(context.settle_delay);
+    let (permission_dialog_title, permission_dialog_text) = dialog_text(permission_dialog.handle)?;
+    if permission_dialog_title.trim().is_empty() && permission_dialog_text.trim().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "native Save permission dialog exposed no title or message text",
+        ));
+    }
+    let permission_evidence = capture_region_evidence(
+        context,
+        "03-save-dialog-permission-error.png",
+        permission_dialog,
+        context.display.physical_bounds,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_error",
+        permission_dialog,
+        Some(&permission_evidence),
+    )?;
+
+    // Enter dismisses the shell's fallback prompt on the Windows image used by this acceptance
+    // host; the parent Save dialog is still cancelled below before the retry is opened.
+    inject_key(permission_dialog.handle, VK_RETURN)?;
+    wait_for_window_gone(
+        permission_dialog.handle,
+        context.timeout,
+        "Save permission error dismissal",
+    )?;
+    let retained_dialog = wait_for_owned_foreground_window(
+        save_dialog.handle,
+        context.timeout,
+        "Save permission error dismissal",
+    )?;
+    let save_dialog_retained_after_failure = retained_dialog.handle == save_dialog.handle
+        && unsafe { IsWindow(retained_dialog.handle) } != 0;
+    record_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_error_dismissed",
+        retained_dialog,
+        None,
+    )?;
+
+    inject_key(retained_dialog.handle, VK_ESCAPE)?;
+    wait_for_window_gone(
+        retained_dialog.handle,
+        context.timeout,
+        "Save dialog cancellation after permission error",
+    )?;
+    wait_for_no_visible_save_dialogs(
+        context.timeout,
+        "Save dialog cancellation after permission error",
+    )?;
+    let failure_state =
+        wait_for_capture_state(context, "native Save permission failure", |state| {
+            state.session_state == "selecting"
+                && state.selection == Some(selection)
+                && state.overlay_count == 1
+                && state.capture_preflight_ready
+                && state.background_tasks_idle
+                && state.status
+                    == context.locale.format_template(
+                        UiText::SelectionDimensions,
+                        &[
+                            ("width", &selection.width().to_string()),
+                            ("height", &selection.height().to_string()),
+                        ],
+                    )
+        })?;
+    let failure_selection_preserved = failure_state.selection == Some(selection);
+    if !failure_selection_preserved {
+        return Err(io::Error::other(
+            "native Save permission failure did not preserve the committed selection",
+        ));
+    }
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let restored_evidence = capture_evidence(
+        context,
+        "04-save-dialog-permission-selection-restored.png",
+        overlay,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_selection_restored",
+        guard_foreground(overlay.handle)?,
+        Some(&restored_evidence),
+    )?;
+
+    read_only_fixture.restore()?;
+    let permission_restored_before_retry =
+        read_only_directory.is_dir() && read_only_fixture.probe_write()?;
+    if !permission_restored_before_retry {
+        return Err(io::Error::other(
+            "native Save read-only directory was not writable before retry",
+        ));
+    }
+    let failure_target_preserved =
+        file_snapshot_preserved(&failure_target, failure_target_snapshot.as_deref())?;
+    if !failure_target_preserved {
+        return Err(io::Error::other(
+            "native Save permission failure created or changed its denied target",
+        ));
+    }
+    let failure_temporary_files = temporary_file_count(&read_only_directory)?;
+    if failure_temporary_files != 0 {
+        return Err(io::Error::other(
+            "native Save permission failure left a temporary file",
+        ));
+    }
+
+    let dialogs_before_retry = visible_common_dialogs()?;
+    let foreground = inject_mouse_click(overlay.handle, plan.save)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_retry_click",
+        foreground,
+        None,
+    )?;
+    let retry_dialog = wait_for_save_dialog(
+        overlay.handle,
+        controller.handle,
+        &dialogs_before_retry,
+        context.timeout,
+    )?;
+    thread::sleep(context.settle_delay);
+    set_save_dialog_path(&retry_dialog, &retry_target, context.timeout)?;
+    let retry_path_evidence = capture_evidence(
+        context,
+        "05-save-dialog-permission-retry-path.png",
+        retry_dialog,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_retry_path",
+        retry_dialog,
+        Some(&retry_path_evidence),
+    )?;
+    inject_key(retry_dialog.handle, VK_RETURN)?;
+    wait_for_window_gone(
+        retry_dialog.handle,
+        context.timeout,
+        "Save permission retry",
+    )?;
+    wait_for_no_visible_save_dialogs(context.timeout, "Save permission retry")?;
+    wait_for_window_gone(
+        overlay.handle,
+        context.timeout,
+        "Save permission retry completion",
+    )?;
+    let retry_state = wait_for_capture_state(context, "native Save permission retry", |state| {
+        state.session_state == "completed"
+            && state.selection == Some(selection)
+            && state.overlay_count == 0
+            && state.pinned_count == 0
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+            && state.status.starts_with("Selection saved to ")
+    })?;
+    let clean = wait_for_desktop_quiescence(
+        context,
+        "native Save permission retry completion",
+        Some("06-save-dialog-permission-retry-clean.png"),
+    )?;
+    record_desktop_step(
+        report,
+        &context.report_path,
+        "save_dialog_permission_retry_clean",
+        "06-save-dialog-permission-retry-clean.png",
+        &clean,
+    )?;
+    let (saved, retry_bytes) = wait_for_saved_png(&retry_target, context.timeout)?;
+    validate_frame_dimensions(&saved, selection, "native Save permission retry PNG")?;
+    let retry_content =
+        validate_same_pixel_content(&source, &saved, "native Save permission retry PNG")?;
+    ensure_path_within(&retry_target, &context.session_root)?;
+    let retry_temporary_files = temporary_file_count(&retry_directory)?;
+    if retry_temporary_files != 0 {
+        return Err(io::Error::other(
+            "native Save permission retry left a temporary file",
+        ));
+    }
+
+    let relative = |path: &Path| {
+        path.strip_prefix(&context.session_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    let read_only_path = relative(&read_only_directory);
+    let failure_path = relative(&failure_target);
+    let retry_path = relative(&retry_target);
+    let permission_dialog_screenshot = permission_evidence.file_name.clone();
+
+    unsafe { ShowWindow(controller.handle, SW_HIDE) };
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "native Save permission controller hide",
+    )?;
+    ensure_capture_input_released()?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "native Save permission retry cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.save_dialog_permission_retry = Some(SaveDialogPermissionRetryReport {
+        requested_selection,
+        selection,
+        read_only_directory: read_only_path,
+        failure_target: failure_path,
+        account,
+        permission_denied_before_input,
+        permission_dialog_title,
+        permission_dialog_text,
+        permission_dialog_screenshot,
+        save_dialog_retained_after_failure,
+        failure_target_preserved,
+        failure_selection_preserved,
+        failure_temporary_files,
+        selection_restored_after_dialog_failure: failure_state.selection == Some(selection),
+        permission_restored_before_retry,
+        retry_dialog_reopened: true,
         retry_target: retry_path,
         retry_width: saved.width,
         retry_height: saved.height,
@@ -10936,6 +11313,69 @@ fn wait_for_save_dialog(
 }
 
 #[cfg(windows)]
+/// Waits for the native permission message box that belongs to the open Save dialog.
+fn wait_for_save_permission_dialog(
+    overlay: *mut c_void,
+    save_dialog: *mut c_void,
+    timeout: Duration,
+) -> io::Result<NativeWindow> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let candidates = process_windows()?
+            .into_iter()
+            .filter(|window| window.handle != overlay && window.handle != save_dialog)
+            .filter(|window| window_class_name(window.handle).is_ok_and(|class| class == "#32770"))
+            .filter(|window| {
+                owner_chain_contains(window.handle, save_dialog)
+                    || owner_chain_contains(window.handle, overlay)
+            })
+            .collect::<Vec<_>>();
+        if candidates.len() > 1 {
+            return Err(io::Error::other(
+                "multiple owned Save permission dialogs appeared; input injection was aborted",
+            ));
+        }
+        if let Some(dialog) = candidates.into_iter().next()
+            && unsafe { GetForegroundWindow() } == dialog.handle
+        {
+            return Ok(dialog);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the owned Save permission dialog did not become the foreground window",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+/// Waits until a known process-owned dialog is visible and has regained foreground input.
+fn wait_for_owned_foreground_window(
+    handle: *mut c_void,
+    timeout: Duration,
+    action: &str,
+) -> io::Result<NativeWindow> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if unsafe { IsWindow(handle) } != 0
+            && unsafe { IsWindowVisible(handle) } != 0
+            && unsafe { GetForegroundWindow() } == handle
+        {
+            return owned_window(handle);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("process window did not regain foreground input after {action}"),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
 /// Waits until every visible process-owned common dialog is gone before the next UI evidence step.
 fn wait_for_no_visible_save_dialogs(timeout: Duration, action: &str) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
@@ -10957,6 +11397,36 @@ fn wait_for_no_visible_save_dialogs(timeout: Duration, action: &str) -> io::Resu
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+#[cfg(windows)]
+/// Collects the native dialog title and distinct visible child-control text for diagnostics.
+fn dialog_text(dialog: *mut c_void) -> io::Result<(String, String)> {
+    struct Search {
+        handles: Vec<*mut c_void>,
+    }
+
+    unsafe extern "system" fn callback(window: *mut c_void, parameter: LPARAM) -> BOOL {
+        // SAFETY: EnumChildWindows returns the pointer supplied for this synchronous traversal.
+        let search = unsafe { &mut *(parameter as *mut Search) };
+        search.handles.push(window);
+        1
+    }
+
+    let mut search = Search {
+        handles: Vec::new(),
+    };
+    // SAFETY: callback only borrows search for the duration of this recursive child enumeration.
+    unsafe { EnumChildWindows(dialog, Some(callback), &mut search as *mut Search as LPARAM) };
+    let mut texts = Vec::new();
+    for handle in search.handles {
+        let text = window_text(handle)?.trim_matches('\0').trim().to_owned();
+        if !text.is_empty() && !texts.iter().any(|existing| existing == &text) {
+            texts.push(text);
+        }
+    }
+    let title = window_text(dialog)?.trim_matches('\0').trim().to_owned();
+    Ok((title, texts.join(" | ")))
 }
 
 #[cfg(windows)]
@@ -13172,6 +13642,36 @@ mod tests {
                 "--allow-input",
                 "--capture-scenario",
                 "save-permission-retry",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_accepts_save_dialog_permission_retry_scenario_without_clipboard_access() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "save-dialog-permission-retry",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::SaveDialogPermissionRetry
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_save_dialog_permission_retry"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(!options.allow_system_clipboard);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "save-dialog-permission-retry",
                 "--allow-system-clipboard",
             ]))
             .is_err()
