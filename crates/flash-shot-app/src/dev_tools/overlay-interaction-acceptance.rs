@@ -130,6 +130,7 @@ const MAX_RECORDING_GRID_MAE: f64 = 18.0;
 const WINDOW_TARGET_CHILD_MODE: &str = "--window-target-child";
 const SCROLL_TARGET_CHILD_MODE: &str = "--scroll-target-child";
 const CLIPBOARD_CONSUMER_CHILD_MODE: &str = "--clipboard-consumer-child";
+const CLIPBOARD_CONTENTION_HOLDER_CHILD_MODE: &str = "--clipboard-contention-holder-child";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const WINDOW_FIXTURE_CLASS: &str = "FlashShotRecordingWindowFixture";
 const SCROLL_FIXTURE_CLASS: &str = "FlashShotScrollWindowFixture";
@@ -199,6 +200,7 @@ enum CaptureScenarioOption {
     ScrollRoundtrip,
     AnnotationRegression,
     CopyCancellationRace,
+    ClipboardContentionRetry,
     SaveFailureRetry,
 }
 
@@ -213,6 +215,7 @@ impl CaptureScenarioOption {
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
             Self::AnnotationRegression => "capture_annotation_regression",
             Self::CopyCancellationRace => "capture_copy_cancellation_race",
+            Self::ClipboardContentionRetry => "capture_clipboard_contention_retry",
             Self::SaveFailureRetry => "capture_save_failure_retry",
         }
     }
@@ -225,6 +228,7 @@ impl CaptureScenarioOption {
                 | Self::SelectionTransform
                 | Self::ScrollRoundtrip
                 | Self::AnnotationRegression
+                | Self::ClipboardContentionRetry
                 | Self::SaveFailureRetry
         )
     }
@@ -367,10 +371,13 @@ impl Options {
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
                         "annotation-regression" => CaptureScenarioOption::AnnotationRegression,
                         "copy-cancellation-race" => CaptureScenarioOption::CopyCancellationRace,
+                        "clipboard-contention-retry" => {
+                            CaptureScenarioOption::ClipboardContentionRetry
+                        }
                         "save-failure-retry" => CaptureScenarioOption::SaveFailureRetry,
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', or 'save-failure-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', or 'save-failure-retry'"
                     .to_owned(),
                             );
                         }
@@ -436,21 +443,33 @@ impl Options {
                     .to_owned(),
             );
         }
+        if options.capture_scenario == CaptureScenarioOption::ClipboardContentionRetry
+            && !options.allow_system_clipboard
+        {
+            return Err(
+                "clipboard-contention-retry changes the Windows clipboard; rerun with --allow-system-clipboard"
+                    .to_owned(),
+            );
+        }
         let copy_capable_capture = matches!(
             options.capture_scenario,
             CaptureScenarioOption::Standard
                 | CaptureScenarioOption::CopyOnly
                 | CaptureScenarioOption::CopyCancellationRace
+                | CaptureScenarioOption::ClipboardContentionRetry
         ) && options.record_target.is_none()
             && !scroll_export_seen;
         if copy_trigger_seen && !copy_capable_capture {
             return Err(
-                "--copy-trigger is only valid with standard or copy-only capture".to_owned(),
+                "--copy-trigger is only valid with standard, copy-only, or clipboard-contention-retry capture"
+                    .to_owned(),
             );
         }
         let standard_system_copy = matches!(
             options.capture_scenario,
-            CaptureScenarioOption::Standard | CaptureScenarioOption::CopyOnly
+            CaptureScenarioOption::Standard
+                | CaptureScenarioOption::CopyOnly
+                | CaptureScenarioOption::ClipboardContentionRetry
         ) && options.record_target.is_none()
             && !scroll_export_seen;
         let pins_system_copy = options.capture_scenario == CaptureScenarioOption::PinsCoexist;
@@ -462,7 +481,7 @@ impl Options {
             && !scroll_system_copy
         {
             return Err(
-                "--allow-system-clipboard is only valid with standard capture, pins-coexist, or scroll-roundtrip Copy"
+                "--allow-system-clipboard is only valid with standard capture, copy-only, clipboard-contention-retry, pins-coexist, or scroll-roundtrip Copy"
                     .to_owned(),
             );
         }
@@ -493,7 +512,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1296,6 +1315,7 @@ struct AcceptanceReport {
     recording: Option<RecordingReport>,
     capture_actions: Option<CaptureActionReport>,
     copy_cancellation_race: Option<CopyCancellationRaceReport>,
+    clipboard_contention_retry: Option<ClipboardContentionRetryReport>,
     narrow_edge: Option<NarrowEdgeReport>,
     pins_coexist: Option<PinsCoexistReport>,
     selection_transform: Option<SelectionTransformReport>,
@@ -1779,6 +1799,44 @@ struct CopyCancellationRaceReport {
 }
 
 #[derive(serde::Serialize)]
+struct ClipboardContentionRetryReport {
+    trigger: &'static str,
+    action: &'static str,
+    requested_selection: PhysicalRect,
+    selection: PhysicalRect,
+    holder_process_id: u32,
+    holder_held_before_input: bool,
+    clipboard_sequence_before: u32,
+    failure_status: String,
+    failure_selection_preserved: bool,
+    failure_clipboard_unchanged: bool,
+    holder_released_before_retry: bool,
+    clipboard_sequence_after: u32,
+    clipboard_sequence_changed: bool,
+    copied_bounds: PhysicalRect,
+    width: u32,
+    height: u32,
+    png_path: String,
+    dib_path: String,
+    consumer_image_path: String,
+    png_bytes: usize,
+    dib_bytes: usize,
+    png_content: ExactPixelMatchReport,
+    dib_content: ExactPixelMatchReport,
+    consumer_image_content: ExactPixelMatchReport,
+    timing_clock: &'static str,
+    timing_boundary: &'static str,
+    input_to_consumer_readable_ms: f64,
+    consumer_result_path: String,
+    consumer_ready_before_input: bool,
+    consumer_observing_before_input: bool,
+    consumer_cleaned_up: bool,
+    editor_retained_after_retry: bool,
+    cleanup_after_escape: bool,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
 struct CaptureStateEvidence {
     session_state: String,
     selection: Option<PhysicalRect>,
@@ -1972,6 +2030,17 @@ struct ClipboardConsumer {
 }
 
 #[cfg(windows)]
+struct ClipboardContentionHolder {
+    child: process::Child,
+    process_group: ProcessGroup,
+    process_id: u32,
+    held_path: PathBuf,
+    release_path: PathBuf,
+    released_path: PathBuf,
+    stopped: bool,
+}
+
+#[cfg(windows)]
 #[derive(serde::Deserialize, serde::Serialize)]
 struct ClipboardConsumerResult {
     previous_sequence: u32,
@@ -1991,6 +2060,16 @@ pub(super) fn entrypoint() {
     {
         if let Err(error) = run_clipboard_consumer_child(std::env::args_os().skip(2)) {
             eprintln!("clipboard consumer failed: {error}");
+            process::exit(1);
+        }
+        return;
+    }
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new(CLIPBOARD_CONTENTION_HOLDER_CHILD_MODE))
+    {
+        if let Err(error) = run_clipboard_contention_holder_child(std::env::args_os().skip(2)) {
+            eprintln!("clipboard contention holder failed: {error}");
             process::exit(1);
         }
         return;
@@ -2117,6 +2196,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             CaptureScenarioOption::Standard
             | CaptureScenarioOption::CopyOnly
             | CaptureScenarioOption::CopyCancellationRace
+            | CaptureScenarioOption::ClipboardContentionRetry
             | CaptureScenarioOption::PinsCoexist
             | CaptureScenarioOption::SelectionTransform
             | CaptureScenarioOption::ScrollRoundtrip
@@ -2198,9 +2278,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 22 records the
-        // real Quick Save destination failure and retry evidence.
-        schema_version: 22,
+        // Increment when the machine-readable report shape changes. Schema 23 records real
+        // system clipboard contention failure and retry evidence.
+        schema_version: 23,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2224,6 +2304,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         recording: None,
         capture_actions: None,
         copy_cancellation_race: None,
+        clipboard_contention_retry: None,
         narrow_edge: None,
         pins_coexist: None,
         selection_transform: None,
@@ -2541,6 +2622,71 @@ fn run_clipboard_consumer_child(arguments: impl IntoIterator<Item = OsString>) -
         serde_json::to_vec_pretty(&result).map_err(io::Error::other)?,
     )?;
     fs::rename(temporary, result_path)
+}
+
+#[cfg(windows)]
+/// Holds the Windows clipboard without changing its contents until the parent releases it.
+fn run_clipboard_contention_holder_child(
+    arguments: impl IntoIterator<Item = OsString>,
+) -> io::Result<()> {
+    let mut arguments = arguments.into_iter();
+    let timeout_ms = arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid holder timeout"))?;
+    let held_path = PathBuf::from(arguments.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard held path is missing",
+        )
+    })?);
+    let release_path = PathBuf::from(arguments.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard release path is missing",
+        )
+    })?);
+    let released_path = PathBuf::from(arguments.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard released path is missing",
+        )
+    })?);
+    if arguments.next().is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clipboard contention holder received unexpected arguments",
+        ));
+    }
+
+    // A null owner is sufficient for a private task to hold the process-global clipboard lock;
+    // no clipboard format is opened, emptied, or written by this fixture.
+    if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if let Err(error) = fs::write(&held_path, b"held") {
+        // SAFETY: this child owns the successful OpenClipboard call above.
+        unsafe { CloseClipboard() };
+        return Err(error);
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    while !release_path.is_file() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    let released = release_path.is_file();
+    // SAFETY: this child owns the successful OpenClipboard call above.
+    unsafe { CloseClipboard() };
+    fs::write(&released_path, b"released")?;
+    if released {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "clipboard contention holder release was not requested before its deadline",
+        ))
+    }
 }
 
 #[cfg(windows)]
@@ -3493,6 +3639,167 @@ impl Drop for ClipboardConsumer {
 }
 
 #[cfg(windows)]
+impl ClipboardContentionHolder {
+    /// Starts a no-window child that holds the clipboard lock without changing its contents.
+    fn launch(session_root: &Path, timeout: Duration) -> io::Result<Self> {
+        let holder_root = session_root.join("clipboard-contention-holder");
+        fs::create_dir_all(&holder_root)?;
+        let held_path = holder_root.join("held");
+        let release_path = holder_root.join("release");
+        let released_path = holder_root.join("released");
+        for path in [&held_path, &release_path, &released_path] {
+            if path.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "clipboard contention path already exists: {}",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+        let process_group = ProcessGroup::create()?;
+        let mut child = process::Command::new(std::env::current_exe()?)
+            .arg(CLIPBOARD_CONTENTION_HOLDER_CHILD_MODE)
+            .arg(timeout.as_millis().to_string())
+            .arg(&held_path)
+            .arg(&release_path)
+            .arg(&released_path)
+            .stdin(process::Stdio::null())
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::inherit())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()?;
+        if let Err(error) = process_group.assign(&child) {
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "clipboard contention holder could not join its Job Object ({error}); cleanup={cleanup:?}"
+            )));
+        }
+        let process_id = child.id();
+        let deadline = Instant::now() + timeout;
+        loop {
+            if held_path.is_file() {
+                break;
+            }
+            if let Some(status) = child.try_wait()? {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!(
+                        "clipboard contention holder exited before holding the clipboard: {status}"
+                    ),
+                ));
+            }
+            if Instant::now() >= deadline {
+                let cleanup = terminate_process_group_bounded(
+                    &process_group,
+                    &mut child,
+                    Duration::from_millis(500),
+                );
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "clipboard contention holder did not acquire the clipboard (cleanup={cleanup:?})"
+                    ),
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Ok(Self {
+            child,
+            process_group,
+            process_id,
+            held_path,
+            release_path,
+            released_path,
+            stopped: false,
+        })
+    }
+
+    /// Requests release and waits until the child closes and reaps its clipboard handle.
+    fn release_and_wait(&mut self, timeout: Duration) -> io::Result<()> {
+        fs::write(&self.release_path, b"release")?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.released_path.is_file() {
+                match self.child.try_wait()? {
+                    Some(status) if status.success() => {
+                        self.stopped = true;
+                        return Ok(());
+                    }
+                    Some(status) => {
+                        self.stopped = true;
+                        return Err(io::Error::other(format!(
+                            "clipboard contention holder exited with {status} after release"
+                        )));
+                    }
+                    None => {}
+                }
+            } else if let Some(status) = self.child.try_wait()? {
+                self.stopped = true;
+                return Err(io::Error::other(format!(
+                    "clipboard contention holder exited with {status} before release"
+                )));
+            }
+            if Instant::now() >= deadline {
+                let cleanup = self.terminate_bounded(Duration::from_millis(500));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "clipboard contention holder did not release the clipboard (cleanup={cleanup:?})"
+                    ),
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Terminates and reaps a holder that failed before the explicit release path.
+    fn terminate_bounded(&mut self, timeout: Duration) -> io::Result<()> {
+        let terminate_error = self.process_group.terminate().err();
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.child.try_wait()? {
+                Some(_) => {
+                    self.stopped = true;
+                    return Ok(());
+                }
+                None if Instant::now() >= deadline => break,
+                None => thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        let kill_error = self.child.kill().err();
+        let reap_deadline = Instant::now() + Duration::from_millis(250);
+        while Instant::now() < reap_deadline {
+            if self.child.try_wait()?.is_some() {
+                self.stopped = true;
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "clipboard contention holder could not be reaped (terminate={terminate_error:?}, kill={kill_error:?})"
+            ),
+        ))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ClipboardContentionHolder {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = self.terminate_bounded(Duration::from_millis(500));
+        }
+    }
+}
+
+#[cfg(windows)]
 fn wait_for_scroll_fixture_window(
     child: &mut process::Child,
     process_id: u32,
@@ -3678,6 +3985,9 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::CopyOnly) => execute_copy_only_interactions(context, report),
         (None, CaptureScenarioOption::CopyCancellationRace) => {
             execute_copy_cancellation_race_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::ClipboardContentionRetry) => {
+            execute_clipboard_contention_retry_interactions(context, report)
         }
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
@@ -6652,6 +6962,294 @@ fn execute_copy_cancellation_race_interactions(
         serde_json::to_string(&race_report).map_err(io::Error::other)?
     );
     report.copy_cancellation_race = Some(race_report);
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Holds the real clipboard through one failed Copy, releases it, and proves the same selection
+/// can be copied again with all native formats and resources intact.
+fn execute_clipboard_contention_retry_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    let (overlay, plan, selection, requested_selection, source) =
+        begin_selected_overlay(context, controller)?;
+    thread::sleep(context.settle_delay);
+    let selected = capture_evidence(context, "12-clipboard-contention-selection.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "clipboard_contention_selection_ready",
+        guard_foreground(overlay.handle)?,
+        Some(&selected),
+    )?;
+
+    let mut consumer = ClipboardConsumer::launch(&context.session_root, context.timeout)?;
+    let consumer_ready_before_input = consumer.ready_path.is_file();
+    let clipboard_sequence_before = consumer.arm()?;
+    let consumer_observing_before_input = wait_for_path(
+        &consumer.observing_path,
+        context.timeout,
+        "clipboard consumer observing marker",
+    )?;
+    let mut holder = ClipboardContentionHolder::launch(&context.session_root, context.timeout)?;
+    let holder_held_before_input = holder.held_path.is_file();
+    // The holder must not mutate the user's existing clipboard before the first production input.
+    let before_input_sequence = unsafe { GetClipboardSequenceNumber() };
+    if before_input_sequence != clipboard_sequence_before {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "system clipboard changed before contention input ({clipboard_sequence_before} -> {before_input_sequence})"
+            ),
+        ));
+    }
+
+    let (failure_foreground, _failure_started_qpc) =
+        inject_copy_trigger(overlay.handle, plan.copy, context.copy_trigger)?;
+    record_step(
+        report,
+        &context.report_path,
+        "clipboard_contention_failure_trigger",
+        failure_foreground,
+        None,
+    )?;
+    let failure_state = wait_for_capture_state(context, "clipboard contention failure", |state| {
+        state.session_state == "selecting"
+            && state.selection == Some(selection)
+            && state.overlay_count == 1
+            && !state.selection_copy_active
+            && !state.clipboard_write_active
+            && !state.capture_teardown_pending
+            && state.capture_preflight_ready
+            && state.status.starts_with("Copy failed:")
+    })?;
+    let failure_clipboard_unchanged =
+        unsafe { GetClipboardSequenceNumber() } == clipboard_sequence_before;
+    if !failure_clipboard_unchanged {
+        return Err(io::Error::other(
+            "failed Copy changed the system clipboard before the retry",
+        ));
+    }
+    let failure_selection_preserved = failure_state.selection == Some(selection);
+    if !failure_selection_preserved {
+        return Err(io::Error::other(
+            "clipboard contention failure discarded the editable selection",
+        ));
+    }
+    // Let GPUI paint the settled failure message before taking the user-visible evidence shot.
+    thread::sleep(context.settle_delay);
+    let failure = capture_evidence(context, "13-clipboard-contention-failed.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "clipboard_contention_failure_reported",
+        guard_foreground(overlay.handle)?,
+        Some(&failure),
+    )?;
+
+    holder.release_and_wait(context.timeout)?;
+    let holder_released_before_retry = holder.stopped && holder.released_path.is_file();
+    if !holder_released_before_retry {
+        return Err(io::Error::other(
+            "clipboard contention holder did not confirm release before retry",
+        ));
+    }
+
+    let (retry_foreground, retry_started_qpc) =
+        inject_copy_trigger(overlay.handle, plan.copy, context.copy_trigger)?;
+    record_step(
+        report,
+        &context.report_path,
+        "clipboard_contention_retry_trigger",
+        retry_foreground,
+        None,
+    )?;
+    let consumer_result =
+        consumer.wait_result_with_probe(context.timeout, |remaining| match query_capture_state(
+            context,
+            remaining.min(Duration::from_millis(100)),
+        ) {
+            Ok(state)
+                if state.status.starts_with("Copy failed:") && !state.selection_copy_active =>
+            {
+                Err(io::Error::other(state.status))
+            }
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::TimedOut && !remaining.is_zero() => Ok(()),
+            Err(error) => Err(error),
+        })?;
+    let png_path = PathBuf::from(&consumer_result.png_path);
+    let dib_path = PathBuf::from(&consumer_result.dib_path);
+    let consumer_image_path = PathBuf::from(&consumer_result.consumer_image_path);
+    for path in [&png_path, &dib_path, &consumer_image_path] {
+        ensure_path_within(path, &context.session_root)?;
+    }
+    ensure_path_within(&consumer.result_path, &context.session_root)?;
+    let copied = CaptureFrame::open_png(&consumer_image_path)?;
+    let png = fs::read(&png_path)?;
+    let dib = fs::read(&dib_path)?;
+    if consumer_result.previous_sequence != clipboard_sequence_before
+        || consumer_result.png_bytes != png.len()
+        || consumer_result.dib_bytes != dib.len()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clipboard contention retry result does not match its launch sequence or artifact sizes",
+        ));
+    }
+    let clipboard_sequence_after = unsafe { GetClipboardSequenceNumber() };
+    if clipboard_sequence_after != consumer_result.observed_sequence {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "system clipboard changed after contention retry consumer read ({} -> {clipboard_sequence_after})",
+                consumer_result.observed_sequence
+            ),
+        ));
+    }
+    let retry_state =
+        wait_for_capture_state(context, "clipboard contention retry completion", |state| {
+            selection_copy_completed_in_editor(state, selection)
+        })?;
+    if retry_state.selection != Some(selection) {
+        return Err(io::Error::other(
+            "clipboard contention retry no longer reports its editable selection",
+        ));
+    }
+    validate_frame_dimensions(&copied, selection, "clipboard contention retry image")?;
+    let consumer_image_content =
+        validate_same_pixel_content(&source, &copied, "clipboard contention retry image")?;
+    let decoded_png = CaptureFrame::open_png(&png_path)?;
+    validate_frame_dimensions(&decoded_png, selection, "clipboard contention retry PNG")?;
+    let png_content =
+        validate_same_pixel_content(&source, &decoded_png, "clipboard contention retry PNG")?;
+    let decoded_dib = decode_clipboard_dib(&dib)?;
+    validate_frame_dimensions(&decoded_dib, selection, "clipboard contention retry CF_DIB")?;
+    let dib_content =
+        validate_same_pixel_content(&source, &decoded_dib, "clipboard contention retry CF_DIB")?;
+    let input_to_consumer_readable_ms =
+        qpc_elapsed_ms(retry_started_qpc, consumer_result.consumer_read_qpc_ticks)?;
+    if !consumer_ready_before_input
+        || !consumer_observing_before_input
+        || !consumer.stopped
+        || clipboard_sequence_after == clipboard_sequence_before
+    {
+        return Err(io::Error::other(
+            "clipboard contention retry consumer was not ready, did not observe a sequence change, or was not reaped",
+        ));
+    }
+    let final_sequence = unsafe { GetClipboardSequenceNumber() };
+    if final_sequence != clipboard_sequence_after {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "system clipboard changed during contention retry cleanup ({clipboard_sequence_after} -> {final_sequence})"
+            ),
+        ));
+    }
+    let editor_retained_after_retry = selection_copy_completed_in_editor(&retry_state, selection);
+    let retry = capture_evidence(
+        context,
+        "14-clipboard-contention-retry-complete.png",
+        overlay,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "clipboard_contention_retry_complete",
+        guard_foreground(overlay.handle)?,
+        Some(&retry),
+    )?;
+
+    let cleanup_foreground = focus_and_inject_key(overlay, VK_ESCAPE, context.timeout)?;
+    wait_for_window_gone(
+        overlay.handle,
+        context.timeout,
+        "clipboard contention Escape cleanup",
+    )?;
+    let cleanup_state =
+        wait_for_capture_state(context, "clipboard contention Escape cleanup", |state| {
+            state.session_state == "idle"
+                && state.selection.is_none()
+                && state.overlay_count == 0
+                && state.pinned_count == 0
+                && !state.capture_teardown_pending
+                && state.background_tasks_idle
+                && state.capture_preflight_ready
+        })?;
+    record_step(
+        report,
+        &context.report_path,
+        "clipboard_contention_retry_cleanup",
+        cleanup_foreground,
+        None,
+    )?;
+    ensure_capture_input_released()?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "clipboard contention retry cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    let relative = |path: &Path| {
+        path.strip_prefix(&context.session_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    report.clipboard_contention_retry = Some(ClipboardContentionRetryReport {
+        trigger: context.copy_trigger.label(),
+        action: match context.copy_trigger {
+            CopyTriggerOption::Toolbar => "toolbar_click",
+            CopyTriggerOption::Enter => "enter_key",
+        },
+        requested_selection,
+        selection,
+        holder_process_id: holder.process_id,
+        holder_held_before_input,
+        clipboard_sequence_before,
+        failure_status: failure_state.status,
+        failure_selection_preserved,
+        failure_clipboard_unchanged,
+        holder_released_before_retry,
+        clipboard_sequence_after,
+        clipboard_sequence_changed: clipboard_sequence_after != clipboard_sequence_before,
+        copied_bounds: copied.bounds,
+        width: copied.width,
+        height: copied.height,
+        png_path: relative(&png_path),
+        dib_path: relative(&dib_path),
+        consumer_image_path: relative(&consumer_image_path),
+        png_bytes: png.len(),
+        dib_bytes: dib.len(),
+        png_content,
+        dib_content,
+        consumer_image_content,
+        timing_clock: "windows_qpc",
+        timing_boundary: "retry_button_down_batch_to_consumer_decoded_image",
+        input_to_consumer_readable_ms,
+        consumer_result_path: relative(&consumer.result_path),
+        consumer_ready_before_input,
+        consumer_observing_before_input,
+        consumer_cleaned_up: consumer.stopped,
+        editor_retained_after_retry,
+        cleanup_after_escape: cleanup_state.session_state == "idle"
+            && cleanup_state.selection.is_none()
+            && cleanup_state.overlay_count == 0
+            && !cleanup_state.capture_teardown_pending
+            && cleanup_state.capture_preflight_ready,
+        cleanup: CleanupReport {
+            session_state: cleanup_state.session_state,
+            overlay_count: cleanup_state.overlay_count,
+            pinned_count: cleanup_state.pinned_count,
+            capture_teardown_pending: cleanup_state.capture_teardown_pending,
+            visible_process_windows,
+            capture_preflight_ready: cleanup_state.capture_preflight_ready,
+        },
+    });
     write_report(&context.report_path, report)
 }
 
@@ -12089,6 +12687,39 @@ mod tests {
                 "--capture-scenario",
                 "copy-cancellation-race",
                 "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_accepts_clipboard_contention_retry_only_with_clipboard_authorization() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "clipboard-contention-retry",
+            "--allow-system-clipboard",
+            "--copy-trigger",
+            "enter",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::ClipboardContentionRetry
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_clipboard_contention_retry"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(options.allow_system_clipboard);
+        assert_eq!(options.copy_trigger, CopyTriggerOption::Enter);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "clipboard-contention-retry",
             ]))
             .is_err()
         );
