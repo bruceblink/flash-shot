@@ -202,6 +202,7 @@ enum CaptureScenarioOption {
     CopyCancellationRace,
     ClipboardContentionRetry,
     SaveFailureRetry,
+    SavePermissionRetry,
 }
 
 impl CaptureScenarioOption {
@@ -217,6 +218,7 @@ impl CaptureScenarioOption {
             Self::CopyCancellationRace => "capture_copy_cancellation_race",
             Self::ClipboardContentionRetry => "capture_clipboard_contention_retry",
             Self::SaveFailureRetry => "capture_save_failure_retry",
+            Self::SavePermissionRetry => "capture_save_permission_retry",
         }
     }
 
@@ -230,6 +232,7 @@ impl CaptureScenarioOption {
                 | Self::AnnotationRegression
                 | Self::ClipboardContentionRetry
                 | Self::SaveFailureRetry
+                | Self::SavePermissionRetry
         )
     }
 }
@@ -375,9 +378,10 @@ impl Options {
                             CaptureScenarioOption::ClipboardContentionRetry
                         }
                         "save-failure-retry" => CaptureScenarioOption::SaveFailureRetry,
+                        "save-permission-retry" => CaptureScenarioOption::SavePermissionRetry,
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', or 'save-failure-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'save-failure-retry', or 'save-permission-retry'"
                     .to_owned(),
                             );
                         }
@@ -512,7 +516,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry|save-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1322,6 +1326,7 @@ struct AcceptanceReport {
     scroll_roundtrip: Option<ScrollRoundtripReport>,
     annotation_regression: Option<AnnotationRegressionReport>,
     save_failure_retry: Option<SaveFailureRetryReport>,
+    save_permission_retry: Option<SavePermissionRetryReport>,
     error: Option<String>,
 }
 
@@ -1594,6 +1599,27 @@ struct SaveFailureRetryReport {
     failure_status: String,
     failure_selection_preserved: bool,
     failure_temporary_files: usize,
+    retry_width: u32,
+    retry_height: u32,
+    retry_bytes: u64,
+    retry_content: ExactPixelMatchReport,
+    retry_temporary_files: usize,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct SavePermissionRetryReport {
+    requested_selection: PhysicalRect,
+    selection: PhysicalRect,
+    read_only_history: String,
+    account: String,
+    permission_denied_before_input: bool,
+    history_index_preserved_after_failure: bool,
+    failure_status: String,
+    failure_selection_preserved: bool,
+    failure_temporary_files: usize,
+    permission_restored_before_retry: bool,
+    retry_target: String,
     retry_width: u32,
     retry_height: u32,
     retry_bytes: u64,
@@ -2201,7 +2227,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::SelectionTransform
             | CaptureScenarioOption::ScrollRoundtrip
             | CaptureScenarioOption::AnnotationRegression
-            | CaptureScenarioOption::SaveFailureRetry,
+            | CaptureScenarioOption::SaveFailureRetry
+            | CaptureScenarioOption::SavePermissionRetry,
         ) => (520.0, 640.0),
     };
 
@@ -2278,9 +2305,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 23 records real
-        // system clipboard contention failure and retry evidence.
-        schema_version: 23,
+        // Increment when the machine-readable report shape changes. Schema 24 records real
+        // read-only-directory Quick Save failure and retry evidence.
+        schema_version: 24,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2311,6 +2338,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         scroll_roundtrip: None,
         annotation_regression: None,
         save_failure_retry: None,
+        save_permission_retry: None,
         error: None,
     }
 }
@@ -3981,6 +4009,9 @@ fn run_interaction_sequence(
         }
         (None, CaptureScenarioOption::SaveFailureRetry) => {
             execute_save_failure_retry_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::SavePermissionRetry) => {
+            execute_save_permission_retry_interactions(context, report)
         }
         (None, CaptureScenarioOption::CopyOnly) => execute_copy_only_interactions(context, report),
         (None, CaptureScenarioOption::CopyCancellationRace) => {
@@ -7610,6 +7641,163 @@ fn temporary_file_count(directory: &Path) -> io::Result<usize> {
 }
 
 #[cfg(windows)]
+/// Runs the Windows ACL utility against a directory owned by this disposable acceptance session.
+fn run_icacls(directory: &Path, arguments: &[OsString]) -> io::Result<()> {
+    let output = process::Command::new("icacls")
+        .arg(directory)
+        .args(arguments)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr);
+    let detail = if detail.trim().is_empty() {
+        String::from_utf8_lossy(&output.stdout)
+    } else {
+        detail
+    };
+    Err(io::Error::other(format!(
+        "icacls {} failed with {}: {}",
+        directory.display(),
+        output.status,
+        detail.trim()
+    )))
+}
+
+#[cfg(windows)]
+/// Uses the current Windows account name so the deny ACE applies to the process running Quick Save.
+fn current_windows_account() -> io::Result<String> {
+    let user = std::env::var("USERNAME")
+        .map_err(|error| io::Error::other(format!("USERNAME is unavailable: {error}")))?;
+    if user.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "USERNAME is empty",
+        ));
+    }
+    let domain = std::env::var("USERDOMAIN").unwrap_or_default();
+    if domain.is_empty() {
+        Ok(user)
+    } else {
+        Ok(format!("{domain}\\{user}"))
+    }
+}
+
+#[cfg(windows)]
+/// Holds a real deny-write ACL over the isolated history root until the retry is ready.
+struct ReadOnlyHistoryFixture {
+    directory: PathBuf,
+    account: String,
+    history_index: Option<Vec<u8>>,
+    restored: bool,
+}
+
+#[cfg(windows)]
+impl ReadOnlyHistoryFixture {
+    /// Applies a deny-write ACE and probes file creation so the first Quick Save cannot be a false
+    /// positive caused by a merely invalid or replaced destination.
+    fn create(directory: &Path) -> io::Result<Self> {
+        if !directory.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("history directory is missing: {}", directory.display()),
+            ));
+        }
+        let history_index = match fs::read(directory.join("history.json")) {
+            Ok(index) => Some(index),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let account = current_windows_account()?;
+        let deny = OsString::from(format!("{account}:(OI)(CI)(W)"));
+        run_icacls(directory, &[OsString::from("/deny"), deny])?;
+        let fixture = Self {
+            directory: directory.to_owned(),
+            account,
+            history_index,
+            restored: false,
+        };
+        if fixture.probe_write()? {
+            let mut fixture = fixture;
+            let restore_result = fixture.restore();
+            return Err(io::Error::other(format!(
+                "icacls reported a deny ACE but the history directory still accepted writes{}",
+                restore_result
+                    .err()
+                    .map(|error| format!("; ACL restore failed: {error}"))
+                    .unwrap_or_default()
+            )));
+        }
+        Ok(fixture)
+    }
+
+    /// Returns false only for the expected access-denied result; successful creation is a fixture
+    /// error because the application would not be exercising a real permission failure.
+    fn probe_write(&self) -> io::Result<bool> {
+        let path = self.directory.join(format!(
+            ".flash-shot-permission-probe-{}.tmp",
+            process::id()
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                drop(file);
+                fs::remove_file(path)?;
+                Ok(true)
+            }
+            Err(error)
+                if error.kind() == io::ErrorKind::PermissionDenied
+                    || error.raw_os_error() == Some(5) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Confirms the failed export did not create or rewrite the managed history index.
+    fn history_index_preserved(&self) -> io::Result<bool> {
+        let path = self.directory.join("history.json");
+        match &self.history_index {
+            Some(index) => Ok(fs::read(path)? == *index),
+            None => Ok(!path.exists()),
+        }
+    }
+
+    /// Removes only the fixture's deny ACE, then probes a real file create before allowing retry.
+    fn restore(&mut self) -> io::Result<()> {
+        if self.restored {
+            return Ok(());
+        }
+        run_icacls(
+            &self.directory,
+            &[OsString::from("/remove:d"), OsString::from(&self.account)],
+        )?;
+        if !self.probe_write()? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "history directory remained read-only after ACL restore",
+            ));
+        }
+        self.restored = true;
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ReadOnlyHistoryFixture {
+    fn drop(&mut self) {
+        if let Err(error) = self.restore() {
+            eprintln!("read-only history fixture cleanup failed: {error}");
+        }
+    }
+}
+
+#[cfg(windows)]
 /// Replaces the managed history directory with a file so Quick Save reaches a real destination
 /// failure without making the native Save dialog part of the fault fixture.
 struct UnavailableHistoryFixture {
@@ -7834,6 +8022,191 @@ fn execute_save_failure_retry_interactions(
         failure_status: failure_state.status,
         failure_selection_preserved: failure_state.selection == Some(selection),
         failure_temporary_files,
+        retry_width: saved.width,
+        retry_height: saved.height,
+        retry_bytes,
+        retry_content,
+        retry_temporary_files,
+        cleanup: CleanupReport {
+            session_state: retry_state.session_state,
+            overlay_count: retry_state.overlay_count,
+            pinned_count: retry_state.pinned_count,
+            capture_teardown_pending: retry_state.capture_teardown_pending,
+            visible_process_windows,
+            capture_preflight_ready: retry_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Exercises a real deny-write ACL on Quick Save's history root, then retries the same selection
+/// after the ACL is removed. The fixture stays owned by this worker until the retry is complete.
+fn execute_save_permission_retry_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    let (overlay, _plan, selection, requested_selection, source) =
+        begin_selected_overlay(context, controller)?;
+    thread::sleep(context.settle_delay);
+    let selected = capture_evidence(context, "01-save-permission-selection.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_permission_selection_ready",
+        guard_foreground(overlay.handle)?,
+        Some(&selected),
+    )?;
+
+    let history_directory = context.session_root.join("history");
+    let mut read_only_history = ReadOnlyHistoryFixture::create(&history_directory)?;
+    let permission_denied_before_input = !read_only_history.probe_write()?;
+    if !permission_denied_before_input {
+        return Err(io::Error::other(
+            "read-only Quick Save fixture accepted a write before input",
+        ));
+    }
+    let foreground = inject_quick_save(overlay.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_permission_shortcut",
+        foreground,
+        None,
+    )?;
+
+    let failure_state =
+        wait_for_capture_state(context, "read-only Quick Save destination", |state| {
+            state.session_state == "selecting"
+                && state.selection == Some(selection)
+                && state.overlay_count == 1
+                && state.capture_preflight_ready
+                && state.background_tasks_idle
+                && state.status.starts_with("Save failed:")
+        })?;
+    if failure_state.selection != Some(selection) {
+        return Err(io::Error::other(
+            "read-only Quick Save failure did not preserve the editable selection",
+        ));
+    }
+    focus_owned_window(overlay, context.timeout)?;
+    let failure_evidence = capture_evidence(context, "03-save-permission-reported.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_permission_reported",
+        guard_foreground(overlay.handle)?,
+        Some(&failure_evidence),
+    )?;
+
+    let history_index_preserved_after_failure = read_only_history.history_index_preserved()?;
+    if !history_index_preserved_after_failure {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "read-only Quick Save changed the history index",
+        ));
+    }
+    read_only_history.restore()?;
+    let permission_restored_before_retry =
+        history_directory.is_dir() && read_only_history.probe_write()?;
+    if !permission_restored_before_retry {
+        return Err(io::Error::other(
+            "Quick Save history directory was not writable before retry",
+        ));
+    }
+    // The ACL blocks directory enumeration on some Windows configurations, so inspect the failed
+    // attempt immediately after restoring access; the restore operation does not remove files.
+    let failure_temporary_files = temporary_file_count(&history_directory)?;
+    if failure_temporary_files != 0 {
+        return Err(io::Error::other(
+            "read-only Quick Save failure left a temporary file",
+        ));
+    }
+
+    let foreground = inject_quick_save(overlay.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "save_permission_retry_shortcut",
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(
+        overlay.handle,
+        context.timeout,
+        "read-only Quick Save retry completion",
+    )?;
+    let retry_state =
+        wait_for_capture_state(context, "read-only Quick Save retry completion", |state| {
+            state.session_state == "completed"
+                && state.selection == Some(selection)
+                && state.overlay_count == 0
+                && state.pinned_count == 0
+                && !state.capture_teardown_pending
+                && state.background_tasks_idle
+                && state.capture_preflight_ready
+                && state.status.starts_with("Selection saved to ")
+        })?;
+    let clean = wait_for_desktop_quiescence(
+        context,
+        "read-only Quick Save retry completion",
+        Some("05-save-permission-retry-clean.png"),
+    )?;
+    record_desktop_step(
+        report,
+        &context.report_path,
+        "save_permission_retry_clean",
+        "05-save-permission-retry-clean.png",
+        &clean,
+    )?;
+    let (retry_target, saved, retry_bytes) =
+        wait_for_single_png(&history_directory, context.timeout)?;
+    validate_frame_dimensions(&saved, selection, "read-only Quick Save retry PNG")?;
+    let retry_content =
+        validate_same_pixel_content(&source, &saved, "read-only Quick Save retry PNG")?;
+    let retry_temporary_files = temporary_file_count(&history_directory)?;
+    if retry_temporary_files != 0 {
+        return Err(io::Error::other(
+            "successful read-only Quick Save retry left a temporary file",
+        ));
+    }
+    let relative = |path: &Path| {
+        path.strip_prefix(&context.session_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    let retry_path = relative(&retry_target);
+    let read_only_path = relative(&history_directory);
+    let account = read_only_history.account.clone();
+
+    unsafe { ShowWindow(controller.handle, SW_HIDE) };
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "read-only Quick Save controller hide",
+    )?;
+    ensure_capture_input_released()?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "read-only Quick Save retry cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    report.save_permission_retry = Some(SavePermissionRetryReport {
+        requested_selection,
+        selection,
+        read_only_history: read_only_path,
+        account,
+        permission_denied_before_input,
+        history_index_preserved_after_failure,
+        failure_status: failure_state.status,
+        failure_selection_preserved: failure_state.selection == Some(selection),
+        failure_temporary_files,
+        permission_restored_before_retry,
+        retry_target: retry_path,
         retry_width: saved.width,
         retry_height: saved.height,
         retry_bytes,
@@ -12769,6 +13142,36 @@ mod tests {
                 "--allow-input",
                 "--capture-scenario",
                 "save-failure-retry",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_accepts_save_permission_retry_scenario_without_clipboard_access() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "save-permission-retry",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::SavePermissionRetry
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_save_permission_retry"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(!options.allow_system_clipboard);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "save-permission-retry",
                 "--allow-system-clipboard",
             ]))
             .is_err()
