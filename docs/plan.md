@@ -1,8 +1,8 @@
 # 主线开发计划
 
-更新日期：2026-09-09
+更新日期：2026-09-13
 当前版本：`0.1.3`
-目标版本：`0.2.0` 质量阶段
+目标版本：`0.2.0` 质量阶段与截图工作区 UI 改造
 
 本文档是 Flash Shot 唯一的主线开发计划。它记录当前代码事实、后续切片、验收条件和明确暂缓项；
 逐次运行日志、旧计划和机器专属输出留在 Git 历史或 Windows 验收记录中，不再另建执行计划。
@@ -34,6 +34,13 @@
 | 拆除屏障 | Teardown Barrier | 在旧窗口、任务、输入和临时资源清理完成前阻止下一次采集的条件 | 不是单独的测试工具或持久化锁 |
 | 资源所有者 | Resource Owner | 当前负责提交或释放窗口、文件、剪贴板写入和外部进程资源的操作 | 不是业务数据的持久化拥有者 |
 | 界面度量 | ThemeMetrics | 跨页面共享的颜色语义、间距、尺寸和命中区参数 | 不是截图像素或平台 DPI 值 |
+| 截图工作区 | Screenshot Workspace | 截图覆盖层中承载选区画布、主工具栏、上下文样式栏、结果动作和工具组浮层的连续操作区域 | 不是设置面板、历史页、录屏设置或完整应用导航 |
+| 主工具栏 | Main Toolbar | 截图工作区中承载当前模式、常用结果动作和 More 入口的稳定主操作行 | 不是设置入口或所有低频功能的容器 |
+| 上下文样式栏 | Contextual Style Row | 跟随当前标注工具或选中对象显示颜色、线宽、填充等相关编辑控件的附属操作行 | 不是全局设置面板或独立的标注业务状态机 |
+| 工具组 | Tool Group | 将已有同类标注或操作入口作为一个主工具栏动作组展示，并由工具组浮层承载选择 | 不是新增领域工具或全局设置分类 |
+| 工具组浮层 | Tool Group Popover | 从主工具栏动作组展开、承载同类工具选择并返回焦点的短生命周期浮层 | 不是设置页、永久工具箱或跨窗口菜单 |
+| 选区提示 | Selection HUD | 在选区附近显示尺寸、目标或放大预览等即时反馈的工作区元素 | 不是导出图像内容或持久化状态 |
+| 工作区布局快照 | Workspace Layout Snapshot | 一次布局计算中同时记录主工具栏、样式栏、More/工具组浮层和安全边距几何的不可变结果 | 不是截图帧、导出结果或持久化设置 |
 | 暂缓项 | Deferred Scope | 已明确不纳入当前版本、等待硬件/服务/产品决策的范围 | 不是已完成或默认支持 |
 
 ## 1. 代码复审结论
@@ -65,7 +72,7 @@
 | P0 | 外部失败恢复 | 保存、历史索引和录屏进程已有确定性恢复测试；`copy-cancellation-race` 的隔离观察器、真实 `clipboard-contention-retry` 和 Quick Save 真实只读目录已在当前 Release 会话覆盖，但原生 Save 对话框权限和 FFmpeg 用户界面失败仍未完整执行 | 真实失败触发、可理解反馈、再次操作成功、无窗口/进程/任务/临时文件残留 |
 | P1 | 标注原生回归 | Text、Watermark、Line 和双向 Arrow 已接入 `annotation-regression` 场景；当前 HEAD 仍缺少真实鼠标/键盘和导出证据 | 当前 Release、单屏 100%、同会话 JSON、步骤截图、逐像素导出和清理报告 |
 | P1 | 动态文案盘点 | `Locale`/`UiText` 已覆盖大部分设置、Capture、Library、Record、Pin 和 workflow；剩余动态状态需要重新盘点，不能沿用旧的 317 条计数 | 中英文资源覆盖、参数化模板测试、无未登记用户可见硬编码 |
-| P1 | UI 信息层级 | 设置壳层、覆盖层/Pin token 和 Library/Record 尺寸已有部分复核；Record、App、诊断和错误恢复入口仍需收敛 | 420x420、520x640、980x760；中英文、深浅主题；真实入口可达且无重叠 |
+| P1 | UI 信息层级 | 设置壳层、Pin token 和 Library/Record 尺寸已有部分复核；截图工作区仍需按 W1-W6 收敛主行、样式行、工具组浮层和错误恢复入口 | 420x420、520x640、980x760；中英文、深浅主题；真实入口可达且无重叠 |
 | P1 | 大模块维护成本 | `overlay.rs`、`view.rs`、`i18n.rs` 和 `overlay-interaction-acceptance.rs` 仍集中在 `flash-shot-app` | 先冻结行为，再按职责小步拆分；报告 schema、快捷键和用户行为不变 |
 | P2 | 环境矩阵 | 当前证据主要是单显示器 100%；150%/200%、负坐标双屏和混合 DPI 双屏没有当前硬件证据 | 对应真实 Windows 环境、物理像素、窗口布局和清理报告 |
 | P2 | 在线翻译与跨平台 | 真实 HTTPS 翻译闭环以及 Linux/macOS 功能对等尚未排期 | 产品范围恢复、可丢弃服务或原生桌面环境，以及独立验收计划 |
@@ -96,6 +103,29 @@
 4. 每个异步操作都绑定操作代次或等价的资源所有者检查；失败必须释放 busy、窗口、输入、任务、进程和临时文件。
 5. 继续保持唯一 `flash-shot` 二进制、版本化设置和现有报告/脚本参数兼容。
 
+截图工作区 UI 另按 W0-W6 管理：只调整截图覆盖层的层级、外观、布局和控件交互，不改变选区物理像素、标注文档坐标、
+Copy/Save/Pin/Cancel 语义、快捷键、报告字段或失败恢复规则。Snow Shot 的设置面板、设置项组织、工具栏定制设置、Qt/Tauri/Web
+架构和未被工作区直接验证的功能不进入本路线；它只作为公开工作区外观和交互的参考来源。
+
+### 2.4 Snow Shot 最新版研究基线
+
+本路线以[公开 GitHub 仓库](https://github.com/mg-chao/snow-apps)为准，不读取或推断本机旧版 checkout。截至 2026-09-13，
+[Snow Shot 最新公开 Release `v1.0.0-beta`](https://github.com/mg-chao/snow-apps/releases/tag/v1.0.0-beta)
+对应提交为 [`395fdab`](https://github.com/mg-chao/snow-apps/commit/395fdab690d5681a46d3324ce944ffb1b84240b6)。Release 说明和该 tag
+用于确认已发布的工作区能力；`main` 分支的测试文档只作为补充研究材料，不把未发布代码写成 Flash Shot 已验证能力。
+
+| 公开参考 | 观察到的工作区做法 | Flash Shot 转化决定 |
+| --- | --- | --- |
+| [Release 说明](https://github.com/mg-chao/snow-apps/releases/tag/v1.0.0-beta) | 自定义截图工具栏、可隐藏/重定位的次级工具栏、滚动模式、Save As 实时预览、分数 DPI 边框修正、分组动作 tooltip、箭头附着文字和拖拽期间保留选区的动作图标 | 采用稳定主工具栏加上下文样式栏的层级；常用动作图标优先、说明通过 tooltip 和可访问名称补足；不复制 Snow Shot 的设置项数量 |
+| [`ScreenshotToolPalette` 声明](https://github.com/mg-chao/snow-apps/blob/v1.0.0-beta/snow_shot/include/snow_shot/presentation/screenshottoolpalette.h) 与[实现](https://github.com/mg-chao/snow-apps/blob/v1.0.0-beta/snow_shot/src/presentation/tools/screenshottoolpalette.cpp) | 浮动半透明调色板由主工具栏、可选次级/样式行和录制控件组成；工具组按需生成，布局提交会同步激活并按 size hint 调整几何 | 在 `overlay.rs` 保留现有语义 ID 和 handler，抽出工作区共享 surface、按钮、分隔线、swatch、工具组浮层和一次性布局快照；不迁移 Qt 类层次 |
+| [主面板测试](https://github.com/mg-chao/snow-apps/blob/main/snow_shot/tests/screenshot_toolbar_main_panel_tests.cpp) | 工具栏按内容和 DPI 计算尺寸，拖动、换行、样式组布局请求和按钮图标不会造成重复几何失效；覆盖 50/100/125/150/200% 的阴影与尺寸一致性 | 用纯布局测试覆盖可见动作组合、三种窗口尺寸和可用 DPI；移除截图工作区对单一总宽度与每个固定按钮宽度的依赖 |
+| [共享控件测试](https://github.com/mg-chao/snow-apps/blob/main/snow_shot/tests/toolbar_shared_controls_tests.md) 与[浮层调查](https://github.com/mg-chao/snow-apps/blob/main/snow_shot/tests/toolbar_popover_investigation.md) | 截图、Pin、录制共享控件状态、tooltip、可访问性、阴影和分隔线；工具组支持悬停发现、点击确定、局部坐标命中、Escape/外部关闭和单一浮层所有者 | 统一 GPUI 工作区控件状态与浮层生命周期；More 保持点击/键盘可达，不依赖悬停才能操作；浮层位置只在最终放置阶段使用全局坐标 |
+| [`ScreenshotSelectionShadowRenderer`](https://github.com/mg-chao/snow-apps/blob/v1.0.0-beta/snow_shot/src/presentation/overlay/screenshotselectionshadowrenderer.cpp) | 选区周边的 checkerboard、圆角阴影和缓存九宫格只用于预览/结果呈现，导出合成器独立 | 只借鉴选区边缘的层次、阴影和安全间距；所有效果停留在 overlay paint 路径，禁止进入导出像素 |
+
+工作区外观基线固定为：深色或浅色语义 surface 上的轻量浮动工具栏、细边框、柔和阴影、4px 间距基线、稳定命中区、单一强调色，
+以及明确的 active/hover/pressed/focus/disabled/busy 状态。Flash Shot 保留现有 teal 语义色和浅色/深色主题，不复制 Snow Shot 的具体颜色、
+图标素材或设置面板布局；截图工作区要让选区、主动作和当前上下文成为第一视觉层级。
+
 ## 3. 当前状态
 
 | 编号 | 主线切片 | 状态 | 说明 |
@@ -106,6 +136,13 @@
 | B3 | 历史异步流控 | 已完成（单屏 100%） | 300 条队列、失败/重试、删除、目录切换和窗口关闭已有资源证据 |
 | B4 | 标注回归保护 | 部分完成 | 当前 runner 已覆盖 Text、Watermark、Line 和双向 Arrow；真实输入仍待执行 |
 | U0 | 视觉设计基线 | 已完成（单屏 100%） | 语义颜色、几何 token、双主题和三种窗口尺寸已有设置/覆盖层探针 |
+| W0 | 最新版 Snow Shot 截图工作区研究与路线冻结 | 已完成（文档研究，2026-09-13） | 已锁定公开 `v1.0.0-beta` 的工作区参考、Flash Shot 转化边界和 W1-W6 验收顺序；不纳入 Snow Shot 设置面板 |
+| W1 | 工作区视觉基础与共享控件 | 待开始 | 统一截图工作区 surface、按钮、分隔线、swatch、tooltip、焦点态和工作区布局 token |
+| W2 | 主工具栏重排 | 待开始 | 以常用 Copy/Save/Pin/Cancel 和 More 为稳定主行，保留语义 ID、快捷键和异步状态 |
+| W3 | 上下文样式栏 | 待开始 | 将当前标注样式控件收敛为跟随工具/对象的附属行，不扩展标注领域能力 |
+| W4 | 工具组与 More 浮层 | 待开始 | 统一低频动作、工具组选择、键盘焦点、关闭规则和局部坐标放置 |
+| W5 | 选区锚定、HUD 与布局快照 | 待开始 | 让工具栏行、样式行和选区边缘在小选区、边缘选区及 DPI 场景稳定协同 |
+| W6 | 双主题、双语、DPI 与真实输入验收 | 待开始 | 以同一 Release 完成工作区状态矩阵、真实鼠标键盘、截图、像素和清理报告 |
 | U1 | 动态文案国际化 | 部分完成 | 继续清点 workflow、错误、忙状态和动态数量；Record 无输入验收状态已改为读取活动语言资源，其他动态文案仍需盘点 |
 | U2 | 信息架构与动作收敛 | 部分完成（Record 主动作，2026-09-09） | Record 页已将录制/重试作为唯一强调动作，支持检查保持次要层级；App、Library 和真实输入矩阵仍待继续 |
 | U3 | 视觉 token 与布局 | 部分完成 | 设置、覆盖层、Pin、Library/Record 已使用部分 token；真实输入和高 DPI 未覆盖 |
@@ -217,6 +254,131 @@ Save 对话框目录权限，不替代 FFmpeg 用户界面失败恢复；B1 仍�
 **验收**：每个步骤的类型、内容、起终点与注入记录一致；第二个箭头不受第一个影响；导出 PNG 尺寸与选区物理尺寸
 一致且像素发生预期变化；`.tmp`、窗口、任务和按键清理。报告、截图和导出文件必须来自同一 Release session。
 
+### W0：冻结 Snow Shot 工作区参考与 Flash Shot 边界（本次完成）
+
+**结果**：已按公开 GitHub 的 `v1.0.0-beta` Release、tag 源码和 `main` 分支工作区测试文档完成研究，确认参考重点是
+截图工具栏的视觉层级、次级样式行、工具组浮层、稳定几何、tooltip/键盘可达性和选区边缘呈现。当前路线不引入 Snow Shot
+的设置面板、设置项组织或 Qt/Tauri/Web 架构。
+
+**冻结决定**：Flash Shot 的截图工作区采用“选区画布 + 主工具栏 + 上下文样式栏 + 按需浮层”的单一操作区域。Copy、Save、
+Pin、Cancel 继续是结果主动作，More 收纳低频动作；现有 GPUI、`ThemeMetrics`、`UiText`、标注文档坐标、操作代次、报告字段和
+导出合成路径保持不变。W1-W6 只调整 UI surface、布局和控件交互，每个切片独立验证、提交和推送。
+
+### W1：工作区视觉基础与共享控件
+
+**目标**：在不改变任何截图、标注和导出行为的前提下，建立截图工作区可复用的视觉与几何基础。
+
+**负责范围**：`crates/flash-shot-app/src/app/theme.rs`、`overlay.rs`、`i18n.rs`；若 `overlay.rs` 的职责边界已由行为测试冻结，
+再按现有应用模块风格新增 `app/overlay_toolbar.rs`，只承载工作区呈现和布局辅助，不提前拆业务状态机。
+
+**交付内容**：
+
+1. 在 `ThemeMetrics` 和语义颜色中补齐 toolbar surface/elevated/border/hover/active/focus、主行/样式行高度、内边距、间距、
+   icon button 命中区、popover gap、shadow margin 等 token；颜色、半径和几何不得在按钮分支中散落硬编码。
+2. 提供统一的工作区 surface、icon button、separator、swatch、tooltip/accessibility 和 popover shell；保留现有稳定语义 ID、
+   handler、快捷键和 busy/disabled 状态。
+3. Copy、Save、Pin、Cancel、Undo/Redo、标注入口等熟悉操作优先使用图标；每个图标必须有 `UiText` tooltip 和可访问名称，
+   中英文长文案仍由容器负责换行或调整，而不是截断。
+
+**验收**：纯布局/状态测试覆盖无选区、选区、忙态、禁用、焦点和错误状态；English/简体中文、浅色/深色、420x420、520x640、
+980x760 均无截断和重叠；Capture、Copy、Save、Pin、Cancel 的 handler 调用次数与改造前一致；`git diff` 中不存在新的工作区
+固定颜色、固定总宽度或与 `ThemeMetrics` 重复的 token。
+
+**独立提交建议**：`feat: add screenshot workspace toolbar foundation`。
+
+### W2：主工具栏重排
+
+**目标**：让截图工作区的常用动作形成一条稳定、可扫描、可预测的主操作行，同时保留现有行为和键盘路径。
+
+**布局决定**：左侧只放当前模式/拖动把手以及在标注上下文中确实可用的 Undo/Redo；中部放标注工具组或当前工具入口；右侧固定
+Pin、Copy、Save、More、Cancel 的结果动作顺序。Copy 保持唯一强调动作，Cancel 保持破坏性样式；低频滚动、OCR、录屏、二维码、
+颜色复制和翻译不回到主行。`Mark` 不再作为长文本动作铺满工具栏，而作为标注工具组入口显示。
+
+**实现约束**：保留 `overlay-annotation-controls`、`overlay-pin`、`overlay-copy`、`overlay-save`、
+`OVERLAY_MORE_ACTIONS_ID`、`overlay-cancel` 及 Alt+M；保留 Copy busy、Save/Pin disabled、Escape 取消和无选区 fallback。
+用可见控件的 intrinsic size、token 间距和当前窗口安全边距计算布局，逐步移除对 `OVERLAY_ACTION_BAR_WIDTH=620` 以及每个动作
+固定宽度的依赖；布局结果交给 W5 的 `WorkspaceLayoutSnapshot` 统一保存。
+
+**验收**：同一状态下每个主动作最多触发一次；点击工具栏不会穿透到画布；主行在三种窗口尺寸和中英文下不遮挡选区、HUD 或其他
+浮层；Copy/Save/Pin/Cancel 的结果、快捷键、错误恢复和清理报告与现有行为一致。
+
+**独立提交建议**：`feat: reorganize screenshot workspace main toolbar`。
+
+### W3：上下文样式栏
+
+**目标**：把标注样式控制收敛为跟随当前工具或选中对象的附属行，避免默认显示杂乱的侧向/纵向设置面板。
+
+**交付内容**：
+
+1. 样式栏只在当前标注工具或选中对象需要时出现，与主工具栏共享 surface、边框、阴影、焦点和命中区规则；在选区上方空间不足时，
+   整行移动到下方或安全边界内，不能拆成互相覆盖的多个面板。
+2. 复用现有 `AnnotationStyle` 和领域规则，只映射已经支持的颜色、线宽、填充/透明度、字体大小等属性。Shape、Line/Arrow、
+   Freehand、Highlight、Text/Watermark/Number、Blur/Mosaic 只显示各自相关控件，不新增标注工具或导出语义。
+3. 颜色使用 swatch，数值使用紧凑控件，active/mixed/disabled/busy 状态可见；连续调整按“预览后释放提交”执行，单击控件只产生
+   一个领域命令。对象删除、复制、层级调整等低频动作进入上下文溢出入口，不挤占样式栏。
+
+**验收**：每类现有标注工具的样式栏均能打开、切换、Escape 关闭并恢复焦点；样式预览、Undo/Redo、文档坐标、Quick Save 和
+导出 PNG 像素与改造前一致；无激活工具时不显示空样式栏；中英文、双主题和三种窗口尺寸均无溢出。
+
+**独立提交建议**：`feat: add contextual screenshot style row`。
+
+### W4：工具组与 More 浮层
+
+**目标**：将同类工具和低频能力放入可发现、可关闭、可回到原焦点的短生命周期浮层，同时避免悬停或异步回调造成误操作。
+
+**交互规则**：
+
+1. 以数据驱动的 `ToolGroup` 描述工具项和现有 handler；首批只整理已有能力，例如 Shape（Rectangle/Ellipse）、Line（Line/Arrow/
+   Freehand）、Obscure（Blur/Mosaic）和 Text（Text/Watermark/Number）。Highlight、Scroll、OCR、Record 等是否分组只按当前
+   handler 和可用状态决定，不为了模仿参考产品增加工具。
+2. 悬停只负责发现，点击、Enter 或 Space 才确定选择；支持方向键移动、Escape 关闭、外部点击关闭和关闭后焦点返回触发按钮。
+   More 必须支持点击和键盘操作，不能设计成悬停才能使用的入口；tooltip 不得代替可访问名称。
+3. 工具组按需 materialize，工作区只保留一个浮层所有者；打开、关闭和操作代次变化时清理旧回调、捕获和 busy 状态。浮层命中先在
+   本地/`PreviewTransform` 坐标完成，最终放置才换算全局坐标，禁止混用不同 DPI 下的全局矩形交集。
+4. More 保留滚动、OCR、二维码、颜色复制、翻译、录屏、保存标注/可编辑结果以及识别进行中/成功/失败/重试/复制/清除状态；不把
+   Snow Shot 设置项或 Flash Shot 全局设置塞进该浮层。
+
+**验收**：工具组与 More 的点击、键盘、焦点、Escape、外部关闭和重复打开均无鬼影/重复实例；选中工具只提交一次命令；浮层不
+穿透画布、不丢失选区、不留下任务或窗口；各状态的中英文文案、tooltip 和错误恢复可见。
+
+**独立提交建议**：`feat: add screenshot tool group popovers`。
+
+### W5：选区锚定、HUD 与布局快照
+
+**目标**：让选区边缘、尺寸 HUD、放大镜、主工具栏、上下文样式栏和浮层在小选区、边缘选区及不同 DPI 下协同稳定。
+
+**实现约束**：保留 `paint_selection_mask` 的遮罩、边框、拖拽手柄、尺寸和放大镜语义；只在 overlay paint 路径增加借鉴 Snow Shot
+的边缘层次、checkerboard/阴影和安全间距，导出 compositor 不得读取这些装饰状态。新增 `WorkspaceLayoutSnapshot`，一次布局中
+同时记录主行、样式行、More/工具组浮层、选区锚点和安全边距；按上方/下方空间选择放置方向，不足时 clamp 到可见工作区，相关行
+必须一起移动。
+
+布局计算统一经过 `PreviewTransform` 的逻辑/物理坐标转换，不在事件处理器里写全局固定位置。工具栏和浮层使用 occlude/等价机制
+阻止鼠标事件穿透画布，但画布拖选、调整手柄、键盘微调和取消路径保持可用。
+
+**验收**：覆盖零/极小选区、全屏选区、四边贴边选区、拖动、调整大小、标注和浮层打开；无 stale frame、布局重算抖动、控件重叠
+或 HUD 遮挡；导出像素、尺寸、标注文档坐标、Copy/Save/Pin 和清理状态与 W1 前一致。
+
+**独立提交建议**：`feat: anchor screenshot workspace layout to selection`。
+
+### W6：双主题、双语、DPI 与真实输入验收
+
+**目标**：用同一提交构建的 Windows Release 证明截图工作区在完整状态矩阵下可操作、可理解且不影响截图主链。
+
+**状态矩阵**：无选区、普通选区、标注中、选中 Shape、Text/Watermark/Number、混合样式、More 打开、工具组打开、Copy busy、
+识别进行中/成功/重试/失败，以及顶部/底部/左右边缘和极小选区。每个状态覆盖 English/简体中文、浅色/深色和 420x420、520x640、
+980x760；在具备硬件时执行 100%/125%/150%/200% DPI，缺少真实硬件的矩阵继续明确记为 D1 暂缓。
+
+**原生验收**：真实 Windows Release 使用鼠标和键盘完成拖选、调整、工具选择、样式修改、Copy/Save/Pin/Cancel、More、Escape、
+外部关闭和快捷键；保存结构化报告、关键截图、导出 PNG/逐像素结果、DPI/显示器信息以及窗口、任务、按键、剪贴板和临时文件清理
+结果。验证 action count、焦点回收、浮层无残留、长文案无截断，并复查 B1 失败恢复和 B4 标注回归没有被 UI 改造削弱。
+
+**独立提交建议**：`test: verify screenshot workspace toolbar`。
+
+**W 路线执行顺序**：先完成 B1 尚未覆盖的 FFmpeg 用户界面失败恢复，再完成 B4 当前 HEAD 的真实标注输入；W0 的路线文档切片
+已完成，随后严格按 W1、W2、W3、W4、W5、W6 顺序推进。W1-W4 新增的可见文案同时登记到 `UiText`；U1 继续负责非截图工作区的
+动态文案，U2 继续负责 App/Library/Record 入口，U3 负责其他页面视觉矩阵，U4 负责 Pin 原生窗口。W6 通过后才开始 M1 的 runner/
+overlay 职责拆分，避免在工作区行为尚未稳定时搬移大型模块。
+
 ### U1：完成动态文案迁移
 
 **目标**：用户可见的动态状态全部由 `Locale`/`UiText` 提供，错误详情和路径作为参数保留。
@@ -237,7 +399,8 @@ Starting、Recording、Paused、Stopping、Failed 和 Cancelled；English 与简
 
 **目标**：Capture、Library、Record、App 各自只有一个最强主要动作，低频能力可找到且不与主流程竞争。
 
-**边界**：GPUI 页面导航、设置快捷入口、Library 筛选/批量操作、Record 生命周期和诊断入口；不删除唯一可完成核心流程的入口。
+**边界**：GPUI 页面导航、设置快捷入口、Library 筛选/批量操作、Record 生命周期和诊断入口；截图工作区的主/次动作、样式栏和
+工具组由 W2-W6 负责；不删除唯一可完成核心流程的入口。
 
 **验收**：三种窗口尺寸均能完成截图、标注、Copy、Save、Pin、OCR 重试和 Record 取消/清理；主/次/破坏性/忙/错误/恢复
 状态可区分；稳定语义 ID 不依赖显示文案；真实键鼠验收通过后才能关闭切片。
@@ -250,15 +413,15 @@ App/Library 的重复入口收敛、真实键鼠重试和三种窗口尺寸的�
 
 **目标**：把已完成的 token 和隔离探针扩展到真实中英文输入与窗口生命周期。
 
-**边界**：界面度量（ThemeMetrics）、按钮/工具栏命中区、焦点态、tooltip、Pin 复制/保存/关闭和语言/主题组合；不改变截图像素、
-快捷键和报告 schema。
+**边界**：界面度量（ThemeMetrics）、按钮/工具栏命中区、焦点态、tooltip、Pin 复制/保存/关闭和其他页面的语言/主题组合；截图工作区
+的新增 surface、布局和状态由 W1-W6 负责；不改变截图像素、快捷键和报告 schema。
 
 **验收**：English/简体中文、浅色/深色、420x420/520x640/980x760 均无截断、重叠或状态遮挡；Pin 真实点击、关闭和
 再次 Capture 可恢复；已打开窗口的语言切换策略明确，若不能安全刷新必须提示重新打开。
 
 ### M1：按职责拆分大型模块
 
-**前置**：B1-B4、U1-U4 的行为证据稳定，且当前报告 schema 有固定回归样本。
+**前置**：B1-B4、W1-W6、U1-U4 的行为证据稳定，且当前报告 schema 有固定回归样本。
 
 **顺序**：先把 `overlay-interaction-acceptance` 按 Capture/Copy/Pin/Scroll/Recording 和共享 Windows 输入设施拆分，
 再把 `overlay.rs` 按渲染、输入、选择变换、菜单/工具状态和导出生命周期拆分。每次只迁移一个职责，保持 CLI 参数、
@@ -367,17 +530,24 @@ git diff --check
 结构化报告、关键截图、像素产物和清理结果。`--allow-input`、系统剪贴板和 FFmpeg 只在明确授权的可丢弃 Windows
 会话使用；静态探针或旧报告不能替代真实输入。
 
+W1-W6 还必须保留一组可重复的布局/状态测试，并在 W6 以同一 Release 完成截图工作区状态矩阵。视觉截图只证明 surface、几何、
+文案和状态层级；Copy/Save/Pin/Cancel、标注文档坐标、导出像素、快捷键、焦点回收和窗口/任务/剪贴板/临时文件清理必须由对应
+原生验收字段单独证明。Snow Shot 的公开测试文档可作为检查项来源，但不能替代 Flash Shot 的 Windows 证据。
+
 验证失败、证据不足或只完成子集时，保持“部分完成/待执行”，不提交为完成状态。验证通过后只提交一个独立功能，
 提交信息使用简洁 Conventional Commit，并立即推送当前分支；文档整理本身也只作为一个独立文档切片交付。
 
 ## 6. `v0.2.0` 退出条件
 
 - B1-B4 的失败恢复和标注回归在当前代码上可重复，且没有孤儿窗口、进程、任务、按键或半成品文件；
-- U1 完成后核心 UI 没有未登记的中英文硬编码；U2-U4 的三种尺寸、双主题和双语真实验收通过；
-- M1 至少完成一个 runner 或 overlay 职责拆分，报告和用户行为无回归；
+- W1-W6 的截图工作区 surface、主工具栏、上下文样式栏、工具组/More 浮层和选区锚定在三种尺寸、双主题、双语及可用 DPI
+  下通过布局与真实输入验收；没有新的固定颜色、固定总宽度、未登记 tooltip 或工作区硬编码文案；
+- U1 完成后核心 UI 没有未登记的中英文硬编码；U2-U4 的非截图工作区三种尺寸、双主题和双语真实验收通过；
+- M1 至少完成一个 runner 或 overlay 职责拆分，且必须建立在 W1-W6 行为稳定、报告和用户行为无回归之上；
 - 已具备的 DPI 环境全部执行，未具备的矩阵仍显式标记为暂缓；
 - CI、Release 构建、便携包/安装器、manifest、SHA-256 和下载复核通过；
 - README、需求、架构、计划、Windows 验收、分发和 Linux 可行性文档之间无失效链接或相互矛盾的状态。
 
 下一步固定从 **B1 外部失败恢复** 开始；若当前 Windows 会话缺少所需权限、消费者或 FFmpeg，记录阻塞证据，
-先完成可执行的确定性测试，不把环境缺失写成通过，也不越过 B1 扩展新功能。
+先完成可执行的确定性测试，不把环境缺失写成通过，也不越过 B1 扩展新功能。B1 和 B4 完成后进入 W1；W0 只代表本次公开研究
+和路线文档已完成，不代表截图工作区代码或原生 UI 验收已经完成。
