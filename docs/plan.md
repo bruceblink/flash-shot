@@ -69,7 +69,6 @@
 
 | 优先级 | 未完成项 | 当前事实 | 完成所需证据 |
 | --- | --- | --- | --- |
-| P1 | 标注原生回归 | Text、Watermark、Line 和双向 Arrow 已接入 `annotation-regression` 场景；当前 HEAD 仍缺少真实鼠标/键盘和导出证据 | 当前 Release、单屏 100%、同会话 JSON、步骤截图、逐像素导出和清理报告 |
 | P1 | 动态文案盘点 | `Locale`/`UiText` 已覆盖大部分设置、Capture、Library、Record、Pin 和 workflow；剩余动态状态需要重新盘点，不能沿用旧的 317 条计数 | 中英文资源覆盖、参数化模板测试、无未登记用户可见硬编码 |
 | P1 | UI 信息层级 | 设置壳层、Pin token 和 Library/Record 尺寸已有部分复核；截图工作区仍需按 W1-W6 收敛主行、样式行、工具组浮层和错误恢复入口 | 420x420、520x640、980x760；中英文、深浅主题；真实入口可达且无重叠 |
 | P1 | 大模块维护成本 | `overlay.rs`、`view.rs`、`i18n.rs` 和 `overlay-interaction-acceptance.rs` 仍集中在 `flash-shot-app` | 先冻结行为，再按职责小步拆分；报告 schema、快捷键和用户行为不变 |
@@ -133,7 +132,7 @@ Copy/Save/Pin/Cancel 语义、快捷键、报告字段或失败恢复规则。Sn
 | B1 | 外部失败恢复 | 已完成（单屏 100%，DPI 96） | 保存、历史和录屏进程的确定性恢复，以及 `copy-cancellation-race`、真实剪贴板争用、Quick Save/原生 Save 对话框目录权限和 FFmpeg 启动失败重试均已有证据；150%/200%、多屏仍按 D1 单独验收 |
 | B2 | Capture/Save/Pin/Close 生命周期 | 已完成（单屏 100%） | 操作代次、拆除屏障、输入释放和下一次 Capture 已有 Release 证据 |
 | B3 | 历史异步流控 | 已完成（单屏 100%） | 300 条队列、失败/重试、删除、目录切换和窗口关闭已有资源证据 |
-| B4 | 标注回归保护 | 部分完成 | 当前 runner 已覆盖 Text、Watermark、Line 和双向 Arrow；真实输入仍待执行 |
+| B4 | 标注回归保护 | 已完成（单屏 100%，DPI 96） | 当前 Release 已通过真实 Text、Watermark、Line、正向/反向 Arrow、Quick Save、物理坐标、像素变化和清理验收；150%/200%、多屏仍按 D1 单独验收 |
 | U0 | 视觉设计基线 | 已完成（单屏 100%） | 语义颜色、几何 token、双主题和三种窗口尺寸已有设置/覆盖层探针 |
 | W0 | 最新版 Snow Shot 截图工作区研究与路线冻结 | 已完成（文档研究，2026-09-13） | 已锁定公开 `v1.0.0-beta` 的工作区参考、Flash Shot 转化边界和 W1-W6 验收顺序；不纳入 Snow Shot 设置面板 |
 | W1 | 工作区视觉基础与共享控件 | 待开始 | 统一截图工作区 surface、按钮、分隔线、swatch、tooltip、焦点态和工作区布局 token |
@@ -251,9 +250,8 @@ Save 对话框目录权限；截至该记录点，B1 仍保持“部分完成”
 生产系统剪贴板、三路 `exact_match=true` 和 `cleanup_safe=true`。同日首次预热曾在拖选后观察到整屏选区，失败报告保留在
 `target/`，不计入本次批量统计。
 
-**顺序**：确定性 fault fixture、真实系统剪贴板争用和 Quick Save 真实只读目录已完成；接着执行可丢弃桌面上的
-原生 Save 对话框目录权限和 FFmpeg 场景。
-任何一类无法清理都保留失败报告并停止该切片。
+**顺序**：确定性 fault fixture、真实系统剪贴板争用、Quick Save 真实只读目录、原生 Save 对话框目录权限和
+FFmpeg 启动失败重试均已完成；任何一类无法清理都保留失败报告并停止该切片。
 
 ### B4：执行当前 HEAD 标注回归
 
@@ -264,6 +262,18 @@ Save 对话框目录权限；截至该记录点，B1 仍保持“部分完成”
 
 **验收**：每个步骤的类型、内容、起终点与注入记录一致；第二个箭头不受第一个影响；导出 PNG 尺寸与选区物理尺寸
 一致且像素发生预期变化；`.tmp`、窗口、任务和按键清理。报告、截图和导出文件必须来自同一 Release session。
+
+2026-09-13 的当前源码 Release `overlay-interaction-acceptance --allow-input --capture-scenario annotation-regression`
+通过 `scripts/run-dev-tool.ps1 -Release` 在单屏 `\\.\DISPLAY1`、2560x1440、DPI 96 会话中完成真实拖选、Text、Watermark、
+Line、正向 Arrow、反向 Arrow 和 Quick Save。schema 26 报告为 `status=passed`，证据位于
+`target/overlay-interaction-acceptance/b4-annotation-regression-current-20260913/session-1789261735559-9828/report.json`；
+请求与提交选区均为 `(563,288)-(1741,720)`，物理尺寸 `1178x432`。报告记录 Text/Watermark 内容分别为
+`B4 Text 中文`、`B4 Watermark 中文`，Line 起终点、两个方向相反的 Arrow 起终点以及对应步骤截图；同一 session
+导出 PNG 为 `1178x432`、71672 bytes，导出指纹与源帧不同。`00-annotation-tools.png` 至
+`05-annotation-arrow-reverse.png` 已目视复核，五类标注和 Layers 顺序清晰可见；cleanup 为
+`session_state=completed`、overlay/Pin/可见进程窗口均为 0、`capture_teardown_pending=false`、
+`capture_preflight_ready=true`，会话后本机 `.tmp=0` 且 `flash-shot` 进程为 0。该证据关闭 B4 的单屏 100% 原生回归范围，
+150%/200% 和多屏仍由 D1 单独验收。
 
 ### W0：冻结 Snow Shot 工作区参考与 Flash Shot 边界（本次完成）
 
@@ -385,7 +395,7 @@ Pin、Copy、Save、More、Cancel 的结果动作顺序。Copy 保持唯一强�
 
 **独立提交建议**：`test: verify screenshot workspace toolbar`。
 
-**W 路线执行顺序**：B1 外部失败恢复已完成，下一步完成 B4 当前 HEAD 的真实标注输入；W0 的路线文档切片
+**W 路线执行顺序**：B1 外部失败恢复和 B4 当前 HEAD 的真实标注输入均已完成，下一步进入 W1 工作区视觉基础与共享控件；W0 的路线文档切片
 已完成，随后严格按 W1、W2、W3、W4、W5、W6 顺序推进。W1-W4 新增的可见文案同时登记到 `UiText`；U1 继续负责非截图工作区的
 动态文案，U2 继续负责 App/Library/Record 入口，U3 负责其他页面视觉矩阵，U4 负责 Pin 原生窗口。W6 通过后才开始 M1 的 runner/
 overlay 职责拆分，避免在工作区行为尚未稳定时搬移大型模块。
@@ -559,6 +569,6 @@ W1-W6 还必须保留一组可重复的布局/状态测试，并在 W6 以同一
 - CI、Release 构建、便携包/安装器、manifest、SHA-256 和下载复核通过；
 - README、需求、架构、计划、Windows 验收、分发和 Linux 可行性文档之间无失效链接或相互矛盾的状态。
 
-下一步固定从 **B4 标注原生回归** 开始；若当前 Windows 会话缺少所需权限、消费者或 FFmpeg，记录阻塞证据，
-先完成可执行的确定性测试，不把环境缺失写成通过，也不越过 B4 扩展新功能。B4 完成后进入 W1；W0 只代表本次公开研究
+下一步固定从 **W1 工作区视觉基础与共享控件** 开始；若当前 Windows 会话缺少所需权限、消费者或 FFmpeg，记录阻塞证据，
+先完成可执行的确定性测试，不把环境缺失写成通过，也不越过 W1 扩展新功能。W1-W6 完成后进入 M1；W0 只代表本次公开研究
 和路线文档已完成，不代表截图工作区代码或原生 UI 验收已经完成。
