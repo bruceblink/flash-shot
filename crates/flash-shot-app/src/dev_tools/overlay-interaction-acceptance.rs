@@ -9809,6 +9809,8 @@ fn execute_recording_failure_retry_interactions(
             ),
         ));
     }
+    // The worker state can report failure before GPUI paints the user-visible error message.
+    thread::sleep(context.settle_delay);
     let failed_evidence = capture_evidence(
         context,
         "02-recording-failed.png",
