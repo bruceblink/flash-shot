@@ -34,6 +34,13 @@ pub struct ThemeColors {
     pub surface: Hsla,
     pub surface_elevated: Hsla,
     pub surface_hover: Hsla,
+    /// Semantic colors for the screenshot workspace controls and their transient popovers.
+    pub toolbar_surface: Hsla,
+    pub toolbar_elevated: Hsla,
+    pub toolbar_border: Hsla,
+    pub toolbar_hover: Hsla,
+    pub toolbar_active: Hsla,
+    pub toolbar_focus: Hsla,
     /// Compatibility aliases kept while feature surfaces migrate to semantic token names.
     pub background: Hsla,
     pub panel: Hsla,
@@ -70,6 +77,24 @@ pub struct ThemeMetrics {
     pub toggle_height: f32,
     pub control_height: f32,
     pub toolbar_height: f32,
+    pub workspace_toolbar_height: f32,
+    pub workspace_style_row_height: f32,
+    pub workspace_toolbar_padding: f32,
+    pub workspace_toolbar_gap: f32,
+    pub workspace_tool_gap: f32,
+    pub workspace_icon_button_hit_area: f32,
+    pub workspace_icon_size: f32,
+    pub workspace_popover_gap: f32,
+    pub workspace_selection_gap: f32,
+    pub workspace_shadow_margin: f32,
+    pub workspace_separator_width: f32,
+    pub workspace_separator_height: f32,
+    pub workspace_tool_cell_width: f32,
+    pub workspace_tool_row_height: f32,
+    pub workspace_annotation_padding: f32,
+    pub workspace_style_row_gap: f32,
+    pub workspace_style_panel_width: f32,
+    pub workspace_swatch_size: f32,
     pub radius_sm: f32,
     pub radius_md: f32,
     pub library_thumbnail_width: f32,
@@ -100,6 +125,24 @@ impl ThemeMetrics {
     pub const TOGGLE_HEIGHT: f32 = 20.0;
     pub const CONTROL_HEIGHT: f32 = 36.0;
     pub const TOOLBAR_HEIGHT: f32 = 44.0;
+    pub const WORKSPACE_TOOLBAR_HEIGHT: f32 = 36.0;
+    pub const WORKSPACE_STYLE_ROW_HEIGHT: f32 = 32.0;
+    pub const WORKSPACE_TOOLBAR_PADDING: f32 = 6.0;
+    pub const WORKSPACE_TOOLBAR_GAP: f32 = 6.0;
+    pub const WORKSPACE_TOOL_GAP: f32 = 8.0;
+    pub const WORKSPACE_ICON_BUTTON_HIT_AREA: f32 = Self::WORKSPACE_TOOLBAR_HEIGHT;
+    pub const WORKSPACE_ICON_SIZE: f32 = 16.0;
+    pub const WORKSPACE_POPOVER_GAP: f32 = 8.0;
+    pub const WORKSPACE_SELECTION_GAP: f32 = 12.0;
+    pub const WORKSPACE_SHADOW_MARGIN: f32 = 4.0;
+    pub const WORKSPACE_SEPARATOR_WIDTH: f32 = 1.0;
+    pub const WORKSPACE_SEPARATOR_HEIGHT: f32 = 24.0;
+    pub const WORKSPACE_TOOL_CELL_WIDTH: f32 = 104.0;
+    pub const WORKSPACE_TOOL_ROW_HEIGHT: f32 = 34.0;
+    pub const WORKSPACE_ANNOTATION_PADDING: f32 = 4.0;
+    pub const WORKSPACE_STYLE_ROW_GAP: f32 = 30.0;
+    pub const WORKSPACE_STYLE_PANEL_WIDTH: f32 = 164.0;
+    pub const WORKSPACE_SWATCH_SIZE: f32 = 22.0;
     pub const LIBRARY_THUMBNAIL_WIDTH: f32 = 72.0;
     pub const LIBRARY_THUMBNAIL_HEIGHT: f32 = 46.0;
     pub const LIBRARY_ROW_PADDING: f32 = 12.0;
@@ -115,16 +158,6 @@ impl ThemeMetrics {
     pub const OVERLAY_EDGE_INSET: f32 = 18.0;
     pub const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
     pub const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
-    pub const OVERLAY_ACTION_BAR_GAP: f32 = 12.0;
-    pub const OVERLAY_ACTION_ITEM_GAP: f32 = 6.0;
-    pub const OVERLAY_ACTION_ITEM_HEIGHT: f32 = 36.0;
-    pub const OVERLAY_ACTION_BAR_PADDING: f32 = 6.0;
-    pub const OVERLAY_ACTION_BAR_BORDER: f32 = 1.0;
-    pub const OVERLAY_SECONDARY_MENU_GAP: f32 = 8.0;
-    pub const ANNOTATION_ACTION_HEIGHT: f32 = 32.0;
-    pub const ANNOTATION_TOOL_ROW_HEIGHT: f32 = 34.0;
-    pub const ANNOTATION_TOOL_GAP: f32 = 8.0;
-    pub const ANNOTATION_TOOLBAR_PADDING: f32 = 4.0;
     pub const PIN_CONTROL_HEIGHT: f32 = 30.0;
     pub const PIN_TOOLBAR_PADDING: f32 = 8.0;
     pub const PIN_TOOLBAR_GAP: f32 = 8.0;
@@ -149,6 +182,24 @@ impl Default for ThemeMetrics {
             toggle_height: Self::TOGGLE_HEIGHT,
             control_height: Self::CONTROL_HEIGHT,
             toolbar_height: Self::TOOLBAR_HEIGHT,
+            workspace_toolbar_height: Self::WORKSPACE_TOOLBAR_HEIGHT,
+            workspace_style_row_height: Self::WORKSPACE_STYLE_ROW_HEIGHT,
+            workspace_toolbar_padding: Self::WORKSPACE_TOOLBAR_PADDING,
+            workspace_toolbar_gap: Self::WORKSPACE_TOOLBAR_GAP,
+            workspace_tool_gap: Self::WORKSPACE_TOOL_GAP,
+            workspace_icon_button_hit_area: Self::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            workspace_icon_size: Self::WORKSPACE_ICON_SIZE,
+            workspace_popover_gap: Self::WORKSPACE_POPOVER_GAP,
+            workspace_selection_gap: Self::WORKSPACE_SELECTION_GAP,
+            workspace_shadow_margin: Self::WORKSPACE_SHADOW_MARGIN,
+            workspace_separator_width: Self::WORKSPACE_SEPARATOR_WIDTH,
+            workspace_separator_height: Self::WORKSPACE_SEPARATOR_HEIGHT,
+            workspace_tool_cell_width: Self::WORKSPACE_TOOL_CELL_WIDTH,
+            workspace_tool_row_height: Self::WORKSPACE_TOOL_ROW_HEIGHT,
+            workspace_annotation_padding: Self::WORKSPACE_ANNOTATION_PADDING,
+            workspace_style_row_gap: Self::WORKSPACE_STYLE_ROW_GAP,
+            workspace_style_panel_width: Self::WORKSPACE_STYLE_PANEL_WIDTH,
+            workspace_swatch_size: Self::WORKSPACE_SWATCH_SIZE,
             radius_sm: 4.0,
             radius_md: 8.0,
             library_thumbnail_width: Self::LIBRARY_THUMBNAIL_WIDTH,
@@ -181,6 +232,12 @@ impl ThemeColors {
                 surface: Hsla::from(rgb(0x121a22)),
                 surface_elevated: Hsla::from(rgb(0x1a2631)),
                 surface_hover: Hsla::from(rgb(0x20323f)),
+                toolbar_surface: Hsla::from(rgb(0x111a22)),
+                toolbar_elevated: Hsla::from(rgb(0x1a2631)),
+                toolbar_border: Hsla::from(rgb(0x3b505e)),
+                toolbar_hover: Hsla::from(rgb(0x254454)),
+                toolbar_active: Hsla::from(rgb(0x20b8e4)),
+                toolbar_focus: Hsla::from(rgb(0x9beaff)),
                 background: Hsla::from(rgb(0x0b1015)),
                 panel: Hsla::from(rgb(0x121a22)),
                 border: Hsla::from(rgb(0x2c3b47)),
@@ -204,6 +261,12 @@ impl ThemeColors {
                 surface: Hsla::from(rgb(0xffffff)),
                 surface_elevated: Hsla::from(rgb(0xf9fcfe)),
                 surface_hover: Hsla::from(rgb(0xe8f3f7)),
+                toolbar_surface: Hsla::from(rgb(0xffffff)),
+                toolbar_elevated: Hsla::from(rgb(0xf9fcfe)),
+                toolbar_border: Hsla::from(rgb(0xb8cbd4)),
+                toolbar_hover: Hsla::from(rgb(0xe7f2f6)),
+                toolbar_active: Hsla::from(rgb(0x004962)),
+                toolbar_focus: Hsla::from(rgb(0x004962)),
                 background: Hsla::from(rgb(0xf3f7fa)),
                 panel: Hsla::from(rgb(0xffffff)),
                 border: Hsla::from(rgb(0xd2dfe6)),
@@ -355,10 +418,7 @@ mod tests {
     #[test]
     fn overlay_and_pin_controls_share_stable_geometry_tokens() {
         let metrics = ThemeMetrics::default();
-        assert_eq!(
-            ThemeMetrics::OVERLAY_ACTION_ITEM_HEIGHT,
-            metrics.control_height
-        );
+        assert_eq!(metrics.workspace_toolbar_height, metrics.control_height);
         assert_eq!(ThemeMetrics::PIN_CLOSE_SIZE, 32.0);
         assert_eq!(ThemeMetrics::PIN_CONTROL_GAP, metrics.space_1);
         assert_eq!(ThemeMetrics::PIN_TOOLBAR_GAP, metrics.space_2);

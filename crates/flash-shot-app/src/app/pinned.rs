@@ -3,12 +3,15 @@
 use std::{sync::Arc, time::Duration};
 
 use gpui::{
-    AsyncApp, Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, Keystroke, Pixels,
-    Render, Size, WeakEntity, Window, WindowControlArea, div, img, prelude::*, px, size,
+    AsyncApp, Context, Entity, FocusHandle, Focusable, KeyDownEvent, Keystroke, Pixels, Render,
+    SharedString, Size, WeakEntity, Window, WindowControlArea, div, img, prelude::*, px, size,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::FlashShotApp;
+use super::overlay_toolbar::{
+    WorkspaceButtonConfig, WorkspaceButtonTone, workspace_surface, workspace_text_button,
+};
 use crate::{
     i18n::{Locale, UiText},
     platform::{capture::CaptureFrame, clipboard::ClipboardService},
@@ -18,24 +21,6 @@ use crate::{
 const PIN_OPACITY_STEPS: [u8; 4] = [255, 191, 128, 64];
 const PIN_FEEDBACK_VISIBLE_FOR: Duration = Duration::from_secs(3);
 const PIN_TOP_CONTROLS_HEIGHT: f32 = ThemeMetrics::PIN_TOP_CONTROLS_HEIGHT;
-
-struct PinnedTooltip(&'static str, crate::theme::ThemeColors);
-
-impl Render for PinnedTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px_2()
-            .py_1()
-            .bg(self.1.panel)
-            .border_1()
-            .border_color(self.1.border)
-            .rounded_sm()
-            .shadow_lg()
-            .text_color(self.1.text)
-            .text_xs()
-            .child(self.0)
-    }
-}
 
 /// Describes each compact pin control without requiring the image window to stay large.
 fn pinned_control_tooltip(locale: Locale, control: &str) -> &'static str {
@@ -410,6 +395,7 @@ pub(super) fn native_window_handle(window: &Window) -> Option<isize> {
         })
 }
 
+/// Builds one consistent pin control with readable state, focus, hover, and tooltip feedback.
 #[derive(Clone, Copy)]
 enum PinnedButtonTone {
     Neutral,
@@ -418,99 +404,37 @@ enum PinnedButtonTone {
     Destructive,
 }
 
-/// Builds one consistent pin control with readable state, focus, hover, and tooltip feedback.
+/// Maps the Pin-specific state vocabulary onto the shared workspace button visuals.
 fn pinned_tool_button(
     id: impl Into<gpui::ElementId>,
-    label: impl Into<String>,
+    label: impl Into<SharedString>,
     control: &'static str,
     colors: crate::theme::ThemeColors,
     locale: Locale,
     tone: PinnedButtonTone,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
-    let emphasized = matches!(tone, PinnedButtonTone::Selected | PinnedButtonTone::Primary);
-    let destructive = matches!(tone, PinnedButtonTone::Destructive);
-    div()
-        .id(id)
-        .h(px(ThemeMetrics::PIN_CONTROL_HEIGHT))
-        .px_3()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .border_1()
-        .border_color(if destructive {
-            colors.danger
-        } else if emphasized {
-            colors.accent
-        } else {
-            colors.border
-        })
-        .bg(if emphasized {
-            colors.accent
-        } else {
-            colors.surface_elevated
-        })
-        .text_color(if emphasized {
-            colors.background
-        } else if destructive {
-            colors.danger
-        } else {
-            colors.text
-        })
-        .text_xs()
-        .font_weight(FontWeight::SEMIBOLD)
-        .focusable()
-        .focus_visible(|style| style.border_color(colors.accent))
-        .cursor_pointer()
-        .hover(move |style| {
-            style
-                .bg(if emphasized {
-                    colors.accent_hover
-                } else {
-                    colors.surface_hover
-                })
-                .border_color(if destructive {
-                    colors.danger
-                } else if emphasized {
-                    colors.accent_hover
-                } else {
-                    colors.accent
-                })
-                .text_color(if emphasized {
-                    colors.background
-                } else if destructive {
-                    colors.danger
-                } else {
-                    colors.text
-                })
-        })
-        .active(move |style| {
-            style
-                .bg(if destructive {
-                    colors.danger
-                } else if emphasized {
-                    colors.accent_pressed
-                } else {
-                    colors.surface_hover
-                })
-                .border_color(if destructive {
-                    colors.danger
-                } else {
-                    colors.accent_pressed
-                })
-                .text_color(if destructive || emphasized {
-                    colors.background
-                } else {
-                    colors.text
-                })
-        })
-        .tooltip(move |_, cx| {
-            cx.new(|_| PinnedTooltip(pinned_control_tooltip(locale, control), colors))
-                .into()
-        })
-        .on_click(on_click)
-        .child(label.into())
+    let label = label.into();
+    let (tone, active) = match tone {
+        PinnedButtonTone::Neutral => (WorkspaceButtonTone::Neutral, false),
+        PinnedButtonTone::Selected => (WorkspaceButtonTone::Neutral, true),
+        PinnedButtonTone::Primary => (WorkspaceButtonTone::Primary, false),
+        PinnedButtonTone::Destructive => (WorkspaceButtonTone::Destructive, false),
+    };
+    workspace_text_button(
+        id,
+        label,
+        WorkspaceButtonConfig::text(
+            None,
+            ThemeMetrics::PIN_CONTROL_HEIGHT,
+            colors,
+            tone,
+            active,
+            true,
+            Some(pinned_control_tooltip(locale, control)),
+        ),
+        on_click,
+    )
 }
 
 impl Render for PinnedImage {
@@ -536,7 +460,7 @@ impl Render for PinnedImage {
                 }
             });
         }
-        let toolbar = div()
+        let toolbar = workspace_surface(colors, true)
             .id("pinned-toolbar")
             .absolute()
             .top(px(ThemeMetrics::PIN_TOOLBAR_PADDING))
@@ -548,11 +472,6 @@ impl Render for PinnedImage {
             .flex_wrap()
             .items_center()
             .gap(px(ThemeMetrics::PIN_TOOLBAR_GAP))
-            .bg(colors.surface_elevated)
-            .border_1()
-            .border_color(colors.border)
-            .rounded_lg()
-            .shadow_lg()
             .when(!self.feedback_visible && !self.copy_in_flight, |toolbar| {
                 toolbar
                     .invisible()
@@ -571,7 +490,7 @@ impl Render for PinnedImage {
                             .flex()
                             .items_center()
                             .rounded_md()
-                            .bg(colors.background)
+                            .bg(colors.toolbar_surface)
                             .text_xs()
                             .text_color(colors.muted)
                             .child(self.status),
