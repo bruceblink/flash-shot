@@ -24,6 +24,8 @@ use crate::platform::process_pause::set_paused;
 const FFMPEG_PATH_ENV: &str = "FLASH_SHOT_FFMPEG";
 const MICROPHONE_DEVICE_ENV: &str = "FLASH_SHOT_RECORDING_MICROPHONE";
 const SYSTEM_AUDIO_DEVICE_ENV: &str = "FLASH_SHOT_RECORDING_SYSTEM_AUDIO";
+#[cfg(feature = "dev-tools")]
+const RECORDING_START_FAILURE_ONCE_ENV: &str = "FLASH_SHOT_RECORDING_START_FAILURE_ONCE";
 const VERSION_ARGUMENTS: &[&str] = &["-hide_banner", "-version"];
 const FORMAT_ARGUMENTS: &[&str] = &["-hide_banner", "-formats"];
 const DEVICE_ARGUMENTS: &[&str] = &["-hide_banner", "-devices"];
@@ -41,6 +43,9 @@ const DSHOW_AUDIO_DEVICE_ARGUMENTS: &[&str] = &[
 pub const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const FFMPEG_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
+
+#[cfg(feature = "dev-tools")]
+static RECORDING_START_FAILURE_ONCE_CONSUMED: AtomicBool = AtomicBool::new(false);
 
 /// Read-only capabilities exposed by an installed FFmpeg executable.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -489,6 +494,15 @@ fn recording_worker(
     events: async_channel::Sender<RecordingEvent>,
 ) {
     let _lifecycle = RecordingWorkerLifecycle(Arc::clone(&commands));
+    #[cfg(feature = "dev-tools")]
+    if consume_recording_start_failure_injection() {
+        emit_recording_failure(
+            &events,
+            &staging_output,
+            "acceptance-injected recording startup failure".to_owned(),
+        );
+        return;
+    }
     let process = match RecordingProcess::start(command) {
         Ok(process) => process,
         Err(error) => {
@@ -519,6 +533,13 @@ fn recording_worker(
             emit_recording_failure(&events, &staging_output, message);
         }
     }
+}
+
+#[cfg(feature = "dev-tools")]
+/// Consumes the opt-in one-shot fault used by the real recording retry acceptance scenario.
+fn consume_recording_start_failure_injection() -> bool {
+    std::env::var_os(RECORDING_START_FAILURE_ONCE_ENV).is_some()
+        && !RECORDING_START_FAILURE_ONCE_CONSUMED.swap(true, Ordering::AcqRel)
 }
 
 /// Runs one already-started process and returns only after its child and reader threads are owned

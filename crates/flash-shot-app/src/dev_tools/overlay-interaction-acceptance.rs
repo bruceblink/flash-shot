@@ -170,6 +170,8 @@ const RECORDING_DIRECTORY_ENV: &str = "FLASH_SHOT_RECORDING_DIRECTORY";
 const RECORDING_MICROPHONE_ENV: &str = "FLASH_SHOT_RECORDING_MICROPHONE";
 #[cfg(windows)]
 const RECORDING_SYSTEM_AUDIO_ENV: &str = "FLASH_SHOT_RECORDING_SYSTEM_AUDIO";
+#[cfg(windows)]
+const RECORDING_START_FAILURE_ONCE_ENV: &str = "FLASH_SHOT_RECORDING_START_FAILURE_ONCE";
 
 #[cfg(windows)]
 static LIVE_FIXTURE_WINDOWS: AtomicUsize = AtomicUsize::new(0);
@@ -201,6 +203,7 @@ enum CaptureScenarioOption {
     AnnotationRegression,
     CopyCancellationRace,
     ClipboardContentionRetry,
+    RecordingFailureRetry,
     SaveFailureRetry,
     SavePermissionRetry,
     SaveDialogPermissionRetry,
@@ -218,6 +221,7 @@ impl CaptureScenarioOption {
             Self::AnnotationRegression => "capture_annotation_regression",
             Self::CopyCancellationRace => "capture_copy_cancellation_race",
             Self::ClipboardContentionRetry => "capture_clipboard_contention_retry",
+            Self::RecordingFailureRetry => "recording_failure_retry",
             Self::SaveFailureRetry => "capture_save_failure_retry",
             Self::SavePermissionRetry => "capture_save_permission_retry",
             Self::SaveDialogPermissionRetry => "capture_save_dialog_permission_retry",
@@ -233,6 +237,7 @@ impl CaptureScenarioOption {
                 | Self::ScrollRoundtrip
                 | Self::AnnotationRegression
                 | Self::ClipboardContentionRetry
+                | Self::RecordingFailureRetry
                 | Self::SaveFailureRetry
                 | Self::SavePermissionRetry
                 | Self::SaveDialogPermissionRetry
@@ -380,6 +385,7 @@ impl Options {
                         "clipboard-contention-retry" => {
                             CaptureScenarioOption::ClipboardContentionRetry
                         }
+                        "recording-failure-retry" => CaptureScenarioOption::RecordingFailureRetry,
                         "save-failure-retry" => CaptureScenarioOption::SaveFailureRetry,
                         "save-permission-retry" => CaptureScenarioOption::SavePermissionRetry,
                         "save-dialog-permission-retry" => {
@@ -387,7 +393,7 @@ impl Options {
                         }
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
                     .to_owned(),
                             );
                         }
@@ -522,7 +528,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1334,6 +1340,7 @@ struct AcceptanceReport {
     save_failure_retry: Option<SaveFailureRetryReport>,
     save_permission_retry: Option<SavePermissionRetryReport>,
     save_dialog_permission_retry: Option<SaveDialogPermissionRetryReport>,
+    recording_failure_retry: Option<RecordingFailureRetryReport>,
     error: Option<String>,
 }
 
@@ -1411,6 +1418,15 @@ struct RecordingReport {
     maximum_progress_frame: u64,
     content: RecordingContentReport,
     window_dynamics: Option<RecordingWindowDynamicsReport>,
+}
+
+#[derive(serde::Serialize)]
+struct RecordingFailureRetryReport {
+    failure_status: String,
+    failure_state_cleared: bool,
+    retry_target: &'static str,
+    retry_started: bool,
+    retry_target_bounds: PhysicalRect,
 }
 
 #[derive(serde::Serialize)]
@@ -2220,7 +2236,10 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&session_root)?;
     fs::create_dir_all(session_root.join("screenshots"))?;
 
-    isolate_process_environment(&session_root);
+    isolate_process_environment(
+        &session_root,
+        options.capture_scenario == CaptureScenarioOption::RecordingFailureRetry,
+    );
     let settings_path = session_root.join("settings.json");
     let mut settings = UserSettings::default();
     // Keep native acceptance deterministic while still deriving visible status text from the
@@ -2249,7 +2268,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         .then(OverlayInteractionCopyRace::new);
     let app_copy_race = copy_race.clone();
     let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
-        (Some(_), _) => (980.0, 760.0),
+        (Some(_), _) | (None, CaptureScenarioOption::RecordingFailureRetry) => (980.0, 760.0),
         (None, CaptureScenarioOption::NarrowEdge) => (420.0, 420.0),
         (
             None,
@@ -2340,9 +2359,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 25 records the
-        // native Save dialog's read-only-directory error and retry evidence.
-        schema_version: 25,
+        // Increment when the machine-readable report shape changes. Schema 26 records the
+        // real recording startup failure and successful retry evidence.
+        schema_version: 26,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2375,6 +2394,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         save_failure_retry: None,
         save_permission_retry: None,
         save_dialog_permission_retry: None,
+        recording_failure_retry: None,
         error: None,
     }
 }
@@ -2395,14 +2415,20 @@ fn panic_payload_message(payload: &(dyn Any + Send)) -> &str {
 }
 
 #[cfg(windows)]
-/// Pins all writable recording state to this session and disables inherited audio capture.
-fn isolate_process_environment(session_root: &Path) {
+/// Pins all writable recording state to this session, optionally enabling one startup fault, and
+/// disables inherited audio capture.
+fn isolate_process_environment(session_root: &Path, inject_recording_start_failure: bool) {
     let recording_directory = session_root.join("recordings");
     // SAFETY: this runs before GPUI and the acceptance worker start, so no other thread can read
     // a partially updated process environment. The process exits after this one isolated run.
     unsafe {
         std::env::set_var(PROFILE_DIRECTORY_ENV, session_root);
         std::env::set_var(RECORDING_DIRECTORY_ENV, recording_directory);
+        if inject_recording_start_failure {
+            std::env::set_var(RECORDING_START_FAILURE_ONCE_ENV, "1");
+        } else {
+            std::env::remove_var(RECORDING_START_FAILURE_ONCE_ENV);
+        }
         std::env::remove_var(RECORDING_MICROPHONE_ENV);
         std::env::remove_var(RECORDING_SYSTEM_AUDIO_ENV);
     }
@@ -4058,6 +4084,9 @@ fn run_interaction_sequence(
         }
         (None, CaptureScenarioOption::ClipboardContentionRetry) => {
             execute_clipboard_contention_retry_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::RecordingFailureRetry) => {
+            execute_recording_failure_retry_interactions(context, report)
         }
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
@@ -9715,6 +9744,306 @@ fn ensure_path_within(path: &Path, root: &Path) -> io::Result<()> {
 }
 
 #[cfg(windows)]
+/// Drives a real Record-page startup failure, retry, pause/resume cycle, and MP4 verification.
+fn execute_recording_failure_retry_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "controller_ready",
+        controller,
+        None,
+    )?;
+
+    context
+        .interaction_commands
+        .send_blocking(OverlayInteractionAcceptanceCommand::ShowRecordingSettings)
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Record page command closed"))?;
+    let controller = wait_for_owned_window_visible(controller.handle, context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let controls = recording_control_plan_for_window(controller.handle)?;
+    let idle = capture_evidence(context, "01-recording-idle.png", controller)?;
+    record_step(
+        report,
+        &context.report_path,
+        "record_page_visible",
+        controller,
+        Some(&idle),
+    )?;
+
+    let foreground = inject_mouse_click(controller.handle, controls.stop)?;
+    record_step(
+        report,
+        &context.report_path,
+        "recording_start_failure_click",
+        foreground,
+        None,
+    )?;
+    let failed = wait_for_recording_failure(context, "recording startup failure")?;
+    let failure_state_cleared = !failed.active
+        && !failed.starting
+        && !failed.stopping
+        && !failed.paused
+        && failed.target.is_none();
+    if !failure_state_cleared {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("recording failure left lifecycle state active: {failed:?}"),
+        ));
+    }
+    if !failed
+        .status
+        .contains("acceptance-injected recording startup failure")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Record page did not surface the injected startup failure: {}",
+                failed.status
+            ),
+        ));
+    }
+    let failed_evidence = capture_evidence(
+        context,
+        "02-recording-failed.png",
+        guard_foreground(controller.handle)?,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "recording_start_failed",
+        foreground,
+        Some(&failed_evidence),
+    )?;
+    record_recording_state(report, &context.report_path, "failed", failed.clone())?;
+
+    let foreground = inject_mouse_click(controller.handle, controls.stop)?;
+    record_step(
+        report,
+        &context.report_path,
+        "recording_retry_click",
+        foreground,
+        None,
+    )?;
+    let active = wait_for_recording_state(context, "retried display recording", |state| {
+        state.active
+            && !state.starting
+            && !state.stopping
+            && state.target.as_deref() == Some("display")
+            && state.progress_frame >= 10
+            && state.progress_time_us > 0
+    })?;
+    let expected_source_bounds = context.display.physical_bounds;
+    let reported_source_bounds = active.target_bounds.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "retried display recording did not report physical source bounds",
+        )
+    })?;
+    if reported_source_bounds != expected_source_bounds {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "display recording reported {reported_source_bounds:?}, expected {expected_source_bounds:?}"
+            ),
+        ));
+    }
+    let reference_timestamp_seconds = active.progress_time_us as f64 / 1_000_000.0;
+    let recording_reference = SystemCaptureBackend.capture(expected_source_bounds)?;
+    if recording_reference.bounds != expected_source_bounds {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "recording reference captured {:?}, expected {expected_source_bounds:?}",
+                recording_reference.bounds
+            ),
+        ));
+    }
+    let reference_path = context
+        .session_root
+        .join("screenshots")
+        .join("recording-source-reference.png");
+    recording_reference.save_png(&reference_path)?;
+    let mut maximum_progress_frame = active.progress_frame;
+    report.recording_failure_retry = Some(RecordingFailureRetryReport {
+        failure_status: failed.status,
+        failure_state_cleared,
+        retry_target: "display",
+        retry_started: true,
+        retry_target_bounds: reported_source_bounds,
+    });
+    record_recording_state(
+        report,
+        &context.report_path,
+        "retry_recording",
+        active.clone(),
+    )?;
+    let retried_evidence = capture_evidence(
+        context,
+        "03-recording-retried.png",
+        guard_foreground(controller.handle)?,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "recording_retry_started",
+        controller,
+        Some(&retried_evidence),
+    )?;
+
+    let foreground = inject_mouse_click(controller.handle, controls.pause_or_resume)?;
+    let paused = wait_for_recording_state(context, "paused retried recording", |state| {
+        state.active && state.paused && !state.stopping
+    })?;
+    maximum_progress_frame = maximum_progress_frame.max(paused.progress_frame);
+    record_recording_state(report, &context.report_path, "paused", paused)?;
+    thread::sleep(context.settle_delay.max(PAUSE_STABILITY_INTERVAL));
+    let paused_before =
+        wait_for_recording_state(context, "settled paused retried recording", |state| {
+            state.active && state.paused && !state.stopping
+        })?;
+    maximum_progress_frame = maximum_progress_frame.max(paused_before.progress_frame);
+    record_recording_state(
+        report,
+        &context.report_path,
+        "paused_stability_start",
+        paused_before.clone(),
+    )?;
+    thread::sleep(PAUSE_STABILITY_INTERVAL);
+    let paused_after = query_recording_state(context, context.timeout.min(Duration::from_secs(1)))?;
+    validate_paused_progress(&paused_before, &paused_after)?;
+    maximum_progress_frame = maximum_progress_frame.max(paused_after.progress_frame);
+    record_recording_state(
+        report,
+        &context.report_path,
+        "paused_stability_end",
+        paused_after.clone(),
+    )?;
+    let paused_evidence = capture_evidence(
+        context,
+        "04-paused.png",
+        guard_foreground(controller.handle)?,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "pause_click",
+        foreground,
+        Some(&paused_evidence),
+    )?;
+
+    let foreground = inject_mouse_click(controller.handle, controls.pause_or_resume)?;
+    let resumed = wait_for_recording_state(context, "resumed retried recording", |state| {
+        state.active
+            && !state.paused
+            && !state.stopping
+            && state.progress_frame > paused_after.progress_frame
+            && state.progress_time_us > paused_after.progress_time_us
+    })?;
+    maximum_progress_frame = maximum_progress_frame.max(resumed.progress_frame);
+    record_recording_state(report, &context.report_path, "resumed", resumed)?;
+    thread::sleep(context.settle_delay);
+    let resumed_evidence = capture_evidence(
+        context,
+        "05-resumed.png",
+        guard_foreground(controller.handle)?,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "resume_click",
+        foreground,
+        Some(&resumed_evidence),
+    )?;
+
+    let foreground = inject_mouse_click(controller.handle, controls.stop)?;
+    record_step(report, &context.report_path, "stop_click", foreground, None)?;
+    let stopping = wait_for_recording_state(context, "stopping retried recording", |state| {
+        state.stopping
+    })?;
+    maximum_progress_frame = maximum_progress_frame.max(stopping.progress_frame);
+    record_recording_state(report, &context.report_path, "stopping", stopping)?;
+    let saved = wait_for_recording_state(context, "saved retried recording", recording_saved)?;
+    maximum_progress_frame = maximum_progress_frame.max(saved.progress_frame);
+    record_recording_state(report, &context.report_path, "saved", saved)?;
+    thread::sleep(context.settle_delay);
+    let saved_evidence = capture_evidence(
+        context,
+        "06-saved.png",
+        guard_foreground(controller.handle)?,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "saved_visible",
+        controller,
+        Some(&saved_evidence),
+    )?;
+
+    let output = single_recording_output(&context.session_root.join("recordings"))?;
+    let output_bytes = fs::metadata(&output)?.len();
+    if output_bytes == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "retried recording MP4 is empty",
+        ));
+    }
+    let capabilities = discover()?;
+    let media = probe_media(capabilities.executable(), &output)?;
+    validate_recorded_media(expected_source_bounds, &media)?;
+    let decoded_path = context
+        .session_root
+        .join("screenshots")
+        .join("recording-decoded-frame.png");
+    extract_video_frame(
+        capabilities.executable(),
+        &output,
+        reference_timestamp_seconds,
+        &decoded_path,
+    )?;
+    let decoded_frame = CaptureFrame::open_png(&decoded_path)?;
+    let content_comparison =
+        validate_recording_frame_content(&recording_reference, &decoded_frame)?;
+    let content = recording_content_report(
+        "screenshots/recording-source-reference.png".to_owned(),
+        "screenshots/recording-decoded-frame.png".to_owned(),
+        reference_timestamp_seconds,
+        content_comparison,
+    );
+    let relative_output = output
+        .strip_prefix(&context.session_root)
+        .unwrap_or(&output)
+        .to_string_lossy()
+        .into_owned();
+    report.recording = Some(RecordingReport {
+        target: "display",
+        requested_selection: expected_source_bounds,
+        source_bounds: expected_source_bounds,
+        reported_source_bounds,
+        window_title: None,
+        output: relative_output,
+        output_bytes,
+        ffmpeg_version: capabilities.version().to_owned(),
+        codec_name: media.codec_name,
+        width: media.width,
+        height: media.height,
+        duration_seconds: media.duration_seconds,
+        pause_observed: true,
+        resume_observed: true,
+        maximum_progress_frame,
+        content,
+        window_dynamics: None,
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
 /// Drives the real overlay entry plus Record-page pause, resume, stop, and MP4 verification.
 fn execute_recording_interactions(
     context: &WorkerContext,
@@ -10351,6 +10680,34 @@ fn wait_for_recording_state(
                 ),
             ));
         }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+/// Waits for an expected recording failure without treating its user-visible status as runner error.
+fn wait_for_recording_failure(
+    context: &WorkerContext,
+    stage: &str,
+) -> io::Result<OverlayInteractionRecordingState> {
+    let deadline = Instant::now() + context.timeout;
+    let mut last_status = None;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "timed out waiting for {stage}; last status: {}",
+                    last_status.as_deref().unwrap_or("no state reply received")
+                ),
+            ));
+        }
+        let state = query_recording_state(context, remaining)?;
+        if recording_failed(&state) {
+            return Ok(state);
+        }
+        last_status = Some(state.status);
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -13672,6 +14029,36 @@ mod tests {
                 "--allow-input",
                 "--capture-scenario",
                 "save-dialog-permission-retry",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_accepts_recording_failure_retry_scenario_without_clipboard_access() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "recording-failure-retry",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::RecordingFailureRetry
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "recording_failure_retry"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(!options.allow_system_clipboard);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "recording-failure-retry",
                 "--allow-system-clipboard",
             ]))
             .is_err()

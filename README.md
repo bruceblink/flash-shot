@@ -154,6 +154,22 @@ history，校验导出尺寸、导出像素已包含标注、临时文件清理�
 `session-<timestamp>-<pid>\report.json`，步骤截图位于同一会话的 `screenshots` 目录。未在真实 Windows
 桌面执行的结果只能标记为待执行，不能用 Linux 单元测试替代原生输入证据。
 
+验证录屏启动失败后的 Record 页恢复时，使用一次性故障注入场景。它打开真实 Record 页，触发一次录屏启动失败，
+检查错误文案和生命周期已清理，再点击同一个主操作重试；随后执行暂停、继续、停止，并用 FFprobe 和解码帧校验
+最终 H.264 MP4：
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance `
+  --allow-input --capture-scenario recording-failure-retry `
+  --output-dir target\overlay-interaction-acceptance\recording-failure-retry
+```
+
+该场景要求单显示器 100% DPI、可丢弃的交互式 Windows 桌面和可用 FFmpeg，不读取或改写系统剪贴板。报告会在
+`recording_failure_retry` 中记录失败状态、清理结果、重试目标和目标边界；报告与步骤截图位于生成的
+`session-<timestamp>-<pid>` 目录。区域录制和窗口录制仍分别使用 `--record-target area` 与
+`--record-target window`，不会经过该故障注入场景。完整开发工具说明见
+[开发工具说明](crates/flash-shot-app/src/dev_tools/README.md)。
+
 使用固定 4K 场景测量 CPU 导出合成器。该指标衡量导出性能，不是 GPUI 交互帧门禁；
 只有在建立具有代表性的 Release 基线后，才应显式设置上限：
 
@@ -197,6 +213,7 @@ FFmpeg 能力快照：
 - [产品需求](docs/requirements.md)
 - [开发设计思路](docs/architecture.md)
 - [主线开发计划](docs/plan.md)
+- [开发工具说明](crates/flash-shot-app/src/dev_tools/README.md)
 - [Windows 手工验收记录](docs/windows-manual-acceptance.md)
 - [Windows 分发](docs/windows-distribution.md)
 - [Linux 平台可行性验证](docs/linux-platform-validation.md)

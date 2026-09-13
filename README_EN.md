@@ -308,6 +308,23 @@ forces output into its disposable session and clears inherited recording-audio o
 .\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --record-target window --output-dir target/overlay-recording-interaction-acceptance
 ```
 
+To validate Record-page recovery after a recording startup failure, use the one-shot fault-injection
+scenario below. It opens the real Record page, triggers one startup failure, checks the visible error
+and cleared lifecycle, then clicks the same primary action to retry. It continues through Pause,
+Resume, and Stop and verifies the finalized H.264 MP4 with FFprobe and a decoded frame:
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance `
+  --allow-input --capture-scenario recording-failure-retry `
+  --output-dir target\overlay-interaction-acceptance\recording-failure-retry
+```
+
+Run it on a disposable interactive Windows desktop with one 100%-scaled display and an available
+FFmpeg. The scenario does not access the system clipboard. `report.json` records the failure status,
+cleared lifecycle, retry target, and target bounds; the report and step screenshots are stored below
+the generated `session-<timestamp>-<pid>` directory. The area and window recording flows remain
+separate and continue to use `--record-target area` and `--record-target window`.
+
 On a single-display interactive desktop, run the isolated three-Pin lifecycle gate without
 registering a tray icon or global shortcuts and without writing to the system clipboard. The gate
 uses measured native bounds for DPI-aware layout, verifies that Show all preserves focus, and

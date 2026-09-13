@@ -233,6 +233,12 @@ Save 对话框目录权限，不替代 FFmpeg 用户界面失败恢复；B1 仍�
 `target/ui-acceptance/recording-ui-failed-retry-zh-CN.png` 及同名 JSON。该证据仍不替代真实 FFmpeg
 运行中退出和原生 Save 对话框目录权限恢复矩阵。
 
+2026-09-13 已接入 `overlay-interaction-acceptance --capture-scenario recording-failure-retry`：在独立进程中
+通过 `dev-tools` 专用环境变量对真实录屏 worker 注入一次启动失败，检查 Record 页错误状态和生命周期清理，
+再点击同一个主操作重试，并继续完成 Pause、Resume、Stop、FFprobe 和解码帧校验。该场景不会读取系统剪贴板，
+区域录制与窗口录制仍走原有路径；宿主全特性测试 496 项和 Windows MSVC target 编译检查已通过。真实 Windows
+Release、鼠标输入、FFmpeg MP4 和截图证据仍待执行，因此 B1 继续保持“部分完成”，不能以跨平台编译替代原生验收。
+
 2026-09-06 的当前源码 Release `overlay-interaction-acceptance --capture-scenario copy-only
 --allow-system-clipboard` 已完成一次真实工具栏 Copy：PNG、CF_DIB 和普通消费者均逐像素一致，编辑器保留选区，
 消费者已回收且最终 `capture_teardown_pending=false`。随后 `overlay-copy-batch` 在同一单屏环境完成 2 次预热和
