@@ -29,7 +29,6 @@ pub(crate) struct WorkspaceButtonConfig {
 impl WorkspaceButtonConfig {
     /// Creates an icon configuration using the workspace's stable toolbar hit height.
     pub(crate) fn icon(
-        width: f32,
         colors: ThemeColors,
         tone: WorkspaceButtonTone,
         active: bool,
@@ -37,8 +36,8 @@ impl WorkspaceButtonConfig {
         tooltip: impl Into<SharedString>,
     ) -> Self {
         Self {
-            width: Some(width),
-            height: ThemeMetrics::default().workspace_icon_button_hit_area,
+            width: Some(ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA),
+            height: ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
             colors,
             tone,
             active,
@@ -101,7 +100,7 @@ pub(crate) fn workspace_surface(colors: ThemeColors, elevated: bool) -> Div {
         .shadow_lg()
 }
 
-/// Builds a divider without making each toolbar row choose its own geometry.
+/// Builds a shared toolbar divider so adjacent action groups keep a clear visual boundary.
 pub(crate) fn workspace_separator(
     id: impl Into<gpui::ElementId>,
     colors: ThemeColors,

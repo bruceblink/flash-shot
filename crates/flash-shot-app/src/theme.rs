@@ -157,7 +157,6 @@ impl ThemeMetrics {
     pub const SETTINGS_CONTROL_COLUMN_MIN_WIDTH: f32 = 160.0;
     pub const OVERLAY_EDGE_INSET: f32 = 18.0;
     pub const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
-    pub const OVERLAY_ACTION_BAR_WIDTH: f32 = 620.0;
     pub const PIN_CONTROL_HEIGHT: f32 = 30.0;
     pub const PIN_TOOLBAR_PADDING: f32 = 8.0;
     pub const PIN_TOOLBAR_GAP: f32 = 8.0;

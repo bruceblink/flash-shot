@@ -49,9 +49,6 @@ const OVERLAY_EDGE_INSET: f32 = ThemeMetrics::OVERLAY_EDGE_INSET;
 // Keep fallback controls above a scaled Windows taskbar when the borderless
 // overlay extends over the full display rather than the working area.
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET;
-// W2 will replace this legacy cap with intrinsic-width placement. Keep the alias during W1 so
-// the current behavior and its layout tests remain unchanged while shared styling is introduced.
-const OVERLAY_ACTION_BAR_WIDTH: f32 = ThemeMetrics::OVERLAY_ACTION_BAR_WIDTH;
 const OVERLAY_ACTION_BAR_GAP: f32 = ThemeMetrics::WORKSPACE_SELECTION_GAP;
 const OVERLAY_ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
 const OVERLAY_ACTION_ITEM_HEIGHT: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_HEIGHT;
@@ -85,11 +82,6 @@ const ANNOTATION_LAYERS_WIDTH: f32 = 180.0;
 const ANNOTATION_LAYERS_PREFERRED_HEIGHT: f32 = 200.0;
 const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 900.0;
 const ANNOTATION_TOOLBAR_MIN_CONTENT_WIDTH: f32 = 320.0;
-// Keep the core screenshot actions compact while optional actions use wider,
-// self-explanatory labels when they are expanded. These are outer button widths
-// paired with `secondary_action_button`, so the layout calculation and actual
-// rendered menu always wrap at the same places.
-const OVERLAY_PRIMARY_ACTION_WIDTHS: [f32; 6] = [52.0, 44.0, 48.0, 48.0, 48.0, 58.0];
 const OVERLAY_MORE_ACTIONS_ID: &str = "overlay-more-actions";
 const SECONDARY_ACTION_COUNT: usize = 14;
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
@@ -1194,7 +1186,12 @@ impl Render for CaptureOverlay {
             selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds));
         let show_annotation_controls =
             annotation_controls_visible(app.overlay_annotation_controls, selection, display_bounds);
-        let base_action_layout = action_toolbar_layout(selected_on_display, transform, viewport);
+        let base_action_layout = action_toolbar_layout(
+            selected_on_display,
+            transform,
+            viewport,
+            show_annotation_controls,
+        );
         let annotation_style_height = annotation_style_panel_height(can_adjust_font_size);
         let annotation_layout = show_annotation_controls
             .then(|| {
@@ -1236,9 +1233,19 @@ impl Render for CaptureOverlay {
                 (view_rect(viewport).height - annotation_layer_top - OVERLAY_BOTTOM_SAFE_INSET)
                     .max(80.0)
             });
+        let secondary_menu_width = action_layout.map(|_| {
+            secondary_action_menu_width(
+                view_rect(viewport).width,
+                recognition_result.is_some(),
+                recognition_retry.is_some(),
+            )
+        });
+        let secondary_menu_left = action_layout
+            .zip(secondary_menu_width)
+            .map(|(layout, width)| secondary_action_menu_left(layout, width, viewport));
         let secondary_menu_height = action_layout.map(|layout| {
             secondary_action_menu_height(
-                layout.width,
+                secondary_menu_width.unwrap_or(layout.width),
                 recognition_result.is_some(),
                 recognition_retry.is_some(),
                 recognition_in_flight,
@@ -1248,8 +1255,9 @@ impl Render for CaptureOverlay {
             let menu_height = secondary_menu_height.unwrap_or_default();
             if let Some(marking) = annotation_layout {
                 let viewport = view_rect(viewport);
-                let above = layout.top - OVERLAY_SECONDARY_MENU_GAP - menu_height;
-                let below = layout.top + layout.height + OVERLAY_SECONDARY_MENU_GAP + menu_height;
+                let menu_offset = secondary_action_menu_offset();
+                let above = layout.top - menu_offset - menu_height;
+                let below = layout.top + layout.height + menu_offset + menu_height;
                 if marking.actions_above_tools && above >= viewport.top + OVERLAY_EDGE_INSET {
                     return true;
                 }
@@ -1619,48 +1627,6 @@ impl Render for CaptureOverlay {
                                 .flex_wrap()
                                 .items_center()
                                 .gap(px(ThemeMetrics::default().workspace_toolbar_gap))
-                                .child(workspace_icon_button(
-                                    "overlay-undo",
-                                    icon::UNDO,
-                                    locale.text(UiText::OverlayUndo),
-                                    WorkspaceButtonConfig::icon(
-                                        36.0,
-                                        colors,
-                                        WorkspaceButtonTone::Neutral,
-                                        false,
-                                        can_undo,
-                                        locale.text(UiText::OverlayUndo),
-                                    ),
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.undo_annotation(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(workspace_icon_button(
-                                    "overlay-redo",
-                                    icon::REDO,
-                                    locale.text(UiText::OverlayRedo),
-                                    WorkspaceButtonConfig::icon(
-                                        36.0,
-                                        colors,
-                                        WorkspaceButtonTone::Neutral,
-                                        false,
-                                        can_redo,
-                                        locale.text(UiText::OverlayRedo),
-                                    ),
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.redo_annotation(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(workspace_separator(
-                                    "overlay-annotation-tools-separator",
-                                    colors,
-                                ))
                                 .child(annotation_action_button(
                                     "overlay-tool-watermark",
                                     locale.text(UiText::OverlayWatermark),
@@ -2323,7 +2289,7 @@ impl Render for CaptureOverlay {
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .justify_end()
+                    .justify_between()
                     .gap(px(OVERLAY_ACTION_ITEM_GAP))
                     .p(px(OVERLAY_ACTION_BAR_PADDING))
                     .when(!show_annotation_controls, |actions| {
@@ -2338,164 +2304,234 @@ impl Render for CaptureOverlay {
                     .font_weight(FontWeight::SEMIBOLD)
                     .when(can_export, |actions| {
                         actions
-                            .child(
-                                workspace_icon_button(
-                                    "overlay-annotation-controls",
-                                    icon::MARK,
-                                    locale.text(UiText::OverlayMark),
-                                    WorkspaceButtonConfig::icon(
-                                        OVERLAY_PRIMARY_ACTION_WIDTHS[0],
-                                        colors,
-                                        WorkspaceButtonTone::Neutral,
-                                        show_annotation_controls,
-                                        true,
-                                        primary_action_tooltip(locale, "draw"),
-                                    ),
-                                    cx.listener(|this, _, window, cx| {
-                                        // Return focus to the overlay canvas after opening the
-                                        // annotation palette so keyboard tools remain available
-                                        // without requiring an extra click on the image.
-                                        this.focus_handle.focus(window, cx);
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.toggle_overlay_annotation_controls(cx)
-                                            })
-                                        });
-                                    }),
+                            .when(show_annotation_controls, |actions| {
+                                actions.child(
+                                    div()
+                                        .id("overlay-annotation-context-actions")
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(OVERLAY_ACTION_ITEM_GAP))
+                                        .child(workspace_icon_button(
+                                            "overlay-undo",
+                                            icon::UNDO,
+                                            locale.text(UiText::OverlayUndo),
+                                            WorkspaceButtonConfig::icon(
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                can_undo,
+                                                locale.text(UiText::OverlayUndo),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.undo_annotation(cx)
+                                                    });
+                                                });
+                                            }),
+                                        ))
+                                        .child(workspace_icon_button(
+                                            "overlay-redo",
+                                            icon::REDO,
+                                            locale.text(UiText::OverlayRedo),
+                                            WorkspaceButtonConfig::icon(
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                can_redo,
+                                                locale.text(UiText::OverlayRedo),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.redo_annotation(cx)
+                                                    });
+                                                });
+                                            }),
+                                        )),
                                 )
-                                .on_key_down(stop_overlay_action_key_propagation),
+                            })
+                            .when(show_annotation_controls, |actions| {
+                                actions.child(workspace_separator(
+                                    "overlay-action-context-separator",
+                                    colors,
+                                ))
+                            })
+                            .child(
+                                div()
+                                    .id("overlay-mode-actions")
+                                    .flex()
+                                    .items_center()
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-annotation-controls",
+                                            icon::MARK,
+                                            locale.text(UiText::OverlayMark),
+                                            WorkspaceButtonConfig::icon(
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                show_annotation_controls,
+                                                true,
+                                                primary_action_tooltip(locale, "draw"),
+                                            ),
+                                            cx.listener(|this, _, window, cx| {
+                                                // Return focus to the overlay canvas after opening the
+                                                // annotation palette so keyboard tools remain available
+                                                // without requiring an extra click on the image.
+                                                this.focus_handle.focus(window, cx);
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.toggle_overlay_annotation_controls(cx)
+                                                    })
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    ),
                             )
+                            .when(show_annotation_controls, |actions| {
+                                actions.child(workspace_separator(
+                                    "overlay-action-result-separator",
+                                    colors,
+                                ))
+                            })
                             .child(
-                                workspace_icon_button(
-                                    "overlay-pin",
-                                    icon::PIN,
-                                    locale.text(UiText::OverlayPin),
-                                    WorkspaceButtonConfig::icon(
-                                        OVERLAY_PRIMARY_ACTION_WIDTHS[1],
-                                        colors,
-                                        WorkspaceButtonTone::Neutral,
-                                        false,
-                                        true,
-                                        locale.text(UiText::OverlayPinTooltip),
+                                div()
+                                    .id("overlay-result-actions")
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(OVERLAY_ACTION_ITEM_GAP))
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-pin",
+                                            icon::PIN,
+                                            locale.text(UiText::OverlayPin),
+                                            WorkspaceButtonConfig::icon(
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                true,
+                                                locale.text(UiText::OverlayPinTooltip),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| app.pin_selection(cx))
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-copy",
+                                            icon::COPY,
+                                            locale.text(UiText::OverlayCopy),
+                                            WorkspaceButtonConfig::icon(
+                                                colors,
+                                                WorkspaceButtonTone::Primary,
+                                                false,
+                                                !selection_copy_in_progress,
+                                                if selection_copy_in_progress {
+                                                    locale.text(UiText::OverlayCopyingTooltip)
+                                                } else {
+                                                    primary_action_tooltip(locale, "copy")
+                                                },
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| app.copy_selection(cx))
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-save",
+                                            icon::SAVE,
+                                            locale.text(UiText::OverlaySave),
+                                            WorkspaceButtonConfig::icon(
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                true,
+                                                primary_action_tooltip(locale, "save"),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| app.save_selection(cx))
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            OVERLAY_MORE_ACTIONS_ID,
+                                            icon::MORE,
+                                            more_actions_button_label(locale, show_more_actions),
+                                            WorkspaceButtonConfig::icon(
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                show_more_actions,
+                                                true,
+                                                if show_more_actions {
+                                                    locale.text(UiText::OverlayHideMoreTooltip)
+                                                } else {
+                                                    locale.text(UiText::OverlayShowMoreTooltip)
+                                                },
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.toggle_overlay_more_actions(cx)
+                                                    })
+                                                });
+                                            }),
+                                        )
+                                        .track_focus(&self.more_actions_focus_handle)
+                                        .aria_keyshortcuts("Alt+M")
+                                        .aria_expanded(show_more_actions)
+                                        .on_key_down(
+                                            move |event, window, cx| {
+                                                handle_more_actions_key_down(
+                                                    show_more_actions,
+                                                    &more_actions_navigation,
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                );
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-cancel",
+                                            icon::CANCEL,
+                                            locale.text(UiText::OverlayCancel),
+                                            WorkspaceButtonConfig::icon(
+                                                colors,
+                                                WorkspaceButtonTone::Destructive,
+                                                false,
+                                                true,
+                                                primary_action_tooltip(locale, "cancel"),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| app.reset(cx))
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
                                     ),
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.pin_selection(cx))
-                                        });
-                                    }),
-                                )
-                                .on_key_down(stop_overlay_action_key_propagation),
-                            )
-                            .child(
-                                workspace_icon_button(
-                                    "overlay-copy",
-                                    icon::COPY,
-                                    locale.text(UiText::OverlayCopy),
-                                    WorkspaceButtonConfig::icon(
-                                        OVERLAY_PRIMARY_ACTION_WIDTHS[2],
-                                        colors,
-                                        WorkspaceButtonTone::Primary,
-                                        false,
-                                        !selection_copy_in_progress,
-                                        if selection_copy_in_progress {
-                                            locale.text(UiText::OverlayCopyingTooltip)
-                                        } else {
-                                            primary_action_tooltip(locale, "copy")
-                                        },
-                                    ),
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.copy_selection(cx))
-                                        });
-                                    }),
-                                )
-                                .on_key_down(stop_overlay_action_key_propagation),
-                            )
-                            .child(
-                                workspace_icon_button(
-                                    "overlay-save",
-                                    icon::SAVE,
-                                    locale.text(UiText::OverlaySave),
-                                    WorkspaceButtonConfig::icon(
-                                        OVERLAY_PRIMARY_ACTION_WIDTHS[3],
-                                        colors,
-                                        WorkspaceButtonTone::Neutral,
-                                        false,
-                                        true,
-                                        primary_action_tooltip(locale, "save"),
-                                    ),
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.save_selection(cx))
-                                        });
-                                    }),
-                                )
-                                .on_key_down(stop_overlay_action_key_propagation),
-                            )
-                            .child(
-                                workspace_icon_button(
-                                    OVERLAY_MORE_ACTIONS_ID,
-                                    icon::MORE,
-                                    more_actions_button_label(locale, show_more_actions),
-                                    WorkspaceButtonConfig::icon(
-                                        OVERLAY_PRIMARY_ACTION_WIDTHS[4],
-                                        colors,
-                                        WorkspaceButtonTone::Neutral,
-                                        show_more_actions,
-                                        true,
-                                        if show_more_actions {
-                                            locale.text(UiText::OverlayHideMoreTooltip)
-                                        } else {
-                                            locale.text(UiText::OverlayShowMoreTooltip)
-                                        },
-                                    ),
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.toggle_overlay_more_actions(cx)
-                                            })
-                                        });
-                                    }),
-                                )
-                                .track_focus(&self.more_actions_focus_handle)
-                                .aria_keyshortcuts("Alt+M")
-                                .aria_expanded(show_more_actions)
-                                .on_key_down(
-                                    move |event, window, cx| {
-                                        handle_more_actions_key_down(
-                                            show_more_actions,
-                                            &more_actions_navigation,
-                                            event,
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                ),
-                            )
-                            .child(
-                                workspace_icon_button(
-                                    "overlay-cancel",
-                                    icon::CANCEL,
-                                    locale.text(UiText::OverlayCancel),
-                                    WorkspaceButtonConfig::icon(
-                                        OVERLAY_PRIMARY_ACTION_WIDTHS[5],
-                                        colors,
-                                        WorkspaceButtonTone::Destructive,
-                                        false,
-                                        true,
-                                        primary_action_tooltip(locale, "cancel"),
-                                    ),
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| app.update(cx, |app, cx| app.reset(cx)));
-                                    }),
-                                )
-                                .on_key_down(stop_overlay_action_key_propagation),
                             )
                             .when(show_more_actions, |actions| {
                                 actions.child(
@@ -2504,17 +2540,17 @@ impl Render for CaptureOverlay {
                                         .tab_group()
                                         .occlude()
                                         .absolute()
-                                        .right_0()
-                                        .w_full()
+                                        .when_some(secondary_menu_width, |menu, width| {
+                                            menu.w(px(width))
+                                        })
+                                        .when_some(secondary_menu_left, |menu, left| {
+                                            menu.left(px(left))
+                                        })
                                         .when(secondary_menu_above, |menu| {
-                                            menu.bottom(px(OVERLAY_ACTION_ITEM_HEIGHT
-                                                + OVERLAY_ACTION_BAR_PADDING * 2.0
-                                                + OVERLAY_SECONDARY_MENU_GAP))
+                                            menu.bottom(px(secondary_action_menu_offset()))
                                         })
                                         .when(!secondary_menu_above, |menu| {
-                                            menu.top(px(OVERLAY_ACTION_ITEM_HEIGHT
-                                                + OVERLAY_ACTION_BAR_PADDING * 2.0
-                                                + OVERLAY_SECONDARY_MENU_GAP))
+                                            menu.top(px(secondary_action_menu_offset()))
                                         })
                                         .p(px(OVERLAY_ACTION_BAR_PADDING))
                                         .flex()
@@ -4002,19 +4038,19 @@ fn smart_target_hud_label(locale: Locale, target: InspectionTarget) -> String {
     )
 }
 
+/// Places the stable main row near the selection using only shared icon geometry and safe bounds.
 fn action_toolbar_layout(
     selection: Option<PhysicalRect>,
     transform: Option<PreviewTransform>,
     viewport: Bounds<Pixels>,
+    show_annotation_controls: bool,
 ) -> Option<ActionToolbarLayout> {
     let selection = selection?;
     let transform = transform?;
     let viewport = view_rect(viewport);
     let available_width = (viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0);
-    let width = action_toolbar_natural_width(false, false)
-        .min(available_width)
-        .min(OVERLAY_ACTION_BAR_WIDTH);
-    let height = action_toolbar_height(width, false, false);
+    let width = action_toolbar_natural_width(show_annotation_controls).min(available_width);
+    let height = action_toolbar_height(width, show_annotation_controls);
     let selection_top = transform
         .physical_to_view(PhysicalPoint {
             x: selection.left,
@@ -4080,10 +4116,16 @@ fn secondary_menu_opens_above(
     menu_height: f32,
 ) -> bool {
     let viewport = view_rect(viewport);
-    let top = toolbar.top - OVERLAY_SECONDARY_MENU_GAP - menu_height;
-    let bottom = toolbar.top + toolbar.height + OVERLAY_SECONDARY_MENU_GAP + menu_height;
+    let menu_offset = secondary_action_menu_offset();
+    let top = toolbar.top - menu_offset - menu_height;
+    let bottom = toolbar.top + toolbar.height + menu_offset + menu_height;
     top >= viewport.top + OVERLAY_EDGE_INSET
         || bottom > viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET
+}
+
+/// Keeps the detached More panel clear of the main toolbar's padded border.
+fn secondary_action_menu_offset() -> f32 {
+    OVERLAY_ACTION_ITEM_HEIGHT + OVERLAY_ACTION_BAR_PADDING * 2.0 + OVERLAY_SECONDARY_MENU_GAP
 }
 
 /// Lifts status feedback above the fallback action bar so narrow overlays stay readable.
@@ -4117,31 +4159,76 @@ fn secondary_action_menu_height(
     has_recognition_retry: bool,
     recognition_in_flight: bool,
 ) -> f32 {
-    action_toolbar_height_for(
-        width,
-        OVERLAY_MORE_ACTION_WIDTHS
-            .into_iter()
-            .chain(
-                has_recognition_result
-                    .then_some(OVERLAY_RECOGNITION_ACTION_WIDTHS)
-                    .into_iter()
-                    .flatten(),
-            )
-            .chain(
-                has_recognition_retry
-                    .then_some(OVERLAY_RETRY_ACTION_WIDTHS)
-                    .into_iter()
-                    .flatten(),
-            ),
-    ) + if has_recognition_result {
-        OVERLAY_RECOGNITION_PREVIEW_HEIGHT + OVERLAY_ACTION_ITEM_GAP
-    } else {
-        0.0
-    } + if recognition_in_flight {
-        OVERLAY_RECOGNITION_STATUS_HEIGHT + OVERLAY_ACTION_ITEM_GAP
-    } else {
-        0.0
+    let widths = secondary_action_widths(has_recognition_result, has_recognition_retry);
+    action_toolbar_height_for(width, widths.iter().copied())
+        + if has_recognition_result {
+            OVERLAY_RECOGNITION_PREVIEW_HEIGHT + OVERLAY_ACTION_ITEM_GAP
+        } else {
+            0.0
+        }
+        + if recognition_in_flight {
+            OVERLAY_RECOGNITION_STATUS_HEIGHT + OVERLAY_ACTION_ITEM_GAP
+        } else {
+            0.0
+        }
+}
+
+/// Returns the visible More actions in their stable layout order for height and width estimates.
+fn secondary_action_widths(has_recognition_result: bool, has_recognition_retry: bool) -> Vec<f32> {
+    let mut widths = OVERLAY_MORE_ACTION_WIDTHS.to_vec();
+    if has_recognition_result {
+        widths.extend(OVERLAY_RECOGNITION_ACTION_WIDTHS);
     }
+    if has_recognition_retry {
+        widths.extend(OVERLAY_RETRY_ACTION_WIDTHS);
+    }
+    widths
+}
+
+/// Finds a compact preferred More-panel width that keeps its common actions to four rows.
+fn secondary_action_menu_preferred_width(
+    has_recognition_result: bool,
+    has_recognition_retry: bool,
+) -> f32 {
+    let widths = secondary_action_widths(has_recognition_result, has_recognition_retry);
+    let minimum_width = widths.iter().copied().fold(0.0, f32::max)
+        + OVERLAY_ACTION_BAR_PADDING * 2.0
+        + OVERLAY_ACTION_BAR_BORDER * 2.0;
+    let maximum_width = widths.iter().sum::<f32>()
+        + widths.len().saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
+        + OVERLAY_ACTION_BAR_PADDING * 2.0
+        + OVERLAY_ACTION_BAR_BORDER * 2.0;
+    let mut width = minimum_width.ceil();
+    while width <= maximum_width {
+        if action_toolbar_row_count(width, widths.iter().copied()) <= 4 {
+            return width;
+        }
+        width += 1.0;
+    }
+    maximum_width
+}
+
+/// Caps the More panel by the current safe viewport while preserving its preferred content width.
+fn secondary_action_menu_width(
+    viewport_width: f32,
+    has_recognition_result: bool,
+    has_recognition_retry: bool,
+) -> f32 {
+    let available_width = (viewport_width - OVERLAY_EDGE_INSET * 2.0).max(1.0);
+    secondary_action_menu_preferred_width(has_recognition_result, has_recognition_retry)
+        .min(available_width)
+}
+
+/// Centers the More panel near its trigger while clamping it to the overlay's safe horizontal area.
+fn secondary_action_menu_left(
+    toolbar: ActionToolbarLayout,
+    menu_width: f32,
+    viewport: Bounds<Pixels>,
+) -> f32 {
+    let viewport = view_rect(viewport);
+    let left_min = viewport.left + OVERLAY_EDGE_INSET - toolbar.left;
+    let left_max = viewport.right() - OVERLAY_EDGE_INSET - menu_width - toolbar.left;
+    ((toolbar.width - menu_width) / 2.0).clamp(left_min, left_max)
 }
 
 /// Gives the retry control a precise action without exposing internal failure categories.
@@ -4168,48 +4255,60 @@ fn recognition_result_preview(text: &str) -> String {
     preview
 }
 
-/// Measures the single-row content width so compact actions do not occupy an empty 620 px panel.
-fn action_toolbar_natural_width(show_more_actions: bool, has_recognition_result: bool) -> f32 {
-    let more_widths = show_more_actions
-        .then_some(OVERLAY_MORE_ACTION_WIDTHS)
-        .into_iter()
-        .flatten();
-    let recognition_widths = (show_more_actions && has_recognition_result)
-        .then_some(OVERLAY_RECOGNITION_ACTION_WIDTHS)
-        .into_iter()
-        .flatten();
-    let widths = OVERLAY_PRIMARY_ACTION_WIDTHS
-        .into_iter()
-        .chain(more_widths)
-        .chain(recognition_widths);
-    let (count, item_width) = widths.fold((0_u32, 0.0), |(count, total), width| {
-        (count.saturating_add(1), total + width)
-    });
-    item_width
-        + count.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
+/// Counts visible main-row buttons so layout and hit targets use one stable geometry source.
+fn action_toolbar_item_count(show_annotation_controls: bool) -> usize {
+    6 + usize::from(show_annotation_controls) * 2
+}
+
+/// Lists the visible main-row item widths, including the two group dividers in marking mode.
+fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
+    if show_annotation_controls {
+        vec![
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+        ]
+    } else {
+        std::iter::repeat_n(
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            action_toolbar_item_count(false),
+        )
+        .collect()
+    }
+}
+
+/// Measures the visible main row from shared geometry instead of a per-action width table.
+fn action_toolbar_natural_width(show_annotation_controls: bool) -> f32 {
+    let widths = action_toolbar_item_widths(show_annotation_controls);
+    widths.iter().sum::<f32>()
+        + widths.len().saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
         + OVERLAY_ACTION_BAR_PADDING * 2.0
         + OVERLAY_ACTION_BAR_BORDER * 2.0
 }
 
-fn action_toolbar_height(width: f32, show_more_actions: bool, has_recognition_result: bool) -> f32 {
-    let more_widths = show_more_actions
-        .then_some(OVERLAY_MORE_ACTION_WIDTHS)
-        .into_iter()
-        .flatten();
-    let recognition_widths = (show_more_actions && has_recognition_result)
-        .then_some(OVERLAY_RECOGNITION_ACTION_WIDTHS)
-        .into_iter()
-        .flatten();
-    action_toolbar_height_for(
-        width,
-        OVERLAY_PRIMARY_ACTION_WIDTHS
-            .into_iter()
-            .chain(more_widths)
-            .chain(recognition_widths),
-    )
+/// Computes wrapped-row height from the shared icon hit size when a narrow viewport requires it.
+fn action_toolbar_height(width: f32, show_annotation_controls: bool) -> f32 {
+    action_toolbar_height_for(width, action_toolbar_item_widths(show_annotation_controls))
 }
 
+/// Computes the total toolbar height from wrapped rows and shared vertical tokens.
 fn action_toolbar_height_for(width: f32, widths: impl IntoIterator<Item = f32>) -> f32 {
+    let rows = action_toolbar_row_count(width, widths);
+    rows as f32 * OVERLAY_ACTION_ITEM_HEIGHT
+        + rows.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
+        + OVERLAY_ACTION_BAR_PADDING * 2.0
+        + OVERLAY_ACTION_BAR_BORDER * 2.0
+}
+
+/// Counts flex rows using the same padded content width as the rendered toolbar.
+fn action_toolbar_row_count(width: f32, widths: impl IntoIterator<Item = f32>) -> u32 {
     let mut rows = 1_u32;
     let mut row_width = 0.0;
     let content_width =
@@ -4227,10 +4326,7 @@ fn action_toolbar_height_for(width: f32, widths: impl IntoIterator<Item = f32>) 
             row_width = next_width;
         }
     }
-    rows as f32 * OVERLAY_ACTION_ITEM_HEIGHT
-        + rows.saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
-        + OVERLAY_ACTION_BAR_PADDING * 2.0
-        + OVERLAY_ACTION_BAR_BORDER * 2.0
+    rows
 }
 
 /// Chooses pointer feedback without letting selection movement override an active drawing tool.
@@ -4286,11 +4382,12 @@ mod tests {
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
         recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
-        secondary_action_focus_target, secondary_action_menu_height, secondary_action_tooltip,
-        secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
-        selection_point_from_view_or_screen, should_stop_overlay_action_key_propagation,
-        smart_target_hud_label, smart_target_hud_layout, status_bottom_inset,
-        status_bottom_inset_for_stacked_annotation, view_rect, visible_selection,
+        secondary_action_focus_target, secondary_action_menu_height, secondary_action_menu_left,
+        secondary_action_menu_width, secondary_action_tooltip, secondary_menu_opens_above,
+        selection_cursor, selection_dimension_label_layout, selection_point_from_view_or_screen,
+        should_stop_overlay_action_key_propagation, smart_target_hud_label,
+        smart_target_hud_layout, status_bottom_inset, status_bottom_inset_for_stacked_annotation,
+        view_rect, visible_selection,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
@@ -4988,11 +5085,11 @@ mod tests {
         };
 
         assert_eq!(
-            action_toolbar_layout(Some(selection), transform, viewport),
+            action_toolbar_layout(Some(selection), transform, viewport, false),
             Some(ActionToolbarLayout {
-                left: 858.0,
+                left: 940.0,
                 top: 518.0,
-                width: 342.0,
+                width: 260.0,
                 height: 50.0,
             })
         );
@@ -5017,9 +5114,9 @@ mod tests {
             bottom: 400,
         };
         let primary_actions = ActionToolbarLayout {
-            left: 658.0,
+            left: 740.0,
             top: 412.0,
-            width: 342.0,
+            width: 260.0,
             height: 50.0,
         };
 
@@ -5042,7 +5139,7 @@ mod tests {
         assert_eq!(layout.tools_top, layout.top);
         assert_eq!(layout.style_top, layout.tools_top);
         assert_eq!(layout.style_left, 836.0);
-        assert_eq!(layout.action_toolbar.left, 658.0);
+        assert_eq!(layout.action_toolbar.left, 740.0);
         assert!((layout.action_toolbar.top - 548.0).abs() < 0.01);
         assert_eq!(layout.action_toolbar.width, primary_actions.width);
         assert_eq!(layout.action_toolbar.height, primary_actions.height);
@@ -5070,9 +5167,9 @@ mod tests {
             bottom: 700,
         };
         let primary_actions = ActionToolbarLayout {
-            left: 858.0,
+            left: 940.0,
             top: 518.0,
-            width: 342.0,
+            width: 260.0,
             height: 50.0,
         };
 
@@ -5119,7 +5216,7 @@ mod tests {
         let toolbar = ActionToolbarLayout {
             left: 18.0,
             top: 508.0,
-            width: 620.0,
+            width: 260.0,
             height: 42.0,
         };
 
@@ -5156,19 +5253,22 @@ mod tests {
             }
         );
 
-        let toolbar = action_toolbar_layout(Some(selection), transform, viewport).unwrap();
+        let toolbar = action_toolbar_layout(Some(selection), transform, viewport, false).unwrap();
         assert_eq!(
             toolbar,
             ActionToolbarLayout {
-                left: 60.0,
+                left: 142.0,
                 top: 250.0,
-                width: 342.0,
+                width: 260.0,
                 height: 50.0,
             }
         );
         assert!(toolbar.top + toolbar.height + OVERLAY_ACTION_BAR_GAP <= selection.top as f32);
 
-        let menu_height = secondary_action_menu_height(toolbar.width, false, false, false);
+        let menu_width =
+            secondary_action_menu_width(super::view_rect(viewport).width, false, false);
+        assert_eq!(menu_width, 334.0);
+        let menu_height = secondary_action_menu_height(menu_width, false, false, false);
         assert_eq!(menu_height, 176.0);
         assert!(secondary_menu_opens_above(toolbar, viewport, menu_height));
         let menu_top = toolbar.top
@@ -5211,13 +5311,13 @@ mod tests {
             }
         );
 
-        let primary = action_toolbar_layout(Some(selection), transform, viewport).unwrap();
+        let primary = action_toolbar_layout(Some(selection), transform, viewport, false).unwrap();
         assert_eq!(
             primary,
             ActionToolbarLayout {
-                left: 2200.0,
+                left: 2282.0,
                 top: 1270.0,
-                width: 342.0,
+                width: 260.0,
                 height: 50.0,
             }
         );
@@ -5558,14 +5658,26 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false, false), 92.0);
-        assert_eq!(action_toolbar_height(288.0, false, false), 92.0);
-        assert_eq!(action_toolbar_natural_width(false, false), 342.0);
-        let layout = action_toolbar_layout(Some(selection), transform, viewport).unwrap();
-        assert_eq!(layout.left, 18.0);
-        assert!((layout.top - 296.0).abs() < 0.01);
-        assert_eq!(layout.width, 324.0);
-        assert_eq!(layout.height, 92.0);
+        assert_eq!(action_toolbar_height(324.0, false), 50.0);
+        assert_eq!(action_toolbar_height(288.0, false), 50.0);
+        assert_eq!(action_toolbar_natural_width(false), 260.0);
+        assert_eq!(action_toolbar_natural_width(true), 358.0);
+        assert_eq!(action_toolbar_height(358.0, true), 50.0);
+        assert_eq!(secondary_action_menu_width(420.0, false, false), 334.0);
+        assert_eq!(secondary_action_menu_width(360.0, false, false), 324.0);
+        let layout = action_toolbar_layout(Some(selection), transform, viewport, false).unwrap();
+        assert_eq!(
+            secondary_action_menu_left(
+                layout,
+                secondary_action_menu_width(360.0, false, false),
+                viewport,
+            ),
+            -62.0
+        );
+        assert_eq!(layout.left, 80.0);
+        assert!((layout.top - 338.0).abs() < 0.01);
+        assert_eq!(layout.width, 260.0);
+        assert_eq!(layout.height, 50.0);
         assert_eq!(
             secondary_action_menu_height(324.0, false, false, false),
             218.0
@@ -5646,9 +5758,9 @@ mod tests {
             style_top: 548.0,
             style_height: 128.0,
             action_toolbar: ActionToolbarLayout {
-                left: 160.0,
+                left: 242.0,
                 top: 682.0,
-                width: 342.0,
+                width: 260.0,
                 height: 50.0,
             },
             actions_above_tools: false,

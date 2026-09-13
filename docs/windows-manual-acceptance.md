@@ -44,6 +44,7 @@ FFmpeg 版本与 ddagrab/gdigrab 支持：
 | 负坐标双屏 | 暂缓 | 将副屏放在主屏左侧，跨屏拖动选区并在两屏边缘调整大小。 | 选区和放大镜不跳变；每个显示器只显示自己的覆盖层操作区；导出结果没有偏移或裁切错误。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 混合 DPI 双屏 | 暂缓 | 将两个显示器设置为不同缩放，例如 100% 与 150% 或 200%；跨屏截图、保存并核对像素尺寸。 | 光标、选区、窗口智能识别和导出均以物理像素对齐；无重复或缺失的工具栏。 | 用户于 2026-08-10 暂缓双屏范围；恢复时执行。 |
 | 窄选区与最小设置窗 | 通过 | 将设置窗口缩小到最小可用尺寸；在屏幕边缘创建窄选区，展开次级操作与标注面板。 | 文本不截断，控件不重叠；主工具栏保持可点击，次级菜单在可用一侧展开。 | `current-narrow-edge-single-100` 在真实 420x420 client 中启动截图，拖出右下 160x96 选区并真实点击 More/Less 与 Mark 开关。 |
+| W2 主工具栏重排（静态 UI） | 部分通过（单屏 100%，Release 探针） | 使用同一源码 Release 的 `CaptureOverlay` 探针，检查普通选区、展开 More、标注上下文、English/简体中文和深色/浅色主行。 | Copy 保持唯一强调；Pin、Save、More、Cancel 顺序稳定；低频动作不回到主行；主行和 More 面板无截断、重叠或选区穿透。 | `target/ui-acceptance/w2-final2-selection.png`、`w2-final2-selection-more.png`、`w2-final2-marking-en.png`、`w2-final2-marking-zh-CN.png` 及同名 JSON 均为 `scale_match=true`；这是静态渲染证据，不替代真实鼠标键盘命中、高 DPI 和多屏验收。 |
 | App 壳层 U0 视觉基线 | 通过 | 在同一提交的 Release 构建中分别以 420x420、520x640、980x760 启动设置页，覆盖浅色/深色与 English/简体中文。 | 标题区、响应式导航、当前页面、设置行和状态栏在三种尺寸中无控件重叠；宽窗使用侧栏，窄窗使用顶部导航；两种主题和语言均正常显示。 | 提交 `cf8436f` 的 `target/ui-acceptance/u0-shell-*.png` 与同名 JSON 共 12 组，当前 Windows 单屏、DPI 96、`scale_factor: 1.0`；自动静态检查和工作区测试见该提交。 |
 | 多 Pin 生命周期 | 部分通过 | 在单屏 100% 环境连续创建至少三张 Pin，分别移动、缩放、调透明度、复制、保存、关闭；期间再次截图。 | 单屏 100% 子集中的各 Pin 独立响应，关闭一个不影响其余窗口，主应用可继续进入截图覆盖层。 | `current-pin-lifecycle-single-100` 覆盖缩放、透明度、内存复制、保存与可见性生命周期；`current-pins-coexist-capture-single-100` 通过三次真实 Pin 点击、真实鼠标拖动和 Pin 共存下的 Capture/Cancel 补齐单屏主链；`current-pins-system-clipboard-single-100` 又以首张 Pin 的真实 `Ctrl+C` 验证 PNG、CF_DIB 和普通消费者逐像素一致；`current-pin-lifecycle-soak-60s-single-100` 完成 60 秒持续生命周期复核。150%/200% 实机仍待执行，不由本行通过结论覆盖。 |
 | 滚动截图 | 通过 | 真实打开 More 与 Scroll shot，自动捕获第二帧并 Finish；分别重新运行完整流程，从编辑器执行系统 Copy 和原生 Save。 | 自动滚动等待目标重绘后只追加一帧；拼接源、剪贴板 PNG/CF_DIB/消费者图像与保存 PNG 的尺寸和像素一致；控制条不遮挡选区，文字与按钮完整；结束后无残留状态或窗口。 | `current-scroll-export-roundtrip-single-100` 使用两个独立 Release 会话完成双出口，详见本表 2026-08-12 记录。 |
@@ -106,6 +107,11 @@ cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --al
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/overlay-selection-bottom-right-more.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-bottom-right-more
 # 覆盖层标注面板：使用简体中文目录复核图层、工具和操作标签的换行与边界。
 .\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 1100 760 target/ui-acceptance/overlay-marking-zh-CN.png 1500 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-marking zh-CN
+# W2 主工具栏：普通选区、More 展开、标注上下文和简体中文主题；只证明当前源码 Release 的渲染与布局。
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/w2-final2-selection.png 1000 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection en
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 420 420 target/ui-acceptance/w2-final2-selection-more.png 1000 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-selection-more en
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance dark 1100 760 target/ui-acceptance/w2-final2-marking-en.png 1000 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-marking en
+.\scripts\run-dev-tool.ps1 -Release settings-ui-acceptance light 1100 760 target/ui-acceptance/w2-final2-marking-zh-CN.png 1000 0 1.0 capture 0 idle translation-idle ocr-idle recording-support-idle update-idle overlay-marking zh-CN
 # 显式输入验收：会短暂取得焦点并移动全局鼠标，仅在可丢弃的单屏桌面会话中运行。
 .\scripts\run-dev-tool.ps1 -Release overlay-interaction-acceptance --allow-input --output-dir target/overlay-interaction-acceptance
 # Copy 取消竞争：使用进程内隔离观察器，不写系统剪贴板；分别覆盖工具栏和 Enter 输入。
