@@ -69,7 +69,6 @@
 
 | 优先级 | 未完成项 | 当前事实 | 完成所需证据 |
 | --- | --- | --- | --- |
-| P0 | 外部失败恢复 | 保存、历史索引和录屏进程已有确定性恢复测试；`copy-cancellation-race` 的隔离观察器、真实 `clipboard-contention-retry` 和 Quick Save 真实只读目录已在当前 Release 会话覆盖，但原生 Save 对话框权限和 FFmpeg 用户界面失败仍未完整执行 | 真实失败触发、可理解反馈、再次操作成功、无窗口/进程/任务/临时文件残留 |
 | P1 | 标注原生回归 | Text、Watermark、Line 和双向 Arrow 已接入 `annotation-regression` 场景；当前 HEAD 仍缺少真实鼠标/键盘和导出证据 | 当前 Release、单屏 100%、同会话 JSON、步骤截图、逐像素导出和清理报告 |
 | P1 | 动态文案盘点 | `Locale`/`UiText` 已覆盖大部分设置、Capture、Library、Record、Pin 和 workflow；剩余动态状态需要重新盘点，不能沿用旧的 317 条计数 | 中英文资源覆盖、参数化模板测试、无未登记用户可见硬编码 |
 | P1 | UI 信息层级 | 设置壳层、Pin token 和 Library/Record 尺寸已有部分复核；截图工作区仍需按 W1-W6 收敛主行、样式行、工具组浮层和错误恢复入口 | 420x420、520x640、980x760；中英文、深浅主题；真实入口可达且无重叠 |
@@ -131,7 +130,7 @@ Copy/Save/Pin/Cancel 语义、快捷键、报告字段或失败恢复规则。Sn
 | 编号 | 主线切片 | 状态 | 说明 |
 | --- | --- | --- | --- |
 | A | `v0.1.3` 发布基线 | 已完成（2026-09-06） | 标签 `v0.1.3` 的 CI 源码/Release 构建、安装器生命周期、便携启动、manifest、SHA-256、双语发布说明和公开 Release 下载复核均通过 |
-| B1 | 外部失败恢复 | 部分完成 | 保存/历史/录屏进程的确定性恢复和录屏失败可重试反馈已完成；`copy-cancellation-race`、真实 `clipboard-contention-retry` 和 Quick Save 真实只读目录已接入，原生 Save 对话框目录权限和 FFmpeg UI 注入待补 |
+| B1 | 外部失败恢复 | 已完成（单屏 100%，DPI 96） | 保存、历史和录屏进程的确定性恢复，以及 `copy-cancellation-race`、真实剪贴板争用、Quick Save/原生 Save 对话框目录权限和 FFmpeg 启动失败重试均已有证据；150%/200%、多屏仍按 D1 单独验收 |
 | B2 | Capture/Save/Pin/Close 生命周期 | 已完成（单屏 100%） | 操作代次、拆除屏障、输入释放和下一次 Capture 已有 Release 证据 |
 | B3 | 历史异步流控 | 已完成（单屏 100%） | 300 条队列、失败/重试、删除、目录切换和窗口关闭已有资源证据 |
 | B4 | 标注回归保护 | 部分完成 | 当前 runner 已覆盖 Text、Watermark、Line 和双向 Arrow；真实输入仍待执行 |
@@ -174,12 +173,12 @@ Escape，再释放检查点。`copy-cancellation-race` 只使用进程内 `isola
 - Enter Copy：`target/overlay-copy-cancellation-race-enter/session-1788186375319-19480/report.json`。
 
 两份报告均为 schema 20、`status=passed`，检查点在 Escape 前到达、观察器未收到帧、两类操作状态均释放，最终
-overlay/Pin/任务/按键清零；截图与路径已登记在 [Windows 手工验收记录](windows-manual-acceptance.md)。B1 仍保持
+overlay/Pin/任务/按键清零；截图与路径已登记在 [Windows 手工验收记录](windows-manual-acceptance.md)。在当时记录点 B1 尚保持
 “部分完成”。快速保存确定性 fixture 已在提交 `a4e5081` 覆盖损坏帧失败、最终保留名和 `.tmp` 清理、使用同一
 时间戳/UUID 的再次保存、首选目录失效后的全屏 PNG 回退；提交 `a6f053e` 又覆盖录屏 worker 启动失败后的运行标记
 释放；提交 `a62461d` 覆盖持续系统剪贴板争用在固定预算后返回最后错误。当前源码 Release 的
 `settings-ui-acceptance` 已以无输入探针生成并目视复核 `failed`/`cancelled` Record 状态，报告和截图已登记在
-Windows 验收记录；真实系统剪贴板争用和 Quick Save 只读目录已补齐，下一步只处理原生 Save 对话框目录权限和 FFmpeg 用户界面失败恢复。
+Windows 验收记录；截至该记录点，真实系统剪贴板争用和 Quick Save 只读目录已补齐，下一步只处理原生 Save 对话框目录权限和 FFmpeg 用户界面失败恢复。
 
 2026-09-10 的当前源码 Release `overlay-interaction-acceptance --capture-scenario save-failure-retry`
 补齐了 Quick Save 目标失效后的真实输入回归：runner 在同一选区提交 `Shift+Enter` 前临时替换隔离历史目录，
@@ -187,8 +186,7 @@ Windows 验收记录；真实系统剪贴板争用和 Quick Save 只读目录已
 报告为 `status=passed`，1178x432 PNG 与源帧逐像素一致，失败和成功路径的 `.tmp` 均为 0，最终
 `capture_teardown_pending=false`、覆盖层/后台任务/可见 runner 窗口均清零。证据位于
 `target/overlay-save-failure-retry-current-v3/session-1789053581823-18576/report.json` 及其同目录截图。
-该证据只覆盖单屏 100% 的 Quick Save 目标失效与恢复，不替代系统剪贴板争用、原生 Save 对话框目录权限和
-FFmpeg 用户界面失败恢复；B1 仍保持“部分完成”。
+该证据只覆盖单屏 100% 的 Quick Save 目标失效与恢复；截至该记录点，B1 仍保持“部分完成”。
 
 2026-09-11 的当前源码 Release `overlay-interaction-acceptance --capture-scenario clipboard-contention-retry
 --allow-system-clipboard` 又补齐了真实系统剪贴板争用后的 Copy 重试：runner 启动无窗口子进程持有剪贴板锁，
@@ -198,8 +196,7 @@ PNG、CF_DIB 和普通图像结果，三者与源帧逐像素一致；schema 23 
 `capture_teardown_pending=false`、覆盖层/Pin/后台任务/可见 runner 窗口和输入均清零。工具栏报告位于
 `target/overlay-clipboard-contention-retry-current-toolbar-v3/session-1789132623560-21696/report.json`，
 Enter 报告位于 `target/overlay-clipboard-contention-retry-current-enter-v2/session-1789132728113-22384/report.json`，
-截图和清理/消费者字段均来自对应 session。该证据只覆盖单屏 100% 的系统剪贴板锁争用恢复，不替代原生 Save
-对话框权限和 FFmpeg 用户界面失败恢复；B1 仍保持“部分完成”。
+截图和清理/消费者字段均来自对应 session。该证据只覆盖单屏 100% 的系统剪贴板锁争用恢复；截至该记录点，B1 仍保持“部分完成”。
 
 2026-09-11 的当前源码 Release `overlay-interaction-acceptance --capture-scenario save-permission-retry`
 补齐了 Quick Save 真实只读目录的失败恢复：runner 在隔离 profile 的 `history` 目录上为当前 Windows 用户应用
@@ -210,8 +207,7 @@ Enter 报告位于 `target/overlay-clipboard-contention-retry-current-enter-v2/s
 `screenshots/01-save-permission-selection.png`、`03-save-permission-reported.png` 和
 `05-save-permission-retry-clean.png` 已目视复核；报告记录权限 probe、历史索引未改写、失败/成功 `.tmp` 均为 0，
 重试 PNG 为 1178x432 且 `exact_match=true`，最终 `capture_teardown_pending=false`、覆盖层/Pin/后台任务/可见
-runner 窗口均清零。该证据只覆盖 Quick Save 目录权限，不替代原生 Save 对话框目录权限和 FFmpeg 用户界面失败恢复；
-B1 仍保持“部分完成”。
+runner 窗口均清零。该证据只覆盖 Quick Save 目录权限；截至该记录点，B1 仍保持“部分完成”。
 
 2026-09-11 的当前源码 Release `overlay-interaction-acceptance --capture-scenario save-dialog-permission-retry`
 补齐了原生 Save 对话框目录权限失败后的恢复：runner 在隔离 `exports/read-only` 目录应用当前 Windows 用户的
@@ -224,20 +220,29 @@ B1 仍保持“部分完成”。
 `06-save-dialog-permission-retry-clean.png` 已目视复核。报告记录权限 probe、拒绝目标保持不存在、Save 对话框保留、
 选区恢复、失败/重试 `.tmp` 均为 0；重试 PNG 为 1178x432、259556 bytes 且 `exact_match=true`，最终
 `capture_teardown_pending=false`、覆盖层/Pin/后台任务/可见 runner 窗口均清零。该证据只覆盖单屏 100% 的原生
-Save 对话框目录权限，不替代 FFmpeg 用户界面失败恢复；B1 仍保持“部分完成”。
+Save 对话框目录权限；截至该记录点，B1 仍保持“部分完成”。
 
 本次 B1 子切片补齐录屏 worker 失败后的可重试反馈：失败状态保留 FFmpeg 原始诊断，并明确提示检查 FFmpeg
 和输出目录后重试；English/简体中文的长状态在固定 48px 状态栏中自动换行，不再以省略号隐藏下一步。
 确定性状态测试与当前 Release 的 520x640 Record 截图均通过，证据见
 `target/ui-acceptance/recording-ui-failed-retry-en.png`、
 `target/ui-acceptance/recording-ui-failed-retry-zh-CN.png` 及同名 JSON。该证据仍不替代真实 FFmpeg
-运行中退出和原生 Save 对话框目录权限恢复矩阵。
+运行中退出和原生 Save 对话框目录权限恢复矩阵；截至该子切片记录，B1 尚未完成。
 
-2026-09-13 已接入 `overlay-interaction-acceptance --capture-scenario recording-failure-retry`：在独立进程中
-通过 `dev-tools` 专用环境变量对真实录屏 worker 注入一次启动失败，检查 Record 页错误状态和生命周期清理，
-再点击同一个主操作重试，并继续完成 Pause、Resume、Stop、FFprobe 和解码帧校验。该场景不会读取系统剪贴板，
-区域录制与窗口录制仍走原有路径；宿主全特性测试 496 项和 Windows MSVC target 编译检查已通过。真实 Windows
-Release、鼠标输入、FFmpeg MP4 和截图证据仍待执行，因此 B1 继续保持“部分完成”，不能以跨平台编译替代原生验收。
+2026-09-13 的当前源码 Release `overlay-interaction-acceptance --capture-scenario recording-failure-retry`
+通过 `scripts/run-dev-tool.ps1 -Release` 在单屏 `\\.\DISPLAY1`、2560x1440、DPI 96 会话中执行；runner 用
+`dev-tools` 专用环境变量对真实录屏 worker 注入一次启动失败，等待 GPUI 完成失败态绘制后抓取
+`02-recording-failed.png`，再点击同一个 `Record display` 主操作重试。schema 26 报告为 `status=passed`，证据位于
+`target/overlay-interaction-acceptance/recording-failure-retry-b1-20260913/session-1789260976220-17344/report.json`；
+`recording_failure_retry.failure_status` 保留 `Screen recording failed: acceptance-injected recording startup failure...`，
+`failure_state_cleared=true`、`retry_started=true`，并确认重试目标为整块显示器物理边界。
+同一 session 的 `01-recording-idle.png`、`02-recording-failed.png`、`03-recording-retried.png`、`04-paused.png`、
+`05-resumed.png` 和 `06-saved.png` 已目视复核，失败、重试、暂停和保存状态均可读。真实 Pause、Resume、Stop
+完成后，FFprobe 确认一个 H.264 视频流、2560x1440、5.566667 秒、371113 bytes；解码帧在 0.333333 秒与同一
+显示器源帧比较，`grid_mean_absolute_error=0.5364583333333334`，低于允许值 18。`cargo fmt --all -- --check`、
+`cargo test -p flash-shot-app --locked`（378 项）、全 workspace 严格 Clippy 和 Release 构建均通过；会话结束后本机
+复查 `.tmp=0` 且 `flash-shot` 进程为 0。该场景不读取系统剪贴板，区域录制与窗口录制仍走原有路径；B1 的外部失败恢复
+范围现标记为“已完成（单屏 100%，DPI 96）”，150%/200% 和多屏继续由 D1 单独验收。
 
 2026-09-06 的当前源码 Release `overlay-interaction-acceptance --capture-scenario copy-only
 --allow-system-clipboard` 已完成一次真实工具栏 Copy：PNG、CF_DIB 和普通消费者均逐像素一致，编辑器保留选区，
@@ -380,7 +385,7 @@ Pin、Copy、Save、More、Cancel 的结果动作顺序。Copy 保持唯一强�
 
 **独立提交建议**：`test: verify screenshot workspace toolbar`。
 
-**W 路线执行顺序**：先完成 B1 尚未覆盖的 FFmpeg 用户界面失败恢复，再完成 B4 当前 HEAD 的真实标注输入；W0 的路线文档切片
+**W 路线执行顺序**：B1 外部失败恢复已完成，下一步完成 B4 当前 HEAD 的真实标注输入；W0 的路线文档切片
 已完成，随后严格按 W1、W2、W3、W4、W5、W6 顺序推进。W1-W4 新增的可见文案同时登记到 `UiText`；U1 继续负责非截图工作区的
 动态文案，U2 继续负责 App/Library/Record 入口，U3 负责其他页面视觉矩阵，U4 负责 Pin 原生窗口。W6 通过后才开始 M1 的 runner/
 overlay 职责拆分，避免在工作区行为尚未稳定时搬移大型模块。
@@ -554,6 +559,6 @@ W1-W6 还必须保留一组可重复的布局/状态测试，并在 W6 以同一
 - CI、Release 构建、便携包/安装器、manifest、SHA-256 和下载复核通过；
 - README、需求、架构、计划、Windows 验收、分发和 Linux 可行性文档之间无失效链接或相互矛盾的状态。
 
-下一步固定从 **B1 外部失败恢复** 开始；若当前 Windows 会话缺少所需权限、消费者或 FFmpeg，记录阻塞证据，
-先完成可执行的确定性测试，不把环境缺失写成通过，也不越过 B1 扩展新功能。B1 和 B4 完成后进入 W1；W0 只代表本次公开研究
+下一步固定从 **B4 标注原生回归** 开始；若当前 Windows 会话缺少所需权限、消费者或 FFmpeg，记录阻塞证据，
+先完成可执行的确定性测试，不把环境缺失写成通过，也不越过 B4 扩展新功能。B4 完成后进入 W1；W0 只代表本次公开研究
 和路线文档已完成，不代表截图工作区代码或原生 UI 验收已经完成。
