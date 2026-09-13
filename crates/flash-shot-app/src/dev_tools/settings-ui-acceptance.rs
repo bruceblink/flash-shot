@@ -204,8 +204,8 @@ fn parse_extent(value: Option<std::ffi::OsString>, name: &str) -> Result<f32, St
     let extent = value
         .parse::<f32>()
         .map_err(|_| format!("{name} must be a number"))?;
-    if !extent.is_finite() || extent < 420.0 {
-        return Err(format!("{name} must be at least 420"));
+    if !extent.is_finite() || extent < 360.0 {
+        return Err(format!("{name} must be at least 360"));
     }
     Ok(extent)
 }
@@ -688,8 +688,8 @@ fn screenshot_metadata_path(output: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        AcceptanceSurface, parse_display_index, parse_expected_scale, parse_linger_delay,
-        parse_locale, parse_ocr_support_check_state, parse_recording_state,
+        AcceptanceSurface, parse_display_index, parse_expected_scale, parse_extent,
+        parse_linger_delay, parse_locale, parse_ocr_support_check_state, parse_recording_state,
         parse_recording_support_check_state, parse_section, parse_settle_delay, parse_surface,
         parse_translation_service_test_state, parse_update_check_state, scale_factor_for_dpi,
         scale_matches, screenshot_metadata_path,
@@ -707,6 +707,15 @@ mod tests {
             Duration::from_secs(120)
         );
         assert!(parse_linger_delay(OsString::from("300001")).is_err());
+    }
+
+    #[test]
+    fn acceptance_extent_supports_the_narrow_workspace_sample() {
+        assert_eq!(
+            parse_extent(Some(OsString::from("360")), "width").unwrap(),
+            360.0
+        );
+        assert!(parse_extent(Some(OsString::from("359")), "width").is_err());
     }
 
     #[test]

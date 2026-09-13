@@ -20,6 +20,7 @@ use super::{
     overlay_toolbar::{
         WorkspaceButtonConfig, WorkspaceButtonTone, icon, workspace_icon_button,
         workspace_separator, workspace_surface, workspace_swatch, workspace_text_button,
+        workspace_text_button_with_aria,
     },
     workflow::{inspection_kind_label, selection_dimension_label},
 };
@@ -74,14 +75,19 @@ const ANNOTATION_TOOLBAR_PADDING: f32 = ThemeMetrics::WORKSPACE_ANNOTATION_PADDI
 // stable drawing palette move when an annotation is selected.
 const ANNOTATION_CONTEXT_SECTION_GAP: f32 =
     ANNOTATION_TOOL_GAP + ANNOTATION_TOOLBAR_PADDING * 2.0 + 1.0;
-const ANNOTATION_TOOL_PALETTE_ITEMS: usize = 14;
-const ANNOTATION_STYLE_ROW_GAP: f32 = ThemeMetrics::WORKSPACE_STYLE_ROW_GAP;
-const ANNOTATION_STYLE_PANEL_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_PANEL_WIDTH;
+// Keep the measured palette count aligned with the buttons rendered below so compact locales do
+// not reserve an unused wrapped row.
+const ANNOTATION_TOOL_PALETTE_ITEMS: usize = 12;
 const ANNOTATION_STYLE_PANEL_GAP: f32 = ThemeMetrics::WORKSPACE_POPOVER_GAP;
+const ANNOTATION_STYLE_CONTROL_HEIGHT: f32 = ThemeMetrics::WORKSPACE_STYLE_ROW_HEIGHT;
+const ANNOTATION_STYLE_CONTROL_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+const ANNOTATION_STYLE_ROW_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+const ANNOTATION_STYLE_VALUE_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_VALUE_WIDTH;
+const ANNOTATION_STYLE_OPACITY_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_OPACITY_WIDTH;
+const ANNOTATION_STYLE_FILL_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_FILL_WIDTH;
 const ANNOTATION_LAYERS_WIDTH: f32 = 180.0;
 const ANNOTATION_LAYERS_PREFERRED_HEIGHT: f32 = 200.0;
 const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 900.0;
-const ANNOTATION_TOOLBAR_MIN_CONTENT_WIDTH: f32 = 320.0;
 const OVERLAY_MORE_ACTIONS_ID: &str = "overlay-more-actions";
 const SECONDARY_ACTION_COUNT: usize = 14;
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
@@ -90,7 +96,7 @@ const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
 const OVERLAY_RECOGNITION_ACTION_WIDTHS: [f32; 2] = [76.0, 92.0];
 const OVERLAY_RETRY_ACTION_WIDTHS: [f32; 1] = [126.0];
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
-const ANNOTATION_WIDTHS: [u32; 4] = [1, 3, 6, 10];
+const ANNOTATION_WIDTHS: [u32; 5] = [1, 3, 4, 6, 10];
 const ANNOTATION_FONT_SIZES: [u32; 4] = [16, 24, 32, 48];
 const ANNOTATION_OPACITIES: [u8; 4] = [255, 192, 128, 64];
 const MAGNIFIER_RADIUS: i32 = 4;
@@ -421,6 +427,19 @@ fn annotation_action_button(
         on_click,
     )
     .on_key_down(stop_overlay_action_key_propagation)
+}
+
+/// Builds one compact style choice with the shared toolbar focus, hover, tooltip, and hitbox
+/// behavior. The visible value stays short while the tooltip describes the control group.
+fn annotation_style_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<gpui::SharedString>,
+    aria_label: impl Into<gpui::SharedString>,
+    config: WorkspaceButtonConfig,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    workspace_text_button_with_aria(id, label, aria_label, config, on_click)
+        .on_key_down(stop_overlay_action_key_propagation)
 }
 
 pub(super) struct CaptureOverlay {
@@ -855,7 +874,7 @@ pub(super) fn open_ui_acceptance(
     acceptance: crate::OverlayUiAcceptanceOptions,
     cx: &mut App,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let width = acceptance.width.max(420.0).round() as u32;
+    let width = acceptance.width.max(360.0).round() as u32;
     let height = acceptance.height.max(320.0).round() as u32;
     let display = DisplayInfo {
         id: "overlay-ui-acceptance".to_owned(),
@@ -919,6 +938,10 @@ pub(super) fn open_ui_acceptance(
                         }
                         if show_annotation_controls {
                             app.toggle_overlay_annotation_controls(cx);
+                            // The marking acceptance surface must exercise the contextual row,
+                            // not merely the visibility toggle. Rectangle exposes every W3
+                            // control while keeping the synthetic fixture free of new geometry.
+                            app.select_rectangle_tool(cx);
                         }
                         let width = selection.width().to_string();
                         let height = selection.height().to_string();
@@ -1105,30 +1128,20 @@ impl Render for CaptureOverlay {
         let text_edit = app.text_edit().cloned();
         let text_edit_annotation = app.text_edit_annotation();
         let selected_annotation = app.selected_annotation;
+        let selected_annotation_object =
+            selected_annotation.and_then(|id| app.annotation_document.as_ref()?.annotation(id));
         let can_delete = selected_annotation.is_some();
         let selected_tool = app.annotation_tool;
-        let can_edit_text = selected_annotation
-            .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
-            .is_some_and(|annotation| {
-                matches!(
-                    annotation.kind,
-                    AnnotationKind::Text { .. } | AnnotationKind::Watermark { .. }
-                )
-            });
-        let can_adjust_font_size = selected_annotation
-            .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
-            .is_some_and(is_text_annotation)
-            || matches!(
-                selected_tool,
-                Some(AnnotationTool::Text | AnnotationTool::Watermark)
-            );
-        let can_rotate = selected_annotation
-            .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
-            .is_some_and(Annotation::supports_clockwise_rotation);
-        let can_fill = selected_annotation
-            .and_then(|id| app.annotation_document.as_ref()?.annotation(id))
-            .is_some_and(Annotation::supports_fill)
-            || selected_tool.is_some_and(AnnotationTool::supports_fill);
+        let can_edit_text = selected_annotation_object.is_some_and(|annotation| {
+            matches!(
+                annotation.kind,
+                AnnotationKind::Text { .. } | AnnotationKind::Watermark { .. }
+            )
+        });
+        let can_rotate =
+            selected_annotation_object.is_some_and(Annotation::supports_clockwise_rotation);
+        let style_capabilities =
+            annotation_style_capabilities(selected_tool, selected_annotation_object);
         let selected_number = selected_annotation.and_then(|id| {
             app.annotation_document
                 .as_ref()?
@@ -1192,32 +1205,32 @@ impl Render for CaptureOverlay {
             viewport,
             show_annotation_controls,
         );
-        let annotation_style_height = annotation_style_panel_height(can_adjust_font_size);
+        let annotation_style_height = annotation_style_row_height(
+            (view_rect(viewport).width - OVERLAY_EDGE_INSET * 2.0)
+                .clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH),
+            style_capabilities,
+        );
         let annotation_layout = show_annotation_controls
             .then(|| {
-                annotation_toolbar_layout(
+                annotation_toolbar_layout_with_tool_width(
                     selected_on_display,
                     transform,
                     viewport,
                     base_action_layout,
                     annotation_toolbar_items,
                     annotation_style_height,
+                    if locale == Locale::SimplifiedChinese {
+                        ThemeMetrics::WORKSPACE_TOOL_CELL_WIDTH_COMPACT
+                    } else {
+                        ANNOTATION_TOOL_ESTIMATED_WIDTH
+                    },
                 )
             })
             .flatten();
         let action_layout = annotation_layout
             .map(|layout| layout.action_toolbar)
             .or(base_action_layout);
-        let annotation_style_is_side_by_side =
-            annotation_layout.is_some_and(|layout| layout.tools_width < layout.width);
-        let annotation_style_panel_left = annotation_layout
-            .map(|layout| layout.style_left)
-            .unwrap_or(OVERLAY_EDGE_INSET);
-        let annotation_style_panel_top = annotation_layout
-            .map(|layout| layout.style_top)
-            .unwrap_or(OVERLAY_EDGE_INSET);
-        let annotation_style_left = annotation_style_panel_left + ANNOTATION_STYLE_PANEL_GAP;
-        let annotation_style_top = annotation_style_panel_top + ANNOTATION_STYLE_PANEL_GAP;
+        let show_annotation_style = show_annotation_controls && style_capabilities.has_controls();
         let annotation_layer_layout = owns_action_toolbar
             .then(|| annotation_layout.and_then(|layout| annotation_layer_layout(layout, viewport)))
             .flatten();
@@ -1276,7 +1289,7 @@ impl Render for CaptureOverlay {
             action_layout,
         );
         let status_inset = annotation_layout
-            .filter(|layout| !annotation_style_is_side_by_side && !layout.actions_above_tools)
+            .filter(|layout| layout.style_height > 0.0 && !layout.actions_above_tools)
             .map(|layout| {
                 status_bottom_inset_for_stacked_annotation(layout, dimension_layout, viewport)
             })
@@ -1582,18 +1595,6 @@ impl Render for CaptureOverlay {
             .when(show_annotation_controls, |overlay| {
                 overlay.child(
                     div()
-                        .id("overlay-annotation-style")
-                        .occlude()
-                        .absolute()
-                        .left(px(annotation_style_panel_left))
-                        .top(px(annotation_style_panel_top))
-                        .w(px(ANNOTATION_STYLE_PANEL_WIDTH))
-                        .h(px(annotation_style_height)),
-                )
-            })
-            .when(show_annotation_controls, |overlay| {
-                overlay.child(
-                    div()
                         .id("overlay-annotation-tools")
                         .occlude()
                         .absolute()
@@ -1612,12 +1613,6 @@ impl Render for CaptureOverlay {
                         .flex_col()
                         .gap(px(ThemeMetrics::default().workspace_toolbar_gap))
                         .p(px(ThemeMetrics::default().workspace_toolbar_padding))
-                        .when(annotation_style_is_side_by_side, |tools| {
-                            tools
-                                .pr_2()
-                                .border_r_1()
-                                .border_color(colors.toolbar_border)
-                        })
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(
@@ -2075,179 +2070,209 @@ impl Render for CaptureOverlay {
                         }),
                 )
             })
-            .when(show_annotation_controls, |overlay| {
-                overlay.child(
-                    div()
-                        .absolute()
-                        .left(px(annotation_style_left))
-                        .top(px(annotation_style_top))
-                        .flex()
-                        .gap_2()
-                        .children(ANNOTATION_COLORS.into_iter().map(|color| {
-                            workspace_swatch(
-                                format!("overlay-color-{color:08x}"),
-                                gpui::Hsla::from(rgba(color)),
-                                color == annotation_color,
-                                locale.text(UiText::AnnotationColorSelected),
-                                locale.text(UiText::AnnotationColorSelected),
-                                colors,
-                                cx.listener(move |this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| {
-                                            app.select_annotation_color(color, cx)
-                                        });
-                                    });
-                                }),
-                            )
-                        })),
-                )
-            })
-            .when(
-                show_annotation_controls && can_adjust_font_size,
-                |overlay| {
-                    overlay.child(
-                        div()
-                            .absolute()
-                            .left(px(annotation_style_left))
-                            .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 4.0))
-                            .flex()
-                            .gap_2()
-                            .children(ANNOTATION_FONT_SIZES.into_iter().map(|font_size| {
+            .when(show_annotation_style, |overlay| {
+                let style_row = workspace_surface(colors, false)
+                    .id("overlay-annotation-style-row")
+                    .occlude()
+                    .absolute()
+                    .when_some(annotation_layout, |style, layout| {
+                        style
+                            .left(px(layout.style_left))
+                            .top(px(layout.style_top))
+                            .w(px(layout.tools_width))
+                            .h(px(layout.style_height))
+                    })
+                    .when(annotation_layout.is_none(), |style| {
+                        style
+                            .left(px(OVERLAY_EDGE_INSET))
+                            .right(px(OVERLAY_EDGE_INSET))
+                            .top(px(OVERLAY_EDGE_INSET))
+                    })
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(ANNOTATION_STYLE_CONTROL_GAP))
+                    .p(px(ANNOTATION_STYLE_ROW_PADDING))
+                    .children(
+                        [
+                            style_capabilities.color.then(|| {
                                 div()
-                                    .id(format!("overlay-font-size-{font_size}"))
-                                    .w(px(30.0))
-                                    .h(px(22.0))
+                                    .id("overlay-style-colors")
                                     .flex()
                                     .items_center()
-                                    .justify_center()
-                                    .bg(colors.panel)
-                                    .border_2()
-                                    .border_color(if font_size == annotation_font_size {
-                                        colors.text
-                                    } else {
-                                        colors.border
-                                    })
-                                    .text_color(colors.text)
-                                    .text_xs()
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| {
-                                                app.select_annotation_font_size(font_size, cx)
-                                            });
-                                        });
+                                    .gap(px(ANNOTATION_STYLE_CONTROL_GAP))
+                                    .children(ANNOTATION_COLORS.into_iter().map(|color| {
+                                        workspace_swatch(
+                                            format!("overlay-color-{color:08x}"),
+                                            gpui::Hsla::from(rgba(color)),
+                                            color == annotation_color,
+                                            locale.text(UiText::AnnotationColorSelected),
+                                            locale.text(UiText::AnnotationColorSelected),
+                                            colors,
+                                            cx.listener(move |this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.select_annotation_color(color, cx)
+                                                    });
+                                                });
+                                            }),
+                                        )
                                     }))
-                                    .child(font_size.to_string())
-                            })),
-                    )
-                },
-            )
-            .when(show_annotation_controls && can_fill, |overlay| {
-                overlay.child(
-                    div()
-                        .absolute()
-                        .left(px(annotation_style_left))
-                        .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 2.0))
-                        .px_3()
-                        .py_2()
-                        .id("overlay-fill")
-                        .bg(if fill_enabled {
-                            colors.accent
-                        } else {
-                            colors.panel
-                        })
-                        .text_color(if fill_enabled {
-                            colors.background
-                        } else {
-                            colors.text
-                        })
-                        .cursor_pointer()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let app = this.app.clone();
-                            cx.defer(move |cx| {
-                                app.update(cx, |app, cx| app.toggle_annotation_fill(cx));
-                            });
-                        }))
-                        .child(locale.text(UiText::OverlayFill)),
-                )
-            })
-            .when(show_annotation_controls, |overlay| {
-                overlay.child(
-                    div()
-                        .absolute()
-                        .left(px(annotation_style_left))
-                        .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP))
-                        .flex()
-                        .gap_2()
-                        .children(ANNOTATION_WIDTHS.into_iter().map(|width| {
-                            div()
-                                .id(format!("overlay-width-{width}"))
-                                .w(px(22.0))
-                                .h(px(22.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .bg(colors.panel)
-                                .border_2()
-                                .border_color(if width == annotation_width {
-                                    colors.text
-                                } else {
-                                    colors.border
-                                })
-                                .text_color(colors.text)
-                                .text_xs()
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| {
-                                            app.select_annotation_width(width, cx)
-                                        });
-                                    });
-                                }))
-                                .child(width.to_string())
-                        })),
-                )
-            })
-            .when(show_annotation_controls, |overlay| {
-                overlay.child(
-                    div()
-                        .absolute()
-                        .left(px(annotation_style_left))
-                        .top(px(annotation_style_top + ANNOTATION_STYLE_ROW_GAP * 3.0))
-                        .flex()
-                        .gap_2()
-                        .children(ANNOTATION_OPACITIES.into_iter().map(|opacity| {
-                            div()
-                                .id(format!("overlay-opacity-{opacity}"))
-                                .w(px(28.0))
-                                .h(px(22.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .bg(rgba((annotation_color & 0xFFFFFF00) | u32::from(opacity)))
-                                .border_2()
-                                .border_color(if opacity == annotation_opacity {
-                                    colors.text
-                                } else {
-                                    colors.border
-                                })
-                                .text_color(colors.text)
-                                .text_xs()
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let app = this.app.clone();
-                                    cx.defer(move |cx| {
-                                        app.update(cx, |app, cx| {
-                                            app.select_annotation_opacity(opacity, cx)
-                                        });
-                                    });
-                                }))
-                                .child((u16::from(opacity) * 100 / 255).to_string())
-                        })),
-                )
+                            }),
+                            style_capabilities.fill.then(|| {
+                                div()
+                                    .id("overlay-style-fill-group")
+                                    .border_l_1()
+                                    .border_color(colors.toolbar_border)
+                                    .pl_2()
+                                    .child(annotation_style_button(
+                                        "overlay-fill",
+                                        locale.text(UiText::OverlayFill),
+                                        locale.text(UiText::OverlayFill),
+                                        WorkspaceButtonConfig::text(
+                                            Some(ANNOTATION_STYLE_FILL_WIDTH),
+                                            ANNOTATION_STYLE_CONTROL_HEIGHT,
+                                            colors,
+                                            WorkspaceButtonTone::Neutral,
+                                            fill_enabled,
+                                            true,
+                                            Some(locale.text(UiText::OverlayFill)),
+                                        ),
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.toggle_annotation_fill(cx)
+                                                });
+                                            });
+                                        }),
+                                    ))
+                            }),
+                            style_capabilities.width.then(|| {
+                                div()
+                                    .id("overlay-style-widths")
+                                    .border_l_1()
+                                    .border_color(colors.toolbar_border)
+                                    .pl_2()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(ANNOTATION_STYLE_CONTROL_GAP))
+                                    .children(ANNOTATION_WIDTHS.into_iter().map(|width| {
+                                        let value = width.to_string();
+                                        let aria_label = locale.format_template(
+                                            UiText::AnnotationWidth,
+                                            &[("width", &value)],
+                                        );
+                                        annotation_style_button(
+                                            format!("overlay-width-{width}"),
+                                            value,
+                                            aria_label,
+                                            WorkspaceButtonConfig::text(
+                                                Some(ANNOTATION_STYLE_VALUE_WIDTH),
+                                                ANNOTATION_STYLE_CONTROL_HEIGHT,
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                width == annotation_width,
+                                                true,
+                                                Some(locale.text(UiText::AnnotationWidthLabel)),
+                                            ),
+                                            cx.listener(move |this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.select_annotation_width(width, cx)
+                                                    });
+                                                });
+                                            }),
+                                        )
+                                    }))
+                            }),
+                            style_capabilities.opacity.then(|| {
+                                div()
+                                    .id("overlay-style-opacity")
+                                    .border_l_1()
+                                    .border_color(colors.toolbar_border)
+                                    .pl_2()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(ANNOTATION_STYLE_CONTROL_GAP))
+                                    .children(ANNOTATION_OPACITIES.into_iter().map(|opacity| {
+                                        let percent = (u16::from(opacity) * 100 / 255).to_string();
+                                        let aria_label = locale.format_template(
+                                            UiText::AnnotationOpacity,
+                                            &[("percent", &percent)],
+                                        );
+                                        annotation_style_button(
+                                            format!("overlay-opacity-{opacity}"),
+                                            format!("{percent}%"),
+                                            aria_label,
+                                            WorkspaceButtonConfig::text(
+                                                Some(ANNOTATION_STYLE_OPACITY_WIDTH),
+                                                ANNOTATION_STYLE_CONTROL_HEIGHT,
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                opacity == annotation_opacity,
+                                                true,
+                                                Some(locale.text(UiText::AnnotationOpacityLabel)),
+                                            ),
+                                            cx.listener(move |this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.select_annotation_opacity(opacity, cx)
+                                                    });
+                                                });
+                                            }),
+                                        )
+                                    }))
+                            }),
+                            style_capabilities.font_size.then(|| {
+                                div()
+                                    .id("overlay-style-font-sizes")
+                                    .border_l_1()
+                                    .border_color(colors.toolbar_border)
+                                    .pl_2()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(ANNOTATION_STYLE_CONTROL_GAP))
+                                    .children(ANNOTATION_FONT_SIZES.into_iter().map(|font_size| {
+                                        let value = font_size.to_string();
+                                        let aria_label = locale.format_template(
+                                            UiText::AnnotationTextSize,
+                                            &[("size", &value)],
+                                        );
+                                        annotation_style_button(
+                                            format!("overlay-font-size-{font_size}"),
+                                            value,
+                                            aria_label,
+                                            WorkspaceButtonConfig::text(
+                                                Some(ANNOTATION_STYLE_VALUE_WIDTH),
+                                                ANNOTATION_STYLE_CONTROL_HEIGHT,
+                                                colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                font_size == annotation_font_size,
+                                                true,
+                                                Some(locale.text(UiText::AnnotationTextSizeLabel)),
+                                            ),
+                                            cx.listener(move |this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.select_annotation_font_size(
+                                                            font_size, cx,
+                                                        )
+                                                    });
+                                                });
+                                            }),
+                                        )
+                                    }))
+                            }),
+                        ]
+                        .into_iter()
+                        .flatten(),
+                    );
+                overlay.child(style_row)
             })
             .child(
                 div()
@@ -3197,6 +3222,7 @@ fn annotation_layer_label(locale: Locale, kind: &AnnotationKind) -> &'static str
     }
 }
 
+#[cfg(test)]
 fn is_text_annotation(annotation: &Annotation) -> bool {
     matches!(
         annotation.kind,
@@ -3691,6 +3717,29 @@ struct AnnotationToolbarItems {
     arrange_context: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct AnnotationStyleCapabilities {
+    color: bool,
+    fill: bool,
+    width: bool,
+    opacity: bool,
+    font_size: bool,
+}
+
+impl AnnotationStyleCapabilities {
+    const EMPTY: Self = Self {
+        color: false,
+        fill: false,
+        width: false,
+        opacity: false,
+        font_size: false,
+    };
+
+    const fn has_controls(self) -> bool {
+        self.color || self.fill || self.width || self.opacity || self.font_size
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct AnnotationLayerLayout {
     left: f32,
@@ -3712,9 +3761,149 @@ struct SmartTargetHudLayout {
     width: f32,
 }
 
-/// Keeps style controls at a stable height while revealing text-only sizing choices when needed.
-fn annotation_style_panel_height(can_adjust_font_size: bool) -> f32 {
-    if can_adjust_font_size { 158.0 } else { 128.0 }
+/// Maps a drawing tool to the style values that its renderer actually consumes.
+///
+/// Effect tools intentionally return no controls because their appearance is fixed by the
+/// renderer; exposing unrelated values would create a misleading empty settings surface.
+const fn annotation_style_capabilities_for_tool(
+    tool: AnnotationTool,
+) -> AnnotationStyleCapabilities {
+    match tool {
+        AnnotationTool::Watermark | AnnotationTool::Text => AnnotationStyleCapabilities {
+            color: true,
+            opacity: true,
+            font_size: true,
+            ..AnnotationStyleCapabilities::EMPTY
+        },
+        AnnotationTool::Number => AnnotationStyleCapabilities {
+            color: true,
+            opacity: true,
+            ..AnnotationStyleCapabilities::EMPTY
+        },
+        AnnotationTool::Blur | AnnotationTool::Mosaic => AnnotationStyleCapabilities::EMPTY,
+        AnnotationTool::Highlight => AnnotationStyleCapabilities {
+            color: true,
+            opacity: true,
+            ..AnnotationStyleCapabilities::EMPTY
+        },
+        AnnotationTool::Rectangle | AnnotationTool::Ellipse => AnnotationStyleCapabilities {
+            color: true,
+            fill: true,
+            width: true,
+            opacity: true,
+            ..AnnotationStyleCapabilities::EMPTY
+        },
+        AnnotationTool::Line | AnnotationTool::Arrow | AnnotationTool::Freehand => {
+            AnnotationStyleCapabilities {
+                color: true,
+                width: true,
+                opacity: true,
+                ..AnnotationStyleCapabilities::EMPTY
+            }
+        }
+    }
+}
+
+/// Maps a selected annotation to the same capabilities as the tool that created it.
+const fn annotation_style_capabilities_for_kind(
+    kind: &AnnotationKind,
+) -> AnnotationStyleCapabilities {
+    match kind {
+        AnnotationKind::Watermark { .. } => {
+            annotation_style_capabilities_for_tool(AnnotationTool::Watermark)
+        }
+        AnnotationKind::Text { .. } => annotation_style_capabilities_for_tool(AnnotationTool::Text),
+        AnnotationKind::Number { .. } => {
+            annotation_style_capabilities_for_tool(AnnotationTool::Number)
+        }
+        AnnotationKind::Blur { .. } => annotation_style_capabilities_for_tool(AnnotationTool::Blur),
+        AnnotationKind::Mosaic { .. } => {
+            annotation_style_capabilities_for_tool(AnnotationTool::Mosaic)
+        }
+        AnnotationKind::Highlight { .. } => {
+            annotation_style_capabilities_for_tool(AnnotationTool::Highlight)
+        }
+        AnnotationKind::Rectangle { .. } => {
+            annotation_style_capabilities_for_tool(AnnotationTool::Rectangle)
+        }
+        AnnotationKind::Ellipse { .. } => {
+            annotation_style_capabilities_for_tool(AnnotationTool::Ellipse)
+        }
+        AnnotationKind::Line { .. } => annotation_style_capabilities_for_tool(AnnotationTool::Line),
+        AnnotationKind::Arrow { .. } => {
+            annotation_style_capabilities_for_tool(AnnotationTool::Arrow)
+        }
+        AnnotationKind::Freehand { .. } => {
+            annotation_style_capabilities_for_tool(AnnotationTool::Freehand)
+        }
+    }
+}
+
+/// Chooses capabilities for the active drawing tool or the selected document object.
+fn annotation_style_capabilities(
+    tool: Option<AnnotationTool>,
+    selected_annotation: Option<&Annotation>,
+) -> AnnotationStyleCapabilities {
+    tool.map(annotation_style_capabilities_for_tool)
+        .or_else(|| {
+            selected_annotation
+                .map(|annotation| annotation_style_capabilities_for_kind(&annotation.kind))
+        })
+        .unwrap_or_default()
+}
+
+/// Measures the attached style row using the same fixed control groups that the renderer wraps.
+///
+/// The estimate is intentionally conservative for localized labels and button padding. Returning
+/// zero for an unsupported tool also removes the row's gap from the surrounding layout.
+fn annotation_style_row_height(width: f32, capabilities: AnnotationStyleCapabilities) -> f32 {
+    if !capabilities.has_controls() {
+        return 0.0;
+    }
+    const COLOR_GROUP_WIDTH: f32 =
+        ThemeMetrics::WORKSPACE_SWATCH_SIZE * 5.0 + ANNOTATION_STYLE_CONTROL_GAP * 4.0;
+    const WIDTH_GROUP_WIDTH: f32 =
+        5.0 * ANNOTATION_STYLE_VALUE_WIDTH + ANNOTATION_STYLE_CONTROL_GAP * 4.0;
+    const OPACITY_GROUP_WIDTH: f32 =
+        4.0 * ANNOTATION_STYLE_OPACITY_WIDTH + ANNOTATION_STYLE_CONTROL_GAP * 3.0;
+    const FONT_GROUP_WIDTH: f32 = WIDTH_GROUP_WIDTH;
+    const FILL_GROUP_WIDTH: f32 = ANNOTATION_STYLE_FILL_WIDTH;
+    const GROUP_SEPARATOR_WIDTH: f32 =
+        ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH + ThemeMetrics::SPACE_2;
+    let group_widths = [
+        capabilities.color.then_some(COLOR_GROUP_WIDTH),
+        capabilities
+            .fill
+            .then_some(FILL_GROUP_WIDTH + GROUP_SEPARATOR_WIDTH),
+        capabilities
+            .width
+            .then_some(WIDTH_GROUP_WIDTH + GROUP_SEPARATOR_WIDTH),
+        capabilities
+            .opacity
+            .then_some(OPACITY_GROUP_WIDTH + GROUP_SEPARATOR_WIDTH),
+        capabilities
+            .font_size
+            .then_some(FONT_GROUP_WIDTH + GROUP_SEPARATOR_WIDTH),
+    ];
+    let available_width = (width - ANNOTATION_STYLE_ROW_PADDING * 2.0).max(1.0);
+    let mut rows: usize = 1;
+    let mut row_width = 0.0;
+    for group_width in group_widths.into_iter().flatten() {
+        let next_width = if row_width == 0.0 {
+            group_width
+        } else {
+            row_width + ANNOTATION_STYLE_CONTROL_GAP + group_width
+        };
+        if row_width > 0.0 && next_width > available_width {
+            rows += 1;
+            row_width = group_width;
+        } else {
+            row_width = next_width;
+        }
+    }
+    ANNOTATION_STYLE_ROW_PADDING * 2.0
+        + rows as f32 * ANNOTATION_STYLE_CONTROL_HEIGHT
+        + rows.saturating_sub(1) as f32 * ANNOTATION_STYLE_CONTROL_GAP
 }
 
 /// Retains the expanded Arrange group only while its originating annotation remains selected.
@@ -3757,15 +3946,23 @@ fn annotation_toolbar_items(
 #[cfg(test)]
 fn annotation_toolbar_height(viewport: Bounds<Pixels>, items: AnnotationToolbarItems) -> f32 {
     let viewport = view_rect(viewport);
-    annotation_toolbar_height_for_width((viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0), items)
+    annotation_toolbar_height_for_width(
+        (viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0),
+        items,
+        ANNOTATION_TOOL_ESTIMATED_WIDTH,
+    )
 }
 
 /// Measures each visible toolbar section independently so a selection context cannot reorder the
 /// drawing palette or reserve rows until it is actually expanded.
-fn annotation_toolbar_height_for_width(width: f32, items: AnnotationToolbarItems) -> f32 {
+fn annotation_toolbar_height_for_width(
+    width: f32,
+    items: AnnotationToolbarItems,
+    tool_estimated_width: f32,
+) -> f32 {
     let content_width = (width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
     let columns = (((content_width + ANNOTATION_TOOL_GAP)
-        / (ANNOTATION_TOOL_ESTIMATED_WIDTH + ANNOTATION_TOOL_GAP))
+        / (tool_estimated_width + ANNOTATION_TOOL_GAP))
         .floor() as usize)
         .max(1);
     let section_height = |item_count: usize| {
@@ -3792,7 +3989,10 @@ fn annotation_toolbar_height_for_width(width: f32, items: AnnotationToolbarItems
         + ANNOTATION_TOOLBAR_PADDING * 2.0
 }
 
-/// Keeps marking modes, style controls, and selection commands in one dock beside the selection.
+/// Keeps marking modes, the attached style row, and selection commands in one dock beside the
+/// selection. The style row always follows the tool palette, so it cannot become a detached side
+/// panel at wide widths.
+#[cfg(test)]
 fn annotation_toolbar_layout(
     selection: Option<PhysicalRect>,
     transform: Option<PreviewTransform>,
@@ -3801,27 +4001,45 @@ fn annotation_toolbar_layout(
     items: AnnotationToolbarItems,
     style_height: f32,
 ) -> Option<AnnotationToolbarLayout> {
+    annotation_toolbar_layout_with_tool_width(
+        selection,
+        transform,
+        viewport,
+        action_toolbar,
+        items,
+        style_height,
+        ANNOTATION_TOOL_ESTIMATED_WIDTH,
+    )
+}
+
+/// Lays out the workspace using a locale-aware estimate for intrinsic text-button widths.
+///
+/// English labels need the wider fallback cell while compact Chinese labels can use the actual
+/// shorter button rhythm, preventing an unused reserved row from separating the style row.
+fn annotation_toolbar_layout_with_tool_width(
+    selection: Option<PhysicalRect>,
+    transform: Option<PreviewTransform>,
+    viewport: Bounds<Pixels>,
+    action_toolbar: Option<ActionToolbarLayout>,
+    items: AnnotationToolbarItems,
+    style_height: f32,
+    tool_estimated_width: f32,
+) -> Option<AnnotationToolbarLayout> {
     let selection = selection?;
     let transform = transform?;
     let action_toolbar = action_toolbar?;
     let viewport = view_rect(viewport);
     let width =
         (viewport.width - OVERLAY_EDGE_INSET * 2.0).clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH);
-    let side_by_side = width
-        >= ANNOTATION_STYLE_PANEL_WIDTH
-            + ANNOTATION_STYLE_PANEL_GAP
-            + ANNOTATION_TOOLBAR_MIN_CONTENT_WIDTH;
-    let tools_width = if side_by_side {
-        width - ANNOTATION_STYLE_PANEL_WIDTH - ANNOTATION_STYLE_PANEL_GAP
+    let tools_width = width;
+    let tools_height =
+        annotation_toolbar_height_for_width(tools_width, items, tool_estimated_width);
+    let style_gap = if style_height > 0.0 {
+        ANNOTATION_STYLE_PANEL_GAP
     } else {
-        width
+        0.0
     };
-    let tools_height = annotation_toolbar_height_for_width(tools_width, items);
-    let tools_and_style_height = if side_by_side {
-        tools_height.max(style_height)
-    } else {
-        tools_height + ANNOTATION_STYLE_PANEL_GAP + style_height
-    };
+    let tools_and_style_height = tools_height + style_gap + style_height;
     let total_height = tools_and_style_height + ANNOTATION_STYLE_PANEL_GAP + action_toolbar.height;
     let top_left = transform.physical_to_view(PhysicalPoint {
         x: selection.left,
@@ -3863,16 +4081,8 @@ fn annotation_toolbar_layout(
     } else {
         top + tools_and_style_height + ANNOTATION_STYLE_PANEL_GAP
     };
-    let style_left = if side_by_side {
-        left + width - ANNOTATION_STYLE_PANEL_WIDTH
-    } else {
-        left
-    };
-    let style_top = if side_by_side {
-        tools_top
-    } else {
-        tools_top + tools_height + ANNOTATION_STYLE_PANEL_GAP
-    };
+    let style_left = left;
+    let style_top = tools_top + tools_height + style_gap;
     Some(AnnotationToolbarLayout {
         left,
         top,
@@ -4367,14 +4577,16 @@ fn selection_cursor(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionToolbarLayout, AnnotationToolbarLayout, FrameInputBatch, MAGNIFIER_CELL_SIZE,
-        MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING,
-        OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET,
-        OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
+        ANNOTATION_WIDTHS, ActionToolbarLayout, AnnotationStyleCapabilities,
+        AnnotationToolbarLayout, FrameInputBatch, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
+        OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT,
+        OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET, OVERLAY_MORE_ACTIONS_ID,
+        OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
         OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
         SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, accepts_overlay_input,
         action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
-        annotation_controls_visible, annotation_layer_label, annotation_style_panel_height,
+        annotation_controls_visible, annotation_layer_label,
+        annotation_style_capabilities_for_tool, annotation_style_row_height,
         annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
         arrange_context_for_selection, arrow_head_points, capture_double_click,
         close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
@@ -4390,7 +4602,7 @@ mod tests {
         view_rect, visible_selection,
     };
     use crate::domain::{
-        annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle},
+        annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle, AnnotationTool},
         geometry::{PhysicalPoint, PhysicalRect},
         selection::{PreviewTransform, SelectionDrag, ViewPoint, ViewRect},
     };
@@ -5126,21 +5338,21 @@ mod tests {
             viewport,
             Some(primary_actions),
             annotation_toolbar_items(false, false, false, false, false),
-            annotation_style_panel_height(false),
+            0.0,
         )
         .expect("selection with actions should position marking tools");
 
         assert_eq!(layout.left, 100.0);
         assert_eq!(layout.width, 900.0);
-        assert_eq!(layout.tools_width, 728.0);
-        assert_eq!(layout.tools_height, 126.0);
-        assert_eq!(layout.height, 186.0);
+        assert_eq!(layout.tools_width, 900.0);
+        assert_eq!(layout.tools_height, 84.0);
+        assert_eq!(layout.height, 142.0);
         assert!((layout.top - 412.0).abs() < 0.01);
         assert_eq!(layout.tools_top, layout.top);
-        assert_eq!(layout.style_top, layout.tools_top);
-        assert_eq!(layout.style_left, 836.0);
+        assert_eq!(layout.style_top, layout.tools_top + layout.tools_height);
+        assert_eq!(layout.style_left, layout.left);
         assert_eq!(layout.action_toolbar.left, 740.0);
-        assert!((layout.action_toolbar.top - 548.0).abs() < 0.01);
+        assert!((layout.action_toolbar.top - 504.0).abs() < 0.01);
         assert_eq!(layout.action_toolbar.width, primary_actions.width);
         assert_eq!(layout.action_toolbar.height, primary_actions.height);
         assert!(!layout.actions_above_tools);
@@ -5179,18 +5391,18 @@ mod tests {
             viewport,
             Some(primary_actions),
             annotation_toolbar_items(false, false, false, false, false),
-            annotation_style_panel_height(false),
+            0.0,
         )
         .expect("selection with actions should position marking tools");
 
-        assert_eq!(layout.top, 382.0);
-        assert_eq!(layout.tools_top, 440.0);
-        assert_eq!(layout.style_top, layout.tools_top);
+        assert_eq!(layout.top, 426.0);
+        assert_eq!(layout.tools_top, 484.0);
+        assert_eq!(layout.style_top, layout.tools_top + layout.tools_height);
         assert_eq!(layout.action_toolbar.top, layout.top);
         assert!(layout.actions_above_tools);
         assert!(layout.top >= 18.0);
         assert_eq!(
-            layout.tools_top + annotation_style_panel_height(false) + OVERLAY_ACTION_BAR_GAP,
+            layout.tools_top + layout.tools_height + OVERLAY_ACTION_BAR_GAP,
             selection.top as f32
         );
     }
@@ -5327,19 +5539,19 @@ mod tests {
             viewport,
             Some(primary),
             annotation_toolbar_items(false, false, false, false, false),
-            annotation_style_panel_height(false),
+            0.0,
         )
         .unwrap();
         assert_eq!(marking.left, 1642.0);
-        assert_eq!(marking.top, 1134.0);
+        assert_eq!(marking.top, 1178.0);
         assert_eq!(marking.width, 900.0);
-        assert_eq!(marking.height, 186.0);
-        assert_eq!(marking.tools_width, 728.0);
-        assert_eq!(marking.tools_top, 1192.0);
-        assert_eq!(marking.style_left, 2378.0);
-        assert_eq!(marking.style_top, 1192.0);
+        assert_eq!(marking.height, 142.0);
+        assert_eq!(marking.tools_width, 900.0);
+        assert_eq!(marking.tools_top, 1236.0);
+        assert_eq!(marking.style_left, marking.left);
+        assert_eq!(marking.style_top, 1320.0);
         assert_eq!(marking.action_toolbar.left, primary.left);
-        assert_eq!(marking.action_toolbar.top, 1134.0);
+        assert_eq!(marking.action_toolbar.top, 1178.0);
         assert!(marking.actions_above_tools);
         assert!(marking.top >= OVERLAY_EDGE_INSET);
         assert!(marking.top + marking.height + OVERLAY_ACTION_BAR_GAP <= selection.top as f32);
@@ -5712,9 +5924,42 @@ mod tests {
         assert_eq!(selected_items.arrange_context, 0);
         assert_eq!(expanded_items.arrange_context, 6);
         assert_eq!(annotation_toolbar_height(wide, stable_items), 42.0);
-        assert_eq!(annotation_toolbar_height(narrow, stable_items), 294.0);
-        assert_eq!(annotation_toolbar_height(narrow, selected_items), 471.0);
-        assert!(annotation_toolbar_height(narrow, expanded_items) > 471.0);
+        assert_eq!(annotation_toolbar_height(narrow, stable_items), 252.0);
+        assert_eq!(annotation_toolbar_height(narrow, selected_items), 429.0);
+        assert!(annotation_toolbar_height(narrow, expanded_items) > 429.0);
+    }
+
+    #[test]
+    fn annotation_style_capabilities_only_expose_renderer_backed_values() {
+        assert!(ANNOTATION_WIDTHS.contains(&4));
+        let text = annotation_style_capabilities_for_tool(AnnotationTool::Text);
+        assert_eq!(
+            text,
+            AnnotationStyleCapabilities {
+                color: true,
+                opacity: true,
+                font_size: true,
+                ..AnnotationStyleCapabilities::EMPTY
+            }
+        );
+        assert!(annotation_style_capabilities_for_tool(AnnotationTool::Rectangle).fill);
+        assert!(annotation_style_capabilities_for_tool(AnnotationTool::Line).width);
+        assert!(annotation_style_capabilities_for_tool(AnnotationTool::Number).color);
+        assert_eq!(
+            annotation_style_capabilities_for_tool(AnnotationTool::Blur),
+            AnnotationStyleCapabilities::EMPTY
+        );
+        assert_eq!(
+            annotation_style_row_height(
+                360.0,
+                annotation_style_capabilities_for_tool(AnnotationTool::Rectangle)
+            ),
+            120.0
+        );
+        assert_eq!(
+            annotation_style_row_height(360.0, AnnotationStyleCapabilities::EMPTY),
+            0.0
+        );
     }
 
     #[test]
@@ -5756,7 +6001,7 @@ mod tests {
             tools_top: 300.0,
             style_left: 18.0,
             style_top: 548.0,
-            style_height: 128.0,
+            style_height: 40.0,
             action_toolbar: ActionToolbarLayout {
                 left: 242.0,
                 top: 682.0,

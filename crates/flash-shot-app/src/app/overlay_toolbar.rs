@@ -135,6 +135,17 @@ pub(crate) fn workspace_text_button(
     workspace_button(id, label.clone(), label, config, on_click)
 }
 
+/// Builds a text action whose compact visible value has a fuller accessible name.
+pub(crate) fn workspace_text_button_with_aria(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    aria_label: impl Into<SharedString>,
+    config: WorkspaceButtonConfig,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    workspace_button(id, label, aria_label, config, on_click)
+}
+
 /// Builds the shared button shell used by icon and text workspace controls.
 fn workspace_button(
     id: impl Into<gpui::ElementId>,

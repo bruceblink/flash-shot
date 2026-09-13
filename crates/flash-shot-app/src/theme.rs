@@ -90,11 +90,13 @@ pub struct ThemeMetrics {
     pub workspace_separator_width: f32,
     pub workspace_separator_height: f32,
     pub workspace_tool_cell_width: f32,
+    pub workspace_tool_cell_width_compact: f32,
     pub workspace_tool_row_height: f32,
     pub workspace_annotation_padding: f32,
-    pub workspace_style_row_gap: f32,
-    pub workspace_style_panel_width: f32,
     pub workspace_swatch_size: f32,
+    pub workspace_style_value_width: f32,
+    pub workspace_style_opacity_width: f32,
+    pub workspace_style_fill_width: f32,
     pub radius_sm: f32,
     pub radius_md: f32,
     pub library_thumbnail_width: f32,
@@ -138,11 +140,13 @@ impl ThemeMetrics {
     pub const WORKSPACE_SEPARATOR_WIDTH: f32 = 1.0;
     pub const WORKSPACE_SEPARATOR_HEIGHT: f32 = 24.0;
     pub const WORKSPACE_TOOL_CELL_WIDTH: f32 = 104.0;
+    pub const WORKSPACE_TOOL_CELL_WIDTH_COMPACT: f32 = 64.0;
     pub const WORKSPACE_TOOL_ROW_HEIGHT: f32 = 34.0;
     pub const WORKSPACE_ANNOTATION_PADDING: f32 = 4.0;
-    pub const WORKSPACE_STYLE_ROW_GAP: f32 = 30.0;
-    pub const WORKSPACE_STYLE_PANEL_WIDTH: f32 = 164.0;
     pub const WORKSPACE_SWATCH_SIZE: f32 = 22.0;
+    pub const WORKSPACE_STYLE_VALUE_WIDTH: f32 = 40.0;
+    pub const WORKSPACE_STYLE_OPACITY_WIDTH: f32 = 56.0;
+    pub const WORKSPACE_STYLE_FILL_WIDTH: f32 = 76.0;
     pub const LIBRARY_THUMBNAIL_WIDTH: f32 = 72.0;
     pub const LIBRARY_THUMBNAIL_HEIGHT: f32 = 46.0;
     pub const LIBRARY_ROW_PADDING: f32 = 12.0;
@@ -194,11 +198,13 @@ impl Default for ThemeMetrics {
             workspace_separator_width: Self::WORKSPACE_SEPARATOR_WIDTH,
             workspace_separator_height: Self::WORKSPACE_SEPARATOR_HEIGHT,
             workspace_tool_cell_width: Self::WORKSPACE_TOOL_CELL_WIDTH,
+            workspace_tool_cell_width_compact: Self::WORKSPACE_TOOL_CELL_WIDTH_COMPACT,
             workspace_tool_row_height: Self::WORKSPACE_TOOL_ROW_HEIGHT,
             workspace_annotation_padding: Self::WORKSPACE_ANNOTATION_PADDING,
-            workspace_style_row_gap: Self::WORKSPACE_STYLE_ROW_GAP,
-            workspace_style_panel_width: Self::WORKSPACE_STYLE_PANEL_WIDTH,
             workspace_swatch_size: Self::WORKSPACE_SWATCH_SIZE,
+            workspace_style_value_width: Self::WORKSPACE_STYLE_VALUE_WIDTH,
+            workspace_style_opacity_width: Self::WORKSPACE_STYLE_OPACITY_WIDTH,
+            workspace_style_fill_width: Self::WORKSPACE_STYLE_FILL_WIDTH,
             radius_sm: 4.0,
             radius_md: 8.0,
             library_thumbnail_width: Self::LIBRARY_THUMBNAIL_WIDTH,
@@ -394,6 +400,10 @@ mod tests {
         assert_eq!(metrics.toggle_height, 20.0);
         assert_eq!(metrics.control_height, 36.0);
         assert_eq!(metrics.toolbar_height, 44.0);
+        assert_eq!(metrics.workspace_style_value_width, 40.0);
+        assert_eq!(metrics.workspace_style_opacity_width, 56.0);
+        assert_eq!(metrics.workspace_style_fill_width, 76.0);
+        assert_eq!(metrics.workspace_tool_cell_width_compact, 64.0);
         assert!(metrics.radius_md <= 8.0);
     }
 
