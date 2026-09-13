@@ -201,6 +201,7 @@ enum CaptureScenarioOption {
     SelectionTransform,
     ScrollRoundtrip,
     AnnotationRegression,
+    ToolGroup,
     CopyCancellationRace,
     ClipboardContentionRetry,
     RecordingFailureRetry,
@@ -219,6 +220,7 @@ impl CaptureScenarioOption {
             Self::SelectionTransform => "capture_selection_transform",
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
             Self::AnnotationRegression => "capture_annotation_regression",
+            Self::ToolGroup => "capture_tool_group",
             Self::CopyCancellationRace => "capture_copy_cancellation_race",
             Self::ClipboardContentionRetry => "capture_clipboard_contention_retry",
             Self::RecordingFailureRetry => "recording_failure_retry",
@@ -236,6 +238,7 @@ impl CaptureScenarioOption {
                 | Self::SelectionTransform
                 | Self::ScrollRoundtrip
                 | Self::AnnotationRegression
+                | Self::ToolGroup
                 | Self::ClipboardContentionRetry
                 | Self::RecordingFailureRetry
                 | Self::SaveFailureRetry
@@ -381,6 +384,7 @@ impl Options {
                         "selection-transform" => CaptureScenarioOption::SelectionTransform,
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
                         "annotation-regression" => CaptureScenarioOption::AnnotationRegression,
+                        "tool-group" => CaptureScenarioOption::ToolGroup,
                         "copy-cancellation-race" => CaptureScenarioOption::CopyCancellationRace,
                         "clipboard-contention-retry" => {
                             CaptureScenarioOption::ClipboardContentionRetry
@@ -393,7 +397,7 @@ impl Options {
                         }
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'tool-group', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
                     .to_owned(),
                             );
                         }
@@ -528,7 +532,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -565,6 +569,16 @@ struct InteractionPlan {
     cancel: PhysicalPoint,
     record_area: PhysicalPoint,
     record_window: PhysicalPoint,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ToolGroupInteractionPlan {
+    mark: PhysicalPoint,
+    text_trigger: PhysicalPoint,
+    shape_trigger: PhysicalPoint,
+    shape_rectangle: PhysicalPoint,
+    outside: PhysicalPoint,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -792,6 +806,144 @@ fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionP
     )
 }
 
+#[cfg(windows)]
+/// Locates the first two production tool-group triggers and one Shape child after Mark opens the
+/// annotation workspace. The constants mirror the shared overlay tokens so SendInput lands inside
+/// both English and Simplified Chinese fixed-width cells.
+fn tool_group_interaction_plan_for_capture_selection(
+    handle: *mut c_void,
+    capture_bounds: PhysicalRect,
+    selection: PhysicalRect,
+) -> io::Result<ToolGroupInteractionPlan> {
+    const EDGE_INSET: f32 = 18.0;
+    const BOTTOM_SAFE_INSET: f32 = 96.0;
+    const SELECTION_GAP: f32 = 12.0;
+    const TOOLBAR_MAX_WIDTH: f32 = 900.0;
+    const TOOLBAR_PADDING: f32 = 4.0;
+    const TOOL_GAP: f32 = 8.0;
+    const TOOL_ROW_HEIGHT: f32 = 34.0;
+    const TOOL_ESTIMATED_WIDTH: f32 = 104.0;
+    const ACTION_ITEM_WIDTH: f32 = 36.0;
+    const ACTION_ITEM_GAP: f32 = 6.0;
+    const ACTION_PADDING: f32 = 6.0;
+    const ACTION_BORDER: f32 = 1.0;
+    const ACTION_TOOLBAR_HEIGHT: f32 = 50.0;
+    const POPUP_PADDING: f32 = 6.0;
+
+    let window = owned_window(handle)?;
+    let client = client_bounds_for_window(handle)?;
+    let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
+    let (width, height) = overlay_logical_size(client, scale)?;
+    let top_left = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: selection.left,
+            y: selection.top,
+        },
+        client,
+        capture_bounds,
+    )?;
+    let bottom_right = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: selection.right,
+            y: selection.bottom,
+        },
+        client,
+        capture_bounds,
+    )?;
+    let logical = |point: PhysicalPoint| {
+        (
+            (point.x - client.left) as f32 / scale,
+            (point.y - client.top) as f32 / scale,
+        )
+    };
+    let (_, selection_top) = logical(top_left);
+    let (selection_right, selection_bottom) = logical(bottom_right);
+    let toolbar_width = (width - EDGE_INSET * 2.0).clamp(1.0, TOOLBAR_MAX_WIDTH);
+    let content_width = (toolbar_width - TOOLBAR_PADDING * 2.0).max(1.0);
+    let columns =
+        (((content_width + TOOL_GAP) / (TOOL_ESTIMATED_WIDTH + TOOL_GAP)).floor() as usize).max(1);
+    if columns < 6 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "tool-group acceptance needs six annotation cells on one row; logical viewport is {width:.0}x{height:.0}"
+            ),
+        ));
+    }
+    let palette_rows = 6_usize.div_ceil(columns);
+    let palette_height =
+        palette_rows as f32 * TOOL_ROW_HEIGHT + palette_rows.saturating_sub(1) as f32 * TOOL_GAP;
+    let tools_height = palette_height + TOOLBAR_PADDING * 2.0;
+    let total_height = tools_height + TOOL_GAP + ACTION_TOOLBAR_HEIGHT;
+    let left_min = EDGE_INSET;
+    let left_max = (width - EDGE_INSET - toolbar_width).max(left_min);
+    let left = (selection_right - toolbar_width).clamp(left_min, left_max);
+    let top_min = EDGE_INSET;
+    let top_max = (height - BOTTOM_SAFE_INSET - total_height).max(top_min);
+    let below_selection = selection_bottom + SELECTION_GAP;
+    let above_selection = selection_top - SELECTION_GAP - total_height;
+    let can_fit_below = below_selection <= top_max;
+    let can_fit_above = above_selection >= top_min;
+    let top = if can_fit_below {
+        below_selection
+    } else if can_fit_above {
+        above_selection
+    } else {
+        let room_below = height - BOTTOM_SAFE_INSET - below_selection;
+        let room_above = selection_top - SELECTION_GAP - top_min;
+        if room_below >= room_above {
+            below_selection.clamp(top_min, top_max)
+        } else {
+            above_selection.clamp(top_min, top_max)
+        }
+    };
+    let action_toolbar_width = 6.0 * ACTION_ITEM_WIDTH
+        + 5.0 * ACTION_ITEM_GAP
+        + 2.0 * ACTION_PADDING
+        + 2.0 * ACTION_BORDER;
+    let action_left_min = EDGE_INSET;
+    let action_left_max = (width - EDGE_INSET - action_toolbar_width).max(action_left_min);
+    let action_left =
+        (selection_right - action_toolbar_width).clamp(action_left_min, action_left_max);
+    let action_top_max = (height - BOTTOM_SAFE_INSET - ACTION_TOOLBAR_HEIGHT).max(top_min);
+    let action_below = selection_bottom + SELECTION_GAP;
+    let action_above = selection_top - SELECTION_GAP - ACTION_TOOLBAR_HEIGHT;
+    let action_top = if action_below <= action_top_max {
+        action_below
+    } else {
+        action_above.clamp(top_min, action_top_max)
+    };
+    let screen_point = |point: (f32, f32)| PhysicalPoint {
+        x: client.left + (point.0 * scale).round() as i32,
+        y: client.top + (point.1 * scale).round() as i32,
+    };
+    let tools_top = top;
+    let group_row_top = tools_top + TOOLBAR_PADDING;
+    let group_row_center_y = group_row_top + TOOL_ROW_HEIGHT / 2.0;
+    let popup_top = tools_top + TOOLBAR_PADDING + palette_height + TOOL_GAP;
+    Ok(ToolGroupInteractionPlan {
+        mark: screen_point((
+            action_left + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
+            action_top + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
+        )),
+        // These x positions intentionally sit inside both 64px Chinese and 104px English cells.
+        text_trigger: screen_point((left + TOOLBAR_PADDING + 32.0, group_row_center_y)),
+        shape_trigger: screen_point((left + 128.0, group_row_center_y)),
+        shape_rectangle: screen_point((
+            left + POPUP_PADDING + 32.0,
+            popup_top + POPUP_PADDING + TOOL_ROW_HEIGHT / 2.0,
+        )),
+        outside: map_capture_point_to_screen(
+            PhysicalPoint {
+                x: capture_bounds.left + 24,
+                y: capture_bounds.top + 24,
+            },
+            client,
+            capture_bounds,
+        )?,
+    })
+}
+
 /// Locates the production Scroll shot item in the expanded More menu using its fixed width rows.
 fn scroll_shot_point_for_logical_selection(
     bounds: PhysicalRect,
@@ -886,6 +1038,7 @@ fn scroll_roundtrip_cleanup_complete(state: &OverlayInteractionCaptureState) -> 
         && state.pinned_count == 0
         && !state.more_actions_visible
         && !state.annotation_controls_visible
+        && !state.annotation_tool_group_visible
         && state.manual_scroll_state == "idle"
         && state.manual_scroll_frame_count == 0
         && !state.manual_scroll_can_finish
@@ -1337,6 +1490,7 @@ struct AcceptanceReport {
     selection_transform: Option<SelectionTransformReport>,
     scroll_roundtrip: Option<ScrollRoundtripReport>,
     annotation_regression: Option<AnnotationRegressionReport>,
+    tool_group: Option<ToolGroupReport>,
     save_failure_retry: Option<SaveFailureRetryReport>,
     save_permission_retry: Option<SavePermissionRetryReport>,
     save_dialog_permission_retry: Option<SaveDialogPermissionRetryReport>,
@@ -1588,6 +1742,18 @@ struct AnnotationRegressionReport {
     source_pixel_fingerprint: String,
     exported_pixel_fingerprint: String,
     export_content_changed: bool,
+    cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct ToolGroupReport {
+    requested_selection: PhysicalRect,
+    committed_selection: PhysicalRect,
+    text_group_opened: bool,
+    escape_closed: bool,
+    outside_click_closed: bool,
+    shape_group_opened: bool,
+    selected_tool: &'static str,
     cleanup: CleanupReport,
 }
 
@@ -2268,7 +2434,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         .then(OverlayInteractionCopyRace::new);
     let app_copy_race = copy_race.clone();
     let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
-        (Some(_), _) | (None, CaptureScenarioOption::RecordingFailureRetry) => (980.0, 760.0),
+        (Some(_), _)
+        | (None, CaptureScenarioOption::RecordingFailureRetry)
+        | (None, CaptureScenarioOption::ToolGroup) => (980.0, 760.0),
         (None, CaptureScenarioOption::NarrowEdge) => (420.0, 420.0),
         (
             None,
@@ -2359,9 +2527,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 26 records the
-        // real recording startup failure and successful retry evidence.
-        schema_version: 26,
+        // Increment when the machine-readable report shape changes. Schema 27 records the
+        // real annotation tool-group interaction evidence.
+        schema_version: 27,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2391,6 +2559,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         selection_transform: None,
         scroll_roundtrip: None,
         annotation_regression: None,
+        tool_group: None,
         save_failure_retry: None,
         save_permission_retry: None,
         save_dialog_permission_retry: None,
@@ -4069,6 +4238,9 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::AnnotationRegression) => {
             execute_annotation_regression_interactions(context, report)
         }
+        (None, CaptureScenarioOption::ToolGroup) => {
+            execute_tool_group_interactions(context, report)
+        }
         (None, CaptureScenarioOption::SaveFailureRetry) => {
             execute_save_failure_retry_interactions(context, report)
         }
@@ -5270,7 +5442,12 @@ fn execute_annotation_regression_interactions(
         y: context.display.physical_bounds.top + 24,
     })?;
 
-    let foreground = inject_mouse_click(overlay.handle, plan.mark)?;
+    let group_plan = tool_group_interaction_plan_for_capture_selection(
+        overlay.handle,
+        context.display.physical_bounds,
+        selection,
+    )?;
+    let foreground = inject_mouse_click(overlay.handle, group_plan.mark)?;
     let _marking_state = wait_for_capture_state(context, "annotation controls", |state| {
         state.selection == Some(selection)
             && state.overlay_count == 1
@@ -5631,6 +5808,260 @@ fn execute_annotation_regression_interactions(
         source_pixel_fingerprint: format!("{:016x}", source_metrics.fingerprint),
         exported_pixel_fingerprint: format!("{:016x}", exported_metrics.fingerprint),
         export_content_changed,
+        cleanup: CleanupReport {
+            session_state: final_state.session_state,
+            overlay_count: final_state.overlay_count,
+            pinned_count: final_state.pinned_count,
+            capture_teardown_pending: final_state.capture_teardown_pending,
+            visible_process_windows,
+            capture_preflight_ready: final_state.capture_preflight_ready,
+        },
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Exercises the screenshot workspace tool-group lifecycle with real clicks and keyboard input.
+fn execute_tool_group_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_controller_ready",
+        controller,
+        None,
+    )?;
+
+    let foreground = inject_capture_shortcut(controller.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_capture_shortcut",
+        foreground,
+        None,
+    )?;
+    let overlay = wait_for_overlay(
+        controller.handle,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "tool-group capture overlay hides Settings",
+    )?;
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let plan = interaction_plan_for_window(overlay.handle)?;
+    let drag = inject_mouse_drag(
+        overlay.handle,
+        plan.drag_start,
+        plan.drag_end,
+        context.display.physical_bounds,
+    )?;
+    thread::sleep(context.settle_delay);
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_selection_drag",
+        drag.foreground,
+        None,
+    )?;
+    let selected_state = wait_for_capture_state(context, "tool-group selection", |state| {
+        state.session_state == "selecting"
+            && state.selection.is_some()
+            && state.overlay_count == 1
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+    })?;
+    let selection = selected_state
+        .selection
+        .ok_or_else(|| io::Error::other("tool-group selection disappeared"))?;
+    validate_selection_geometry(drag.selection, selection, "tool-group selection")?;
+
+    let group_plan = tool_group_interaction_plan_for_capture_selection(
+        overlay.handle,
+        context.display.physical_bounds,
+        selection,
+    )?;
+    let foreground = inject_mouse_click(overlay.handle, group_plan.mark)?;
+    wait_for_capture_state(context, "tool-group annotation controls", |state| {
+        state.selection == Some(selection)
+            && state.overlay_count == 1
+            && state.annotation_controls_visible
+            && !state.more_actions_visible
+            && !state.annotation_tool_group_visible
+    })?;
+    let marking = capture_evidence(context, "00-tool-group-toolbar.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_annotation_controls_open",
+        foreground,
+        Some(&marking),
+    )?;
+
+    let foreground = inject_mouse_click(overlay.handle, group_plan.text_trigger)?;
+    wait_for_capture_state(context, "Text tool group open", |state| {
+        state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && state.annotation_tool_group_visible
+    })?;
+    let text_open = capture_evidence(context, "01-tool-group-text-open.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_text_open",
+        foreground,
+        Some(&text_open),
+    )?;
+
+    let foreground = inject_key(overlay.handle, VK_ESCAPE)?;
+    let escaped_state = wait_for_capture_state(context, "tool-group Escape close", |state| {
+        state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+    })?;
+    let escaped = capture_evidence(context, "02-tool-group-escape-closed.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_escape_closed",
+        foreground,
+        Some(&escaped),
+    )?;
+
+    let foreground = inject_mouse_click(overlay.handle, group_plan.text_trigger)?;
+    wait_for_capture_state(context, "Text tool group reopen", |state| {
+        state.annotation_tool_group_visible
+    })?;
+    inject_key(overlay.handle, VK_RIGHT)?;
+    inject_key(overlay.handle, VK_RETURN)?;
+    let watermark_state =
+        wait_for_capture_state(context, "tool-group keyboard child selection", |state| {
+            state.selection == Some(selection)
+                && state.annotation_controls_visible
+                && !state.annotation_tool_group_visible
+                && state.status == "Watermark tool selected"
+        })?;
+    let keyboard_selected =
+        capture_evidence(context, "03-tool-group-keyboard-selected.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_keyboard_child_selected",
+        foreground,
+        Some(&keyboard_selected),
+    )?;
+
+    let foreground = inject_mouse_click(overlay.handle, group_plan.shape_trigger)?;
+    wait_for_capture_state(context, "Shape tool group open", |state| {
+        state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && state.annotation_tool_group_visible
+    })?;
+    let shape_open = capture_evidence(context, "04-tool-group-shape-open.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_shape_open",
+        foreground,
+        Some(&shape_open),
+    )?;
+
+    let foreground = inject_mouse_click(overlay.handle, group_plan.shape_rectangle)?;
+    wait_for_capture_state(context, "Shape child click", |state| {
+        state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+            && state.status == "Rectangle tool selected"
+    })?;
+    let rectangle_selected = capture_evidence(context, "05-tool-group-child-clicked.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_child_clicked",
+        foreground,
+        Some(&rectangle_selected),
+    )?;
+
+    inject_mouse_click(overlay.handle, group_plan.shape_trigger)?;
+    wait_for_capture_state(context, "Shape tool group reopen", |state| {
+        state.annotation_tool_group_visible
+    })?;
+    let foreground = inject_mouse_click(overlay.handle, group_plan.outside)?;
+    let outside_state = wait_for_capture_state(context, "tool-group outside close", |state| {
+        state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+    })?;
+    let outside_closed = capture_evidence(context, "06-tool-group-outside-closed.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_outside_closed",
+        foreground,
+        Some(&outside_closed),
+    )?;
+
+    focus_owned_window(overlay, context.timeout)?;
+    let cleanup_foreground = inject_key(overlay.handle, VK_ESCAPE)?;
+    wait_for_window_gone(overlay.handle, context.timeout, "tool-group Escape cleanup")?;
+    let final_state = wait_for_capture_state(context, "tool-group Escape cleanup", |state| {
+        state.session_state == "idle"
+            && state.selection.is_none()
+            && state.overlay_count == 0
+            && !state.annotation_tool_group_visible
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+    })?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_capture_cleanup",
+        cleanup_foreground,
+        None,
+    )?;
+    unsafe { ShowWindow(controller.handle, SW_HIDE) };
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "tool-group controller hide",
+    )?;
+    ensure_capture_input_released()?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "tool-group cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    if watermark_state.status != "Watermark tool selected" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "keyboard selection did not commit the Watermark tool",
+        ));
+    }
+    if outside_state.annotation_tool_group_visible {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "outside click left the tool-group popover visible",
+        ));
+    }
+    report.tool_group = Some(ToolGroupReport {
+        requested_selection: drag.selection,
+        committed_selection: selection,
+        text_group_opened: true,
+        escape_closed: !escaped_state.annotation_tool_group_visible,
+        outside_click_closed: !outside_state.annotation_tool_group_visible,
+        shape_group_opened: true,
+        selected_tool: "rectangle",
         cleanup: CleanupReport {
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
@@ -13948,6 +14379,29 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_tool_group_scenario() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "tool-group",
+        ]))
+        .unwrap();
+
+        assert_eq!(options.capture_scenario, CaptureScenarioOption::ToolGroup);
+        assert_eq!(options.capture_scenario.workflow(), "capture_tool_group");
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "tool-group",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn parser_accepts_save_failure_retry_scenario_without_clipboard_access() {
         let options = Options::parse_from(arguments(&[
             "--allow-input",
@@ -14259,6 +14713,7 @@ mod tests {
             overlay_count: 0,
             more_actions_visible: false,
             annotation_controls_visible: false,
+            annotation_tool_group_visible: false,
             pinned_count: 0,
             pinned_source_bounds: None,
             capture_teardown_pending: false,

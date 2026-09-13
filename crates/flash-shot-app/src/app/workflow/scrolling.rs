@@ -68,6 +68,7 @@ impl FlashShotApp {
         // stitched-image editor that opens after Finish.
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
+        self.close_annotation_tool_group();
         self.status = locale.text(crate::i18n::UiText::ScrollingReady).to_owned();
         self.close_capture_overlays(cx);
         let app = cx.entity();

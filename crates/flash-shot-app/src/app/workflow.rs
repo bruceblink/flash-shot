@@ -454,13 +454,47 @@ impl FlashShotApp {
     }
 
     pub(super) fn toggle_overlay_more_actions(&mut self, cx: &mut Context<Self>) {
+        if !self.overlay_more_actions {
+            self.close_annotation_tool_group();
+        }
         self.overlay_more_actions = !self.overlay_more_actions;
         cx.notify();
     }
 
     pub(super) fn toggle_overlay_annotation_controls(&mut self, cx: &mut Context<Self>) {
+        if self.overlay_annotation_controls {
+            self.close_annotation_tool_group();
+        }
         self.overlay_annotation_controls = !self.overlay_annotation_controls;
         cx.notify();
+    }
+
+    /// Opens one tool-group popover for the owning display, replacing any other transient group.
+    ///
+    /// The display id is kept with the group so multiple capture windows cannot render duplicate
+    /// popovers. Opening a group also closes More because both surfaces use the same workspace
+    /// ownership slot.
+    pub(in crate::app) fn toggle_annotation_tool_group(
+        &mut self,
+        owner: &str,
+        group: super::AnnotationToolGroup,
+        cx: &mut Context<Self>,
+    ) {
+        let same_owner = self.annotation_tool_group_owner.as_deref() == Some(owner);
+        if same_owner && self.annotation_tool_group == Some(group) {
+            self.close_annotation_tool_group();
+        } else {
+            self.annotation_tool_group = Some(group);
+            self.annotation_tool_group_owner = Some(owner.to_owned());
+            self.overlay_more_actions = false;
+        }
+        cx.notify();
+    }
+
+    /// Clears the transient tool-group owner during outside-click, reset, or teardown paths.
+    pub(in crate::app) fn close_annotation_tool_group(&mut self) {
+        self.annotation_tool_group = None;
+        self.annotation_tool_group_owner = None;
     }
 
     /// Reserves the native clipboard for one writer without blocking unrelated capture actions.

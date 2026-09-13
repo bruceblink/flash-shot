@@ -553,6 +553,7 @@ impl FlashShotApp {
         self.update_check_generation = self.update_check_generation.wrapping_add(1);
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
+        self.close_annotation_tool_group();
         self.status = self
             .settings
             .locale
@@ -800,6 +801,7 @@ impl FlashShotApp {
         self.ocr_support_check_generation = self.ocr_support_check_generation.wrapping_add(1);
         self.overlay_more_actions = false;
         self.overlay_annotation_controls = false;
+        self.close_annotation_tool_group();
         self.status = if self.capture_shortcut_enabled {
             self.settings
                 .locale
@@ -837,6 +839,7 @@ impl FlashShotApp {
         }
         self.operation_generation = self.operation_generation.wrapping_add(1);
         self.invalidate_recognition();
+        self.close_annotation_tool_group();
         self.delayed_capture_generation = None;
         self.delayed_capture_remaining_seconds = None;
         if self.session.state() != CaptureSessionState::Idle {

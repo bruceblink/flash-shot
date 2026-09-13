@@ -1265,6 +1265,7 @@ impl FlashShotApp {
     }
 
     pub(super) fn close_capture_overlays(&mut self, cx: &mut Context<Self>) {
+        self.close_annotation_tool_group();
         let windows = std::mem::take(&mut self.overlay_windows);
         if !windows.is_empty() {
             // Invalidate callbacks queued by the old windows before their native teardown runs.

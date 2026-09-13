@@ -16,7 +16,7 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::{
-    FlashShotApp,
+    AnnotationToolGroup, FlashShotApp,
     overlay_toolbar::{
         WorkspaceButtonConfig, WorkspaceButtonTone, icon, workspace_icon_button,
         workspace_separator, workspace_surface, workspace_swatch, workspace_text_button,
@@ -77,7 +77,11 @@ const ANNOTATION_CONTEXT_SECTION_GAP: f32 =
     ANNOTATION_TOOL_GAP + ANNOTATION_TOOLBAR_PADDING * 2.0 + 1.0;
 // Keep the measured palette count aligned with the buttons rendered below so compact locales do
 // not reserve an unused wrapped row.
-const ANNOTATION_TOOL_PALETTE_ITEMS: usize = 12;
+const ANNOTATION_TOOL_PALETTE_ITEMS: usize = 6;
+const ANNOTATION_TOOL_GROUP_COUNT: usize = 4;
+const ANNOTATION_TOOL_GROUP_MAX_ITEMS: usize = 3;
+const ANNOTATION_TOOL_GROUP_POPUP_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+const ANNOTATION_TOOL_GROUP_POPUP_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
 const ANNOTATION_STYLE_PANEL_GAP: f32 = ThemeMetrics::WORKSPACE_POPOVER_GAP;
 const ANNOTATION_STYLE_CONTROL_HEIGHT: f32 = ThemeMetrics::WORKSPACE_STYLE_ROW_HEIGHT;
 const ANNOTATION_STYLE_CONTROL_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
@@ -104,6 +108,55 @@ const MAGNIFIER_CELL_SIZE: f32 = 12.0;
 const MAGNIFIER_GAP: f32 = 18.0;
 const MIN_ANNOTATION_VIEW_FONT_SIZE: f32 = 8.0;
 const MAX_ANNOTATION_VIEW_FONT_SIZE: f32 = 96.0;
+
+const TEXT_TOOL_GROUP_TOOLS: &[AnnotationTool] = &[
+    AnnotationTool::Text,
+    AnnotationTool::Watermark,
+    AnnotationTool::Number,
+];
+const SHAPE_TOOL_GROUP_TOOLS: &[AnnotationTool] =
+    &[AnnotationTool::Rectangle, AnnotationTool::Ellipse];
+const LINE_TOOL_GROUP_TOOLS: &[AnnotationTool] = &[
+    AnnotationTool::Line,
+    AnnotationTool::Arrow,
+    AnnotationTool::Freehand,
+];
+const OBSCURE_TOOL_GROUP_TOOLS: &[AnnotationTool] = &[AnnotationTool::Blur, AnnotationTool::Mosaic];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AnnotationToolGroupSpec {
+    group: AnnotationToolGroup,
+    label: UiText,
+    tooltip: UiText,
+    tools: &'static [AnnotationTool],
+}
+
+const ANNOTATION_TOOL_GROUP_SPECS: [AnnotationToolGroupSpec; ANNOTATION_TOOL_GROUP_COUNT] = [
+    AnnotationToolGroupSpec {
+        group: AnnotationToolGroup::Text,
+        label: UiText::OverlayTextGroup,
+        tooltip: UiText::OverlayTextGroupTooltip,
+        tools: TEXT_TOOL_GROUP_TOOLS,
+    },
+    AnnotationToolGroupSpec {
+        group: AnnotationToolGroup::Shape,
+        label: UiText::OverlayShapeGroup,
+        tooltip: UiText::OverlayShapeGroupTooltip,
+        tools: SHAPE_TOOL_GROUP_TOOLS,
+    },
+    AnnotationToolGroupSpec {
+        group: AnnotationToolGroup::Line,
+        label: UiText::OverlayLineGroup,
+        tooltip: UiText::OverlayLineGroupTooltip,
+        tools: LINE_TOOL_GROUP_TOOLS,
+    },
+    AnnotationToolGroupSpec {
+        group: AnnotationToolGroup::Obscure,
+        label: UiText::OverlayObscureGroup,
+        tooltip: UiText::OverlayObscureGroupTooltip,
+        tools: OBSCURE_TOOL_GROUP_TOOLS,
+    },
+];
 
 /// Names the less-frequent actions at the exact point where users discover them.
 fn secondary_action_tooltip(locale: Locale, action_id: &str) -> &'static str {
@@ -230,6 +283,111 @@ impl SecondaryActionNavigation {
             }
             None => stop_overlay_action_key_propagation(event, window, cx),
         }
+    }
+}
+
+impl AnnotationToolGroup {
+    const fn index(self) -> usize {
+        match self {
+            Self::Text => 0,
+            Self::Shape => 1,
+            Self::Line => 2,
+            Self::Obscure => 3,
+        }
+    }
+
+    const fn spec(self) -> AnnotationToolGroupSpec {
+        ANNOTATION_TOOL_GROUP_SPECS[self.index()]
+    }
+}
+
+/// Keeps tool-group keyboard traversal local to the currently materialized popover.
+#[derive(Clone)]
+struct AnnotationToolGroupNavigation {
+    tools: &'static [AnnotationTool],
+    current: AnnotationTool,
+    focus_handles: [FocusHandle; ANNOTATION_TOOL_GROUP_MAX_ITEMS],
+}
+
+impl AnnotationToolGroupNavigation {
+    fn focus_handle(&self, tool: AnnotationTool) -> Option<FocusHandle> {
+        self.tools
+            .iter()
+            .position(|candidate| *candidate == tool)
+            .and_then(|index| self.focus_handles.get(index).cloned())
+    }
+
+    /// Keeps arrow-key traversal inside a group while plain Enter/Space remains a button click.
+    fn handle_key_down(&self, event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
+        if let Some(direction) = annotation_tool_group_focus_direction(&event.keystroke) {
+            if let Some(target) =
+                annotation_tool_group_focus_target(self.current, self.tools, direction)
+                && let Some(focus_handle) = self.focus_handle(target)
+            {
+                focus_handle.focus(window, cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
+        stop_overlay_action_key_propagation(event, window, cx);
+    }
+}
+
+/// Names the local arrow-key direction used by a tool-group popover.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AnnotationToolGroupFocusDirection {
+    Next,
+    Previous,
+}
+
+/// Maps plain arrow keys to local tool-group focus traversal.
+fn annotation_tool_group_focus_direction(
+    keystroke: &Keystroke,
+) -> Option<AnnotationToolGroupFocusDirection> {
+    if keystroke.modifiers.modified() {
+        return None;
+    }
+
+    match keystroke.key.as_str() {
+        "down" | "right" => Some(AnnotationToolGroupFocusDirection::Next),
+        "up" | "left" => Some(AnnotationToolGroupFocusDirection::Previous),
+        _ => None,
+    }
+}
+
+/// Chooses the next or previous child without allowing focus to escape the active group.
+fn annotation_tool_group_focus_target(
+    current: AnnotationTool,
+    tools: &[AnnotationTool],
+    direction: AnnotationToolGroupFocusDirection,
+) -> Option<AnnotationTool> {
+    if tools.is_empty() {
+        return None;
+    }
+    let current_index = tools.iter().position(|tool| *tool == current)?;
+    let target_index = match direction {
+        AnnotationToolGroupFocusDirection::Next => (current_index + 1) % tools.len(),
+        AnnotationToolGroupFocusDirection::Previous => {
+            current_index.checked_sub(1).unwrap_or(tools.len() - 1)
+        }
+    };
+    tools.get(target_index).copied()
+}
+
+/// Maps each existing annotation tool to the catalog label used by its group child.
+const fn annotation_tool_ui_text(tool: AnnotationTool) -> UiText {
+    match tool {
+        AnnotationTool::Watermark => UiText::OverlayWatermark,
+        AnnotationTool::Text => UiText::OverlayText,
+        AnnotationTool::Number => UiText::OverlayNumber,
+        AnnotationTool::Blur => UiText::OverlayBlur,
+        AnnotationTool::Mosaic => UiText::OverlayMosaic,
+        AnnotationTool::Highlight => UiText::OverlayHighlight,
+        AnnotationTool::Rectangle => UiText::OverlayRectangle,
+        AnnotationTool::Ellipse => UiText::OverlayEllipse,
+        AnnotationTool::Line => UiText::OverlayLine,
+        AnnotationTool::Arrow => UiText::OverlayArrow,
+        AnnotationTool::Freehand => UiText::OverlayFreehand,
     }
 }
 
@@ -429,6 +587,63 @@ fn annotation_action_button(
     .on_key_down(stop_overlay_action_key_propagation)
 }
 
+/// Builds one fixed-size annotation tool button so the toolbar layout uses the rendered hitbox.
+fn annotation_tool_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<gpui::SharedString>,
+    colors: ThemeColors,
+    active: bool,
+    width: f32,
+    tooltip: Option<&'static str>,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    workspace_text_button(
+        id,
+        label,
+        WorkspaceButtonConfig::text(
+            Some(width),
+            ANNOTATION_TOOL_ROW_HEIGHT,
+            colors,
+            if active {
+                WorkspaceButtonTone::Primary
+            } else {
+                WorkspaceButtonTone::Neutral
+            },
+            active,
+            true,
+            tooltip,
+        ),
+        on_click,
+    )
+}
+
+/// Keeps acceptance selectors and accessibility ids stable as group contents evolve.
+const fn annotation_tool_key(tool: AnnotationTool) -> &'static str {
+    match tool {
+        AnnotationTool::Text => "text",
+        AnnotationTool::Watermark => "watermark",
+        AnnotationTool::Number => "number",
+        AnnotationTool::Blur => "blur",
+        AnnotationTool::Mosaic => "mosaic",
+        AnnotationTool::Highlight => "highlight",
+        AnnotationTool::Rectangle => "rectangle",
+        AnnotationTool::Ellipse => "ellipse",
+        AnnotationTool::Line => "line",
+        AnnotationTool::Arrow => "arrow",
+        AnnotationTool::Freehand => "freehand",
+    }
+}
+
+/// Gives each group trigger a stable semantic id independent of its localized label.
+const fn annotation_tool_group_key(group: AnnotationToolGroup) -> &'static str {
+    match group {
+        AnnotationToolGroup::Text => "text",
+        AnnotationToolGroup::Shape => "shape",
+        AnnotationToolGroup::Line => "line",
+        AnnotationToolGroup::Obscure => "obscure",
+    }
+}
+
 /// Builds one compact style choice with the shared toolbar focus, hover, tooltip, and hitbox
 /// behavior. The visible value stays short while the tooltip describes the control group.
 fn annotation_style_button(
@@ -457,6 +672,9 @@ pub(super) struct CaptureOverlay {
     focus_handle: FocusHandle,
     more_actions_focus_handle: FocusHandle,
     secondary_action_focus_handles: [FocusHandle; SECONDARY_ACTION_COUNT],
+    annotation_tool_group_trigger_focus_handles: [FocusHandle; ANNOTATION_TOOL_GROUP_COUNT],
+    annotation_tool_group_item_focus_handles:
+        [[FocusHandle; ANNOTATION_TOOL_GROUP_MAX_ITEMS]; ANNOTATION_TOOL_GROUP_COUNT],
     topmost_requested: bool,
     annotation_arrange_actions_for: Option<AnnotationId>,
     _app_observation: Subscription,
@@ -546,6 +764,10 @@ impl CaptureOverlay {
             more_actions_focus_handle: cx.focus_handle().tab_stop(false),
             secondary_action_focus_handles: std::array::from_fn(|index| {
                 cx.focus_handle().tab_stop(true).tab_index(index as isize)
+            }),
+            annotation_tool_group_trigger_focus_handles: std::array::from_fn(|_| cx.focus_handle()),
+            annotation_tool_group_item_focus_handles: std::array::from_fn(|_| {
+                std::array::from_fn(|_| cx.focus_handle())
             }),
             topmost_requested: false,
             annotation_arrange_actions_for: None,
@@ -769,6 +991,12 @@ impl CaptureOverlay {
             return;
         }
         if close_more_actions_shortcut(&event.keystroke)
+            && self.close_annotation_tool_group_from_keyboard(window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
+        if close_more_actions_shortcut(&event.keystroke)
             && self.close_more_actions_from_keyboard(window, cx)
         {
             cx.stop_propagation();
@@ -791,6 +1019,198 @@ impl CaptureOverlay {
                     app.handle_key_down(&event, cx);
                 }
             })
+        });
+    }
+
+    fn annotation_tool_group_trigger_focus_handle(
+        &self,
+        group: AnnotationToolGroup,
+    ) -> FocusHandle {
+        self.annotation_tool_group_trigger_focus_handles[group.index()].clone()
+    }
+
+    fn annotation_tool_group_item_focus_handle(
+        &self,
+        group: AnnotationToolGroup,
+        index: usize,
+    ) -> FocusHandle {
+        self.annotation_tool_group_item_focus_handles[group.index()][index].clone()
+    }
+
+    /// Opens or closes a tool group and moves focus after the next render, so the new child exists.
+    fn toggle_annotation_tool_group_from_trigger(
+        &mut self,
+        group: AnnotationToolGroup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let operation_generation = self.operation_generation;
+        let owner = self.display.id.clone();
+        let app = self.app.clone();
+        let is_open = {
+            let app = app.read(cx);
+            app.annotation_tool_group == Some(group)
+                && app.annotation_tool_group_owner.as_deref() == Some(owner.as_str())
+        };
+        let focus_handle = if is_open {
+            self.annotation_tool_group_trigger_focus_handle(group)
+        } else {
+            self.annotation_tool_group_item_focus_handle(group, 0)
+        };
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| {
+                if accepts_overlay_input(operation_generation, app.operation_generation) {
+                    app.toggle_annotation_tool_group(&owner, group, cx);
+                }
+            });
+        });
+        cx.on_next_frame(window, move |_, window, cx| focus_handle.focus(window, cx));
+    }
+
+    /// Selects one materialized child exactly once, closes its owner, and returns focus to the
+    /// trigger so the next keyboard action stays in the screenshot workspace.
+    fn select_annotation_tool_from_group(
+        &mut self,
+        group: AnnotationToolGroup,
+        tool: AnnotationTool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let operation_generation = self.operation_generation;
+        let owner = self.display.id.clone();
+        let app = self.app.clone();
+        let trigger_focus = self.annotation_tool_group_trigger_focus_handle(group);
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| {
+                if !accepts_overlay_input(operation_generation, app.operation_generation)
+                    || app.annotation_tool_group != Some(group)
+                    || app.annotation_tool_group_owner.as_deref() != Some(owner.as_str())
+                {
+                    return;
+                }
+                app.select_annotation_tool(tool, cx);
+                app.close_annotation_tool_group();
+            });
+        });
+        cx.on_next_frame(window, move |_, window, cx| trigger_focus.focus(window, cx));
+    }
+
+    /// Closes the one group owned by this overlay and restores trigger focus for Escape handling.
+    fn close_annotation_tool_group_from_keyboard(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let (group, owner) = {
+            let app = self.app.read(cx);
+            (
+                app.annotation_tool_group,
+                app.annotation_tool_group_owner.as_deref() == Some(self.display.id.as_str()),
+            )
+        };
+        let Some(group) = group.filter(|_| owner) else {
+            return false;
+        };
+        let operation_generation = self.operation_generation;
+        let app = self.app.clone();
+        let trigger_focus = self.annotation_tool_group_trigger_focus_handle(group);
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| {
+                if accepts_overlay_input(operation_generation, app.operation_generation)
+                    && app.annotation_tool_group == Some(group)
+                {
+                    app.close_annotation_tool_group();
+                    cx.notify();
+                }
+            });
+        });
+        cx.on_next_frame(window, move |_, window, cx| trigger_focus.focus(window, cx));
+        true
+    }
+
+    /// Handles a child button's local arrows and Escape without leaking them to canvas shortcuts.
+    fn handle_annotation_tool_group_item_key_down(
+        &mut self,
+        group: AnnotationToolGroup,
+        current: AnnotationTool,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if close_more_actions_shortcut(&event.keystroke)
+            && self.close_annotation_tool_group_from_keyboard(window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
+        let navigation = AnnotationToolGroupNavigation {
+            tools: group.spec().tools,
+            current,
+            focus_handles: self.annotation_tool_group_item_focus_handles[group.index()].clone(),
+        };
+        navigation.handle_key_down(event, window, cx);
+    }
+
+    /// Lets a focused group trigger enter its children with arrows while keeping activation local.
+    fn handle_annotation_tool_group_trigger_key_down(
+        &mut self,
+        group: AnnotationToolGroup,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let is_open = {
+            let app = self.app.read(cx);
+            app.annotation_tool_group == Some(group)
+                && app.annotation_tool_group_owner.as_deref() == Some(self.display.id.as_str())
+        };
+        if close_more_actions_shortcut(&event.keystroke)
+            && is_open
+            && self.close_annotation_tool_group_from_keyboard(window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
+        if is_open && let Some(direction) = annotation_tool_group_focus_direction(&event.keystroke)
+        {
+            let tools = group.spec().tools;
+            let target = match direction {
+                AnnotationToolGroupFocusDirection::Next => tools.first().copied(),
+                AnnotationToolGroupFocusDirection::Previous => tools.last().copied(),
+            };
+            if let Some(target) = target
+                && let Some(focus_handle) = self.annotation_tool_group_item_focus_handles
+                    [group.index()]
+                .iter()
+                .zip(tools.iter())
+                .find_map(|(focus_handle, candidate)| {
+                    (*candidate == target).then(|| focus_handle.clone())
+                })
+            {
+                focus_handle.focus(window, cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
+        stop_overlay_action_key_propagation(event, window, cx);
+    }
+
+    /// Dismisses a group before a canvas gesture can start and returns focus to that canvas.
+    fn dismiss_annotation_tool_group_from_pointer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_handle.focus(window, cx);
+        let operation_generation = self.operation_generation;
+        let app = self.app.clone();
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| {
+                if accepts_overlay_input(operation_generation, app.operation_generation) {
+                    app.close_annotation_tool_group();
+                    cx.notify();
+                }
+            });
         });
     }
 
@@ -928,6 +1348,7 @@ pub(super) fn open_ui_acceptance(
                 placement,
                 show_more_actions,
                 show_annotation_controls,
+                show_annotation_tool_group,
             } => {
                 let selection = overlay_ui_acceptance_selection(display.physical_bounds, placement);
                 match app.session.select(selection) {
@@ -941,7 +1362,14 @@ pub(super) fn open_ui_acceptance(
                             // The marking acceptance surface must exercise the contextual row,
                             // not merely the visibility toggle. Rectangle exposes every W3
                             // control while keeping the synthetic fixture free of new geometry.
-                            app.select_rectangle_tool(cx);
+                            app.select_annotation_tool(AnnotationTool::Rectangle, cx);
+                            if show_annotation_tool_group {
+                                app.toggle_annotation_tool_group(
+                                    &display.id,
+                                    AnnotationToolGroup::Shape,
+                                    cx,
+                                );
+                            }
                         }
                         let width = selection.width().to_string();
                         let height = selection.height().to_string();
@@ -1195,10 +1623,19 @@ impl Render for CaptureOverlay {
         let transform = self.transform(viewport);
         let selected_on_display =
             selection.and_then(|selection| intersect(selection, display_bounds));
+        let annotation_tool_width = if locale == Locale::SimplifiedChinese {
+            ThemeMetrics::WORKSPACE_TOOL_CELL_WIDTH_COMPACT
+        } else {
+            ANNOTATION_TOOL_ESTIMATED_WIDTH
+        };
         let owns_action_toolbar =
             selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds));
         let show_annotation_controls =
             annotation_controls_visible(app.overlay_annotation_controls, selection, display_bounds);
+        let annotation_tool_group = app.annotation_tool_group.filter(|_| {
+            app.annotation_tool_group_owner.as_deref() == Some(self.display.id.as_str())
+        });
+        let show_annotation_tool_group_dismiss = app.annotation_tool_group.is_some();
         let base_action_layout = action_toolbar_layout(
             selected_on_display,
             transform,
@@ -1217,12 +1654,11 @@ impl Render for CaptureOverlay {
                     transform,
                     viewport,
                     base_action_layout,
-                    annotation_toolbar_items,
-                    annotation_style_height,
-                    if locale == Locale::SimplifiedChinese {
-                        ThemeMetrics::WORKSPACE_TOOL_CELL_WIDTH_COMPACT
-                    } else {
-                        ANNOTATION_TOOL_ESTIMATED_WIDTH
+                    AnnotationToolbarLayoutOptions {
+                        items: annotation_toolbar_items,
+                        style_height: annotation_style_height,
+                        annotation_tool_group,
+                        tool_estimated_width: annotation_tool_width,
                     },
                 )
             })
@@ -1592,6 +2028,24 @@ impl Render for CaptureOverlay {
                         )),
                 )
             })
+            .when(show_annotation_tool_group_dismiss, |overlay| {
+                overlay.child(
+                    div()
+                        .id("overlay-annotation-tool-group-dismiss")
+                        .occlude()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| {
+                                this.dismiss_annotation_tool_group_from_pointer(window, cx);
+                            }),
+                        ),
+                )
+            })
             .when(show_annotation_controls, |overlay| {
                 overlay.child(
                     div()
@@ -1611,8 +2065,8 @@ impl Render for CaptureOverlay {
                                 .top(px(OVERLAY_EDGE_INSET))
                         })
                         .flex_col()
-                        .gap(px(ThemeMetrics::default().workspace_toolbar_gap))
-                        .p(px(ThemeMetrics::default().workspace_toolbar_padding))
+                        .gap(px(ANNOTATION_TOOL_GAP))
+                        .p(px(ANNOTATION_TOOLBAR_PADDING))
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(
@@ -1621,212 +2075,139 @@ impl Render for CaptureOverlay {
                                 .flex()
                                 .flex_wrap()
                                 .items_center()
-                                .gap(px(ThemeMetrics::default().workspace_toolbar_gap))
-                                .child(annotation_action_button(
-                                    "overlay-tool-watermark",
-                                    locale.text(UiText::OverlayWatermark),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Watermark) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_watermark_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-text",
-                                    locale.text(UiText::OverlayText),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Text) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_text_tool(cx))
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-number",
-                                    locale.text(UiText::OverlayNumber),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Number) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_number_tool(cx))
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-blur",
-                                    locale.text(UiText::OverlayBlur),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Blur) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_blur_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-mosaic",
-                                    locale.text(UiText::OverlayMosaic),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Mosaic) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_mosaic_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-highlight",
-                                    locale.text(UiText::OverlayHighlight),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Highlight) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_highlight_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-selection",
-                                    locale.text(UiText::OverlaySelect),
-                                    colors,
-                                    if selected_tool.is_none() {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_selection_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-rectangle",
-                                    locale.text(UiText::OverlayRectangle),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Rectangle) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_rectangle_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-ellipse",
-                                    locale.text(UiText::OverlayEllipse),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Ellipse) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_ellipse_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-line",
-                                    locale.text(UiText::OverlayLine),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Line) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_line_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-arrow",
-                                    locale.text(UiText::OverlayArrow),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Arrow) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_arrow_tool(cx));
-                                        });
-                                    }),
-                                ))
-                                .child(annotation_action_button(
-                                    "overlay-tool-freehand",
-                                    locale.text(UiText::OverlayFreehand),
-                                    colors,
-                                    if selected_tool == Some(AnnotationTool::Freehand) {
-                                        AnnotationActionTone::Primary
-                                    } else {
-                                        AnnotationActionTone::Neutral
-                                    },
-                                    true,
-                                    cx.listener(|this, _, _, cx| {
-                                        let app = this.app.clone();
-                                        cx.defer(move |cx| {
-                                            app.update(cx, |app, cx| app.select_freehand_tool(cx));
-                                        });
-                                    }),
-                                )),
+                                .gap(px(ANNOTATION_TOOL_GAP))
+                                .children(ANNOTATION_TOOL_GROUP_SPECS.iter().copied().map(|spec| {
+                                    let group = spec.group;
+                                    let active = annotation_tool_group == Some(group)
+                                        || selected_tool
+                                            .is_some_and(|tool| spec.tools.contains(&tool));
+                                    let focus_handle =
+                                        self.annotation_tool_group_trigger_focus_handle(group);
+                                    annotation_tool_button(
+                                        format!(
+                                            "overlay-tool-group-{}",
+                                            annotation_tool_group_key(group)
+                                        ),
+                                        locale.text(spec.label),
+                                        colors,
+                                        active,
+                                        annotation_tool_width,
+                                        Some(locale.text(spec.tooltip)),
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.toggle_annotation_tool_group_from_trigger(
+                                                group, window, cx,
+                                            );
+                                        }),
+                                    )
+                                    .track_focus(&focus_handle)
+                                    .on_key_down(cx.listener(move |this, event, window, cx| {
+                                        this.handle_annotation_tool_group_trigger_key_down(
+                                            group, event, window, cx,
+                                        );
+                                    }))
+                                }))
+                                .child(
+                                    annotation_tool_button(
+                                        "overlay-tool-highlight",
+                                        locale.text(UiText::OverlayHighlight),
+                                        colors,
+                                        selected_tool == Some(AnnotationTool::Highlight),
+                                        annotation_tool_width,
+                                        None,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.select_annotation_tool(
+                                                        AnnotationTool::Highlight,
+                                                        cx,
+                                                    );
+                                                });
+                                            });
+                                        }),
+                                    )
+                                    .on_key_down(stop_overlay_action_key_propagation),
+                                )
+                                .child(
+                                    annotation_tool_button(
+                                        "overlay-tool-selection",
+                                        locale.text(UiText::OverlaySelect),
+                                        colors,
+                                        selected_tool.is_none(),
+                                        annotation_tool_width,
+                                        None,
+                                        cx.listener(|this, _, _, cx| {
+                                            let app = this.app.clone();
+                                            cx.defer(move |cx| {
+                                                app.update(cx, |app, cx| {
+                                                    app.select_selection_tool(cx);
+                                                });
+                                            });
+                                        }),
+                                    )
+                                    .on_key_down(stop_overlay_action_key_propagation),
+                                ),
                         )
+                        .when_some(annotation_tool_group, |tools, group| {
+                            let available_width = annotation_layout
+                                .map(|layout| layout.tools_width)
+                                .unwrap_or_else(|| {
+                                    (view_rect(viewport).width - OVERLAY_EDGE_INSET * 2.0)
+                                        .clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH)
+                                });
+                            let popup_width = annotation_tool_group_popover_width(
+                                available_width,
+                                group,
+                                annotation_tool_width,
+                            );
+                            tools.child(
+                                workspace_surface(colors, true)
+                                    .id(format!(
+                                        "overlay-tool-group-popover-{}",
+                                        annotation_tool_group_key(group)
+                                    ))
+                                    .occlude()
+                                    .w(px(popup_width))
+                                    .p(px(ANNOTATION_TOOL_GROUP_POPUP_PADDING))
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap(px(ANNOTATION_TOOL_GAP))
+                                    .children(group.spec().tools.iter().copied().enumerate().map(
+                                        |(index, tool)| {
+                                            let focus_handle = self
+                                                .annotation_tool_group_item_focus_handle(
+                                                    group, index,
+                                                );
+                                            let active = selected_tool == Some(tool);
+                                            annotation_tool_button(
+                                                format!(
+                                                    "overlay-tool-group-{}-{}",
+                                                    annotation_tool_group_key(group),
+                                                    annotation_tool_key(tool)
+                                                ),
+                                                locale.text(annotation_tool_ui_text(tool)),
+                                                colors,
+                                                active,
+                                                annotation_tool_width,
+                                                None,
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.select_annotation_tool_from_group(
+                                                        group, tool, window, cx,
+                                                    );
+                                                }),
+                                            )
+                                            .track_focus(&focus_handle)
+                                            .on_key_down(cx.listener(
+                                                move |this, event, window, cx| {
+                                                    this.handle_annotation_tool_group_item_key_down(
+                                                        group, tool, event, window, cx,
+                                                    );
+                                                },
+                                            ))
+                                        },
+                                    )),
+                            )
+                        })
                         .when_some(selected_annotation, |tools, selected_id| {
                             tools.child(
                                 div()
@@ -3717,6 +4098,14 @@ struct AnnotationToolbarItems {
     arrange_context: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AnnotationToolbarLayoutOptions {
+    items: AnnotationToolbarItems,
+    style_height: f32,
+    annotation_tool_group: Option<AnnotationToolGroup>,
+    tool_estimated_width: f32,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct AnnotationStyleCapabilities {
     color: bool,
@@ -3949,8 +4338,47 @@ fn annotation_toolbar_height(viewport: Bounds<Pixels>, items: AnnotationToolbarI
     annotation_toolbar_height_for_width(
         (viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0),
         items,
+        None,
         ANNOTATION_TOOL_ESTIMATED_WIDTH,
     )
+}
+
+/// Computes a compact popover width from the group's actual children and the current locale's
+/// button estimate, keeping the transient surface from spanning the whole annotation toolbar.
+fn annotation_tool_group_popover_width(
+    width: f32,
+    group: AnnotationToolGroup,
+    tool_estimated_width: f32,
+) -> f32 {
+    let available_width = (width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
+    let tools = group.spec().tools;
+    let natural_width = tools.len() as f32 * tool_estimated_width
+        + tools.len().saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
+        + ANNOTATION_TOOL_GROUP_POPUP_PADDING * 2.0
+        + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0;
+    natural_width.min(available_width)
+}
+
+/// Computes wrapped rows for the materialized group using the same dimensions as its renderer.
+fn annotation_tool_group_popover_height(
+    width: f32,
+    group: AnnotationToolGroup,
+    tool_estimated_width: f32,
+) -> f32 {
+    let popup_width = annotation_tool_group_popover_width(width, group, tool_estimated_width);
+    let content_width = (popup_width
+        - ANNOTATION_TOOL_GROUP_POPUP_PADDING * 2.0
+        - ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0)
+        .max(1.0);
+    let columns = (((content_width + ANNOTATION_TOOL_GAP)
+        / (tool_estimated_width + ANNOTATION_TOOL_GAP))
+        .floor() as usize)
+        .max(1);
+    let rows = group.spec().tools.len().div_ceil(columns);
+    rows as f32 * ANNOTATION_TOOL_ROW_HEIGHT
+        + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
+        + ANNOTATION_TOOL_GROUP_POPUP_PADDING * 2.0
+        + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0
 }
 
 /// Measures each visible toolbar section independently so a selection context cannot reorder the
@@ -3958,6 +4386,7 @@ fn annotation_toolbar_height(viewport: Bounds<Pixels>, items: AnnotationToolbarI
 fn annotation_toolbar_height_for_width(
     width: f32,
     items: AnnotationToolbarItems,
+    annotation_tool_group: Option<AnnotationToolGroup>,
     tool_estimated_width: f32,
 ) -> f32 {
     let content_width = (width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
@@ -3982,7 +4411,15 @@ fn annotation_toolbar_height_for_width(
     } else {
         0.0
     };
+    let tool_group_height = annotation_tool_group
+        .map(|group| annotation_tool_group_popover_height(width, group, tool_estimated_width))
+        .unwrap_or(0.0);
+    let tool_group_gap = annotation_tool_group
+        .map(|_| ANNOTATION_TOOL_GAP)
+        .unwrap_or(0.0);
     section_height(ANNOTATION_TOOL_PALETTE_ITEMS)
+        + tool_group_height
+        + tool_group_gap
         + selection_context_height
         + arrange_context_height
         + section_count.saturating_sub(1) as f32 * ANNOTATION_CONTEXT_SECTION_GAP
@@ -4000,15 +4437,19 @@ fn annotation_toolbar_layout(
     action_toolbar: Option<ActionToolbarLayout>,
     items: AnnotationToolbarItems,
     style_height: f32,
+    annotation_tool_group: Option<AnnotationToolGroup>,
 ) -> Option<AnnotationToolbarLayout> {
     annotation_toolbar_layout_with_tool_width(
         selection,
         transform,
         viewport,
         action_toolbar,
-        items,
-        style_height,
-        ANNOTATION_TOOL_ESTIMATED_WIDTH,
+        AnnotationToolbarLayoutOptions {
+            items,
+            style_height,
+            annotation_tool_group,
+            tool_estimated_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
+        },
     )
 }
 
@@ -4021,9 +4462,7 @@ fn annotation_toolbar_layout_with_tool_width(
     transform: Option<PreviewTransform>,
     viewport: Bounds<Pixels>,
     action_toolbar: Option<ActionToolbarLayout>,
-    items: AnnotationToolbarItems,
-    style_height: f32,
-    tool_estimated_width: f32,
+    options: AnnotationToolbarLayoutOptions,
 ) -> Option<AnnotationToolbarLayout> {
     let selection = selection?;
     let transform = transform?;
@@ -4032,14 +4471,18 @@ fn annotation_toolbar_layout_with_tool_width(
     let width =
         (viewport.width - OVERLAY_EDGE_INSET * 2.0).clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH);
     let tools_width = width;
-    let tools_height =
-        annotation_toolbar_height_for_width(tools_width, items, tool_estimated_width);
-    let style_gap = if style_height > 0.0 {
+    let tools_height = annotation_toolbar_height_for_width(
+        tools_width,
+        options.items,
+        options.annotation_tool_group,
+        options.tool_estimated_width,
+    );
+    let style_gap = if options.style_height > 0.0 {
         ANNOTATION_STYLE_PANEL_GAP
     } else {
         0.0
     };
-    let tools_and_style_height = tools_height + style_gap + style_height;
+    let tools_and_style_height = tools_height + style_gap + options.style_height;
     let total_height = tools_and_style_height + ANNOTATION_STYLE_PANEL_GAP + action_toolbar.height;
     let top_left = transform.physical_to_view(PhysicalPoint {
         x: selection.left,
@@ -4093,7 +4536,7 @@ fn annotation_toolbar_layout_with_tool_width(
         tools_top,
         style_left,
         style_top,
-        style_height,
+        style_height: options.style_height,
         action_toolbar: ActionToolbarLayout {
             left: left + width - action_toolbar.width,
             top: action_top,
@@ -4577,16 +5020,20 @@ fn selection_cursor(
 #[cfg(test)]
 mod tests {
     use super::{
-        ANNOTATION_WIDTHS, ActionToolbarLayout, AnnotationStyleCapabilities,
-        AnnotationToolbarLayout, FrameInputBatch, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
-        OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT,
-        OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET, OVERLAY_MORE_ACTIONS_ID,
-        OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
+        ANNOTATION_TOOL_ESTIMATED_WIDTH, ANNOTATION_TOOL_GAP, ANNOTATION_TOOL_GROUP_POPUP_BORDER,
+        ANNOTATION_TOOL_GROUP_POPUP_PADDING, ANNOTATION_TOOL_GROUP_SPECS,
+        ANNOTATION_TOOL_ROW_HEIGHT, ANNOTATION_WIDTHS, ActionToolbarLayout,
+        AnnotationStyleCapabilities, AnnotationToolGroup, AnnotationToolbarLayout, FrameInputBatch,
+        MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING,
+        OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET,
+        OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
         OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
         SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, accepts_overlay_input,
         action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
         annotation_controls_visible, annotation_layer_label,
         annotation_style_capabilities_for_tool, annotation_style_row_height,
+        annotation_tool_group_focus_direction, annotation_tool_group_focus_target,
+        annotation_tool_group_popover_height, annotation_tool_group_popover_width,
         annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
         arrange_context_for_selection, arrow_head_points, capture_double_click,
         close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
@@ -4893,6 +5340,98 @@ mod tests {
                 "{key} must not be captured by More navigation"
             );
         }
+    }
+
+    #[test]
+    fn annotation_tool_groups_materialize_expected_tools_and_local_navigation() {
+        assert_eq!(ANNOTATION_TOOL_GROUP_SPECS.len(), 4);
+        assert_eq!(
+            ANNOTATION_TOOL_GROUP_SPECS[0].tools,
+            &[
+                AnnotationTool::Text,
+                AnnotationTool::Watermark,
+                AnnotationTool::Number,
+            ]
+        );
+        assert_eq!(
+            ANNOTATION_TOOL_GROUP_SPECS[1].tools,
+            &[AnnotationTool::Rectangle, AnnotationTool::Ellipse]
+        );
+        assert_eq!(
+            ANNOTATION_TOOL_GROUP_SPECS[2].tools,
+            &[
+                AnnotationTool::Line,
+                AnnotationTool::Arrow,
+                AnnotationTool::Freehand,
+            ]
+        );
+        assert_eq!(
+            ANNOTATION_TOOL_GROUP_SPECS[3].tools,
+            &[AnnotationTool::Blur, AnnotationTool::Mosaic]
+        );
+        assert_eq!(
+            annotation_tool_group_focus_direction(&Keystroke::parse("right").unwrap()),
+            Some(super::AnnotationToolGroupFocusDirection::Next)
+        );
+        assert_eq!(
+            annotation_tool_group_focus_direction(&Keystroke::parse("up").unwrap()),
+            Some(super::AnnotationToolGroupFocusDirection::Previous)
+        );
+        for key in ["tab", "shift-right", "ctrl-down", "enter", "escape"] {
+            assert_eq!(
+                annotation_tool_group_focus_direction(&Keystroke::parse(key).unwrap()),
+                None,
+                "{key} must stay outside group arrow navigation"
+            );
+        }
+        assert_eq!(
+            annotation_tool_group_focus_target(
+                AnnotationTool::Text,
+                ANNOTATION_TOOL_GROUP_SPECS[0].tools,
+                super::AnnotationToolGroupFocusDirection::Previous,
+            ),
+            Some(AnnotationTool::Number)
+        );
+        assert_eq!(
+            annotation_tool_group_focus_target(
+                AnnotationTool::Number,
+                ANNOTATION_TOOL_GROUP_SPECS[0].tools,
+                super::AnnotationToolGroupFocusDirection::Next,
+            ),
+            Some(AnnotationTool::Text)
+        );
+    }
+
+    #[test]
+    fn annotation_tool_group_popover_layout_matches_fixed_rendered_cells() {
+        let wide_width = 900.0;
+        let tool_width = ANNOTATION_TOOL_ESTIMATED_WIDTH;
+        assert_eq!(
+            annotation_tool_group_popover_width(wide_width, AnnotationToolGroup::Text, tool_width,),
+            3.0 * tool_width
+                + 2.0 * ANNOTATION_TOOL_GAP
+                + 2.0 * ANNOTATION_TOOL_GROUP_POPUP_PADDING
+                + 2.0 * ANNOTATION_TOOL_GROUP_POPUP_BORDER
+        );
+        assert_eq!(
+            annotation_tool_group_popover_height(wide_width, AnnotationToolGroup::Text, tool_width,),
+            ANNOTATION_TOOL_ROW_HEIGHT
+                + 2.0 * ANNOTATION_TOOL_GROUP_POPUP_PADDING
+                + 2.0 * ANNOTATION_TOOL_GROUP_POPUP_BORDER
+        );
+
+        let narrow_width = 324.0;
+        assert_eq!(
+            annotation_tool_group_popover_height(
+                narrow_width,
+                AnnotationToolGroup::Text,
+                tool_width,
+            ),
+            2.0 * ANNOTATION_TOOL_ROW_HEIGHT
+                + ANNOTATION_TOOL_GAP
+                + 2.0 * ANNOTATION_TOOL_GROUP_POPUP_PADDING
+                + 2.0 * ANNOTATION_TOOL_GROUP_POPUP_BORDER
+        );
     }
 
     #[test]
@@ -5339,20 +5878,21 @@ mod tests {
             Some(primary_actions),
             annotation_toolbar_items(false, false, false, false, false),
             0.0,
+            None,
         )
         .expect("selection with actions should position marking tools");
 
         assert_eq!(layout.left, 100.0);
         assert_eq!(layout.width, 900.0);
         assert_eq!(layout.tools_width, 900.0);
-        assert_eq!(layout.tools_height, 84.0);
-        assert_eq!(layout.height, 142.0);
+        assert_eq!(layout.tools_height, 42.0);
+        assert_eq!(layout.height, 100.0);
         assert!((layout.top - 412.0).abs() < 0.01);
         assert_eq!(layout.tools_top, layout.top);
         assert_eq!(layout.style_top, layout.tools_top + layout.tools_height);
         assert_eq!(layout.style_left, layout.left);
         assert_eq!(layout.action_toolbar.left, 740.0);
-        assert!((layout.action_toolbar.top - 504.0).abs() < 0.01);
+        assert!((layout.action_toolbar.top - 462.0).abs() < 0.01);
         assert_eq!(layout.action_toolbar.width, primary_actions.width);
         assert_eq!(layout.action_toolbar.height, primary_actions.height);
         assert!(!layout.actions_above_tools);
@@ -5392,11 +5932,12 @@ mod tests {
             Some(primary_actions),
             annotation_toolbar_items(false, false, false, false, false),
             0.0,
+            None,
         )
         .expect("selection with actions should position marking tools");
 
-        assert_eq!(layout.top, 426.0);
-        assert_eq!(layout.tools_top, 484.0);
+        assert_eq!(layout.top, 468.0);
+        assert_eq!(layout.tools_top, 526.0);
         assert_eq!(layout.style_top, layout.tools_top + layout.tools_height);
         assert_eq!(layout.action_toolbar.top, layout.top);
         assert!(layout.actions_above_tools);
@@ -5540,18 +6081,19 @@ mod tests {
             Some(primary),
             annotation_toolbar_items(false, false, false, false, false),
             0.0,
+            None,
         )
         .unwrap();
         assert_eq!(marking.left, 1642.0);
-        assert_eq!(marking.top, 1178.0);
+        assert_eq!(marking.top, 1220.0);
         assert_eq!(marking.width, 900.0);
-        assert_eq!(marking.height, 142.0);
+        assert_eq!(marking.height, 100.0);
         assert_eq!(marking.tools_width, 900.0);
-        assert_eq!(marking.tools_top, 1236.0);
+        assert_eq!(marking.tools_top, 1278.0);
         assert_eq!(marking.style_left, marking.left);
         assert_eq!(marking.style_top, 1320.0);
         assert_eq!(marking.action_toolbar.left, primary.left);
-        assert_eq!(marking.action_toolbar.top, 1178.0);
+        assert_eq!(marking.action_toolbar.top, 1220.0);
         assert!(marking.actions_above_tools);
         assert!(marking.top >= OVERLAY_EDGE_INSET);
         assert!(marking.top + marking.height + OVERLAY_ACTION_BAR_GAP <= selection.top as f32);
@@ -5924,9 +6466,9 @@ mod tests {
         assert_eq!(selected_items.arrange_context, 0);
         assert_eq!(expanded_items.arrange_context, 6);
         assert_eq!(annotation_toolbar_height(wide, stable_items), 42.0);
-        assert_eq!(annotation_toolbar_height(narrow, stable_items), 252.0);
-        assert_eq!(annotation_toolbar_height(narrow, selected_items), 429.0);
-        assert!(annotation_toolbar_height(narrow, expanded_items) > 429.0);
+        assert_eq!(annotation_toolbar_height(narrow, stable_items), 126.0);
+        assert_eq!(annotation_toolbar_height(narrow, selected_items), 303.0);
+        assert!(annotation_toolbar_height(narrow, expanded_items) > 303.0);
     }
 
     #[test]

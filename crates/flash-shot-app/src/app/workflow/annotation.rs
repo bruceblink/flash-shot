@@ -5,34 +5,6 @@ use crate::app::TextEdit;
 use crate::i18n::UiText;
 
 impl FlashShotApp {
-    pub(in crate::app) fn select_rectangle_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Rectangle, cx);
-    }
-
-    pub(in crate::app) fn select_watermark_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Watermark, cx);
-    }
-
-    pub(in crate::app) fn select_text_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Text, cx);
-    }
-
-    pub(in crate::app) fn select_highlight_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Highlight, cx);
-    }
-
-    pub(in crate::app) fn select_mosaic_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Mosaic, cx);
-    }
-
-    pub(in crate::app) fn select_blur_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Blur, cx);
-    }
-
-    pub(in crate::app) fn select_number_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Number, cx);
-    }
-
     pub(in crate::app) fn adjust_selected_number(
         &mut self,
         delta: i32,
@@ -87,22 +59,6 @@ impl FlashShotApp {
                 true
             }
         }
-    }
-
-    pub(in crate::app) fn select_ellipse_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Ellipse, cx);
-    }
-
-    pub(in crate::app) fn select_line_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Line, cx);
-    }
-
-    pub(in crate::app) fn select_arrow_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Arrow, cx);
-    }
-
-    pub(in crate::app) fn select_freehand_tool(&mut self, cx: &mut Context<Self>) {
-        self.select_annotation_tool(AnnotationTool::Freehand, cx);
     }
 
     pub(in crate::app) fn select_annotation_color(&mut self, color: u32, cx: &mut Context<Self>) {
@@ -246,7 +202,11 @@ impl FlashShotApp {
         cx.notify();
     }
 
-    fn select_annotation_tool(&mut self, tool: AnnotationTool, cx: &mut Context<Self>) {
+    pub(in crate::app) fn select_annotation_tool(
+        &mut self,
+        tool: AnnotationTool,
+        cx: &mut Context<Self>,
+    ) {
         self.annotation_editor.cancel();
         self.text_edit = None;
         self.text_edit_annotation = None;

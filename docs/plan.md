@@ -138,7 +138,7 @@ Copy/Save/Pin/Cancel 语义、快捷键、报告字段或失败恢复规则。Sn
 | W1 | 工作区视觉基础与共享控件 | 已完成（2026-09-13；单屏 100%） | 已统一截图工作区 surface、按钮、分隔线、swatch、tooltip、焦点态和布局 token；确定性布局测试与当前源码 Release 视觉矩阵通过 |
 | W2 | 主工具栏重排 | 已完成（2026-09-13；静态 UI，单屏 100%） | 常用 Copy/Save/Pin/Cancel 和 More 已形成稳定主行；低频动作移入按需面板，保留语义 ID、快捷键和异步状态 |
 | W3 | 上下文样式栏 | 已完成（2026-09-13；静态 UI，单屏 100%） | 样式控件已按当前工具/对象能力收敛为工作区附属行；中英文、双主题和 360/520/700/900/1100 宽度 Release 视觉矩阵通过 |
-| W4 | 工具组与 More 浮层 | 待开始 | 统一低频动作、工具组选择、键盘焦点、关闭规则和局部坐标放置 |
+| W4 | 工具组与 More 浮层 | 已完成（2026-09-13；静态双语/双主题，单屏 100% 真实输入） | 已统一低频动作、工具组选择、键盘焦点、关闭规则和局部坐标放置；More 保持独立的按需浮层 |
 | W5 | 选区锚定、HUD 与布局快照 | 待开始 | 让工具栏行、样式行和选区边缘在小选区、边缘选区及 DPI 场景稳定协同 |
 | W6 | 双主题、双语、DPI 与真实输入验收 | 待开始 | 以同一 Release 完成工作区状态矩阵、真实鼠标键盘、截图、像素和清理报告 |
 | U1 | 动态文案国际化 | 部分完成 | 继续清点 workflow、错误、忙状态和动态数量；Record 无输入验收状态已改为读取活动语言资源，其他动态文案仍需盘点 |
@@ -374,6 +374,14 @@ Clippy 和格式检查通过；当前源码 Release 生成的 `w2-final2-selecti
 **验收**：工具组与 More 的点击、键盘、焦点、Escape、外部关闭和重复打开均无鬼影/重复实例；选中工具只提交一次命令；浮层不
 穿透画布、不丢失选区、不留下任务或窗口；各状态的中英文文案、tooltip 和错误恢复可见。
 
+**本次完成（2026-09-13）**：标注工具栏已将 Text/Watermark/Number、Rectangle/Ellipse、Line/Arrow/Freehand 和 Blur/Mosaic
+收敛为四个按需工具组；每个显示器只保留一个工具组所有者，打开新组会关闭 More，重置、取消、滚动截图和覆盖层关闭都会清理组状态。
+工具组支持点击打开、方向键移动、Enter/Space 选择、Escape 关闭、外部点击关闭，并在关闭后把焦点交还给触发按钮；选中子工具后
+只提交一次既有 `AnnotationTool` handler，不改变标注文档和导出语义。`settings-ui-acceptance` 的
+`w4-tool-group-en-dark-final.png` 与 `w4-tool-group-zh-CN-light-final.png` 均为 `scale_match=true`；真实 Windows 单屏 100%、DPI 96
+的 `overlay-interaction-acceptance --capture-scenario tool-group` 最近一次报告为 schema 27、`status=passed`，覆盖 Text/Shape
+打开、Escape、键盘 Watermark、鼠标 Rectangle、外部关闭和最终清理。该切片仍不替代 W6 的完整状态矩阵、150%/200% DPI 和多屏验收。
+
 **独立提交建议**：`feat: add screenshot tool group popovers`。
 
 ### W5：选区锚定、HUD 与布局快照
@@ -407,8 +415,8 @@ Clippy 和格式检查通过；当前源码 Release 生成的 `w2-final2-selecti
 
 **独立提交建议**：`test: verify screenshot workspace toolbar`。
 
-**W 路线执行顺序**：B1 外部失败恢复、B4 当前 HEAD 的真实标注输入、W1 工作区视觉基础与共享控件、W2 主工具栏重排以及 W3 上下文样式栏均已完成；下一步进入 W4 工具组与 More 浮层。
-W0 的路线文档切片已完成，随后严格按 W4、W5、W6 顺序推进。W1-W4 新增的可见文案同时登记到 `UiText`；U1 继续负责非截图工作区的
+**W 路线执行顺序**：B1 外部失败恢复、B4 当前 HEAD 的真实标注输入、W1 工作区视觉基础与共享控件、W2 主工具栏重排、W3 上下文样式栏以及 W4 工具组与 More 浮层均已完成；下一步进入 W5 选区锚定、HUD 与布局快照。
+W0 的路线文档切片已完成，随后严格按 W5、W6 顺序推进。W1-W4 新增的可见文案同时登记到 `UiText`；U1 继续负责非截图工作区的
 动态文案，U2 继续负责 App/Library/Record 入口，U3 负责其他页面视觉矩阵，U4 负责 Pin 原生窗口。W6 通过后才开始 M1 的 runner/
 overlay 职责拆分，避免在工作区行为尚未稳定时搬移大型模块。
 
@@ -581,6 +589,6 @@ W1-W6 还必须保留一组可重复的布局/状态测试，并在 W6 以同一
 - CI、Release 构建、便携包/安装器、manifest、SHA-256 和下载复核通过；
 - README、需求、架构、计划、Windows 验收、分发和 Linux 可行性文档之间无失效链接或相互矛盾的状态。
 
-下一步固定从 **W4 工具组与 More 浮层** 开始；若当前 Windows 会话缺少所需权限、消费者或 FFmpeg，记录阻塞证据，
-先完成可执行的确定性测试，不把环境缺失写成通过，也不越过 W4 扩展新功能。W1-W6 完成后进入 M1；W0 只代表本次公开研究
+下一步固定从 **W5 选区锚定、HUD 与布局快照** 开始；若当前 Windows 会话缺少所需权限、消费者或 FFmpeg，记录阻塞证据，
+先完成可执行的确定性测试，不把环境缺失写成通过，也不越过 W5 扩展新功能。W1-W6 完成后进入 M1；W0 只代表本次公开研究
 和路线文档已完成，W3 的静态 Release 证据也不替代 W6 的真实输入验收。

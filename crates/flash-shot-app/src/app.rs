@@ -96,6 +96,15 @@ pub(crate) fn open_pin_lifecycle_acceptance(
     )
 }
 
+/// Names the compact annotation tool groups that can own one transient workspace popover.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AnnotationToolGroup {
+    Text,
+    Shape,
+    Line,
+    Obscure,
+}
+
 pub struct FlashShotApp {
     colors: ThemeColors,
     session: CaptureSession,
@@ -175,6 +184,8 @@ pub struct FlashShotApp {
     ocr_support_check_generation: u64,
     overlay_more_actions: bool,
     overlay_annotation_controls: bool,
+    annotation_tool_group: Option<AnnotationToolGroup>,
+    annotation_tool_group_owner: Option<String>,
     operation_generation: u64,
     overlay_windows: Vec<WindowHandle<overlay::CaptureOverlay>>,
     // Deferred native window removal remains observable until the close callback has run.
@@ -879,6 +890,8 @@ impl FlashShotApp {
             ocr_support_check_generation: 0,
             overlay_more_actions: false,
             overlay_annotation_controls: false,
+            annotation_tool_group: None,
+            annotation_tool_group_owner: None,
             operation_generation: 0,
             overlay_windows: Vec::new(),
             capture_teardown_pending: false,
@@ -1109,6 +1122,7 @@ impl FlashShotApp {
                                 overlay_count: this.overlay_windows.len(),
                                 more_actions_visible: this.overlay_more_actions,
                                 annotation_controls_visible: this.overlay_annotation_controls,
+                                annotation_tool_group_visible: this.annotation_tool_group.is_some(),
                                 pinned_count: this.pinned_windows.len(),
                                 pinned_source_bounds,
                                 capture_teardown_pending: this.capture_teardown_pending,

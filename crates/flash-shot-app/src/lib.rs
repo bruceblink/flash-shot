@@ -218,6 +218,7 @@ pub struct OverlayInteractionCaptureState {
     pub overlay_count: usize,
     pub more_actions_visible: bool,
     pub annotation_controls_visible: bool,
+    pub annotation_tool_group_visible: bool,
     pub pinned_count: usize,
     pub pinned_source_bounds: Option<domain::geometry::PhysicalRect>,
     /// Whether a previously visible capture overlay is still waiting for deferred native teardown.
@@ -675,6 +676,7 @@ pub enum OverlayUiAcceptanceScenario {
         placement: OverlayUiAcceptanceSelectionPlacement,
         show_more_actions: bool,
         show_annotation_controls: bool,
+        show_annotation_tool_group: bool,
     },
 }
 
