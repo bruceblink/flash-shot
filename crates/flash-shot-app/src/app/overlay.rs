@@ -1651,40 +1651,31 @@ impl Render for CaptureOverlay {
             app.annotation_tool_group_owner.as_deref() == Some(self.display.id.as_str())
         });
         let show_annotation_tool_group_dismiss = app.annotation_tool_group.is_some();
-        let base_action_layout = action_toolbar_layout(
-            selected_on_display,
-            transform,
-            viewport,
-            show_annotation_controls,
-        );
         let annotation_style_height = annotation_style_row_height(
             (view_rect(viewport).width - OVERLAY_EDGE_INSET * 2.0)
                 .clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH),
             style_capabilities,
         );
-        let annotation_layout = show_annotation_controls
-            .then(|| {
-                annotation_toolbar_layout_with_tool_width(
-                    selected_on_display,
-                    transform,
-                    viewport,
-                    base_action_layout,
-                    AnnotationToolbarLayoutOptions {
-                        items: annotation_toolbar_items,
-                        style_height: annotation_style_height,
-                        annotation_tool_group,
-                        tool_estimated_width: annotation_tool_width,
-                    },
-                )
-            })
-            .flatten();
-        let action_layout = annotation_layout
-            .map(|layout| layout.action_toolbar)
-            .or(base_action_layout);
         let show_annotation_style = show_annotation_controls && style_capabilities.has_controls();
-        let annotation_layer_layout = owns_action_toolbar
-            .then(|| annotation_layout.and_then(|layout| annotation_layer_layout(layout, viewport)))
-            .flatten();
+        let layout_snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
+            selection,
+            display_bounds,
+            transform,
+            viewport,
+            hover_pixel,
+            inspection_target,
+            show_annotation_controls,
+            annotation_toolbar_items,
+            annotation_style_height,
+            annotation_tool_group,
+            annotation_tool_width,
+            has_recognition_result: recognition_result.is_some(),
+            has_recognition_retry: recognition_retry.is_some(),
+            recognition_in_flight,
+        });
+        let action_layout = layout_snapshot.action_toolbar;
+        let annotation_layout = layout_snapshot.annotation_toolbar;
+        let annotation_layer_layout = layout_snapshot.annotation_layer;
         let show_annotation_layers = owns_action_toolbar
             && !layer_annotations.is_empty()
             && (!show_annotation_controls || annotation_layer_layout.is_some());
@@ -1697,66 +1688,14 @@ impl Render for CaptureOverlay {
                 (view_rect(viewport).height - annotation_layer_top - OVERLAY_BOTTOM_SAFE_INSET)
                     .max(80.0)
             });
-        let secondary_menu_width = action_layout.map(|_| {
-            secondary_action_menu_width(
-                view_rect(viewport).width,
-                recognition_result.is_some(),
-                recognition_retry.is_some(),
-            )
-        });
-        let secondary_menu_left = action_layout
-            .zip(secondary_menu_width)
-            .map(|(layout, width)| secondary_action_menu_left(layout, width, viewport));
-        let secondary_menu_height = action_layout.map(|layout| {
-            secondary_action_menu_height(
-                secondary_menu_width.unwrap_or(layout.width),
-                recognition_result.is_some(),
-                recognition_retry.is_some(),
-                recognition_in_flight,
-            )
-        });
-        let secondary_menu_above = action_layout.is_some_and(|layout| {
-            let menu_height = secondary_menu_height.unwrap_or_default();
-            if let Some(marking) = annotation_layout {
-                let viewport = view_rect(viewport);
-                let menu_offset = secondary_action_menu_offset();
-                let above = layout.top - menu_offset - menu_height;
-                let below = layout.top + layout.height + menu_offset + menu_height;
-                if marking.actions_above_tools && above >= viewport.top + OVERLAY_EDGE_INSET {
-                    return true;
-                }
-                if !marking.actions_above_tools
-                    && below <= viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET
-                {
-                    return false;
-                }
-            }
-            secondary_menu_opens_above(layout, viewport, menu_height)
-        });
-        let dimension_layout = selection_dimension_label_layout(
-            selected_on_display,
-            transform,
-            viewport,
-            action_layout,
-        );
-        let status_inset = annotation_layout
-            .filter(|layout| layout.style_height > 0.0 && !layout.actions_above_tools)
-            .map(|layout| {
-                status_bottom_inset_for_stacked_annotation(layout, dimension_layout, viewport)
-            })
-            .unwrap_or_else(|| status_bottom_inset(action_layout.is_none()));
+        let secondary_menu = layout_snapshot.secondary_menu;
+        let dimension_layout = layout_snapshot.dimension;
+        let status_inset = layout_snapshot.status_inset;
+        let smart_target_hud = layout_snapshot.smart_target_hud;
         let target_on_display = selection
             .is_none()
             .then(|| inspection_target.and_then(|target| intersect(target.bounds, display_bounds)))
             .flatten();
-        let smart_target_hud = smart_target_hud_layout(
-            selection,
-            hover_pixel,
-            inspection_target,
-            display_bounds,
-            transform,
-            viewport,
-        );
         let has_selection = selection.is_some();
         let selection_copy_in_progress = app.selection_copy_is_active();
         // Copy owns a frozen snapshot, not this editor. Keep the normal action bar available so
@@ -2182,17 +2121,22 @@ impl Render for CaptureOverlay {
                                 ),
                         )
                         .when_some(annotation_tool_group, |tools, group| {
-                            let available_width = annotation_layout
-                                .map(|layout| layout.tools_width)
+                            let popup_width = layout_snapshot
+                                .annotation_tool_group
+                                .map(|layout| layout.width)
                                 .unwrap_or_else(|| {
-                                    (view_rect(viewport).width - OVERLAY_EDGE_INSET * 2.0)
-                                        .clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH)
+                                    annotation_tool_group_popover_width(
+                                        annotation_layout
+                                            .map(|layout| layout.tools_width)
+                                            .unwrap_or_else(|| {
+                                                (view_rect(viewport).width
+                                                    - OVERLAY_EDGE_INSET * 2.0)
+                                                    .clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH)
+                                            }),
+                                        group,
+                                        annotation_tool_width,
+                                    )
                                 });
-                            let popup_width = annotation_tool_group_popover_width(
-                                available_width,
-                                group,
-                                annotation_tool_width,
-                            );
                             tools.child(
                                 workspace_surface(colors, true)
                                     .id(format!(
@@ -2979,17 +2923,15 @@ impl Render for CaptureOverlay {
                                         .tab_group()
                                         .occlude()
                                         .absolute()
-                                        .when_some(secondary_menu_width, |menu, width| {
-                                            menu.w(px(width))
+                                        .when_some(secondary_menu, |menu, layout| {
+                                            menu.w(px(layout.width)).left(px(layout.left))
                                         })
-                                        .when_some(secondary_menu_left, |menu, left| {
-                                            menu.left(px(left))
-                                        })
-                                        .when(secondary_menu_above, |menu| {
-                                            menu.bottom(px(secondary_action_menu_offset()))
-                                        })
-                                        .when(!secondary_menu_above, |menu| {
-                                            menu.top(px(secondary_action_menu_offset()))
+                                        .when_some(secondary_menu, |menu, layout| {
+                                            if layout.opens_above {
+                                                menu.bottom(px(secondary_action_menu_offset()))
+                                            } else {
+                                                menu.top(px(secondary_action_menu_offset()))
+                                            }
                                         })
                                         .p(px(OVERLAY_ACTION_BAR_PADDING))
                                         .flex()
@@ -4183,6 +4125,72 @@ struct SmartTargetHudLayout {
     width: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WorkspaceSafeArea {
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WorkspaceSelectionAnchor {
+    top_left: ViewPoint,
+    bottom_right: ViewPoint,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SecondaryMenuLayout {
+    left: f32,
+    width: f32,
+    height: f32,
+    opens_above: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AnnotationToolGroupLayout {
+    left: f32,
+    top: f32,
+    width: f32,
+    height: f32,
+}
+
+/// Captures one immutable workspace layout so every surface uses the same selection anchor.
+///
+/// The snapshot keeps the main row, context rows, transient menus, HUDs, and safe area together;
+/// callers must not recalculate one of these values during rendering or input dispatch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WorkspaceLayoutSnapshot {
+    safe_area: WorkspaceSafeArea,
+    selection_anchor: Option<WorkspaceSelectionAnchor>,
+    action_toolbar: Option<ActionToolbarLayout>,
+    annotation_toolbar: Option<AnnotationToolbarLayout>,
+    annotation_layer: Option<AnnotationLayerLayout>,
+    secondary_menu: Option<SecondaryMenuLayout>,
+    annotation_tool_group: Option<AnnotationToolGroupLayout>,
+    dimension: Option<SelectionDimensionLayout>,
+    smart_target_hud: Option<SmartTargetHudLayout>,
+    status_inset: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WorkspaceLayoutInput {
+    selection: Option<PhysicalRect>,
+    display_bounds: PhysicalRect,
+    transform: Option<PreviewTransform>,
+    viewport: Bounds<Pixels>,
+    hover_pixel: Option<PhysicalPoint>,
+    inspection_target: Option<InspectionTarget>,
+    show_annotation_controls: bool,
+    annotation_toolbar_items: AnnotationToolbarItems,
+    annotation_style_height: f32,
+    annotation_tool_group: Option<AnnotationToolGroup>,
+    annotation_tool_width: f32,
+    has_recognition_result: bool,
+    has_recognition_retry: bool,
+    recognition_in_flight: bool,
+}
+
 /// Maps a drawing tool to the style values that its renderer actually consumes.
 ///
 /// Effect tools intentionally return no controls because their appearance is fixed by the
@@ -4775,6 +4783,170 @@ fn action_toolbar_layout(
     })
 }
 
+/// Computes every workspace surface from one selection/display snapshot.
+///
+/// The renderer and interaction tests consume this result instead of independently deciding
+/// where the action row, style rows, More menu, and transient HUD should move.
+fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnapshot {
+    let WorkspaceLayoutInput {
+        selection,
+        display_bounds,
+        transform,
+        viewport,
+        hover_pixel,
+        inspection_target,
+        show_annotation_controls,
+        annotation_toolbar_items,
+        annotation_style_height,
+        annotation_tool_group,
+        annotation_tool_width,
+        has_recognition_result,
+        has_recognition_retry,
+        recognition_in_flight,
+    } = input;
+    let viewport_rect = view_rect(viewport);
+    let safe_area = WorkspaceSafeArea {
+        left: viewport_rect.left + OVERLAY_EDGE_INSET,
+        top: viewport_rect.top + OVERLAY_EDGE_INSET,
+        right: viewport_rect.right() - OVERLAY_EDGE_INSET,
+        bottom: viewport_rect.bottom() - OVERLAY_BOTTOM_SAFE_INSET,
+    };
+    let selected_on_display = selection.and_then(|selection| intersect(selection, display_bounds));
+    let owns_action_toolbar =
+        selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds));
+    let base_action_layout = action_toolbar_layout(
+        selected_on_display,
+        transform,
+        viewport,
+        show_annotation_controls,
+    );
+    let annotation_layout = show_annotation_controls
+        .then(|| {
+            annotation_toolbar_layout_with_tool_width(
+                selected_on_display,
+                transform,
+                viewport,
+                base_action_layout,
+                AnnotationToolbarLayoutOptions {
+                    items: annotation_toolbar_items,
+                    style_height: annotation_style_height,
+                    annotation_tool_group,
+                    tool_estimated_width: annotation_tool_width,
+                },
+            )
+        })
+        .flatten();
+    let action_layout = annotation_layout
+        .map(|layout| layout.action_toolbar)
+        .or(base_action_layout);
+    let annotation_layer = owns_action_toolbar
+        .then(|| annotation_layout.and_then(|layout| annotation_layer_layout(layout, viewport)))
+        .flatten();
+    let secondary_menu = action_layout.map(|layout| {
+        let width = secondary_action_menu_width(
+            viewport_rect.width,
+            has_recognition_result,
+            has_recognition_retry,
+        );
+        let height = secondary_action_menu_height(
+            width,
+            has_recognition_result,
+            has_recognition_retry,
+            recognition_in_flight,
+        );
+        let opens_above = if let Some(marking) = annotation_layout {
+            let menu_offset = secondary_action_menu_offset();
+            let above = layout.top - menu_offset - height;
+            let below = layout.top + layout.height + menu_offset + height;
+            if marking.actions_above_tools && above >= safe_area.top {
+                true
+            } else if !marking.actions_above_tools && below <= safe_area.bottom {
+                false
+            } else {
+                secondary_menu_opens_above(layout, viewport, height)
+            }
+        } else {
+            secondary_menu_opens_above(layout, viewport, height)
+        };
+        SecondaryMenuLayout {
+            left: secondary_action_menu_left(layout, width, viewport),
+            width,
+            height,
+            opens_above,
+        }
+    });
+    let annotation_tool_group =
+        annotation_layout
+            .zip(annotation_tool_group)
+            .map(|(layout, group)| {
+                let content_width =
+                    (layout.tools_width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
+                let columns = (((content_width + ANNOTATION_TOOL_GAP)
+                    / (annotation_tool_width + ANNOTATION_TOOL_GAP))
+                    .floor() as usize)
+                    .max(1);
+                let rows = ANNOTATION_TOOL_PALETTE_ITEMS.div_ceil(columns);
+                let palette_height = rows as f32 * ANNOTATION_TOOL_ROW_HEIGHT
+                    + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP;
+                AnnotationToolGroupLayout {
+                    left: layout.left,
+                    top: layout.tools_top
+                        + ANNOTATION_TOOLBAR_PADDING
+                        + palette_height
+                        + ANNOTATION_TOOL_GAP,
+                    width: annotation_tool_group_popover_width(
+                        layout.tools_width,
+                        group,
+                        annotation_tool_width,
+                    ),
+                    height: annotation_tool_group_popover_height(
+                        layout.tools_width,
+                        group,
+                        annotation_tool_width,
+                    ),
+                }
+            });
+    let dimension =
+        selection_dimension_label_layout(selected_on_display, transform, viewport, action_layout);
+    let smart_target_hud = smart_target_hud_layout(
+        selection,
+        hover_pixel,
+        inspection_target,
+        display_bounds,
+        transform,
+        viewport,
+    );
+    let status_inset = annotation_layout
+        .filter(|layout| layout.style_height > 0.0 && !layout.actions_above_tools)
+        .map(|layout| status_bottom_inset_for_stacked_annotation(layout, dimension, viewport))
+        .unwrap_or_else(|| status_bottom_inset(action_layout.is_none()));
+    let selection_anchor = selected_on_display
+        .zip(transform)
+        .map(|(selection, transform)| WorkspaceSelectionAnchor {
+            top_left: transform.physical_to_view(PhysicalPoint {
+                x: selection.left,
+                y: selection.top,
+            }),
+            bottom_right: transform.physical_to_view(PhysicalPoint {
+                x: selection.right,
+                y: selection.bottom,
+            }),
+        });
+
+    WorkspaceLayoutSnapshot {
+        safe_area,
+        selection_anchor,
+        action_toolbar: action_layout,
+        annotation_toolbar: annotation_layout,
+        annotation_layer,
+        secondary_menu,
+        annotation_tool_group,
+        dimension,
+        smart_target_hud,
+        status_inset,
+    }
+}
+
 /// Assigns one cross-display selection to the screen nearest its export controls.
 fn owns_selection_toolbar(selection: PhysicalRect, display_bounds: PhysicalRect) -> bool {
     selection.width() > 0
@@ -5061,9 +5233,9 @@ mod tests {
         OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET,
         OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
         OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
-        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, accepts_overlay_input,
-        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
-        annotation_controls_visible, annotation_layer_label,
+        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, WorkspaceLayoutInput,
+        accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
+        action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
         annotation_style_capabilities_for_tool, annotation_style_row_height,
         annotation_tool_group_focus_direction, annotation_tool_group_focus_target,
         annotation_tool_group_popover_height, annotation_tool_group_popover_width,
@@ -5079,7 +5251,7 @@ mod tests {
         selection_cursor, selection_dimension_label_layout, selection_point_from_view_or_screen,
         should_stop_overlay_action_key_propagation, smart_target_hud_label,
         smart_target_hud_layout, status_bottom_inset, status_bottom_inset_for_stacked_annotation,
-        view_rect, visible_selection,
+        view_rect, visible_selection, workspace_layout_snapshot,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle, AnnotationTool},
@@ -5847,6 +6019,132 @@ mod tests {
 
         assert!(drag.is_dragging());
         assert_eq!(visible_selection(drag, Some(committed)), Some(committed));
+    }
+
+    #[test]
+    fn workspace_snapshot_keeps_edge_surfaces_on_one_selection_anchor() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(420.0), px(420.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 420,
+            bottom: 420,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+        let selection = overlay_ui_acceptance_selection(
+            bounds,
+            crate::OverlayUiAcceptanceSelectionPlacement::BottomRight,
+        );
+        let snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
+            selection: Some(selection),
+            display_bounds: bounds,
+            transform,
+            viewport,
+            hover_pixel: None,
+            inspection_target: None,
+            show_annotation_controls: false,
+            annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
+            annotation_style_height: 0.0,
+            annotation_tool_group: None,
+            annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            has_recognition_result: false,
+            has_recognition_retry: false,
+            recognition_in_flight: false,
+        });
+
+        assert_eq!(snapshot.safe_area.left, OVERLAY_EDGE_INSET);
+        assert_eq!(snapshot.safe_area.top, OVERLAY_EDGE_INSET);
+        assert_eq!(snapshot.safe_area.right, 402.0);
+        assert_eq!(snapshot.safe_area.bottom, 324.0);
+        assert_eq!(
+            snapshot.selection_anchor,
+            Some(super::WorkspaceSelectionAnchor {
+                top_left: ViewPoint { x: 242.0, y: 312.0 },
+                bottom_right: ViewPoint { x: 402.0, y: 408.0 },
+            })
+        );
+        assert_eq!(
+            snapshot.action_toolbar,
+            Some(ActionToolbarLayout {
+                left: 142.0,
+                top: 250.0,
+                width: 260.0,
+                height: 50.0,
+            })
+        );
+        let menu = snapshot.secondary_menu.expect("selection should own More");
+        assert_eq!(menu.width, 334.0);
+        assert_eq!(menu.height, 176.0);
+        assert!(menu.opens_above);
+        assert_eq!(menu.left, -74.0);
+        assert_eq!(
+            snapshot.dimension,
+            Some(SelectionDimensionLayout {
+                left: 242.0,
+                top: 216.0,
+            })
+        );
+    }
+
+    #[test]
+    fn workspace_snapshot_shares_group_geometry_with_annotation_toolbar() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1280,
+            bottom: 720,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+        let selection = PhysicalRect {
+            left: 300,
+            top: 200,
+            right: 1000,
+            bottom: 400,
+        };
+        let snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
+            selection: Some(selection),
+            display_bounds: bounds,
+            transform,
+            viewport,
+            hover_pixel: None,
+            inspection_target: None,
+            show_annotation_controls: true,
+            annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
+            annotation_style_height: 0.0,
+            annotation_tool_group: Some(AnnotationToolGroup::Text),
+            annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            has_recognition_result: false,
+            has_recognition_retry: false,
+            recognition_in_flight: false,
+        });
+
+        let toolbar = snapshot
+            .annotation_toolbar
+            .expect("marking mode should own a toolbar");
+        let group = snapshot
+            .annotation_tool_group
+            .expect("the selected group should be materialized");
+        assert_eq!(toolbar.action_toolbar, snapshot.action_toolbar.unwrap());
+        assert_eq!(group.left, toolbar.left);
+        assert_eq!(
+            group.width,
+            annotation_tool_group_popover_width(
+                toolbar.tools_width,
+                AnnotationToolGroup::Text,
+                ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            )
+        );
+        assert_eq!(
+            group.height,
+            annotation_tool_group_popover_height(
+                toolbar.tools_width,
+                AnnotationToolGroup::Text,
+                ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            )
+        );
+        assert!(group.top >= toolbar.tools_top);
+        assert!(group.top + group.height <= toolbar.tools_top + toolbar.tools_height);
     }
 
     #[test]

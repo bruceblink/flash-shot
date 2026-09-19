@@ -145,7 +145,8 @@ const NARROW_EDGE_SELECTION_HEIGHT: f32 = 96.0;
 const NARROW_EDGE_RIGHT_INSET: f32 = 18.0;
 const NARROW_EDGE_BOTTOM_INSET: f32 = 12.0;
 const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 900.0;
-const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 186.0;
+// The wide marking dock is one 42px tool row, an 8px separation, and a 50px action row.
+const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 100.0;
 const PIN_COEXIST_COUNT: usize = 3;
 const PIN_COEXIST_SELECTION_WIDTH: f32 = 360.0;
 const PIN_COEXIST_SELECTION_HEIGHT: f32 = 240.0;
@@ -1126,7 +1127,8 @@ fn narrow_edge_interaction_plan(
     );
     let base = interaction_plan_for_logical_selection(bounds, scale, width, height, start, end)?;
 
-    // The production wide dock is 900x186 with the 260px action row above its tools.
+    // Marking mode adds Undo/Redo and two separators, so its production action row is wider
+    // than the compact capture row used before Mark opens.
     let annotation_left_min = NARROW_EDGE_RIGHT_INSET;
     let annotation_left_limit =
         (width - NARROW_EDGE_RIGHT_INSET - NARROW_EDGE_ANNOTATION_WIDTH).max(annotation_left_min);
@@ -1143,10 +1145,29 @@ fn narrow_edge_interaction_plan(
         x: bounds.left + (point.0 * scale).round() as i32,
         y: bounds.top + (point.1 * scale).round() as i32,
     };
-    let expanded_action_left = annotation_left + NARROW_EDGE_ANNOTATION_WIDTH - 260.0;
+    const ACTION_ITEM_WIDTH: f32 = 36.0;
+    const ACTION_ITEM_GAP: f32 = 6.0;
+    const ACTION_PADDING: f32 = 6.0;
+    const ACTION_BORDER: f32 = 1.0;
+    let marking_action_width = 8.0 * ACTION_ITEM_WIDTH
+        + 2.0 * ACTION_BORDER
+        + 9.0 * ACTION_ITEM_GAP
+        + 2.0 * ACTION_PADDING
+        + 2.0 * ACTION_BORDER;
+    let expanded_action_left =
+        annotation_left + NARROW_EDGE_ANNOTATION_WIDTH - marking_action_width;
+    // Skip Undo, Redo, and the context separator to land in the Mark button's hit area.
+    let marking_mark_offset = ACTION_PADDING
+        + 2.0 * ACTION_ITEM_WIDTH
+        + 3.0 * ACTION_ITEM_GAP
+        + ACTION_BORDER
+        + ACTION_ITEM_WIDTH / 2.0;
     Ok(NarrowEdgeInteractionPlan {
         base,
-        expanded_mark: screen_point((expanded_action_left + 25.0, annotation_top + 25.0)),
+        expanded_mark: screen_point((
+            expanded_action_left + marking_mark_offset,
+            annotation_top + 25.0,
+        )),
         // Keep the always-visible magnifier away from the edge toolbars being reviewed.
         evidence_rest: screen_point((24.0, 24.0)),
     })
@@ -15286,7 +15307,7 @@ mod tests {
         assert_eq!(plan.base.mark, PhysicalPoint { x: 2307, y: 1291 });
         assert_eq!(plan.base.more, PhysicalPoint { x: 2475, y: 1291 });
         assert_eq!(plan.base.cancel, PhysicalPoint { x: 2517, y: 1291 });
-        assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2307, y: 1155 });
+        assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2299, y: 1241 });
         assert_eq!(plan.evidence_rest, PhysicalPoint { x: 24, y: 20 });
         assert_eq!(
             map_screen_selection_to_capture(
