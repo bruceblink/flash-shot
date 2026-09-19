@@ -575,6 +575,7 @@ struct InteractionPlan {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ToolGroupInteractionPlan {
     mark: PhysicalPoint,
+    more: PhysicalPoint,
     text_trigger: PhysicalPoint,
     shape_trigger: PhysicalPoint,
     shape_rectangle: PhysicalPoint,
@@ -921,10 +922,21 @@ fn tool_group_interaction_plan_for_capture_selection(
     let group_row_top = tools_top + TOOLBAR_PADDING;
     let group_row_center_y = group_row_top + TOOL_ROW_HEIGHT / 2.0;
     let popup_top = tools_top + TOOLBAR_PADDING + palette_height + TOOL_GAP;
+    let action_center = |index: usize| {
+        action_left
+            + ACTION_BORDER
+            + ACTION_PADDING
+            + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP)
+            + ACTION_ITEM_WIDTH / 2.0
+    };
     Ok(ToolGroupInteractionPlan {
         mark: screen_point((
-            action_left + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
-            action_top + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
+            action_center(0),
+            action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
+        )),
+        more: screen_point((
+            action_center(4),
+            action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
         // These x positions intentionally sit inside both 64px Chinese and 104px English cells.
         text_trigger: screen_point((left + TOOLBAR_PADDING + 32.0, group_row_center_y)),
@@ -1749,6 +1761,8 @@ struct AnnotationRegressionReport {
 struct ToolGroupReport {
     requested_selection: PhysicalRect,
     committed_selection: PhysicalRect,
+    more_opened: bool,
+    more_outside_closed: bool,
     text_group_opened: bool,
     escape_closed: bool,
     outside_click_closed: bool,
@@ -2527,9 +2541,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 27 records the
-        // real annotation tool-group interaction evidence.
-        schema_version: 27,
+        // Increment when the machine-readable report shape changes. Schema 28 records More's
+        // real outside-click dismissal in addition to the annotation tool-group evidence.
+        schema_version: 28,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -5890,6 +5904,42 @@ fn execute_tool_group_interactions(
         context.display.physical_bounds,
         selection,
     )?;
+    let foreground = inject_mouse_click(overlay.handle, group_plan.more)?;
+    let more_open_state = wait_for_capture_state(context, "tool-group More open", |state| {
+        state.selection == Some(selection)
+            && state.overlay_count == 1
+            && state.more_actions_visible
+            && !state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+    })?;
+    let more_open = capture_evidence(context, "00-tool-group-more-open.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_more_open",
+        foreground,
+        Some(&more_open),
+    )?;
+
+    let foreground = inject_mouse_click(overlay.handle, group_plan.outside)?;
+    let more_outside_closed_state =
+        wait_for_capture_state(context, "tool-group More outside close", |state| {
+            state.selection == Some(selection)
+                && state.overlay_count == 1
+                && !state.more_actions_visible
+                && !state.annotation_controls_visible
+                && !state.annotation_tool_group_visible
+        })?;
+    let more_outside_closed =
+        capture_evidence(context, "01-tool-group-more-outside-closed.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_more_outside_closed",
+        foreground,
+        Some(&more_outside_closed),
+    )?;
+
     let foreground = inject_mouse_click(overlay.handle, group_plan.mark)?;
     wait_for_capture_state(context, "tool-group annotation controls", |state| {
         state.selection == Some(selection)
@@ -5898,7 +5948,7 @@ fn execute_tool_group_interactions(
             && !state.more_actions_visible
             && !state.annotation_tool_group_visible
     })?;
-    let marking = capture_evidence(context, "00-tool-group-toolbar.png", overlay)?;
+    let marking = capture_evidence(context, "02-tool-group-toolbar.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -5913,7 +5963,7 @@ fn execute_tool_group_interactions(
             && state.annotation_controls_visible
             && state.annotation_tool_group_visible
     })?;
-    let text_open = capture_evidence(context, "01-tool-group-text-open.png", overlay)?;
+    let text_open = capture_evidence(context, "03-tool-group-text-open.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -5928,7 +5978,7 @@ fn execute_tool_group_interactions(
             && state.annotation_controls_visible
             && !state.annotation_tool_group_visible
     })?;
-    let escaped = capture_evidence(context, "02-tool-group-escape-closed.png", overlay)?;
+    let escaped = capture_evidence(context, "04-tool-group-escape-closed.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -5951,7 +6001,7 @@ fn execute_tool_group_interactions(
                 && state.status == "Watermark tool selected"
         })?;
     let keyboard_selected =
-        capture_evidence(context, "03-tool-group-keyboard-selected.png", overlay)?;
+        capture_evidence(context, "05-tool-group-keyboard-selected.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -5966,7 +6016,7 @@ fn execute_tool_group_interactions(
             && state.annotation_controls_visible
             && state.annotation_tool_group_visible
     })?;
-    let shape_open = capture_evidence(context, "04-tool-group-shape-open.png", overlay)?;
+    let shape_open = capture_evidence(context, "06-tool-group-shape-open.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -5982,7 +6032,7 @@ fn execute_tool_group_interactions(
             && !state.annotation_tool_group_visible
             && state.status == "Rectangle tool selected"
     })?;
-    let rectangle_selected = capture_evidence(context, "05-tool-group-child-clicked.png", overlay)?;
+    let rectangle_selected = capture_evidence(context, "07-tool-group-child-clicked.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -6001,7 +6051,7 @@ fn execute_tool_group_interactions(
             && state.annotation_controls_visible
             && !state.annotation_tool_group_visible
     })?;
-    let outside_closed = capture_evidence(context, "06-tool-group-outside-closed.png", overlay)?;
+    let outside_closed = capture_evidence(context, "08-tool-group-outside-closed.png", overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -6057,6 +6107,8 @@ fn execute_tool_group_interactions(
     report.tool_group = Some(ToolGroupReport {
         requested_selection: drag.selection,
         committed_selection: selection,
+        more_opened: more_open_state.more_actions_visible,
+        more_outside_closed: !more_outside_closed_state.more_actions_visible,
         text_group_opened: true,
         escape_closed: !escaped_state.annotation_tool_group_visible,
         outside_click_closed: !outside_state.annotation_tool_group_visible,

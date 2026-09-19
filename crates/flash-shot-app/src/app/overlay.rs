@@ -1214,6 +1214,21 @@ impl CaptureOverlay {
         });
     }
 
+    /// Dismisses More before a canvas gesture can start and returns focus to that canvas.
+    fn dismiss_more_actions_from_pointer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_handle.focus(window, cx);
+        let operation_generation = self.operation_generation;
+        let app = self.app.clone();
+        cx.defer(move |cx| {
+            app.update(cx, |app, cx| {
+                if accepts_overlay_input(operation_generation, app.operation_generation) {
+                    app.close_overlay_more_actions();
+                    cx.notify();
+                }
+            });
+        });
+    }
+
     /// Opens More from the keyboard and waits one frame before focusing its first rendered action.
     fn open_more_actions_from_keyboard(
         &mut self,
@@ -2042,6 +2057,24 @@ impl Render for CaptureOverlay {
                             MouseButton::Left,
                             cx.listener(|this, _, window, cx| {
                                 this.dismiss_annotation_tool_group_from_pointer(window, cx);
+                            }),
+                        ),
+                )
+            })
+            .when(show_more_actions, |overlay| {
+                overlay.child(
+                    div()
+                        .id("overlay-more-actions-dismiss")
+                        .occlude()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| {
+                                this.dismiss_more_actions_from_pointer(window, cx);
                             }),
                         ),
                 )

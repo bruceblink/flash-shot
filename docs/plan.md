@@ -379,8 +379,11 @@ Clippy 和格式检查通过；当前源码 Release 生成的 `w2-final2-selecti
 工具组支持点击打开、方向键移动、Enter/Space 选择、Escape 关闭、外部点击关闭，并在关闭后把焦点交还给触发按钮；选中子工具后
 只提交一次既有 `AnnotationTool` handler，不改变标注文档和导出语义。`settings-ui-acceptance` 的
 `w4-tool-group-en-dark-final.png` 与 `w4-tool-group-zh-CN-light-final.png` 均为 `scale_match=true`；真实 Windows 单屏 100%、DPI 96
-的 `overlay-interaction-acceptance --capture-scenario tool-group` 最近一次报告为 schema 27、`status=passed`，覆盖 Text/Shape
-打开、Escape、键盘 Watermark、鼠标 Rectangle、外部关闭和最终清理。该切片仍不替代 W6 的完整状态矩阵、150%/200% DPI 和多屏验收。
+的 `overlay-interaction-acceptance --capture-scenario tool-group` 报告
+`target/overlay-interaction-acceptance/more-outside-tool-group-final/session-1789803426675-25240/report.json`
+为 schema 28、`status=passed`，新增验证 More 打开后外部点击关闭且选区保持不变（`more_opened=true`、
+`more_outside_closed=true`），并继续覆盖 Text/Shape 打开、Escape、键盘 Watermark、鼠标 Rectangle、工具组外部关闭和最终清理。
+该切片仍不替代 W6 的完整状态矩阵、150%/200% DPI 和多屏验收。
 
 **独立提交建议**：`feat: add screenshot tool group popovers`。
 

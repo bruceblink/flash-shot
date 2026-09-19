@@ -461,6 +461,11 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Closes the More surface without toggling another transient workspace state.
+    pub(super) fn close_overlay_more_actions(&mut self) {
+        self.overlay_more_actions = false;
+    }
+
     pub(super) fn toggle_overlay_annotation_controls(&mut self, cx: &mut Context<Self>) {
         if self.overlay_annotation_controls {
             self.close_annotation_tool_group();
