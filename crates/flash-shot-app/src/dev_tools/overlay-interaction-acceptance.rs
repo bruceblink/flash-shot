@@ -746,6 +746,15 @@ fn interaction_plan_for_logical_selection(
     start: (f32, f32),
     end: (f32, f32),
 ) -> io::Result<InteractionPlan> {
+    const ACTION_ITEM_WIDTH: f32 = 36.0;
+    const ACTION_ITEM_GAP: f32 = 6.0;
+    const ACTION_PADDING: f32 = 6.0;
+    const ACTION_BORDER: f32 = 1.0;
+    const ACTION_TOOLBAR_WIDTH: f32 = 6.0 * ACTION_ITEM_WIDTH
+        + 5.0 * ACTION_ITEM_GAP
+        + 2.0 * ACTION_PADDING
+        + 2.0 * ACTION_BORDER;
+
     if start.0 < 0.0
         || start.1 < 0.0
         || end.0 <= start.0
@@ -759,7 +768,7 @@ fn interaction_plan_for_logical_selection(
         ));
     }
 
-    let toolbar_width = 342.0_f32.min(width - 36.0).min(620.0);
+    let toolbar_width = ACTION_TOOLBAR_WIDTH.min(width - 36.0);
     let toolbar_height = 50.0;
     let left_min = 18.0;
     let left_limit = (width - 18.0 - toolbar_width).max(left_min);
@@ -777,17 +786,24 @@ fn interaction_plan_for_logical_selection(
         x: bounds.left + (point.0 * scale).round() as i32,
         y: bounds.top + (point.1 * scale).round() as i32,
     };
+    let action_center = |index: usize| {
+        toolbar_left
+            + ACTION_BORDER
+            + ACTION_PADDING
+            + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP)
+            + ACTION_ITEM_WIDTH / 2.0
+    };
     Ok(InteractionPlan {
         drag_start: screen_point(start),
         drag_end: screen_point(end),
         // The primary row is fixed: Mark, Pin, Copy, Save, More, then Cancel.
-        mark: screen_point((toolbar_left + 33.0, toolbar_top + 25.0)),
-        pin: screen_point((toolbar_left + 87.0, toolbar_top + 25.0)),
-        copy: screen_point((toolbar_left + 139.0, toolbar_top + 25.0)),
-        save: screen_point((toolbar_left + 193.0, toolbar_top + 25.0)),
-        more: screen_point((toolbar_left + 247.0, toolbar_top + 25.0)),
-        cancel: screen_point((toolbar_left + 312.0, toolbar_top + 25.0)),
-        // The expanded 342 px menu wraps into five right-aligned rows. Recording occupies the
+        mark: screen_point((action_center(0), toolbar_top + 25.0)),
+        pin: screen_point((action_center(1), toolbar_top + 25.0)),
+        copy: screen_point((action_center(2), toolbar_top + 25.0)),
+        save: screen_point((action_center(3), toolbar_top + 25.0)),
+        more: screen_point((action_center(4), toolbar_top + 25.0)),
+        cancel: screen_point((action_center(5), toolbar_top + 25.0)),
+        // The expanded 334 px menu wraps into five right-aligned rows. Recording occupies the
         // final item of row four and the sole item of row five above this toolbar.
         record_area: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 75.0)),
         record_window: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 33.0)),
@@ -977,7 +993,8 @@ fn scroll_shot_point_for_logical_selection(
             "scroll-shot selection must be increasing and inside the overlay client",
         ));
     }
-    let toolbar_width = 342.0_f32.min(width - 36.0).min(620.0);
+    const ACTION_TOOLBAR_WIDTH: f32 = 260.0;
+    let toolbar_width = ACTION_TOOLBAR_WIDTH.min(width - 36.0);
     let toolbar_height = 50.0;
     let left_min = 18.0;
     let left_limit = (width - 18.0 - toolbar_width).max(left_min);
@@ -991,7 +1008,7 @@ fn scroll_shot_point_for_logical_selection(
         above.max(18.0).min(lowest_top)
     };
 
-    // The 11 production secondary actions wrap into five natural-width rows at the 342px
+    // The 11 production secondary actions wrap into five natural-width rows at the 334px
     // toolbar width; Scroll shot is the leftmost item in the 323px third row (65px wide).
     let menu_above = toolbar_top - 8.0 - SCROLL_SECONDARY_MENU_HEIGHT >= 18.0
         || toolbar_top + toolbar_height + 8.0 + SCROLL_SECONDARY_MENU_HEIGHT > height - 96.0;
@@ -1109,7 +1126,7 @@ fn narrow_edge_interaction_plan(
     );
     let base = interaction_plan_for_logical_selection(bounds, scale, width, height, start, end)?;
 
-    // The production wide dock is 900x186 with the 342px action row above its tools.
+    // The production wide dock is 900x186 with the 260px action row above its tools.
     let annotation_left_min = NARROW_EDGE_RIGHT_INSET;
     let annotation_left_limit =
         (width - NARROW_EDGE_RIGHT_INSET - NARROW_EDGE_ANNOTATION_WIDTH).max(annotation_left_min);
@@ -1126,10 +1143,10 @@ fn narrow_edge_interaction_plan(
         x: bounds.left + (point.0 * scale).round() as i32,
         y: bounds.top + (point.1 * scale).round() as i32,
     };
-    let expanded_action_left = annotation_left + NARROW_EDGE_ANNOTATION_WIDTH - 342.0;
+    let expanded_action_left = annotation_left + NARROW_EDGE_ANNOTATION_WIDTH - 260.0;
     Ok(NarrowEdgeInteractionPlan {
         base,
-        expanded_mark: screen_point((expanded_action_left + 33.0, annotation_top + 25.0)),
+        expanded_mark: screen_point((expanded_action_left + 25.0, annotation_top + 25.0)),
         // Keep the always-visible magnifier away from the edge toolbars being reviewed.
         evidence_rest: screen_point((24.0, 24.0)),
     })
@@ -12317,7 +12334,7 @@ fn save_file_name_edit(
     if matches.len() != 1 {
         return Err(io::Error::other(format!(
             "expected one Save filename edit containing {:?}, found {}",
-            expected_name.unwrap_or("FlashShot date + UUIDv7"),
+            expected_name.unwrap_or("FlashShot timestamp + UUIDv7"),
             matches.len()
         )));
     }
@@ -12335,11 +12352,11 @@ fn is_default_image_filename(name: &str) -> bool {
     let Some(suffix) = stem.strip_prefix("FlashShot-") else {
         return false;
     };
-    let Some((date, uuid)) = suffix.split_once('-') else {
+    let Some((timestamp, uuid)) = suffix.split_once('-') else {
         return false;
     };
-    date.len() == 8
-        && date.bytes().all(|byte| byte.is_ascii_digit())
+    timestamp.len() == 14
+        && timestamp.bytes().all(|byte| byte.is_ascii_digit())
         && uuid::Uuid::parse_str(uuid).is_ok_and(|value| value.get_version_num() == 7)
 }
 
@@ -14137,11 +14154,12 @@ mod tests {
     #[cfg(windows)]
     use super::{
         FixturePhaseState, NativeWindow, decode_clipboard_dib, foreground_assist_ready,
-        has_safe_titlebar_band, horizontal_pin_layout, is_foreground_change_abort,
-        panic_payload_message, parse_recording_window_fixture_arguments,
-        recording_fixture_dynamic_bounds, request_recording_state, titlebar_fallback_ready,
-        validate_fixture_phase_state, validate_recording_frame_content,
-        validate_same_pixel_content, validate_scroll_fixture_frame,
+        has_safe_titlebar_band, horizontal_pin_layout, is_default_image_filename,
+        is_foreground_change_abort, panic_payload_message,
+        parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
+        request_recording_state, titlebar_fallback_ready, validate_fixture_phase_state,
+        validate_recording_frame_content, validate_same_pixel_content,
+        validate_scroll_fixture_frame,
     };
     use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -14223,6 +14241,17 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_image_filename_oracle_requires_second_precision() {
+        assert!(is_default_image_filename(
+            "FlashShot-20260814123045-018f2b50-7b2d-7cc0-8000-000000000000.png"
+        ));
+        assert!(!is_default_image_filename(
+            "FlashShot-20260814-018f2b50-7b2d-7cc0-8000-000000000000.png"
+        ));
     }
 
     #[cfg(windows)]
@@ -15254,10 +15283,10 @@ mod tests {
 
         assert_eq!(plan.base.drag_start, PhysicalPoint { x: 2382, y: 1328 });
         assert_eq!(plan.base.drag_end, PhysicalPoint { x: 2542, y: 1424 });
-        assert_eq!(plan.base.mark, PhysicalPoint { x: 2233, y: 1291 });
-        assert_eq!(plan.base.more, PhysicalPoint { x: 2447, y: 1291 });
-        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2512, y: 1291 });
-        assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2233, y: 1155 });
+        assert_eq!(plan.base.mark, PhysicalPoint { x: 2307, y: 1291 });
+        assert_eq!(plan.base.more, PhysicalPoint { x: 2475, y: 1291 });
+        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2517, y: 1291 });
+        assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2307, y: 1155 });
         assert_eq!(plan.evidence_rest, PhysicalPoint { x: 24, y: 20 });
         assert_eq!(
             map_screen_selection_to_capture(

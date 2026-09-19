@@ -1296,7 +1296,7 @@ impl UiText {
             Self::QuickSaveFolderReady => "Quick-save folder is ready: {path}",
             Self::QuickSaveFolderCheckFailed => "Quick-save folder check failed: {error}",
             Self::QuickSavePrefixChanged => {
-                "Quick-save names use {prefix}<yyyyMMddHHmmssSSS><UUIDv7>.png"
+                "Quick-save names use {prefix}-<yyyyMMddHHmmss>-<UUIDv7>.png"
             }
             Self::QuickSavePrefixSaveFailed => {
                 "Could not save quick-save naming preference: {error}"
@@ -2054,7 +2054,7 @@ impl UiText {
             Self::QuickSaveFolderReady => "快速保存目录已就绪：{path}",
             Self::QuickSaveFolderCheckFailed => "快速保存目录检查失败：{error}",
             Self::QuickSavePrefixChanged => {
-                "快速保存文件名使用 {prefix}<yyyyMMddHHmmssSSS><UUIDv7>.png"
+                "快速保存文件名使用 {prefix}-<yyyyMMddHHmmss>-<UUIDv7>.png"
             }
             Self::QuickSavePrefixSaveFailed => "无法保存快速保存命名设置：{error}",
             Self::HistorySelectionRemoved => "已从选择中移除截图",

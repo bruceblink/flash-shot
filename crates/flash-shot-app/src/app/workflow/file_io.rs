@@ -38,12 +38,15 @@ pub(super) struct ImageTimestamp {
     pub(super) year: u16,
     pub(super) month: u16,
     pub(super) day: u16,
+    pub(super) hour: u16,
+    pub(super) minute: u16,
+    pub(super) second: u16,
 }
 
 /// Builds the native Save dialog's collision-resistant default image name.
 ///
-/// The date is local time, while the UUIDv7 keeps captures from the same day distinct without
-/// relying on a filesystem collision suffix.
+/// The timestamp is local time to second precision, while the UUIDv7 keeps captures from the
+/// same second distinct without relying on a filesystem collision suffix.
 pub(super) fn default_image_filename(export_format: u8) -> String {
     generated_image_filename(
         crate::settings::DEFAULT_SAVE_PREFIX,
@@ -53,13 +56,13 @@ pub(super) fn default_image_filename(export_format: u8) -> String {
 
 /// Builds the lossless PNG name shared by quick saves and editable-project exports.
 ///
-/// The default prefix is the product name. A local date makes files easy to scan, while a UUIDv7
-/// prevents captures from sharing a filename.
+/// The default prefix is the product name. A local timestamp makes files easy to scan, while a
+/// UUIDv7 prevents captures from sharing a filename.
 pub(super) fn default_png_image_filename() -> String {
     generated_image_filename(crate::settings::DEFAULT_SAVE_PREFIX, "png")
 }
 
-/// Combines a safe name prefix with the current local date and a UUIDv7.
+/// Combines a safe name prefix with the current local timestamp and a UUIDv7.
 fn generated_image_filename(software_name: &str, extension: &str) -> String {
     format_default_image_filename(
         software_name,
@@ -76,8 +79,13 @@ fn format_default_image_filename(
     extension: &str,
 ) -> String {
     format!(
-        "{software_name}-{:04}{:02}{:02}-{uuid}.{extension}",
-        timestamp.year, timestamp.month, timestamp.day,
+        "{software_name}-{:04}{:02}{:02}{:02}{:02}{:02}-{uuid}.{extension}",
+        timestamp.year,
+        timestamp.month,
+        timestamp.day,
+        timestamp.hour,
+        timestamp.minute,
+        timestamp.second,
     )
 }
 
@@ -92,6 +100,9 @@ fn local_image_timestamp() -> ImageTimestamp {
         year: system_time.wYear,
         month: system_time.wMonth,
         day: system_time.wDay,
+        hour: system_time.wHour,
+        minute: system_time.wMinute,
+        second: system_time.wSecond,
     }
 }
 
@@ -99,8 +110,16 @@ fn local_image_timestamp() -> ImageTimestamp {
 fn local_image_timestamp() -> ImageTimestamp {
     let timestamp_ms = unix_timestamp_ms();
     let days = (timestamp_ms / 86_400_000) as i64;
+    let day_ms = timestamp_ms % 86_400_000;
     let (year, month, day) = civil_date_from_days(days);
-    ImageTimestamp { year, month, day }
+    ImageTimestamp {
+        year,
+        month,
+        day,
+        hour: (day_ms / 3_600_000) as u16,
+        minute: ((day_ms / 60_000) % 60) as u16,
+        second: ((day_ms / 1_000) % 60) as u16,
+    }
 }
 
 #[cfg(not(windows))]
@@ -465,7 +484,7 @@ mod tests {
     use super::{ImageTimestamp, format_default_image_filename};
 
     #[test]
-    fn default_image_filename_contains_local_date_and_uuid_v7() {
+    fn default_image_filename_contains_local_timestamp_and_uuid_v7() {
         let uuid = uuid::Uuid::parse_str("018f2b50-7b2d-7cc0-8000-000000000000").unwrap();
         let name = format_default_image_filename(
             "FlashShot",
@@ -473,6 +492,9 @@ mod tests {
                 year: 2026,
                 month: 8,
                 day: 14,
+                hour: 12,
+                minute: 30,
+                second: 45,
             },
             uuid,
             "png",
@@ -480,7 +502,7 @@ mod tests {
 
         assert_eq!(
             name,
-            "FlashShot-20260814-018f2b50-7b2d-7cc0-8000-000000000000.png"
+            "FlashShot-20260814123045-018f2b50-7b2d-7cc0-8000-000000000000.png"
         );
         assert_eq!(uuid.get_version_num(), 7);
     }
