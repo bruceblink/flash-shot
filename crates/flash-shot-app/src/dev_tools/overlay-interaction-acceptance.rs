@@ -12265,7 +12265,7 @@ fn save_file_name_edit(
     if matches.len() != 1 {
         return Err(io::Error::other(format!(
             "expected one Save filename edit containing {:?}, found {}",
-            expected_name.unwrap_or("FlashShot timestamp + UUIDv7"),
+            expected_name.unwrap_or("FlashShot date + UUIDv7"),
             matches.len()
         )));
     }
@@ -12280,15 +12280,14 @@ fn is_default_image_filename(name: &str) -> bool {
     else {
         return false;
     };
-    let Some(suffix) = stem.strip_prefix("FlashShot") else {
+    let Some(suffix) = stem.strip_prefix("FlashShot-") else {
         return false;
     };
-    if suffix.len() < 17 {
+    let Some((date, uuid)) = suffix.split_once('-') else {
         return false;
-    }
-    let (timestamp, uuid) = suffix.split_at(17);
-    timestamp.len() == 17
-        && timestamp.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    date.len() == 8
+        && date.bytes().all(|byte| byte.is_ascii_digit())
         && uuid::Uuid::parse_str(uuid).is_ok_and(|value| value.get_version_num() == 7)
 }
 
