@@ -331,7 +331,13 @@ fn button_colors(
             } else {
                 colors.text
             },
-            colors.toolbar_border,
+            // Keep resting neutral actions visually quiet; hover, focus, and active states
+            // provide the affordance without stacking a border around every button.
+            if active {
+                colors.toolbar_focus
+            } else {
+                colors.toolbar_elevated
+            },
         ),
     }
 }
@@ -367,5 +373,36 @@ fn button_active_colors(colors: ThemeColors, tone: WorkspaceButtonTone) -> (Hsla
         ),
         WorkspaceButtonTone::Destructive => (colors.danger, colors.background, colors.danger),
         WorkspaceButtonTone::Neutral => (colors.toolbar_hover, colors.text, colors.toolbar_focus),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WorkspaceButtonTone, button_colors};
+    use crate::theme::{ThemeColors, ThemeMode};
+
+    #[test]
+    fn resting_neutral_buttons_blend_into_the_toolbar_surface() {
+        for mode in [ThemeMode::Dark, ThemeMode::Light] {
+            let colors = ThemeColors::for_mode(mode);
+            let (background, foreground, border) =
+                button_colors(colors, WorkspaceButtonTone::Neutral, false, true);
+
+            assert_eq!(background, colors.toolbar_elevated);
+            assert_eq!(foreground, colors.text);
+            assert_eq!(border, colors.toolbar_elevated);
+        }
+    }
+
+    #[test]
+    fn active_neutral_buttons_keep_a_visible_focus_edge() {
+        for mode in [ThemeMode::Dark, ThemeMode::Light] {
+            let colors = ThemeColors::for_mode(mode);
+            let (_, foreground, border) =
+                button_colors(colors, WorkspaceButtonTone::Neutral, true, true);
+
+            assert_eq!(foreground, colors.background);
+            assert_eq!(border, colors.toolbar_focus);
+        }
     }
 }
