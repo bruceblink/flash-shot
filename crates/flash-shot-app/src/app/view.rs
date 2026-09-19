@@ -2326,11 +2326,9 @@ fn settings_navigation_item(
         })
         .rounded_sm()
         .border_1()
-        .border_color(if active {
-            colors.accent
-        } else {
-            colors.surface
-        })
+        // Keep the rail quiet at rest; the active state is carried by the left accent bar
+        // and a restrained surface lift instead of a card-like outline.
+        .border_color(colors.surface)
         .text_sm()
         .cursor_pointer()
         .bg(if active {
@@ -2345,7 +2343,7 @@ fn settings_navigation_item(
         .hover(move |style| {
             style
                 .bg(colors.surface_hover)
-                .border_color(if active { colors.accent } else { colors.border })
+                .border_color(colors.surface_hover)
                 .text_color(if active { colors.accent } else { colors.text })
         })
         .active(move |style| {
