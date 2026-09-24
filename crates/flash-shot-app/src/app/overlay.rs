@@ -4139,6 +4139,29 @@ struct WorkspaceSelectionAnchor {
     bottom_right: ViewPoint,
 }
 
+impl WorkspaceSelectionAnchor {
+    /// Converts one non-empty physical selection into the shared view-space anchor.
+    ///
+    /// Rejecting zero-area rectangles here keeps every workspace surface on the same validity
+    /// rule. Callers must use this anchor instead of repeating physical-to-view conversions.
+    fn from_selection(selection: PhysicalRect, transform: PreviewTransform) -> Option<Self> {
+        if selection.width() == 0 || selection.height() == 0 {
+            return None;
+        }
+
+        Some(Self {
+            top_left: transform.physical_to_view(PhysicalPoint {
+                x: selection.left,
+                y: selection.top,
+            }),
+            bottom_right: transform.physical_to_view(PhysicalPoint {
+                x: selection.right,
+                y: selection.bottom,
+            }),
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct SecondaryMenuLayout {
     left: f32,
@@ -4472,8 +4495,7 @@ fn annotation_toolbar_height_for_width(
 /// panel at wide widths.
 #[cfg(test)]
 fn annotation_toolbar_layout(
-    selection: Option<PhysicalRect>,
-    transform: Option<PreviewTransform>,
+    selection_anchor: Option<WorkspaceSelectionAnchor>,
     viewport: Bounds<Pixels>,
     action_toolbar: Option<ActionToolbarLayout>,
     items: AnnotationToolbarItems,
@@ -4481,8 +4503,7 @@ fn annotation_toolbar_layout(
     annotation_tool_group: Option<AnnotationToolGroup>,
 ) -> Option<AnnotationToolbarLayout> {
     annotation_toolbar_layout_with_tool_width(
-        selection,
-        transform,
+        selection_anchor,
         viewport,
         action_toolbar,
         AnnotationToolbarLayoutOptions {
@@ -4499,14 +4520,12 @@ fn annotation_toolbar_layout(
 /// English labels need the wider fallback cell while compact Chinese labels can use the actual
 /// shorter button rhythm, preventing an unused reserved row from separating the style row.
 fn annotation_toolbar_layout_with_tool_width(
-    selection: Option<PhysicalRect>,
-    transform: Option<PreviewTransform>,
+    selection_anchor: Option<WorkspaceSelectionAnchor>,
     viewport: Bounds<Pixels>,
     action_toolbar: Option<ActionToolbarLayout>,
     options: AnnotationToolbarLayoutOptions,
 ) -> Option<AnnotationToolbarLayout> {
-    let selection = selection?;
-    let transform = transform?;
+    let selection_anchor = selection_anchor?;
     let action_toolbar = action_toolbar?;
     let viewport = view_rect(viewport);
     let width =
@@ -4525,14 +4544,8 @@ fn annotation_toolbar_layout_with_tool_width(
     };
     let tools_and_style_height = tools_height + style_gap + options.style_height;
     let total_height = tools_and_style_height + ANNOTATION_STYLE_PANEL_GAP + action_toolbar.height;
-    let top_left = transform.physical_to_view(PhysicalPoint {
-        x: selection.left,
-        y: selection.top,
-    });
-    let bottom_right = transform.physical_to_view(PhysicalPoint {
-        x: selection.right,
-        y: selection.bottom,
-    });
+    let top_left = selection_anchor.top_left;
+    let bottom_right = selection_anchor.bottom_right;
     let left_min = viewport.left + OVERLAY_EDGE_INSET;
     let left_max = (viewport.right() - OVERLAY_EDGE_INSET - width).max(left_min);
     let left = (bottom_right.x - width).clamp(left_min, left_max);
@@ -4623,22 +4636,14 @@ fn annotation_layer_layout(
 /// When an edge selection lifts the toolbar above itself, the label moves into the gap above that
 /// toolbar instead of colliding with it or disappearing under the bottom taskbar-safe area.
 fn selection_dimension_label_layout(
-    selection: Option<PhysicalRect>,
-    transform: Option<PreviewTransform>,
+    selection_anchor: Option<WorkspaceSelectionAnchor>,
     viewport: Bounds<Pixels>,
     action_toolbar: Option<ActionToolbarLayout>,
 ) -> Option<SelectionDimensionLayout> {
-    let selection = selection?;
-    let transform = transform?;
+    let selection_anchor = selection_anchor?;
     let viewport = view_rect(viewport);
-    let top_left = transform.physical_to_view(PhysicalPoint {
-        x: selection.left,
-        y: selection.top,
-    });
-    let bottom_right = transform.physical_to_view(PhysicalPoint {
-        x: selection.right,
-        y: selection.bottom,
-    });
+    let top_left = selection_anchor.top_left;
+    let bottom_right = selection_anchor.bottom_right;
     let left_min = viewport.left + OVERLAY_EDGE_INSET;
     let left_max =
         (viewport.right() - OVERLAY_EDGE_INSET - OVERLAY_DIMENSION_LABEL_WIDTH).max(left_min);
@@ -4734,35 +4739,18 @@ fn smart_target_hud_label(locale: Locale, target: InspectionTarget) -> String {
 
 /// Places the stable main row near the selection using only shared icon geometry and safe bounds.
 fn action_toolbar_layout(
-    selection: Option<PhysicalRect>,
-    transform: Option<PreviewTransform>,
+    selection_anchor: Option<WorkspaceSelectionAnchor>,
     viewport: Bounds<Pixels>,
     show_annotation_controls: bool,
 ) -> Option<ActionToolbarLayout> {
-    let selection = selection?;
-    let transform = transform?;
+    let selection_anchor = selection_anchor?;
     let viewport = view_rect(viewport);
     let available_width = (viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0);
     let width = action_toolbar_natural_width(show_annotation_controls).min(available_width);
     let height = action_toolbar_height(width, show_annotation_controls);
-    let selection_top = transform
-        .physical_to_view(PhysicalPoint {
-            x: selection.left,
-            y: selection.top,
-        })
-        .y;
-    let selection_bottom = transform
-        .physical_to_view(PhysicalPoint {
-            x: selection.right,
-            y: selection.bottom,
-        })
-        .y;
-    let selection_right = transform
-        .physical_to_view(PhysicalPoint {
-            x: selection.right,
-            y: selection.bottom,
-        })
-        .x;
+    let selection_top = selection_anchor.top_left.y;
+    let selection_bottom = selection_anchor.bottom_right.y;
+    let selection_right = selection_anchor.bottom_right.x;
     let left_min = viewport.left + OVERLAY_EDGE_INSET;
     let left_limit = (viewport.right() - OVERLAY_EDGE_INSET - width).max(left_min);
     let left = (selection_right - width).clamp(left_min, left_limit);
@@ -4812,19 +4800,19 @@ fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnap
         bottom: viewport_rect.bottom() - OVERLAY_BOTTOM_SAFE_INSET,
     };
     let selected_on_display = selection.and_then(|selection| intersect(selection, display_bounds));
+    let selection_anchor = selected_on_display
+        .zip(transform)
+        .and_then(|(selection, transform)| {
+            WorkspaceSelectionAnchor::from_selection(selection, transform)
+        });
     let owns_action_toolbar =
         selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds));
-    let base_action_layout = action_toolbar_layout(
-        selected_on_display,
-        transform,
-        viewport,
-        show_annotation_controls,
-    );
+    let base_action_layout =
+        action_toolbar_layout(selection_anchor, viewport, show_annotation_controls);
     let annotation_layout = show_annotation_controls
         .then(|| {
             annotation_toolbar_layout_with_tool_width(
-                selected_on_display,
-                transform,
+                selection_anchor,
                 viewport,
                 base_action_layout,
                 AnnotationToolbarLayoutOptions {
@@ -4906,8 +4894,7 @@ fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnap
                     ),
                 }
             });
-    let dimension =
-        selection_dimension_label_layout(selected_on_display, transform, viewport, action_layout);
+    let dimension = selection_dimension_label_layout(selection_anchor, viewport, action_layout);
     let smart_target_hud = smart_target_hud_layout(
         selection,
         hover_pixel,
@@ -4920,19 +4907,6 @@ fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnap
         .filter(|layout| layout.style_height > 0.0 && !layout.actions_above_tools)
         .map(|layout| status_bottom_inset_for_stacked_annotation(layout, dimension, viewport))
         .unwrap_or_else(|| status_bottom_inset(action_layout.is_none()));
-    let selection_anchor = selected_on_display
-        .zip(transform)
-        .map(|(selection, transform)| WorkspaceSelectionAnchor {
-            top_left: transform.physical_to_view(PhysicalPoint {
-                x: selection.left,
-                y: selection.top,
-            }),
-            bottom_right: transform.physical_to_view(PhysicalPoint {
-                x: selection.right,
-                y: selection.bottom,
-            }),
-        });
-
     WorkspaceLayoutSnapshot {
         safe_area,
         selection_anchor,
@@ -5234,15 +5208,15 @@ mod tests {
         OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
         OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
         SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, WorkspaceLayoutInput,
-        accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
-        action_toolbar_natural_width, annotation_controls_visible, annotation_layer_label,
-        annotation_style_capabilities_for_tool, annotation_style_row_height,
-        annotation_tool_group_focus_direction, annotation_tool_group_focus_target,
-        annotation_tool_group_popover_height, annotation_tool_group_popover_width,
-        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
-        arrange_context_for_selection, arrow_head_points, capture_double_click,
-        close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
-        more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
+        WorkspaceSelectionAnchor, accepts_overlay_input, action_toolbar_height,
+        action_toolbar_layout, action_toolbar_natural_width, annotation_controls_visible,
+        annotation_layer_label, annotation_style_capabilities_for_tool,
+        annotation_style_row_height, annotation_tool_group_focus_direction,
+        annotation_tool_group_focus_target, annotation_tool_group_popover_height,
+        annotation_tool_group_popover_width, annotation_toolbar_height, annotation_toolbar_items,
+        annotation_toolbar_layout, arrange_context_for_selection, arrow_head_points,
+        capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
+        magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
         recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
@@ -5261,7 +5235,41 @@ mod tests {
     use crate::i18n::Locale;
     use crate::platform::capture::PixelFormat;
     use crate::platform::window_inspector::{InspectionKind, InspectionTarget};
-    use gpui::{Bounds, Keystroke, point, px, size};
+    use gpui::{Bounds, Keystroke, Pixels, point, px, size};
+
+    /// Builds the same shared anchor used by production layout code.
+    fn workspace_anchor(
+        selection: PhysicalRect,
+        transform: Option<PreviewTransform>,
+    ) -> Option<WorkspaceSelectionAnchor> {
+        transform
+            .and_then(|transform| WorkspaceSelectionAnchor::from_selection(selection, transform))
+    }
+
+    /// Creates a selection-only snapshot input for deterministic boundary-layout tests.
+    fn workspace_layout_input(
+        selection: PhysicalRect,
+        display_bounds: PhysicalRect,
+        transform: Option<PreviewTransform>,
+        viewport: Bounds<Pixels>,
+    ) -> WorkspaceLayoutInput {
+        WorkspaceLayoutInput {
+            selection: Some(selection),
+            display_bounds,
+            transform,
+            viewport,
+            hover_pixel: None,
+            inspection_target: None,
+            show_annotation_controls: false,
+            annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
+            annotation_style_height: 0.0,
+            annotation_tool_group: None,
+            annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            has_recognition_result: false,
+            has_recognition_retry: false,
+            recognition_in_flight: false,
+        }
+    }
 
     #[test]
     fn queued_input_only_applies_to_the_overlay_generation_that_created_it() {
@@ -6022,6 +6030,144 @@ mod tests {
     }
 
     #[test]
+    fn workspace_snapshot_rejects_zero_area_selection_surfaces() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(420.0), px(420.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 420,
+            bottom: 420,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+
+        for selection in [
+            PhysicalRect {
+                left: 210,
+                top: 120,
+                right: 210,
+                bottom: 300,
+            },
+            PhysicalRect {
+                left: 120,
+                top: 210,
+                right: 300,
+                bottom: 210,
+            },
+        ] {
+            let snapshot = workspace_layout_snapshot(workspace_layout_input(
+                selection, bounds, transform, viewport,
+            ));
+
+            assert_eq!(snapshot.selection_anchor, None);
+            assert_eq!(snapshot.action_toolbar, None);
+            assert_eq!(snapshot.annotation_toolbar, None);
+            assert_eq!(snapshot.annotation_layer, None);
+            assert_eq!(snapshot.secondary_menu, None);
+            assert_eq!(snapshot.annotation_tool_group, None);
+            assert_eq!(snapshot.dimension, None);
+            assert_eq!(snapshot.smart_target_hud, None);
+        }
+    }
+
+    #[test]
+    fn workspace_snapshot_keeps_tiny_fullscreen_and_edge_selections_inside_safe_area() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(420.0), px(420.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 420,
+            bottom: 420,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+        let selections = [
+            (
+                "one-pixel",
+                PhysicalRect {
+                    left: 210,
+                    top: 210,
+                    right: 211,
+                    bottom: 211,
+                },
+            ),
+            ("fullscreen", bounds),
+            (
+                "top",
+                PhysicalRect {
+                    left: 120,
+                    top: 0,
+                    right: 300,
+                    bottom: 80,
+                },
+            ),
+            (
+                "bottom",
+                PhysicalRect {
+                    left: 120,
+                    top: 340,
+                    right: 300,
+                    bottom: 420,
+                },
+            ),
+            (
+                "left",
+                PhysicalRect {
+                    left: 0,
+                    top: 120,
+                    right: 80,
+                    bottom: 300,
+                },
+            ),
+            (
+                "right",
+                PhysicalRect {
+                    left: 340,
+                    top: 120,
+                    right: 420,
+                    bottom: 300,
+                },
+            ),
+        ];
+
+        for (name, selection) in selections {
+            let snapshot = workspace_layout_snapshot(workspace_layout_input(
+                selection, bounds, transform, viewport,
+            ));
+            let anchor = snapshot
+                .selection_anchor
+                .unwrap_or_else(|| panic!("{name} selection should have one anchor"));
+            let toolbar = snapshot
+                .action_toolbar
+                .unwrap_or_else(|| panic!("{name} selection should have export actions"));
+            let dimension = snapshot
+                .dimension
+                .unwrap_or_else(|| panic!("{name} selection should have a size HUD"));
+
+            assert_eq!(anchor, workspace_anchor(selection, transform).unwrap());
+            assert!(toolbar.left >= snapshot.safe_area.left, "{name}");
+            assert!(
+                toolbar.left + toolbar.width <= snapshot.safe_area.right,
+                "{name}"
+            );
+            assert!(toolbar.top >= snapshot.safe_area.top, "{name}");
+            assert!(
+                toolbar.top + toolbar.height <= snapshot.safe_area.bottom,
+                "{name}"
+            );
+            assert!(dimension.left >= snapshot.safe_area.left, "{name}");
+            assert!(dimension.top >= snapshot.safe_area.top, "{name}");
+            assert!(
+                dimension.top + super::OVERLAY_DIMENSION_LABEL_HEIGHT <= snapshot.safe_area.bottom,
+                "{name}"
+            );
+            assert!(
+                dimension.top + super::OVERLAY_DIMENSION_LABEL_HEIGHT <= toolbar.top
+                    || dimension.top >= toolbar.top + toolbar.height,
+                "{name} size HUD overlaps the action toolbar"
+            );
+        }
+    }
+
+    #[test]
     fn workspace_snapshot_keeps_edge_surfaces_on_one_selection_anchor() {
         let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(420.0), px(420.0)));
         let bounds = PhysicalRect {
@@ -6167,7 +6313,7 @@ mod tests {
         };
 
         assert_eq!(
-            action_toolbar_layout(Some(selection), transform, viewport, false),
+            action_toolbar_layout(workspace_anchor(selection, transform), viewport, false),
             Some(ActionToolbarLayout {
                 left: 940.0,
                 top: 518.0,
@@ -6203,8 +6349,7 @@ mod tests {
         };
 
         let layout = annotation_toolbar_layout(
-            Some(selection),
-            transform,
+            workspace_anchor(selection, transform),
             viewport,
             Some(primary_actions),
             annotation_toolbar_items(false, false, false, false, false),
@@ -6257,8 +6402,7 @@ mod tests {
         };
 
         let layout = annotation_toolbar_layout(
-            Some(selection),
-            transform,
+            workspace_anchor(selection, transform),
             viewport,
             Some(primary_actions),
             annotation_toolbar_items(false, false, false, false, false),
@@ -6305,7 +6449,11 @@ mod tests {
         };
 
         assert_eq!(
-            selection_dimension_label_layout(Some(selection), transform, viewport, Some(toolbar)),
+            selection_dimension_label_layout(
+                workspace_anchor(selection, transform),
+                viewport,
+                Some(toolbar),
+            ),
             Some(SelectionDimensionLayout {
                 left: 100.0,
                 top: 266.0,
@@ -6337,7 +6485,8 @@ mod tests {
             }
         );
 
-        let toolbar = action_toolbar_layout(Some(selection), transform, viewport, false).unwrap();
+        let toolbar =
+            action_toolbar_layout(workspace_anchor(selection, transform), viewport, false).unwrap();
         assert_eq!(
             toolbar,
             ActionToolbarLayout {
@@ -6363,7 +6512,11 @@ mod tests {
         assert!(menu_top >= OVERLAY_EDGE_INSET);
 
         assert_eq!(
-            selection_dimension_label_layout(Some(selection), transform, viewport, Some(toolbar)),
+            selection_dimension_label_layout(
+                workspace_anchor(selection, transform),
+                viewport,
+                Some(toolbar),
+            ),
             Some(SelectionDimensionLayout {
                 left: 242.0,
                 top: 216.0,
@@ -6395,7 +6548,8 @@ mod tests {
             }
         );
 
-        let primary = action_toolbar_layout(Some(selection), transform, viewport, false).unwrap();
+        let primary =
+            action_toolbar_layout(workspace_anchor(selection, transform), viewport, false).unwrap();
         assert_eq!(
             primary,
             ActionToolbarLayout {
@@ -6406,8 +6560,7 @@ mod tests {
             }
         );
         let marking = annotation_toolbar_layout(
-            Some(selection),
-            transform,
+            workspace_anchor(selection, transform),
             viewport,
             Some(primary),
             annotation_toolbar_items(false, false, false, false, false),
@@ -6750,7 +6903,8 @@ mod tests {
         assert_eq!(action_toolbar_height(358.0, true), 50.0);
         assert_eq!(secondary_action_menu_width(420.0, false, false), 334.0);
         assert_eq!(secondary_action_menu_width(360.0, false, false), 324.0);
-        let layout = action_toolbar_layout(Some(selection), transform, viewport, false).unwrap();
+        let layout =
+            action_toolbar_layout(workspace_anchor(selection, transform), viewport, false).unwrap();
         assert_eq!(
             secondary_action_menu_left(
                 layout,
