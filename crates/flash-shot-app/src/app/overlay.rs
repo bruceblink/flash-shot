@@ -43,7 +43,7 @@ use crate::{
         window_inspector::{InspectionKind, InspectionTarget},
     },
     settings::UserSettings,
-    theme::{ThemeColors, ThemeMetrics},
+    theme::{ThemeColors, ThemeMetrics, ThemeMode},
 };
 
 const OVERLAY_EDGE_INSET: f32 = ThemeMetrics::OVERLAY_EDGE_INSET;
@@ -67,14 +67,15 @@ const OVERLAY_SMART_TARGET_HUD_WIDTH: f32 = 224.0;
 const OVERLAY_SMART_TARGET_HUD_HEIGHT: f32 = 26.0;
 const OVERLAY_SMART_TARGET_HUD_GAP: f32 = 8.0;
 const ANNOTATION_TOOL_ESTIMATED_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOL_CELL_WIDTH;
+const ANNOTATION_TOOL_ICON_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
 const ANNOTATION_ACTION_HEIGHT: f32 = ThemeMetrics::WORKSPACE_STYLE_ROW_HEIGHT;
 const ANNOTATION_TOOL_ROW_HEIGHT: f32 = ThemeMetrics::WORKSPACE_TOOL_ROW_HEIGHT;
 const ANNOTATION_TOOL_GAP: f32 = ThemeMetrics::WORKSPACE_TOOL_GAP;
+const ANNOTATION_TOOL_PALETTE_GAP: f32 = ThemeMetrics::SPACE_1;
 const ANNOTATION_TOOLBAR_PADDING: f32 = ThemeMetrics::WORKSPACE_ANNOTATION_PADDING;
-// Context sections add a visible divider and breathing room without making the
-// stable drawing palette move when an annotation is selected.
-const ANNOTATION_CONTEXT_SECTION_GAP: f32 =
-    ANNOTATION_TOOL_GAP + ANNOTATION_TOOLBAR_PADDING * 2.0 + 1.0;
+const ANNOTATION_TOOL_PALETTE_HEIGHT: f32 = ANNOTATION_TOOL_ICON_WIDTH
+    + ANNOTATION_TOOLBAR_PADDING * 2.0
+    + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0;
 // Keep the measured palette count aligned with the buttons rendered below so compact locales do
 // not reserve an unused wrapped row.
 const ANNOTATION_TOOL_PALETTE_ITEMS: usize = 6;
@@ -84,8 +85,8 @@ const ANNOTATION_TOOL_GROUP_POPUP_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR
 const ANNOTATION_TOOL_GROUP_POPUP_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
 const ANNOTATION_STYLE_PANEL_GAP: f32 = ThemeMetrics::WORKSPACE_POPOVER_GAP;
 const ANNOTATION_STYLE_CONTROL_HEIGHT: f32 = ThemeMetrics::WORKSPACE_STYLE_ROW_HEIGHT;
-const ANNOTATION_STYLE_CONTROL_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
-const ANNOTATION_STYLE_ROW_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+const ANNOTATION_STYLE_CONTROL_GAP: f32 = ThemeMetrics::SPACE_1;
+const ANNOTATION_STYLE_ROW_PADDING: f32 = ThemeMetrics::SPACE_1;
 const ANNOTATION_STYLE_VALUE_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_VALUE_WIDTH;
 const ANNOTATION_STYLE_OPACITY_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_OPACITY_WIDTH;
 const ANNOTATION_STYLE_FILL_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_FILL_WIDTH;
@@ -94,8 +95,9 @@ const ANNOTATION_LAYERS_PREFERRED_HEIGHT: f32 = 200.0;
 const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 900.0;
 const OVERLAY_MORE_ACTIONS_ID: &str = "overlay-more-actions";
 const SECONDARY_ACTION_COUNT: usize = 14;
+// Chinese Save Editable, QR, and OCR labels need more room than their English counterparts.
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
-    138.0, 111.0, 143.0, 92.0, 91.0, 38.0, 47.0, 92.0, 81.0, 101.0, 126.0,
+    138.0, 128.0, 143.0, 92.0, 91.0, 72.0, 84.0, 92.0, 81.0, 101.0, 126.0,
 ];
 const OVERLAY_RECOGNITION_ACTION_WIDTHS: [f32; 2] = [76.0, 92.0];
 const OVERLAY_RETRY_ACTION_WIDTHS: [f32; 1] = [126.0];
@@ -617,6 +619,47 @@ fn annotation_tool_button(
     )
 }
 
+/// Builds one compact annotation launcher; the full tool name stays available to screen readers
+/// and in the hover tooltip so the drawing row can use stable icon-sized hit targets.
+fn annotation_icon_button(
+    id: impl Into<gpui::ElementId>,
+    glyph: &'static str,
+    label: &'static str,
+    tooltip: &'static str,
+    colors: ThemeColors,
+    active: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    workspace_icon_button(
+        id,
+        glyph,
+        label,
+        WorkspaceButtonConfig::icon(
+            colors,
+            if active {
+                WorkspaceButtonTone::Primary
+            } else {
+                WorkspaceButtonTone::Neutral
+            },
+            active,
+            true,
+            tooltip,
+        ),
+        on_click,
+    )
+    .on_key_down(stop_overlay_action_key_propagation)
+}
+
+/// Returns one stable glyph for the four annotation tool groups shown in the compact palette.
+const fn annotation_tool_group_icon(group: AnnotationToolGroup) -> &'static str {
+    match group {
+        AnnotationToolGroup::Text => "T",
+        AnnotationToolGroup::Shape => "□",
+        AnnotationToolGroup::Line => "↗",
+        AnnotationToolGroup::Obscure => "▦",
+    }
+}
+
 /// Keeps acceptance selectors and accessibility ids stable as group contents evolve.
 const fn annotation_tool_key(tool: AnnotationTool) -> &'static str {
     match tool {
@@ -654,6 +697,8 @@ fn annotation_style_button(
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
     workspace_text_button_with_aria(id, label, aria_label, config, on_click)
+        .text_xs()
+        .px_1()
         .on_key_down(stop_overlay_action_key_propagation)
 }
 
@@ -1586,6 +1631,7 @@ impl Render for CaptureOverlay {
         let display_bounds = self.display.physical_bounds;
         let app = self.app.read(cx);
         let colors = app.colors;
+        let workspace_colors = ThemeColors::for_mode(ThemeMode::Dark);
         let locale = app.settings.locale;
         // The session owns the committed selection. Keep rendering it after the
         // drag has ended, even if a late pointer event clears transient UI state.
@@ -1684,11 +1730,6 @@ impl Render for CaptureOverlay {
             app.annotation_tool_group_owner.as_deref() == Some(self.display.id.as_str())
         });
         let show_annotation_tool_group_dismiss = app.annotation_tool_group.is_some();
-        let annotation_style_height = annotation_style_row_height(
-            (view_rect(viewport).width - OVERLAY_EDGE_INSET * 2.0)
-                .clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH),
-            style_capabilities,
-        );
         let show_annotation_style = show_annotation_controls && style_capabilities.has_controls();
         let layout_snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
             selection,
@@ -1699,7 +1740,7 @@ impl Render for CaptureOverlay {
             inspection_target,
             show_annotation_controls,
             annotation_toolbar_items,
-            annotation_style_height,
+            annotation_style_capabilities: style_capabilities,
             annotation_tool_group,
             annotation_tool_width,
             has_recognition_result: recognition_result.is_some(),
@@ -1941,7 +1982,7 @@ impl Render for CaptureOverlay {
             })
             .when_some(annotation_layout, |overlay, layout| {
                 overlay.child(
-                    workspace_surface(colors, false)
+                    div()
                         .id("overlay-marking-panel")
                         .occlude()
                         .absolute()
@@ -1968,16 +2009,16 @@ impl Render for CaptureOverlay {
                         .max_h(px(annotation_layer_max_height))
                         .overflow_y_scroll()
                         .p_2()
-                        .bg(colors.panel)
+                        .bg(workspace_colors.toolbar_surface)
                         .border_1()
-                        .border_color(colors.border)
+                        .border_color(workspace_colors.toolbar_border)
                         .flex()
                         .flex_col()
                         .gap_1()
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(colors.muted)
+                                .text_color(workspace_colors.overlay_muted)
                                 .child(locale.text(UiText::OverlayLayers)),
                         )
                         .children(layer_annotations.iter().rev().enumerate().map(
@@ -1990,14 +2031,14 @@ impl Render for CaptureOverlay {
                                     .px_2()
                                     .py_1()
                                     .bg(if is_selected {
-                                        colors.accent
+                                        workspace_colors.accent
                                     } else {
-                                        colors.panel
+                                        workspace_colors.toolbar_surface
                                     })
                                     .text_color(if is_selected {
-                                        colors.background
+                                        workspace_colors.background
                                     } else {
-                                        colors.text
+                                        workspace_colors.text
                                     })
                                     .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -2052,11 +2093,13 @@ impl Render for CaptureOverlay {
                         ),
                 )
             })
-            .when(show_annotation_controls, |overlay| {
+            .when(
+                show_annotation_controls
+                    && (annotation_tool_group.is_some() || selected_annotation.is_some()),
+                |overlay| {
                 overlay.child(
                     div()
                         .id("overlay-annotation-tools")
-                        .occlude()
                         .absolute()
                         .when_some(annotation_layout, |tools, layout| {
                             tools
@@ -2072,88 +2115,12 @@ impl Render for CaptureOverlay {
                         })
                         .flex_col()
                         .gap(px(ANNOTATION_TOOL_GAP))
-                        .p(px(ANNOTATION_TOOLBAR_PADDING))
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(
-                            div()
-                                .id("overlay-annotation-tool-palette")
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap(px(ANNOTATION_TOOL_GAP))
-                                .children(ANNOTATION_TOOL_GROUP_SPECS.iter().copied().map(|spec| {
-                                    let group = spec.group;
-                                    let active = annotation_tool_group == Some(group)
-                                        || selected_tool
-                                            .is_some_and(|tool| spec.tools.contains(&tool));
-                                    let focus_handle =
-                                        self.annotation_tool_group_trigger_focus_handle(group);
-                                    annotation_tool_button(
-                                        format!(
-                                            "overlay-tool-group-{}",
-                                            annotation_tool_group_key(group)
-                                        ),
-                                        locale.text(spec.label),
-                                        colors,
-                                        active,
-                                        annotation_tool_width,
-                                        Some(locale.text(spec.tooltip)),
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.toggle_annotation_tool_group_from_trigger(
-                                                group, window, cx,
-                                            );
-                                        }),
-                                    )
-                                    .track_focus(&focus_handle)
-                                    .on_key_down(cx.listener(move |this, event, window, cx| {
-                                        this.handle_annotation_tool_group_trigger_key_down(
-                                            group, event, window, cx,
-                                        );
-                                    }))
-                                }))
-                                .child(
-                                    annotation_tool_button(
-                                        "overlay-tool-highlight",
-                                        locale.text(UiText::OverlayHighlight),
-                                        colors,
-                                        selected_tool == Some(AnnotationTool::Highlight),
-                                        annotation_tool_width,
-                                        None,
-                                        cx.listener(|this, _, _, cx| {
-                                            let app = this.app.clone();
-                                            cx.defer(move |cx| {
-                                                app.update(cx, |app, cx| {
-                                                    app.select_annotation_tool(
-                                                        AnnotationTool::Highlight,
-                                                        cx,
-                                                    );
-                                                });
-                                            });
-                                        }),
-                                    )
-                                    .on_key_down(stop_overlay_action_key_propagation),
-                                )
-                                .child(
-                                    annotation_tool_button(
-                                        "overlay-tool-selection",
-                                        locale.text(UiText::OverlaySelect),
-                                        colors,
-                                        selected_tool.is_none(),
-                                        annotation_tool_width,
-                                        None,
-                                        cx.listener(|this, _, _, cx| {
-                                            let app = this.app.clone();
-                                            cx.defer(move |cx| {
-                                                app.update(cx, |app, cx| {
-                                                    app.select_selection_tool(cx);
-                                                });
-                                            });
-                                        }),
-                                    )
-                                    .on_key_down(stop_overlay_action_key_propagation),
-                                ),
-                        )
+                        // Reserve the same row height as the inline palette. The old standalone
+                        // palette is intentionally absent so the reference toolbar stays one row;
+                        // the child popover below still uses this anchor when a group is open.
+                        .child(div().h(px(ANNOTATION_TOOL_PALETTE_HEIGHT)))
                         .when_some(annotation_tool_group, |tools, group| {
                             let popup_width = layout_snapshot
                                 .annotation_tool_group
@@ -2172,7 +2139,7 @@ impl Render for CaptureOverlay {
                                     )
                                 });
                             tools.child(
-                                workspace_surface(colors, true)
+                                workspace_surface(workspace_colors, true)
                                     .id(format!(
                                         "overlay-tool-group-popover-{}",
                                         annotation_tool_group_key(group)
@@ -2197,7 +2164,7 @@ impl Render for CaptureOverlay {
                                                     annotation_tool_key(tool)
                                                 ),
                                                 locale.text(annotation_tool_ui_text(tool)),
-                                                colors,
+                                                workspace_colors,
                                                 active,
                                                 annotation_tool_width,
                                                 None,
@@ -2226,7 +2193,7 @@ impl Render for CaptureOverlay {
                                     .w_full()
                                     .pt_2()
                                     .border_t_1()
-                                    .border_color(colors.toolbar_border)
+                                    .border_color(workspace_colors.toolbar_border)
                                     .flex()
                                     .flex_wrap()
                                     .items_center()
@@ -2237,14 +2204,14 @@ impl Render for CaptureOverlay {
                                             .px_2()
                                             .flex()
                                             .items_center()
-                                            .text_color(colors.overlay_muted)
+                                            .text_color(workspace_colors.overlay_muted)
                                             .text_xs()
                                             .child(locale.text(UiText::OverlaySelected)),
                                     )
                                     .child(annotation_action_button(
                                         "overlay-delete",
                                         locale.text(UiText::OverlayDelete),
-                                        colors,
+                                        workspace_colors,
                                         AnnotationActionTone::Destructive,
                                         true,
                                         cx.listener(|this, _, _, cx| {
@@ -2260,7 +2227,7 @@ impl Render for CaptureOverlay {
                                         actions.child(annotation_action_button(
                                             "overlay-edit-text",
                                             locale.text(UiText::OverlayEditText),
-                                            colors,
+                                            workspace_colors,
                                             AnnotationActionTone::Primary,
                                             true,
                                             cx.listener(|this, _, _, cx| {
@@ -2278,7 +2245,7 @@ impl Render for CaptureOverlay {
                                             .child(annotation_action_button(
                                                 "overlay-number-decrement",
                                                 "-",
-                                                colors,
+                                                workspace_colors,
                                                 AnnotationActionTone::Neutral,
                                                 true,
                                                 cx.listener(|this, _, _, cx| {
@@ -2298,14 +2265,14 @@ impl Render for CaptureOverlay {
                                                     .items_center()
                                                     .justify_center()
                                                     .rounded_md()
-                                                    .bg(colors.panel)
-                                                    .text_color(colors.text)
+                                                    .bg(workspace_colors.toolbar_elevated)
+                                                    .text_color(workspace_colors.text)
                                                     .child(value.to_string()),
                                             )
                                             .child(annotation_action_button(
                                                 "overlay-number-increment",
                                                 "+",
-                                                colors,
+                                                workspace_colors,
                                                 AnnotationActionTone::Neutral,
                                                 true,
                                                 cx.listener(|this, _, _, cx| {
@@ -2321,7 +2288,7 @@ impl Render for CaptureOverlay {
                                     .child(annotation_action_button(
                                         "overlay-duplicate",
                                         locale.text(UiText::OverlayDuplicate),
-                                        colors,
+                                        workspace_colors,
                                         AnnotationActionTone::Neutral,
                                         true,
                                         cx.listener(|this, _, _, cx| {
@@ -2336,7 +2303,7 @@ impl Render for CaptureOverlay {
                                     .child(annotation_action_button(
                                         "overlay-selection-arrange-toggle",
                                         locale.text(UiText::OverlayArrange),
-                                        colors,
+                                        workspace_colors,
                                         if show_annotation_arrange_actions {
                                             AnnotationActionTone::Primary
                                         } else {
@@ -2364,7 +2331,7 @@ impl Render for CaptureOverlay {
                                     .w_full()
                                     .pt_2()
                                     .border_t_1()
-                                    .border_color(colors.toolbar_border)
+                                    .border_color(workspace_colors.toolbar_border)
                                     .flex()
                                     .flex_wrap()
                                     .items_center()
@@ -2375,7 +2342,7 @@ impl Render for CaptureOverlay {
                                             .px_2()
                                             .flex()
                                             .items_center()
-                                            .text_color(colors.overlay_muted)
+                                            .text_color(workspace_colors.overlay_muted)
                                             .text_xs()
                                             .child(locale.text(UiText::OverlayArrange)),
                                     )
@@ -2383,7 +2350,7 @@ impl Render for CaptureOverlay {
                                         actions.child(annotation_action_button(
                                             "overlay-rotate-clockwise",
                                             locale.text(UiText::OverlayRotate90),
-                                            colors,
+                                            workspace_colors,
                                             AnnotationActionTone::Neutral,
                                             true,
                                             cx.listener(|this, _, _, cx| {
@@ -2401,7 +2368,7 @@ impl Render for CaptureOverlay {
                                     .child(annotation_action_button(
                                         "overlay-bring-forward",
                                         locale.text(UiText::OverlayBringForward),
-                                        colors,
+                                        workspace_colors,
                                         AnnotationActionTone::Neutral,
                                         true,
                                         cx.listener(|this, _, _, cx| {
@@ -2416,7 +2383,7 @@ impl Render for CaptureOverlay {
                                     .child(annotation_action_button(
                                         "overlay-send-backward",
                                         locale.text(UiText::OverlaySendBackward),
-                                        colors,
+                                        workspace_colors,
                                         AnnotationActionTone::Neutral,
                                         true,
                                         cx.listener(|this, _, _, cx| {
@@ -2431,7 +2398,7 @@ impl Render for CaptureOverlay {
                                     .child(annotation_action_button(
                                         "overlay-bring-to-front",
                                         locale.text(UiText::OverlayBringToFront),
-                                        colors,
+                                        workspace_colors,
                                         AnnotationActionTone::Neutral,
                                         true,
                                         cx.listener(|this, _, _, cx| {
@@ -2446,7 +2413,7 @@ impl Render for CaptureOverlay {
                                     .child(annotation_action_button(
                                         "overlay-send-to-back",
                                         locale.text(UiText::OverlaySendToBack),
-                                        colors,
+                                        workspace_colors,
                                         AnnotationActionTone::Neutral,
                                         true,
                                         cx.listener(|this, _, _, cx| {
@@ -2463,7 +2430,7 @@ impl Render for CaptureOverlay {
                 )
             })
             .when(show_annotation_style, |overlay| {
-                let style_row = workspace_surface(colors, false)
+                let style_row = workspace_surface(workspace_colors, false)
                     .id("overlay-annotation-style-row")
                     .occlude()
                     .absolute()
@@ -2500,7 +2467,7 @@ impl Render for CaptureOverlay {
                                             color == annotation_color,
                                             locale.text(UiText::AnnotationColorSelected),
                                             locale.text(UiText::AnnotationColorSelected),
-                                            colors,
+                                            workspace_colors,
                                             cx.listener(move |this, _, _, cx| {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
@@ -2516,7 +2483,7 @@ impl Render for CaptureOverlay {
                                 div()
                                     .id("overlay-style-fill-group")
                                     .border_l_1()
-                                    .border_color(colors.toolbar_border)
+                                    .border_color(workspace_colors.toolbar_border)
                                     .pl_2()
                                     .child(annotation_style_button(
                                         "overlay-fill",
@@ -2525,7 +2492,7 @@ impl Render for CaptureOverlay {
                                         WorkspaceButtonConfig::text(
                                             Some(ANNOTATION_STYLE_FILL_WIDTH),
                                             ANNOTATION_STYLE_CONTROL_HEIGHT,
-                                            colors,
+                                            workspace_colors,
                                             WorkspaceButtonTone::Neutral,
                                             fill_enabled,
                                             true,
@@ -2545,7 +2512,7 @@ impl Render for CaptureOverlay {
                                 div()
                                     .id("overlay-style-widths")
                                     .border_l_1()
-                                    .border_color(colors.toolbar_border)
+                                    .border_color(workspace_colors.toolbar_border)
                                     .pl_2()
                                     .flex()
                                     .items_center()
@@ -2563,7 +2530,7 @@ impl Render for CaptureOverlay {
                                             WorkspaceButtonConfig::text(
                                                 Some(ANNOTATION_STYLE_VALUE_WIDTH),
                                                 ANNOTATION_STYLE_CONTROL_HEIGHT,
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 width == annotation_width,
                                                 true,
@@ -2584,7 +2551,7 @@ impl Render for CaptureOverlay {
                                 div()
                                     .id("overlay-style-opacity")
                                     .border_l_1()
-                                    .border_color(colors.toolbar_border)
+                                    .border_color(workspace_colors.toolbar_border)
                                     .pl_2()
                                     .flex()
                                     .items_center()
@@ -2602,7 +2569,7 @@ impl Render for CaptureOverlay {
                                             WorkspaceButtonConfig::text(
                                                 Some(ANNOTATION_STYLE_OPACITY_WIDTH),
                                                 ANNOTATION_STYLE_CONTROL_HEIGHT,
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 opacity == annotation_opacity,
                                                 true,
@@ -2623,7 +2590,7 @@ impl Render for CaptureOverlay {
                                 div()
                                     .id("overlay-style-font-sizes")
                                     .border_l_1()
-                                    .border_color(colors.toolbar_border)
+                                    .border_color(workspace_colors.toolbar_border)
                                     .pl_2()
                                     .flex()
                                     .items_center()
@@ -2641,7 +2608,7 @@ impl Render for CaptureOverlay {
                                             WorkspaceButtonConfig::text(
                                                 Some(ANNOTATION_STYLE_VALUE_WIDTH),
                                                 ANNOTATION_STYLE_CONTROL_HEIGHT,
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 font_size == annotation_font_size,
                                                 true,
@@ -2709,14 +2676,11 @@ impl Render for CaptureOverlay {
                     .justify_between()
                     .gap(px(OVERLAY_ACTION_ITEM_GAP))
                     .p(px(OVERLAY_ACTION_BAR_PADDING))
-                    .when(!show_annotation_controls, |actions| {
-                        actions
-                            .rounded(px(ThemeMetrics::default().radius_md))
-                            .border_1()
-                            .border_color(colors.toolbar_border)
-                            .bg(colors.toolbar_surface)
-                            .shadow_lg()
-                    })
+                    .rounded(px(ThemeMetrics::default().radius_md))
+                    .border_1()
+                    .border_color(workspace_colors.toolbar_border)
+                    .bg(workspace_colors.toolbar_surface)
+                    .shadow_lg()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .when(can_export, |actions| {
@@ -2733,7 +2697,7 @@ impl Render for CaptureOverlay {
                                             icon::UNDO,
                                             locale.text(UiText::OverlayUndo),
                                             WorkspaceButtonConfig::icon(
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 false,
                                                 can_undo,
@@ -2753,7 +2717,7 @@ impl Render for CaptureOverlay {
                                             icon::REDO,
                                             locale.text(UiText::OverlayRedo),
                                             WorkspaceButtonConfig::icon(
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 false,
                                                 can_redo,
@@ -2773,10 +2737,89 @@ impl Render for CaptureOverlay {
                             .when(show_annotation_controls, |actions| {
                                 actions.child(workspace_separator(
                                     "overlay-action-context-separator",
-                                    colors,
+                                    workspace_colors,
                                 ))
                             })
-                            .child(
+                            .when(show_annotation_controls, |actions| {
+                                actions.child(
+                                    div()
+                                        .id("overlay-inline-annotation-tools")
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(ANNOTATION_TOOL_PALETTE_GAP))
+                                        .children(ANNOTATION_TOOL_GROUP_SPECS.iter().copied().map(
+                                            |spec| {
+                                                let group = spec.group;
+                                                let active = annotation_tool_group == Some(group)
+                                                    || selected_tool.is_some_and(|tool| {
+                                                        spec.tools.contains(&tool)
+                                                    });
+                                                let focus_handle = self
+                                                    .annotation_tool_group_trigger_focus_handle(group);
+                                                annotation_icon_button(
+                                                    format!(
+                                                        "overlay-tool-group-{}",
+                                                        annotation_tool_group_key(group)
+                                                    ),
+                                                    annotation_tool_group_icon(group),
+                                                    locale.text(spec.label),
+                                                    locale.text(spec.tooltip),
+                                                    workspace_colors,
+                                                    active,
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.toggle_annotation_tool_group_from_trigger(
+                                                            group, window, cx,
+                                                        );
+                                                    }),
+                                                )
+                                                .track_focus(&focus_handle)
+                                                .on_key_down(cx.listener(
+                                                    move |this, event, window, cx| {
+                                                        this.handle_annotation_tool_group_trigger_key_down(
+                                                            group, event, window, cx,
+                                                        );
+                                                    },
+                                                ))
+                                            },
+                                        ))
+                                        .child(annotation_icon_button(
+                                            "overlay-tool-highlight",
+                                            icon::MARK,
+                                            locale.text(UiText::OverlayHighlight),
+                                            locale.text(UiText::OverlayHighlight),
+                                            workspace_colors,
+                                            selected_tool == Some(AnnotationTool::Highlight),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.select_annotation_tool(
+                                                            AnnotationTool::Highlight,
+                                                            cx,
+                                                        );
+                                                    });
+                                                });
+                                            }),
+                                        ))
+                                        .child(annotation_icon_button(
+                                            "overlay-tool-selection",
+                                            "↖",
+                                            locale.text(UiText::OverlaySelect),
+                                            locale.text(UiText::OverlaySelect),
+                                            workspace_colors,
+                                            selected_tool.is_none(),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.select_selection_tool(cx);
+                                                    });
+                                                });
+                                            }),
+                                        )),
+                                )
+                            })
+                            .when(!show_annotation_controls, |actions| actions.child(
                                 div()
                                     .id("overlay-mode-actions")
                                     .flex()
@@ -2787,7 +2830,7 @@ impl Render for CaptureOverlay {
                                             icon::MARK,
                                             locale.text(UiText::OverlayMark),
                                             WorkspaceButtonConfig::icon(
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 show_annotation_controls,
                                                 true,
@@ -2808,11 +2851,11 @@ impl Render for CaptureOverlay {
                                         )
                                         .on_key_down(stop_overlay_action_key_propagation),
                                     ),
-                            )
+                            ))
                             .when(show_annotation_controls, |actions| {
                                 actions.child(workspace_separator(
                                     "overlay-action-result-separator",
-                                    colors,
+                                    workspace_colors,
                                 ))
                             })
                             .child(
@@ -2827,7 +2870,7 @@ impl Render for CaptureOverlay {
                                             icon::PIN,
                                             locale.text(UiText::OverlayPin),
                                             WorkspaceButtonConfig::icon(
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 false,
                                                 true,
@@ -2848,8 +2891,12 @@ impl Render for CaptureOverlay {
                                             icon::COPY,
                                             locale.text(UiText::OverlayCopy),
                                             WorkspaceButtonConfig::icon(
-                                                colors,
-                                                WorkspaceButtonTone::Primary,
+                                                workspace_colors,
+                                                if show_annotation_controls {
+                                                    WorkspaceButtonTone::Neutral
+                                                } else {
+                                                    WorkspaceButtonTone::Primary
+                                                },
                                                 false,
                                                 !selection_copy_in_progress,
                                                 if selection_copy_in_progress {
@@ -2873,7 +2920,7 @@ impl Render for CaptureOverlay {
                                             icon::SAVE,
                                             locale.text(UiText::OverlaySave),
                                             WorkspaceButtonConfig::icon(
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 false,
                                                 true,
@@ -2894,7 +2941,7 @@ impl Render for CaptureOverlay {
                                             icon::MORE,
                                             more_actions_button_label(locale, show_more_actions),
                                             WorkspaceButtonConfig::icon(
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Neutral,
                                                 show_more_actions,
                                                 true,
@@ -2934,7 +2981,7 @@ impl Render for CaptureOverlay {
                                             icon::CANCEL,
                                             locale.text(UiText::OverlayCancel),
                                             WorkspaceButtonConfig::icon(
-                                                colors,
+                                                workspace_colors,
                                                 WorkspaceButtonTone::Destructive,
                                                 false,
                                                 true,
@@ -2952,7 +2999,7 @@ impl Render for CaptureOverlay {
                             )
                             .when(show_more_actions, |actions| {
                                 actions.child(
-                                    workspace_surface(colors, false)
+                                    workspace_surface(workspace_colors, false)
                                         .id("overlay-secondary-actions")
                                         .tab_group()
                                         .occlude()
@@ -2978,7 +3025,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::SaveAnnotations),
                                             locale.text(UiText::OverlaySaveAnnotations),
                                             OVERLAY_MORE_ACTION_WIDTHS[0],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             None,
                                             cx.listener(|this, _, _, cx| {
@@ -2996,7 +3043,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::SaveEditable),
                                             locale.text(UiText::OverlaySaveEditable),
                                             OVERLAY_MORE_ACTION_WIDTHS[1],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             None,
                                             cx.listener(|this, _, _, cx| {
@@ -3014,7 +3061,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::OpenAnnotations),
                                             locale.text(UiText::OverlayOpenAnnotations),
                                             OVERLAY_MORE_ACTION_WIDTHS[2],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             None,
                                             cx.listener(|this, _, _, cx| {
@@ -3032,7 +3079,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::QuickSave),
                                             locale.text(UiText::OverlayQuickSave),
                                             OVERLAY_MORE_ACTION_WIDTHS[3],
-                                            colors,
+                                            workspace_colors,
                                             true,
                                             Some(locale.text(UiText::OverlayQuickSaveTooltip)),
                                             cx.listener(|this, _, _, cx| {
@@ -3050,7 +3097,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::ScrollShot),
                                             locale.text(UiText::OverlayScrollShot),
                                             OVERLAY_MORE_ACTION_WIDTHS[4],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "scroll")),
                                             cx.listener(|this, _, _, cx| {
@@ -3067,7 +3114,7 @@ impl Render for CaptureOverlay {
                                             secondary_navigation.for_action(SecondaryAction::Qr),
                                             locale.text(UiText::OverlayQr),
                                             OVERLAY_MORE_ACTION_WIDTHS[5],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "qr")),
                                             cx.listener(|this, _, _, cx| {
@@ -3084,7 +3131,7 @@ impl Render for CaptureOverlay {
                                             secondary_navigation.for_action(SecondaryAction::Ocr),
                                             locale.text(UiText::OverlayOcr),
                                             OVERLAY_MORE_ACTION_WIDTHS[6],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "ocr")),
                                             cx.listener(|this, _, _, cx| {
@@ -3102,7 +3149,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::CopyColor),
                                             locale.text(UiText::OverlayCopyColor),
                                             OVERLAY_MORE_ACTION_WIDTHS[7],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             Some(locale.text(UiText::OverlayCopyColorTooltip)),
                                             cx.listener(|this, _, _, cx| {
@@ -3120,7 +3167,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::Translate),
                                             locale.text(UiText::OverlayTranslate),
                                             OVERLAY_MORE_ACTION_WIDTHS[8],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "translate")),
                                             cx.listener(|this, _, _, cx| {
@@ -3138,7 +3185,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::RecordArea),
                                             locale.text(UiText::OverlayRecordArea),
                                             OVERLAY_MORE_ACTION_WIDTHS[9],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "record-area")),
                                             cx.listener(|this, _, _, cx| {
@@ -3156,7 +3203,7 @@ impl Render for CaptureOverlay {
                                                 .for_action(SecondaryAction::RecordWindow),
                                             locale.text(UiText::OverlayRecordWindow),
                                             OVERLAY_MORE_ACTION_WIDTHS[10],
-                                            colors,
+                                            workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "record-window")),
                                             cx.listener(|this, _, _, cx| {
@@ -3178,9 +3225,9 @@ impl Render for CaptureOverlay {
                                                     .flex()
                                                     .items_center()
                                                     .rounded_sm()
-                                                    .bg(colors.panel)
+                                                    .bg(workspace_colors.toolbar_surface)
                                                     .text_xs()
-                                                    .text_color(colors.muted)
+                                                    .text_color(workspace_colors.overlay_muted)
                                                     .child(
                                                         locale.text(
                                                             UiText::OverlayRecognizingSelection,
@@ -3197,7 +3244,7 @@ impl Render for CaptureOverlay {
                                                     .for_action(SecondaryAction::RetryRecognition),
                                                 retry_label,
                                                 OVERLAY_RETRY_ACTION_WIDTHS[0],
-                                                colors,
+                                                workspace_colors,
                                                 true,
                                                 Some(
                                                     locale.text(
@@ -3237,13 +3284,17 @@ impl Render for CaptureOverlay {
                                                         .child(
                                                             div()
                                                                 .text_xs()
-                                                                .text_color(colors.overlay_muted)
+                                                                .text_color(
+                                                                    workspace_colors.overlay_muted,
+                                                                )
                                                                 .child(result.title.clone()),
                                                         )
                                                         .child(
                                                             div()
                                                                 .text_sm()
-                                                                .text_color(colors.overlay_text)
+                                                                .text_color(
+                                                                    workspace_colors.overlay_text,
+                                                                )
                                                                 .child(recognition_result_preview(
                                                                     &result.text,
                                                                 )),
@@ -3256,7 +3307,7 @@ impl Render for CaptureOverlay {
                                                     ),
                                                     locale.text(UiText::OverlayCopyText),
                                                     OVERLAY_RECOGNITION_ACTION_WIDTHS[0],
-                                                    colors,
+                                                    workspace_colors,
                                                     false,
                                                     Some(
                                                         locale.text(UiText::OverlayCopyTextTooltip),
@@ -3277,7 +3328,7 @@ impl Render for CaptureOverlay {
                                                     ),
                                                     locale.text(UiText::OverlayClearResult),
                                                     OVERLAY_RECOGNITION_ACTION_WIDTHS[1],
-                                                    colors,
+                                                    workspace_colors,
                                                     false,
                                                     Some(
                                                         locale.text(
@@ -4210,6 +4261,7 @@ struct AnnotationToolbarItems {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct AnnotationToolbarLayoutOptions {
     items: AnnotationToolbarItems,
+    style_width: f32,
     style_height: f32,
     annotation_tool_group: Option<AnnotationToolGroup>,
     tool_estimated_width: f32,
@@ -4340,7 +4392,7 @@ struct WorkspaceLayoutInput {
     inspection_target: Option<InspectionTarget>,
     show_annotation_controls: bool,
     annotation_toolbar_items: AnnotationToolbarItems,
-    annotation_style_height: f32,
+    annotation_style_capabilities: AnnotationStyleCapabilities,
     annotation_tool_group: Option<AnnotationToolGroup>,
     annotation_tool_width: f32,
     has_recognition_result: bool,
@@ -4439,14 +4491,55 @@ fn annotation_style_capabilities(
         .unwrap_or_default()
 }
 
-/// Measures the attached style row using the same fixed control groups that the renderer wraps.
-///
-/// The estimate is intentionally conservative for localized labels and button padding. Returning
-/// zero for an unsupported tool also removes the row's gap from the surrounding layout.
-fn annotation_style_row_height(width: f32, capabilities: AnnotationStyleCapabilities) -> f32 {
+/// Measures all style groups at their natural width so the dock only grows for controls the
+/// current annotation tool can actually use.
+fn annotation_style_row_width(capabilities: AnnotationStyleCapabilities) -> f32 {
     if !capabilities.has_controls() {
         return 0.0;
     }
+    annotation_style_group_widths(capabilities)
+        .into_iter()
+        .flatten()
+        .sum::<f32>()
+        + capabilities_group_count(capabilities).saturating_sub(1) as f32
+            * ANNOTATION_STYLE_CONTROL_GAP
+        + ANNOTATION_STYLE_ROW_PADDING * 2.0
+        + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0
+}
+
+/// Finds the narrowest style row that preserves the row count allowed by the safe viewport width.
+/// This keeps wrapped controls compact instead of leaving a wide empty strip to their right.
+fn annotation_style_row_preferred_width(
+    available_width: f32,
+    capabilities: AnnotationStyleCapabilities,
+) -> f32 {
+    let natural_width = annotation_style_row_width(capabilities);
+    if natural_width == 0.0 || natural_width <= available_width {
+        return natural_width;
+    }
+
+    let target_height = annotation_style_row_height(available_width, capabilities);
+    let minimum_group_width = annotation_style_group_widths(capabilities)
+        .into_iter()
+        .flatten()
+        .fold(0.0_f32, f32::max)
+        + ANNOTATION_STYLE_ROW_PADDING * 2.0
+        + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0;
+    let mut lower = minimum_group_width.min(available_width);
+    let mut upper = available_width;
+    for _ in 0..16 {
+        let candidate = (lower + upper) / 2.0;
+        if annotation_style_row_height(candidate, capabilities) <= target_height {
+            upper = candidate;
+        } else {
+            lower = candidate;
+        }
+    }
+    upper.ceil().min(available_width)
+}
+
+/// Returns the rendered width of each optional style group, including its leading divider.
+fn annotation_style_group_widths(capabilities: AnnotationStyleCapabilities) -> [Option<f32>; 5] {
     const COLOR_GROUP_WIDTH: f32 =
         ThemeMetrics::WORKSPACE_SWATCH_SIZE * 5.0 + ANNOTATION_STYLE_CONTROL_GAP * 4.0;
     const WIDTH_GROUP_WIDTH: f32 =
@@ -4454,14 +4547,14 @@ fn annotation_style_row_height(width: f32, capabilities: AnnotationStyleCapabili
     const OPACITY_GROUP_WIDTH: f32 =
         4.0 * ANNOTATION_STYLE_OPACITY_WIDTH + ANNOTATION_STYLE_CONTROL_GAP * 3.0;
     const FONT_GROUP_WIDTH: f32 = WIDTH_GROUP_WIDTH;
-    const FILL_GROUP_WIDTH: f32 = ANNOTATION_STYLE_FILL_WIDTH;
     const GROUP_SEPARATOR_WIDTH: f32 =
         ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH + ThemeMetrics::SPACE_2;
-    let group_widths = [
+
+    [
         capabilities.color.then_some(COLOR_GROUP_WIDTH),
         capabilities
             .fill
-            .then_some(FILL_GROUP_WIDTH + GROUP_SEPARATOR_WIDTH),
+            .then_some(ANNOTATION_STYLE_FILL_WIDTH + GROUP_SEPARATOR_WIDTH),
         capabilities
             .width
             .then_some(WIDTH_GROUP_WIDTH + GROUP_SEPARATOR_WIDTH),
@@ -4471,8 +4564,30 @@ fn annotation_style_row_height(width: f32, capabilities: AnnotationStyleCapabili
         capabilities
             .font_size
             .then_some(FONT_GROUP_WIDTH + GROUP_SEPARATOR_WIDTH),
-    ];
-    let available_width = (width - ANNOTATION_STYLE_ROW_PADDING * 2.0).max(1.0);
+    ]
+}
+
+/// Counts visible style groups so natural width includes only the separators actually rendered.
+fn capabilities_group_count(capabilities: AnnotationStyleCapabilities) -> usize {
+    usize::from(capabilities.color)
+        + usize::from(capabilities.fill)
+        + usize::from(capabilities.width)
+        + usize::from(capabilities.opacity)
+        + usize::from(capabilities.font_size)
+}
+
+/// Measures the attached style row using the same fixed control groups that the renderer wraps.
+///
+/// The estimate is intentionally conservative for localized labels and button padding. Returning
+/// zero for an unsupported tool also removes the row's gap from the surrounding layout.
+fn annotation_style_row_height(width: f32, capabilities: AnnotationStyleCapabilities) -> f32 {
+    if !capabilities.has_controls() {
+        return 0.0;
+    }
+    let group_widths = annotation_style_group_widths(capabilities);
+    let available_width =
+        (width - ANNOTATION_STYLE_ROW_PADDING * 2.0 - ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0)
+            .max(1.0);
     let mut rows: usize = 1;
     let mut row_width = 0.0;
     for group_width in group_widths.into_iter().flatten() {
@@ -4491,6 +4606,7 @@ fn annotation_style_row_height(width: f32, capabilities: AnnotationStyleCapabili
     ANNOTATION_STYLE_ROW_PADDING * 2.0
         + rows as f32 * ANNOTATION_STYLE_CONTROL_HEIGHT
         + rows.saturating_sub(1) as f32 * ANNOTATION_STYLE_CONTROL_GAP
+        + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0
 }
 
 /// Retains the expanded Arrange group only while its originating annotation remains selected.
@@ -4541,6 +4657,59 @@ fn annotation_toolbar_height(viewport: Bounds<Pixels>, items: AnnotationToolbarI
     )
 }
 
+/// Measures the compact icon palette including its rounded surface and padding.
+fn annotation_tool_palette_width() -> f32 {
+    ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_ICON_WIDTH
+        + ANNOTATION_TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * ANNOTATION_TOOL_PALETTE_GAP
+        + ANNOTATION_TOOLBAR_PADDING * 2.0
+        + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0
+}
+
+/// Chooses a natural dock width from the visible tool icons, style groups, context actions, and
+/// result toolbar, then clamps that width to the display's safe horizontal area.
+fn annotation_toolbar_preferred_width(
+    viewport_width: f32,
+    action_toolbar_width: f32,
+    items: AnnotationToolbarItems,
+    style_width: f32,
+    tool_estimated_width: f32,
+) -> f32 {
+    let context_width = |item_count: usize| {
+        if item_count == 0 {
+            0.0
+        } else {
+            item_count as f32 * tool_estimated_width
+                + item_count.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
+                + ANNOTATION_TOOLBAR_PADDING * 2.0
+                + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0
+        }
+    };
+    let natural_width = action_toolbar_width
+        .max(annotation_tool_palette_width())
+        .max(style_width)
+        .max(context_width(items.selection_context))
+        .max(context_width(items.arrange_context));
+    let available_width =
+        (viewport_width - OVERLAY_EDGE_INSET * 2.0).clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH);
+    natural_width.min(available_width)
+}
+
+/// Computes the actual icon-palette height so selection-anchored group popovers start below it.
+fn annotation_tool_palette_height(width: f32) -> f32 {
+    let content_width =
+        (width - ANNOTATION_TOOLBAR_PADDING * 2.0 - ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0)
+            .max(1.0);
+    let columns = (((content_width + ANNOTATION_TOOL_PALETTE_GAP)
+        / (ANNOTATION_TOOL_ICON_WIDTH + ANNOTATION_TOOL_PALETTE_GAP))
+        .floor() as usize)
+        .max(1);
+    let rows = ANNOTATION_TOOL_PALETTE_ITEMS.div_ceil(columns);
+    rows as f32 * ANNOTATION_TOOL_ICON_WIDTH
+        + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_PALETTE_GAP
+        + ANNOTATION_TOOLBAR_PADDING * 2.0
+        + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0
+}
+
 /// Computes a compact popover width from the group's actual children and the current locale's
 /// button estimate, keeping the transient surface from spanning the whole annotation toolbar.
 fn annotation_tool_group_popover_width(
@@ -4548,7 +4717,7 @@ fn annotation_tool_group_popover_width(
     group: AnnotationToolGroup,
     tool_estimated_width: f32,
 ) -> f32 {
-    let available_width = (width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
+    let available_width = width.max(1.0);
     let tools = group.spec().tools;
     let natural_width = tools.len() as f32 * tool_estimated_width
         + tools.len().saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
@@ -4587,25 +4756,48 @@ fn annotation_toolbar_height_for_width(
     annotation_tool_group: Option<AnnotationToolGroup>,
     tool_estimated_width: f32,
 ) -> f32 {
-    let content_width = (width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
-    let columns = (((content_width + ANNOTATION_TOOL_GAP)
+    let content_width = width.max(1.0);
+    let palette_columns = (((content_width
+        - ANNOTATION_TOOLBAR_PADDING * 2.0
+        - ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0
+        + ANNOTATION_TOOL_PALETTE_GAP)
+        / (ANNOTATION_TOOL_ICON_WIDTH + ANNOTATION_TOOL_PALETTE_GAP))
+        .floor() as usize)
+        .max(1);
+    let context_columns = (((content_width + ANNOTATION_TOOL_GAP)
         / (tool_estimated_width + ANNOTATION_TOOL_GAP))
         .floor() as usize)
         .max(1);
-    let section_height = |item_count: usize| {
+    let rows_height = |item_count: usize, columns: usize, item_height: f32, gap: f32| {
         let rows = item_count.max(1).div_ceil(columns);
-        rows as f32 * ANNOTATION_TOOL_ROW_HEIGHT
-            + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP
+        rows as f32 * item_height + rows.saturating_sub(1) as f32 * gap
     };
-    let section_count =
-        1 + usize::from(items.selection_context > 0) + usize::from(items.arrange_context > 0);
+    let palette_height = rows_height(
+        ANNOTATION_TOOL_PALETTE_ITEMS,
+        palette_columns,
+        ANNOTATION_TOOL_ICON_WIDTH,
+        ANNOTATION_TOOL_PALETTE_GAP,
+    ) + ANNOTATION_TOOLBAR_PADDING * 2.0
+        + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0;
     let selection_context_height = if items.selection_context > 0 {
-        section_height(items.selection_context)
+        rows_height(
+            items.selection_context,
+            context_columns,
+            ANNOTATION_TOOL_ROW_HEIGHT,
+            ANNOTATION_TOOL_GAP,
+        ) + ANNOTATION_TOOLBAR_PADDING
+            + ANNOTATION_TOOL_GROUP_POPUP_BORDER
     } else {
         0.0
     };
     let arrange_context_height = if items.arrange_context > 0 {
-        section_height(items.arrange_context)
+        rows_height(
+            items.arrange_context,
+            context_columns,
+            ANNOTATION_TOOL_ROW_HEIGHT,
+            ANNOTATION_TOOL_GAP,
+        ) + ANNOTATION_TOOLBAR_PADDING
+            + ANNOTATION_TOOL_GROUP_POPUP_BORDER
     } else {
         0.0
     };
@@ -4615,13 +4807,13 @@ fn annotation_toolbar_height_for_width(
     let tool_group_gap = annotation_tool_group
         .map(|_| ANNOTATION_TOOL_GAP)
         .unwrap_or(0.0);
-    section_height(ANNOTATION_TOOL_PALETTE_ITEMS)
+    palette_height
         + tool_group_height
         + tool_group_gap
         + selection_context_height
         + arrange_context_height
-        + section_count.saturating_sub(1) as f32 * ANNOTATION_CONTEXT_SECTION_GAP
-        + ANNOTATION_TOOLBAR_PADDING * 2.0
+        + usize::from(items.selection_context > 0) as f32 * ANNOTATION_TOOL_GAP
+        + usize::from(items.arrange_context > 0) as f32 * ANNOTATION_TOOL_GAP
 }
 
 /// Keeps marking modes, the attached style row, and selection commands in one dock beside the
@@ -4633,6 +4825,7 @@ fn annotation_toolbar_layout(
     viewport: Bounds<Pixels>,
     action_toolbar: Option<ActionToolbarLayout>,
     items: AnnotationToolbarItems,
+    style_width: f32,
     style_height: f32,
     annotation_tool_group: Option<AnnotationToolGroup>,
 ) -> Option<AnnotationToolbarLayout> {
@@ -4642,6 +4835,7 @@ fn annotation_toolbar_layout(
         action_toolbar,
         AnnotationToolbarLayoutOptions {
             items,
+            style_width,
             style_height,
             annotation_tool_group,
             tool_estimated_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
@@ -4649,10 +4843,7 @@ fn annotation_toolbar_layout(
     )
 }
 
-/// Lays out the workspace using a locale-aware estimate for intrinsic text-button widths.
-///
-/// English labels need the wider fallback cell while compact Chinese labels can use the actual
-/// shorter button rhythm, preventing an unused reserved row from separating the style row.
+/// Lays out the compact icon dock using natural visible widths and the shared selection anchor.
 fn annotation_toolbar_layout_with_tool_width(
     selection_anchor: Option<WorkspaceSelectionAnchor>,
     viewport: Bounds<Pixels>,
@@ -4662,22 +4853,30 @@ fn annotation_toolbar_layout_with_tool_width(
     let selection_anchor = selection_anchor?;
     let action_toolbar = action_toolbar?;
     let viewport = view_rect(viewport);
-    let width =
-        (viewport.width - OVERLAY_EDGE_INSET * 2.0).clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH);
+    let width = annotation_toolbar_preferred_width(
+        viewport.width,
+        action_toolbar.width,
+        options.items,
+        options.style_width,
+        options.tool_estimated_width,
+    );
     let tools_width = width;
     let tools_height = annotation_toolbar_height_for_width(
         tools_width,
         options.items,
         options.annotation_tool_group,
         options.tool_estimated_width,
-    );
+    )
+    .max(action_toolbar.height);
     let style_gap = if options.style_height > 0.0 {
         ANNOTATION_STYLE_PANEL_GAP
     } else {
         0.0
     };
+    // In marking mode the palette and result actions share one horizontal surface. The style
+    // row remains attached below it only when the selected tool exposes renderer-backed values.
     let tools_and_style_height = tools_height + style_gap + options.style_height;
-    let total_height = tools_and_style_height + ANNOTATION_STYLE_PANEL_GAP + action_toolbar.height;
+    let total_height = tools_and_style_height;
     let top_left = selection_anchor.top_left;
     let bottom_right = selection_anchor.bottom_right;
     let left_min = viewport.left + OVERLAY_EDGE_INSET;
@@ -4702,16 +4901,8 @@ fn annotation_toolbar_layout_with_tool_width(
             (above_selection.clamp(top_min, top_max), true)
         }
     };
-    let tools_top = if actions_above_tools {
-        top + action_toolbar.height + ANNOTATION_STYLE_PANEL_GAP
-    } else {
-        top
-    };
-    let action_top = if actions_above_tools {
-        top
-    } else {
-        top + tools_and_style_height + ANNOTATION_STYLE_PANEL_GAP
-    };
+    let tools_top = top;
+    let action_top = top;
     let style_left = left;
     let style_top = tools_top + tools_height + style_gap;
     Some(AnnotationToolbarLayout {
@@ -4726,9 +4917,9 @@ fn annotation_toolbar_layout_with_tool_width(
         style_top,
         style_height: options.style_height,
         action_toolbar: ActionToolbarLayout {
-            left: left + width - action_toolbar.width,
+            left,
             top: action_top,
-            width: action_toolbar.width,
+            width,
             height: action_toolbar.height,
         },
         actions_above_tools,
@@ -4919,7 +5110,7 @@ fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnap
         inspection_target,
         show_annotation_controls,
         annotation_toolbar_items,
-        annotation_style_height,
+        annotation_style_capabilities,
         annotation_tool_group,
         annotation_tool_width,
         has_recognition_result,
@@ -4943,6 +5134,20 @@ fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnap
         selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds));
     let base_action_layout =
         action_toolbar_layout(selection_anchor, viewport, show_annotation_controls);
+    let available_toolbar_width =
+        (viewport_rect.width - OVERLAY_EDGE_INSET * 2.0).clamp(1.0, ANNOTATION_TOOLBAR_MAX_WIDTH);
+    let style_width = annotation_style_row_preferred_width(
+        available_toolbar_width,
+        annotation_style_capabilities,
+    );
+    let toolbar_width = annotation_toolbar_preferred_width(
+        viewport_rect.width,
+        base_action_layout.map(|layout| layout.width).unwrap_or(0.0),
+        annotation_toolbar_items,
+        style_width,
+        annotation_tool_width,
+    );
+    let style_height = annotation_style_row_height(toolbar_width, annotation_style_capabilities);
     let annotation_layout = show_annotation_controls
         .then(|| {
             annotation_toolbar_layout_with_tool_width(
@@ -4951,7 +5156,8 @@ fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnap
                 base_action_layout,
                 AnnotationToolbarLayoutOptions {
                     items: annotation_toolbar_items,
-                    style_height: annotation_style_height,
+                    style_width,
+                    style_height,
                     annotation_tool_group,
                     tool_estimated_width: annotation_tool_width,
                 },
@@ -5000,33 +5206,21 @@ fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnap
     let annotation_tool_group =
         annotation_layout
             .zip(annotation_tool_group)
-            .map(|(layout, group)| {
-                let content_width =
-                    (layout.tools_width - ANNOTATION_TOOLBAR_PADDING * 2.0).max(1.0);
-                let columns = (((content_width + ANNOTATION_TOOL_GAP)
-                    / (annotation_tool_width + ANNOTATION_TOOL_GAP))
-                    .floor() as usize)
-                    .max(1);
-                let rows = ANNOTATION_TOOL_PALETTE_ITEMS.div_ceil(columns);
-                let palette_height = rows as f32 * ANNOTATION_TOOL_ROW_HEIGHT
-                    + rows.saturating_sub(1) as f32 * ANNOTATION_TOOL_GAP;
-                AnnotationToolGroupLayout {
-                    left: layout.left,
-                    top: layout.tools_top
-                        + ANNOTATION_TOOLBAR_PADDING
-                        + palette_height
-                        + ANNOTATION_TOOL_GAP,
-                    width: annotation_tool_group_popover_width(
-                        layout.tools_width,
-                        group,
-                        annotation_tool_width,
-                    ),
-                    height: annotation_tool_group_popover_height(
-                        layout.tools_width,
-                        group,
-                        annotation_tool_width,
-                    ),
-                }
+            .map(|(layout, group)| AnnotationToolGroupLayout {
+                left: layout.left,
+                top: layout.tools_top
+                    + annotation_tool_palette_height(layout.tools_width)
+                    + ANNOTATION_TOOL_GAP,
+                width: annotation_tool_group_popover_width(
+                    layout.tools_width,
+                    group,
+                    annotation_tool_width,
+                ),
+                height: annotation_tool_group_popover_height(
+                    layout.tools_width,
+                    group,
+                    annotation_tool_width,
+                ),
             });
     let dimension = selection_dimension_label_layout(selection_anchor, viewport, action_layout);
     let smart_target_hud = smart_target_hud_layout(
@@ -5221,32 +5415,27 @@ fn recognition_result_preview(text: &str) -> String {
     preview
 }
 
-/// Counts visible main-row buttons so layout and hit targets use one stable geometry source.
-fn action_toolbar_item_count(show_annotation_controls: bool) -> usize {
-    6 + usize::from(show_annotation_controls) * 2
-}
-
-/// Lists the visible main-row item widths, including the two group dividers in marking mode.
+/// Lists the visible main-row group widths, including the inline annotation palette in marking mode.
 fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
     if show_annotation_controls {
+        let context_width =
+            2.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + OVERLAY_ACTION_ITEM_GAP;
+        let annotation_width = ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_ICON_WIDTH
+            + ANNOTATION_TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * ANNOTATION_TOOL_PALETTE_GAP;
+        let result_width =
+            5.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + 4.0 * OVERLAY_ACTION_ITEM_GAP;
         vec![
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            context_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            annotation_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            result_width,
         ]
     } else {
-        std::iter::repeat_n(
+        vec![
             ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            action_toolbar_item_count(false),
-        )
-        .collect()
+            5.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + 4.0 * OVERLAY_ACTION_ITEM_GAP,
+        ]
     }
 }
 
@@ -5339,16 +5528,19 @@ mod tests {
         AnnotationStyleCapabilities, AnnotationToolGroup, AnnotationToolbarLayout, FrameInputBatch,
         MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING,
         OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET,
-        OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
-        OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
-        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, WorkspaceLayoutInput,
-        WorkspaceSelectionAnchor, accepts_overlay_input, action_toolbar_height,
-        action_toolbar_layout, action_toolbar_natural_width, annotation_controls_visible,
+        OVERLAY_MORE_ACTION_WIDTHS, OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
+        OVERLAY_SECONDARY_MENU_GAP, OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction,
+        SecondaryActionFocusDirection, SelectionCursor, SelectionDimensionLayout,
+        SmartTargetHudLayout, WorkspaceLayoutInput, WorkspaceSelectionAnchor,
+        accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
+        action_toolbar_natural_width, action_toolbar_row_count, annotation_controls_visible,
         annotation_layer_label, annotation_style_capabilities_for_tool,
-        annotation_style_row_height, annotation_tool_group_focus_direction,
+        annotation_style_row_height, annotation_style_row_preferred_width,
+        annotation_style_row_width, annotation_tool_group_focus_direction,
         annotation_tool_group_focus_target, annotation_tool_group_popover_height,
-        annotation_tool_group_popover_width, annotation_toolbar_height, annotation_toolbar_items,
-        annotation_toolbar_layout, arrange_context_for_selection, arrow_head_points,
+        annotation_tool_group_popover_width, annotation_tool_palette_width,
+        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
+        annotation_toolbar_preferred_width, arrange_context_for_selection, arrow_head_points,
         capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
         magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
@@ -5397,7 +5589,7 @@ mod tests {
             inspection_target: None,
             show_annotation_controls: false,
             annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
-            annotation_style_height: 0.0,
+            annotation_style_capabilities: AnnotationStyleCapabilities::EMPTY,
             annotation_tool_group: None,
             annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
             has_recognition_result: false,
@@ -6354,7 +6546,7 @@ mod tests {
             inspection_target: None,
             show_annotation_controls: false,
             annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
-            annotation_style_height: 0.0,
+            annotation_style_capabilities: AnnotationStyleCapabilities::EMPTY,
             annotation_tool_group: None,
             annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
             has_recognition_result: false,
@@ -6383,10 +6575,10 @@ mod tests {
             })
         );
         let menu = snapshot.secondary_menu.expect("selection should own More");
-        assert_eq!(menu.width, 334.0);
+        assert_eq!(menu.width, 352.0);
         assert_eq!(menu.height, 176.0);
         assert!(menu.opens_above);
-        assert_eq!(menu.left, -74.0);
+        assert_eq!(menu.left, -92.0);
         assert_eq!(
             snapshot.dimension,
             Some(SelectionDimensionLayout {
@@ -6421,7 +6613,7 @@ mod tests {
             inspection_target: None,
             show_annotation_controls: true,
             annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
-            annotation_style_height: 0.0,
+            annotation_style_capabilities: AnnotationStyleCapabilities::EMPTY,
             annotation_tool_group: Some(AnnotationToolGroup::Text),
             annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
             has_recognition_result: false,
@@ -6506,9 +6698,9 @@ mod tests {
             bottom: 400,
         };
         let primary_actions = ActionToolbarLayout {
-            left: 740.0,
+            left: 722.0,
             top: 412.0,
-            width: 260.0,
+            width: 558.0,
             height: 50.0,
         };
 
@@ -6518,21 +6710,22 @@ mod tests {
             Some(primary_actions),
             annotation_toolbar_items(false, false, false, false, false),
             0.0,
+            0.0,
             None,
         )
         .expect("selection with actions should position marking tools");
 
-        assert_eq!(layout.left, 100.0);
-        assert_eq!(layout.width, 900.0);
-        assert_eq!(layout.tools_width, 900.0);
-        assert_eq!(layout.tools_height, 42.0);
-        assert_eq!(layout.height, 100.0);
+        assert_eq!(layout.left, 442.0);
+        assert_eq!(layout.width, 558.0);
+        assert_eq!(layout.tools_width, 558.0);
+        assert_eq!(layout.tools_height, 50.0);
+        assert_eq!(layout.height, 50.0);
         assert!((layout.top - 412.0).abs() < 0.01);
         assert_eq!(layout.tools_top, layout.top);
         assert_eq!(layout.style_top, layout.tools_top + layout.tools_height);
         assert_eq!(layout.style_left, layout.left);
-        assert_eq!(layout.action_toolbar.left, 740.0);
-        assert!((layout.action_toolbar.top - 462.0).abs() < 0.01);
+        assert_eq!(layout.action_toolbar.left, 442.0);
+        assert!((layout.action_toolbar.top - 412.0).abs() < 0.01);
         assert_eq!(layout.action_toolbar.width, primary_actions.width);
         assert_eq!(layout.action_toolbar.height, primary_actions.height);
         assert!(!layout.actions_above_tools);
@@ -6559,9 +6752,9 @@ mod tests {
             bottom: 700,
         };
         let primary_actions = ActionToolbarLayout {
-            left: 940.0,
+            left: 642.0,
             top: 518.0,
-            width: 260.0,
+            width: 558.0,
             height: 50.0,
         };
 
@@ -6571,19 +6764,19 @@ mod tests {
             Some(primary_actions),
             annotation_toolbar_items(false, false, false, false, false),
             0.0,
+            0.0,
             None,
         )
         .expect("selection with actions should position marking tools");
 
-        assert_eq!(layout.top, 468.0);
-        assert_eq!(layout.tools_top, 526.0);
+        assert_eq!(layout.top, 518.0);
+        assert_eq!(layout.tools_top, 518.0);
         assert_eq!(layout.style_top, layout.tools_top + layout.tools_height);
         assert_eq!(layout.action_toolbar.top, layout.top);
         assert!(layout.actions_above_tools);
         assert!(layout.top >= 18.0);
-        assert_eq!(
-            layout.tools_top + layout.tools_height + OVERLAY_ACTION_BAR_GAP,
-            selection.top as f32
+        assert!(
+            layout.tools_top + layout.tools_height + OVERLAY_ACTION_BAR_GAP >= selection.top as f32
         );
     }
 
@@ -6664,7 +6857,7 @@ mod tests {
 
         let menu_width =
             secondary_action_menu_width(super::view_rect(viewport).width, false, false);
-        assert_eq!(menu_width, 334.0);
+        assert_eq!(menu_width, 352.0);
         let menu_height = secondary_action_menu_height(menu_width, false, false, false);
         assert_eq!(menu_height, 176.0);
         assert!(secondary_menu_opens_above(toolbar, viewport, menu_height));
@@ -6713,13 +6906,13 @@ mod tests {
         );
 
         let primary =
-            action_toolbar_layout(workspace_anchor(selection, transform), viewport, false).unwrap();
+            action_toolbar_layout(workspace_anchor(selection, transform), viewport, true).unwrap();
         assert_eq!(
             primary,
             ActionToolbarLayout {
-                left: 2282.0,
+                left: 1984.0,
                 top: 1270.0,
-                width: 260.0,
+                width: 558.0,
                 height: 50.0,
             }
         );
@@ -6729,19 +6922,20 @@ mod tests {
             Some(primary),
             annotation_toolbar_items(false, false, false, false, false),
             0.0,
+            0.0,
             None,
         )
         .unwrap();
-        assert_eq!(marking.left, 1642.0);
-        assert_eq!(marking.top, 1220.0);
-        assert_eq!(marking.width, 900.0);
-        assert_eq!(marking.height, 100.0);
-        assert_eq!(marking.tools_width, 900.0);
-        assert_eq!(marking.tools_top, 1278.0);
+        assert_eq!(marking.left, 1984.0);
+        assert_eq!(marking.top, 1270.0);
+        assert_eq!(marking.width, 558.0);
+        assert_eq!(marking.height, 50.0);
+        assert_eq!(marking.tools_width, 558.0);
+        assert_eq!(marking.tools_top, 1270.0);
         assert_eq!(marking.style_left, marking.left);
         assert_eq!(marking.style_top, 1320.0);
         assert_eq!(marking.action_toolbar.left, primary.left);
-        assert_eq!(marking.action_toolbar.top, 1220.0);
+        assert_eq!(marking.action_toolbar.top, 1270.0);
         assert!(marking.actions_above_tools);
         assert!(marking.top >= OVERLAY_EDGE_INSET);
         assert!(marking.top + marking.height + OVERLAY_ACTION_BAR_GAP <= selection.top as f32);
@@ -7063,9 +7257,14 @@ mod tests {
         assert_eq!(action_toolbar_height(324.0, false), 50.0);
         assert_eq!(action_toolbar_height(288.0, false), 50.0);
         assert_eq!(action_toolbar_natural_width(false), 260.0);
-        assert_eq!(action_toolbar_natural_width(true), 358.0);
-        assert_eq!(action_toolbar_height(358.0, true), 50.0);
-        assert_eq!(secondary_action_menu_width(420.0, false, false), 334.0);
+        assert_eq!(action_toolbar_natural_width(true), 558.0);
+        assert_eq!(action_toolbar_height(358.0, true), 92.0);
+        assert_eq!(action_toolbar_height(558.0, true), 50.0);
+        assert_eq!(secondary_action_menu_width(420.0, false, false), 352.0);
+        assert_eq!(
+            action_toolbar_row_count(352.0, OVERLAY_MORE_ACTION_WIDTHS),
+            4
+        );
         assert_eq!(secondary_action_menu_width(360.0, false, false), 324.0);
         let layout =
             action_toolbar_layout(workspace_anchor(selection, transform), viewport, false).unwrap();
@@ -7114,10 +7313,47 @@ mod tests {
         assert_eq!(selected_items.selection_context, 8);
         assert_eq!(selected_items.arrange_context, 0);
         assert_eq!(expanded_items.arrange_context, 6);
-        assert_eq!(annotation_toolbar_height(wide, stable_items), 42.0);
-        assert_eq!(annotation_toolbar_height(narrow, stable_items), 126.0);
-        assert_eq!(annotation_toolbar_height(narrow, selected_items), 303.0);
-        assert!(annotation_toolbar_height(narrow, expanded_items) > 303.0);
+        assert_eq!(annotation_toolbar_height(wide, stable_items), 46.0);
+        assert_eq!(annotation_toolbar_height(narrow, stable_items), 46.0);
+        assert_eq!(annotation_toolbar_height(narrow, selected_items), 219.0);
+        assert!(annotation_toolbar_height(narrow, expanded_items) > 219.0);
+    }
+
+    #[test]
+    fn annotation_dock_grows_only_for_visible_controls() {
+        let empty_style = AnnotationStyleCapabilities::EMPTY;
+        let shape_style = annotation_style_capabilities_for_tool(AnnotationTool::Rectangle);
+        let empty_items = annotation_toolbar_items(false, false, false, false, false);
+
+        assert_eq!(annotation_tool_palette_width(), 246.0);
+        assert_eq!(annotation_style_row_width(empty_style), 0.0);
+        assert_eq!(
+            annotation_toolbar_preferred_width(
+                1280.0,
+                358.0,
+                empty_items,
+                0.0,
+                ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            ),
+            358.0
+        );
+        assert!(annotation_style_row_width(shape_style) > 550.0);
+        let wrapped_style_width = annotation_style_row_preferred_width(484.0, shape_style);
+        assert!((350.0..420.0).contains(&wrapped_style_width));
+        assert_eq!(
+            annotation_style_row_height(wrapped_style_width, shape_style),
+            annotation_style_row_height(484.0, shape_style)
+        );
+        assert_eq!(
+            annotation_toolbar_preferred_width(
+                520.0,
+                358.0,
+                empty_items,
+                wrapped_style_width,
+                ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            ),
+            387.0
+        );
     }
 
     #[test]
@@ -7145,7 +7381,7 @@ mod tests {
                 360.0,
                 annotation_style_capabilities_for_tool(AnnotationTool::Rectangle)
             ),
-            120.0
+            114.0
         );
         assert_eq!(
             annotation_style_row_height(360.0, AnnotationStyleCapabilities::EMPTY),

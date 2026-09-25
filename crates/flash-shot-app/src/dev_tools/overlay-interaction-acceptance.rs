@@ -30,6 +30,7 @@ use flash_shot::{
         window_inspector::{SystemWindowInspector, WindowInspector},
     },
     recording::discover,
+    theme::ThemeMetrics,
 };
 
 use super::support::recording_probe;
@@ -936,33 +937,82 @@ fn interaction_plan(bounds: PhysicalRect, scale: f32) -> io::Result<InteractionP
 }
 
 #[cfg(windows)]
-/// Locates the first two production tool-group triggers and one Shape child after Mark opens the
-/// annotation workspace. The constants mirror the shared overlay tokens so SendInput lands inside
-/// both English and Simplified Chinese fixed-width cells.
+/// Measures the Watermark style groups using the same shared widths as the rendered controls.
+fn watermark_style_row_width() -> f32 {
+    let gap = ThemeMetrics::SPACE_1;
+    let group_separator = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH + ThemeMetrics::SPACE_2;
+    let color = ThemeMetrics::WORKSPACE_SWATCH_SIZE * 5.0 + gap * 4.0;
+    let opacity = ThemeMetrics::WORKSPACE_STYLE_OPACITY_WIDTH * 4.0 + gap * 3.0 + group_separator;
+    let font_size = ThemeMetrics::WORKSPACE_STYLE_VALUE_WIDTH * 5.0 + gap * 4.0 + group_separator;
+    color
+        + opacity
+        + font_size
+        + gap * 2.0
+        + ThemeMetrics::WORKSPACE_ANNOTATION_PADDING * 2.0
+        + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH * 2.0
+}
+
+#[cfg(windows)]
+/// Locates the compact annotation group triggers and one Shape child from the committed selection.
+/// The same shared dimensions used by the renderer keep input in the real icon and popover hitboxes.
 fn tool_group_interaction_plan_for_capture_selection(
     handle: *mut c_void,
     capture_bounds: PhysicalRect,
     selection: PhysicalRect,
+    annotation_controls: bool,
+    style_width: f32,
 ) -> io::Result<ToolGroupInteractionPlan> {
     const EDGE_INSET: f32 = 18.0;
-    const BOTTOM_SAFE_INSET: f32 = 96.0;
-    const SELECTION_GAP: f32 = 12.0;
+    const BOTTOM_SAFE_INSET: f32 = ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET;
+    const SELECTION_GAP: f32 = ThemeMetrics::WORKSPACE_SELECTION_GAP;
     const TOOLBAR_MAX_WIDTH: f32 = 900.0;
-    const TOOLBAR_PADDING: f32 = 4.0;
-    const TOOL_GAP: f32 = 8.0;
-    const TOOL_ROW_HEIGHT: f32 = 34.0;
-    const TOOL_ESTIMATED_WIDTH: f32 = 104.0;
-    const ACTION_ITEM_WIDTH: f32 = 36.0;
-    const ACTION_ITEM_GAP: f32 = 6.0;
-    const ACTION_PADDING: f32 = 6.0;
-    const ACTION_BORDER: f32 = 1.0;
-    const ACTION_TOOLBAR_HEIGHT: f32 = 50.0;
-    const POPUP_PADDING: f32 = 6.0;
+    const TOOLBAR_PADDING: f32 = ThemeMetrics::WORKSPACE_ANNOTATION_PADDING;
+    const TOOL_GAP: f32 = ThemeMetrics::WORKSPACE_TOOL_GAP;
+    const TOOL_PALETTE_GAP: f32 = ThemeMetrics::SPACE_1;
+    const TOOL_PALETTE_ITEMS: usize = 6;
+    const TOOL_ICON_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
+    const ACTION_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
+    const ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+    const ACTION_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+    const ACTION_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
+    const ACTION_TOOLBAR_HEIGHT: f32 =
+        ACTION_ITEM_WIDTH + ACTION_PADDING * 2.0 + ACTION_BORDER * 2.0;
+    const POPUP_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+    const POPUP_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOL_CELL_WIDTH_COMPACT;
+    const POPUP_ITEM_HEIGHT: f32 = ThemeMetrics::WORKSPACE_TOOL_ROW_HEIGHT;
+    const PALETTE_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
 
     let window = owned_window(handle)?;
     let client = client_bounds_for_window(handle)?;
     let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
     let (width, height) = overlay_logical_size(client, scale)?;
+    let mark_action_width = ACTION_ITEM_WIDTH
+        + 5.0 * ACTION_ITEM_WIDTH
+        + 5.0 * ACTION_ITEM_GAP
+        + ACTION_PADDING * 2.0
+        + ACTION_BORDER * 2.0;
+    let annotation_palette_width = TOOL_PALETTE_ITEMS as f32 * TOOL_ICON_WIDTH
+        + TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * TOOL_PALETTE_GAP;
+    let context_width = 2.0 * ACTION_ITEM_WIDTH + ACTION_ITEM_GAP;
+    let result_width = 5.0 * ACTION_ITEM_WIDTH + 4.0 * ACTION_ITEM_GAP;
+    let annotation_action_width = context_width
+        + result_width
+        + annotation_palette_width
+        + 4.0 * ACTION_BORDER
+        + 4.0 * ACTION_ITEM_GAP
+        + ACTION_PADDING * 2.0;
+    let palette_width = TOOL_PALETTE_ITEMS as f32 * TOOL_ICON_WIDTH
+        + TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * TOOL_PALETTE_GAP
+        + TOOLBAR_PADDING * 2.0
+        + PALETTE_BORDER * 2.0;
+    let toolbar_width = if annotation_controls {
+        annotation_action_width
+    } else {
+        mark_action_width
+    }
+    .max(palette_width)
+    .max(style_width)
+    .min((width - EDGE_INSET * 2.0).clamp(1.0, TOOLBAR_MAX_WIDTH));
     let top_left = map_capture_point_to_screen(
         PhysicalPoint {
             x: selection.left,
@@ -987,23 +1037,31 @@ fn tool_group_interaction_plan_for_capture_selection(
     };
     let (_, selection_top) = logical(top_left);
     let (selection_right, selection_bottom) = logical(bottom_right);
-    let toolbar_width = (width - EDGE_INSET * 2.0).clamp(1.0, TOOLBAR_MAX_WIDTH);
-    let content_width = (toolbar_width - TOOLBAR_PADDING * 2.0).max(1.0);
-    let columns =
-        (((content_width + TOOL_GAP) / (TOOL_ESTIMATED_WIDTH + TOOL_GAP)).floor() as usize).max(1);
-    if columns < 6 {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!(
-                "tool-group acceptance needs six annotation cells on one row; logical viewport is {width:.0}x{height:.0}"
-            ),
-        ));
-    }
-    let palette_rows = 6_usize.div_ceil(columns);
-    let palette_height =
-        palette_rows as f32 * TOOL_ROW_HEIGHT + palette_rows.saturating_sub(1) as f32 * TOOL_GAP;
-    let tools_height = palette_height + TOOLBAR_PADDING * 2.0;
-    let total_height = tools_height + TOOL_GAP + ACTION_TOOLBAR_HEIGHT;
+    let palette_content_width =
+        (toolbar_width - TOOLBAR_PADDING * 2.0 - PALETTE_BORDER * 2.0 + TOOL_PALETTE_GAP).max(1.0);
+    let palette_columns =
+        ((palette_content_width / (TOOL_ICON_WIDTH + TOOL_PALETTE_GAP)).floor() as usize).max(1);
+    let palette_rows = TOOL_PALETTE_ITEMS.div_ceil(palette_columns);
+    let palette_height = palette_rows as f32 * TOOL_ICON_WIDTH
+        + palette_rows.saturating_sub(1) as f32 * TOOL_PALETTE_GAP
+        + TOOLBAR_PADDING * 2.0
+        + PALETTE_BORDER * 2.0;
+    let tools_height = if annotation_controls {
+        ACTION_TOOLBAR_HEIGHT
+    } else {
+        palette_height + TOOL_GAP + ACTION_TOOLBAR_HEIGHT
+    };
+    let style_height = if style_width > 0.0 {
+        ThemeMetrics::WORKSPACE_STYLE_ROW_HEIGHT + TOOLBAR_PADDING * 2.0 + PALETTE_BORDER * 2.0
+    } else {
+        0.0
+    };
+    let total_height = tools_height
+        + if style_height > 0.0 {
+            TOOL_GAP + style_height
+        } else {
+            0.0
+        };
     let left_min = EDGE_INSET;
     let left_max = (width - EDGE_INSET - toolbar_width).max(left_min);
     let left = (selection_right - toolbar_width).clamp(left_min, left_max);
@@ -1026,10 +1084,7 @@ fn tool_group_interaction_plan_for_capture_selection(
             above_selection.clamp(top_min, top_max)
         }
     };
-    let action_toolbar_width = 6.0 * ACTION_ITEM_WIDTH
-        + 5.0 * ACTION_ITEM_GAP
-        + 2.0 * ACTION_PADDING
-        + 2.0 * ACTION_BORDER;
+    let action_toolbar_width = mark_action_width;
     let action_left_min = EDGE_INSET;
     let action_left_max = (width - EDGE_INSET - action_toolbar_width).max(action_left_min);
     let action_left =
@@ -1047,15 +1102,23 @@ fn tool_group_interaction_plan_for_capture_selection(
         y: client.top + (point.1 * scale).round() as i32,
     };
     let tools_top = top;
-    let group_row_top = tools_top + TOOLBAR_PADDING;
-    let group_row_center_y = group_row_top + TOOL_ROW_HEIGHT / 2.0;
-    let popup_top = tools_top + TOOLBAR_PADDING + palette_height + TOOL_GAP;
+    let group_row_center_y = tools_top + PALETTE_BORDER + TOOLBAR_PADDING + TOOL_ICON_WIDTH / 2.0;
+    let popup_top = if annotation_controls {
+        tools_top + ACTION_TOOLBAR_HEIGHT + TOOL_GAP
+    } else {
+        tools_top + palette_height + TOOL_GAP
+    };
     let action_center = |index: usize| {
         action_left
             + ACTION_BORDER
             + ACTION_PADDING
             + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP)
             + ACTION_ITEM_WIDTH / 2.0
+    };
+    let annotation_row_left = if annotation_controls {
+        left + context_width + ACTION_ITEM_GAP + ACTION_BORDER
+    } else {
+        left
     };
     Ok(ToolGroupInteractionPlan {
         mark: screen_point((
@@ -1066,12 +1129,22 @@ fn tool_group_interaction_plan_for_capture_selection(
             action_center(4),
             action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
-        // These x positions intentionally sit inside both 64px Chinese and 104px English cells.
-        text_trigger: screen_point((left + TOOLBAR_PADDING + 32.0, group_row_center_y)),
-        shape_trigger: screen_point((left + 128.0, group_row_center_y)),
+        text_trigger: screen_point((
+            annotation_row_left + PALETTE_BORDER + TOOLBAR_PADDING + TOOL_ICON_WIDTH / 2.0,
+            group_row_center_y,
+        )),
+        shape_trigger: screen_point((
+            annotation_row_left
+                + PALETTE_BORDER
+                + TOOLBAR_PADDING
+                + TOOL_ICON_WIDTH
+                + TOOL_PALETTE_GAP
+                + TOOL_ICON_WIDTH / 2.0,
+            group_row_center_y,
+        )),
         shape_rectangle: screen_point((
-            left + POPUP_PADDING + 32.0,
-            popup_top + POPUP_PADDING + TOOL_ROW_HEIGHT / 2.0,
+            left + PALETTE_BORDER + POPUP_PADDING + POPUP_ITEM_WIDTH / 2.0,
+            popup_top + PALETTE_BORDER + POPUP_PADDING + POPUP_ITEM_HEIGHT / 2.0,
         )),
         outside: map_capture_point_to_screen(
             PhysicalPoint {
@@ -6091,8 +6164,13 @@ fn execute_annotation_regression_interactions(
     )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
-    let plan = interaction_plan_for_window(overlay.handle)?;
-    let drag = inject_mouse_drag(
+    // Full-display overlays use global physical pixels so Win32's off-screen client inset cannot
+    // shift the committed selection away from the pointer path used by the rendered controls.
+    let plan = interaction_plan(
+        context.display.physical_bounds,
+        context.display.scale_factor,
+    )?;
+    let drag = inject_mouse_drag_in_display_pixels(
         overlay.handle,
         plan.drag_start,
         plan.drag_end,
@@ -6138,6 +6216,8 @@ fn execute_annotation_regression_interactions(
         overlay.handle,
         context.display.physical_bounds,
         selection,
+        false,
+        0.0,
     )?;
     let foreground = inject_mouse_click(overlay.handle, group_plan.mark)?;
     let _marking_state = wait_for_capture_state(context, "annotation controls", |state| {
@@ -6549,8 +6629,13 @@ fn execute_tool_group_interactions(
     )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
-    let plan = interaction_plan_for_window(overlay.handle)?;
-    let drag = inject_mouse_drag(
+    // Full-display overlays use global physical pixels so Win32's off-screen client inset cannot
+    // shift the committed selection away from the pointer path used by the rendered controls.
+    let plan = interaction_plan(
+        context.display.physical_bounds,
+        context.display.scale_factor,
+    )?;
+    let drag = inject_mouse_drag_in_display_pixels(
         overlay.handle,
         plan.drag_start,
         plan.drag_end,
@@ -6581,6 +6666,8 @@ fn execute_tool_group_interactions(
         overlay.handle,
         context.display.physical_bounds,
         selection,
+        false,
+        0.0,
     )?;
     let foreground = inject_mouse_click(overlay.handle, group_plan.more)?;
     let more_open_state = wait_for_capture_state(context, "tool-group More open", |state| {
@@ -6635,7 +6722,14 @@ fn execute_tool_group_interactions(
         Some(&marking),
     )?;
 
-    let foreground = inject_mouse_click(overlay.handle, group_plan.text_trigger)?;
+    let controls_group_plan = tool_group_interaction_plan_for_capture_selection(
+        overlay.handle,
+        context.display.physical_bounds,
+        selection,
+        true,
+        0.0,
+    )?;
+    let foreground = inject_mouse_click(overlay.handle, controls_group_plan.text_trigger)?;
     wait_for_capture_state(context, "Text tool group open", |state| {
         state.selection == Some(selection)
             && state.annotation_controls_visible
@@ -6665,7 +6759,7 @@ fn execute_tool_group_interactions(
         Some(&escaped),
     )?;
 
-    let foreground = inject_mouse_click(overlay.handle, group_plan.text_trigger)?;
+    let foreground = inject_mouse_click(overlay.handle, controls_group_plan.text_trigger)?;
     wait_for_capture_state(context, "Text tool group reopen", |state| {
         state.annotation_tool_group_visible
     })?;
@@ -6688,7 +6782,15 @@ fn execute_tool_group_interactions(
         Some(&keyboard_selected),
     )?;
 
-    let foreground = inject_mouse_click(overlay.handle, group_plan.shape_trigger)?;
+    // Watermark adds a style row, which widens the dock and moves both group triggers left.
+    let expanded_group_plan = tool_group_interaction_plan_for_capture_selection(
+        overlay.handle,
+        context.display.physical_bounds,
+        selection,
+        true,
+        watermark_style_row_width(),
+    )?;
+    let foreground = inject_mouse_click(overlay.handle, expanded_group_plan.shape_trigger)?;
     wait_for_capture_state(context, "Shape tool group open", |state| {
         state.selection == Some(selection)
             && state.annotation_controls_visible
@@ -6703,39 +6805,39 @@ fn execute_tool_group_interactions(
         Some(&shape_open),
     )?;
 
-    let foreground = inject_mouse_click(overlay.handle, group_plan.shape_rectangle)?;
-    wait_for_capture_state(context, "Shape child click", |state| {
-        state.selection == Some(selection)
-            && state.annotation_controls_visible
-            && !state.annotation_tool_group_visible
-            && state.status == "Rectangle tool selected"
-    })?;
-    let rectangle_selected = capture_evidence(context, "07-tool-group-child-clicked.png", overlay)?;
-    record_step(
-        report,
-        &context.report_path,
-        "tool_group_child_clicked",
-        foreground,
-        Some(&rectangle_selected),
-    )?;
-
-    inject_mouse_click(overlay.handle, group_plan.shape_trigger)?;
-    wait_for_capture_state(context, "Shape tool group reopen", |state| {
-        state.annotation_tool_group_visible
-    })?;
-    let foreground = inject_mouse_click(overlay.handle, group_plan.outside)?;
+    let foreground = inject_mouse_click(overlay.handle, expanded_group_plan.outside)?;
     let outside_state = wait_for_capture_state(context, "tool-group outside close", |state| {
         state.selection == Some(selection)
             && state.annotation_controls_visible
             && !state.annotation_tool_group_visible
     })?;
-    let outside_closed = capture_evidence(context, "08-tool-group-outside-closed.png", overlay)?;
+    let outside_closed = capture_evidence(context, "07-tool-group-outside-closed.png", overlay)?;
     record_step(
         report,
         &context.report_path,
         "tool_group_outside_closed",
         foreground,
         Some(&outside_closed),
+    )?;
+
+    inject_mouse_click(overlay.handle, expanded_group_plan.shape_trigger)?;
+    wait_for_capture_state(context, "Shape tool group reopen", |state| {
+        state.annotation_tool_group_visible
+    })?;
+    let foreground = inject_mouse_click(overlay.handle, expanded_group_plan.shape_rectangle)?;
+    wait_for_capture_state(context, "Shape child click", |state| {
+        state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+            && state.status == "Rectangle tool selected"
+    })?;
+    let rectangle_selected = capture_evidence(context, "08-tool-group-child-clicked.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "tool_group_child_clicked",
+        foreground,
+        Some(&rectangle_selected),
     )?;
 
     focus_owned_window(overlay, context.timeout)?;
@@ -15023,7 +15125,7 @@ mod tests {
         parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
         request_recording_state, titlebar_fallback_ready, validate_fixture_phase_state,
         validate_recording_frame_content, validate_same_pixel_content,
-        validate_scroll_fixture_frame,
+        validate_scroll_fixture_frame, watermark_style_row_width,
     };
     use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -16709,6 +16811,12 @@ mod tests {
         let mut resumed = stable;
         resumed.paused = false;
         assert!(validate_paused_progress(&before, &resumed).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn watermark_style_width_matches_shared_workspace_metrics() {
+        assert_eq!(watermark_style_row_width(), 526.0);
     }
 
     #[cfg(windows)]

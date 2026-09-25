@@ -174,7 +174,8 @@ fn workspace_button(
         .aria_label(aria_label)
         .when_some(width, |button, width| button.w(px(width)))
         .h(px(height))
-        .px_3()
+        .when(icon_size.is_some(), |button| button.px_0())
+        .when(icon_size.is_none(), |button| button.px_3())
         .flex()
         .items_center()
         .justify_center()
@@ -322,15 +323,11 @@ fn button_colors(
         WorkspaceButtonTone::Destructive => (colors.danger, colors.background, colors.danger),
         WorkspaceButtonTone::Neutral => (
             if active {
-                colors.toolbar_active
+                colors.toolbar_hover
             } else {
                 colors.toolbar_elevated
             },
-            if active {
-                colors.background
-            } else {
-                colors.text
-            },
+            colors.text,
             // Keep resting neutral actions visually quiet; hover, focus, and active states
             // provide the affordance without stacking a border around every button.
             if active {
@@ -398,10 +395,11 @@ mod tests {
     fn active_neutral_buttons_keep_a_visible_focus_edge() {
         for mode in [ThemeMode::Dark, ThemeMode::Light] {
             let colors = ThemeColors::for_mode(mode);
-            let (_, foreground, border) =
+            let (background, foreground, border) =
                 button_colors(colors, WorkspaceButtonTone::Neutral, true, true);
 
-            assert_eq!(foreground, colors.background);
+            assert_eq!(background, colors.toolbar_hover);
+            assert_eq!(foreground, colors.text);
             assert_eq!(border, colors.toolbar_focus);
         }
     }

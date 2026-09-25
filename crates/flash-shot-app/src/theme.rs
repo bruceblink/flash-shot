@@ -144,9 +144,9 @@ impl ThemeMetrics {
     pub const WORKSPACE_TOOL_ROW_HEIGHT: f32 = 34.0;
     pub const WORKSPACE_ANNOTATION_PADDING: f32 = 4.0;
     pub const WORKSPACE_SWATCH_SIZE: f32 = 22.0;
-    pub const WORKSPACE_STYLE_VALUE_WIDTH: f32 = 40.0;
-    pub const WORKSPACE_STYLE_OPACITY_WIDTH: f32 = 56.0;
-    pub const WORKSPACE_STYLE_FILL_WIDTH: f32 = 76.0;
+    pub const WORKSPACE_STYLE_VALUE_WIDTH: f32 = 32.0;
+    pub const WORKSPACE_STYLE_OPACITY_WIDTH: f32 = 44.0;
+    pub const WORKSPACE_STYLE_FILL_WIDTH: f32 = 48.0;
     pub const LIBRARY_THUMBNAIL_WIDTH: f32 = 72.0;
     pub const LIBRARY_THUMBNAIL_HEIGHT: f32 = 46.0;
     pub const LIBRARY_ROW_PADDING: f32 = 12.0;
@@ -400,9 +400,9 @@ mod tests {
         assert_eq!(metrics.toggle_height, 20.0);
         assert_eq!(metrics.control_height, 36.0);
         assert_eq!(metrics.toolbar_height, 44.0);
-        assert_eq!(metrics.workspace_style_value_width, 40.0);
-        assert_eq!(metrics.workspace_style_opacity_width, 56.0);
-        assert_eq!(metrics.workspace_style_fill_width, 76.0);
+        assert_eq!(metrics.workspace_style_value_width, 32.0);
+        assert_eq!(metrics.workspace_style_opacity_width, 44.0);
+        assert_eq!(metrics.workspace_style_fill_width, 48.0);
         assert_eq!(metrics.workspace_tool_cell_width_compact, 64.0);
         assert!(metrics.radius_md <= 8.0);
     }
