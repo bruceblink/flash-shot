@@ -76,6 +76,11 @@ impl PreviewTransform {
         self.fitted_view
     }
 
+    /// Returns the physical image rectangle represented by this preview transform.
+    pub const fn image_bounds(self) -> PhysicalRect {
+        self.image_bounds
+    }
+
     pub fn view_to_physical(self, point: ViewPoint) -> Option<PhysicalPoint> {
         if !self.fitted_view.contains(point) {
             return None;

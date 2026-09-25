@@ -91,10 +91,10 @@ use windows_sys::Win32::{
             GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
             GetWindowThreadProcessId, HTCAPTION, HWND_TOP, IsChild, IsIconic, IsWindow,
             IsWindowVisible, MOUSEWHEEL_ROUTING_MOUSE_POS, MSG, PostMessageW, PostQuitMessage,
-            RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-            SM_YVIRTUALSCREEN, SPI_GETMOUSEWHEELROUTING, SW_HIDE, SW_MINIMIZE, SW_RESTORE,
-            SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW, SetCursorPos,
-            SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+            RegisterClassW, SM_CMONITORS, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETMOUSEWHEELROUTING, SW_HIDE, SW_MINIMIZE,
+            SW_RESTORE, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW,
+            SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
             SystemParametersInfoW, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
             WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
             WS_POPUP, WS_VISIBLE, WindowFromPoint,
@@ -198,6 +198,7 @@ enum CaptureScenarioOption {
     Standard,
     CopyOnly,
     NarrowEdge,
+    SelectionBoundaryMatrix,
     PinsCoexist,
     SelectionTransform,
     ScrollRoundtrip,
@@ -217,6 +218,7 @@ impl CaptureScenarioOption {
             Self::Standard => "capture",
             Self::CopyOnly => "capture_copy_only",
             Self::NarrowEdge => "capture_narrow_edge",
+            Self::SelectionBoundaryMatrix => "capture_selection_boundary_matrix",
             Self::PinsCoexist => "capture_pins_coexist",
             Self::SelectionTransform => "capture_selection_transform",
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
@@ -235,6 +237,7 @@ impl CaptureScenarioOption {
         matches!(
             self,
             Self::NarrowEdge
+                | Self::SelectionBoundaryMatrix
                 | Self::PinsCoexist
                 | Self::SelectionTransform
                 | Self::ScrollRoundtrip
@@ -246,6 +249,110 @@ impl CaptureScenarioOption {
                 | Self::SavePermissionRetry
                 | Self::SaveDialogPermissionRetry
         )
+    }
+}
+
+/// Native boundary cases cover degenerate drags, a one-pixel export, and each display edge.
+/// Degenerate cases are wider or taller than the click-to-target threshold on purpose, so the
+/// production smart-target behavior cannot turn the probe into a window selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionBoundaryCase {
+    ZeroHeight,
+    ZeroWidth,
+    OnePixel,
+    FullDisplay,
+    TopEdge,
+    BottomEdge,
+    LeftEdge,
+    RightEdge,
+}
+
+impl SelectionBoundaryCase {
+    const ALL: [Self; 8] = [
+        Self::ZeroHeight,
+        Self::ZeroWidth,
+        Self::OnePixel,
+        Self::FullDisplay,
+        Self::TopEdge,
+        Self::BottomEdge,
+        Self::LeftEdge,
+        Self::RightEdge,
+    ];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::ZeroHeight => "zero_height",
+            Self::ZeroWidth => "zero_width",
+            Self::OnePixel => "one_pixel",
+            Self::FullDisplay => "full_display",
+            Self::TopEdge => "top_edge",
+            Self::BottomEdge => "bottom_edge",
+            Self::LeftEdge => "left_edge",
+            Self::RightEdge => "right_edge",
+        }
+    }
+
+    const fn is_degenerate(self) -> bool {
+        matches!(self, Self::ZeroHeight | Self::ZeroWidth)
+    }
+
+    const fn edge_name(self) -> &'static str {
+        match self {
+            Self::FullDisplay => "all",
+            Self::TopEdge => "top",
+            Self::BottomEdge => "bottom",
+            Self::LeftEdge => "left",
+            Self::RightEdge => "right",
+            Self::ZeroHeight | Self::ZeroWidth | Self::OnePixel => "none",
+        }
+    }
+
+    const fn expected_edge_coordinate(self, bounds: PhysicalRect) -> Option<i32> {
+        match self {
+            Self::TopEdge => Some(bounds.top),
+            Self::BottomEdge => Some(bounds.bottom),
+            Self::LeftEdge => Some(bounds.left),
+            Self::RightEdge => Some(bounds.right),
+            Self::ZeroHeight | Self::ZeroWidth | Self::OnePixel | Self::FullDisplay => None,
+        }
+    }
+
+    const fn actual_edge_coordinate(self, selection: PhysicalRect) -> Option<i32> {
+        match self {
+            Self::TopEdge => Some(selection.top),
+            Self::BottomEdge => Some(selection.bottom),
+            Self::LeftEdge => Some(selection.left),
+            Self::RightEdge => Some(selection.right),
+            Self::ZeroHeight | Self::ZeroWidth | Self::OnePixel | Self::FullDisplay => None,
+        }
+    }
+
+    fn edge_matches(self, bounds: PhysicalRect, selection: PhysicalRect) -> bool {
+        match self {
+            Self::OnePixel => selection.width() == 1 && selection.height() == 1,
+            Self::FullDisplay => selection == bounds,
+            Self::TopEdge => selection.top == bounds.top,
+            Self::BottomEdge => selection.bottom == bounds.bottom,
+            Self::LeftEdge => selection.left == bounds.left,
+            Self::RightEdge => selection.right == bounds.right,
+            Self::ZeroHeight | Self::ZeroWidth => false,
+        }
+    }
+
+    /// Returns drag endpoints in the measured display's physical-pixel coordinate space.
+    fn logical_drag_points(self, width: f32, height: f32) -> ((f32, f32), (f32, f32)) {
+        let center_x = (width / 2.0).floor();
+        let center_y = (height / 2.0).floor();
+        match self {
+            Self::ZeroHeight => ((center_x - 16.0, center_y), (center_x + 16.0, center_y)),
+            Self::ZeroWidth => ((center_x, center_y - 16.0), (center_x, center_y + 16.0)),
+            Self::OnePixel => ((center_x, center_y), (center_x + 1.0, center_y + 1.0)),
+            Self::FullDisplay => ((0.0, 0.0), (width, height)),
+            Self::TopEdge => ((width * 0.2, 0.0), (width * 0.8, height * 0.2)),
+            Self::BottomEdge => ((width * 0.2, height * 0.8), (width * 0.8, height)),
+            Self::LeftEdge => ((0.0, height * 0.2), (width * 0.2, height * 0.8)),
+            Self::RightEdge => ((width * 0.8, height * 0.2), (width, height * 0.8)),
+        }
     }
 }
 
@@ -381,6 +488,9 @@ impl Options {
                     options.capture_scenario = match scenario.as_str() {
                         "copy-only" => CaptureScenarioOption::CopyOnly,
                         "narrow-edge" => CaptureScenarioOption::NarrowEdge,
+                        "selection-boundary-matrix" => {
+                            CaptureScenarioOption::SelectionBoundaryMatrix
+                        }
                         "pins-coexist" => CaptureScenarioOption::PinsCoexist,
                         "selection-transform" => CaptureScenarioOption::SelectionTransform,
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
@@ -398,7 +508,7 @@ impl Options {
                         }
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'tool-group', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'tool-group', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
                     .to_owned(),
                             );
                         }
@@ -478,11 +588,12 @@ impl Options {
                 | CaptureScenarioOption::CopyOnly
                 | CaptureScenarioOption::CopyCancellationRace
                 | CaptureScenarioOption::ClipboardContentionRetry
+                | CaptureScenarioOption::SelectionBoundaryMatrix
         ) && options.record_target.is_none()
             && !scroll_export_seen;
         if copy_trigger_seen && !copy_capable_capture {
             return Err(
-                "--copy-trigger is only valid with standard, copy-only, or clipboard-contention-retry capture"
+                "--copy-trigger is only valid with standard, copy-only, clipboard-contention-retry, or selection-boundary-matrix capture"
                     .to_owned(),
             );
         }
@@ -533,7 +644,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1536,6 +1647,7 @@ struct AcceptanceReport {
     copy_cancellation_race: Option<CopyCancellationRaceReport>,
     clipboard_contention_retry: Option<ClipboardContentionRetryReport>,
     narrow_edge: Option<NarrowEdgeReport>,
+    selection_boundary_matrix: Option<SelectionBoundaryMatrixReport>,
     pins_coexist: Option<PinsCoexistReport>,
     selection_transform: Option<SelectionTransformReport>,
     scroll_roundtrip: Option<ScrollRoundtripReport>,
@@ -1722,6 +1834,85 @@ struct NarrowEdgeContentReport {
     fingerprint: String,
     luma_min: u8,
     luma_max: u8,
+}
+
+/// Structured evidence for one fresh overlay per degenerate, one-pixel, or display-edge selection.
+///
+/// The matrix is intentionally limited to a single monitor at 100% DPI. Each case keeps its
+/// production Copy report and post-Escape cleanup snapshot so a pixel mismatch or leaked window
+/// cannot be hidden by a later case.
+#[derive(serde::Serialize)]
+struct SelectionBoundaryMatrixReport {
+    display_bounds: PhysicalRect,
+    idle_status: String,
+    status_reset_between_cases: bool,
+    cases: Vec<SelectionBoundaryCaseReport>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SelectionBoundaryCaseReport {
+    Degenerate {
+        name: &'static str,
+        overlay_bounds: PhysicalRect,
+        overlay_client_bounds: PhysicalRect,
+        requested_drag: PhysicalRect,
+        input_start: PhysicalPoint,
+        input_end: PhysicalPoint,
+        observed_selection: Option<PhysicalRect>,
+        zero_area_rejected: bool,
+        workspace_surfaces_hidden: bool,
+        screenshot: String,
+        cleanup: SelectionBoundaryCleanupReport,
+    },
+    SelectionMissing {
+        name: &'static str,
+        overlay_bounds: PhysicalRect,
+        overlay_client_bounds: PhysicalRect,
+        requested_drag: PhysicalRect,
+        input_start: PhysicalPoint,
+        input_end: PhysicalPoint,
+        observed_selection: Option<PhysicalRect>,
+        status: String,
+        screenshot: String,
+        cleanup: SelectionBoundaryCleanupReport,
+    },
+    Export {
+        name: &'static str,
+        evidence_prefix: String,
+        overlay_bounds: PhysicalRect,
+        overlay_client_bounds: PhysicalRect,
+        input_start: PhysicalPoint,
+        input_end: PhysicalPoint,
+        expected_edge: &'static str,
+        expected_edge_coordinate: Option<i32>,
+        actual_edge_coordinate: Option<i32>,
+        edge_matches: bool,
+        copy: Box<CopyReport>,
+        cleanup: SelectionBoundaryCleanupReport,
+    },
+}
+
+#[derive(serde::Serialize)]
+struct SelectionBoundaryCleanupReport {
+    capture: CleanupReport,
+    status_reset: bool,
+    background_tasks_idle: bool,
+    input_released: bool,
+}
+
+impl SelectionBoundaryCleanupReport {
+    fn is_clean(&self) -> bool {
+        self.capture.session_state == "idle"
+            && self.capture.overlay_count == 0
+            && self.capture.pinned_count == 0
+            && !self.capture.capture_teardown_pending
+            && self.capture.visible_process_windows == 0
+            && self.capture.capture_preflight_ready
+            && self.status_reset
+            && self.background_tasks_idle
+            && self.input_released
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -2496,6 +2687,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::CopyOnly
             | CaptureScenarioOption::CopyCancellationRace
             | CaptureScenarioOption::ClipboardContentionRetry
+            | CaptureScenarioOption::SelectionBoundaryMatrix
             | CaptureScenarioOption::PinsCoexist
             | CaptureScenarioOption::SelectionTransform
             | CaptureScenarioOption::ScrollRoundtrip
@@ -2579,9 +2771,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 28 records More's
-        // real outside-click dismissal in addition to the annotation tool-group evidence.
-        schema_version: 28,
+        // Increment when the machine-readable report shape changes. Schema 30 records the W5
+        // one-pixel boundary case and verifies that cleanup restores the ready status.
+        schema_version: 30,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -2607,6 +2799,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         copy_cancellation_race: None,
         clipboard_contention_retry: None,
         narrow_edge: None,
+        selection_boundary_matrix: None,
         pins_coexist: None,
         selection_transform: None,
         scroll_roundtrip: None,
@@ -4278,6 +4471,9 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::NarrowEdge) => {
             execute_narrow_edge_interactions(context, report)
         }
+        (None, CaptureScenarioOption::SelectionBoundaryMatrix) => {
+            execute_selection_boundary_matrix(context, report)
+        }
         (None, CaptureScenarioOption::PinsCoexist) => {
             execute_pins_coexist_interactions(context, report)
         }
@@ -4605,6 +4801,447 @@ fn execute_narrow_edge_interactions(
 }
 
 #[cfg(windows)]
+/// Runs the W5 boundary cases in separate real overlays and persists each case before continuing.
+///
+/// The matrix is restricted to one 96-DPI display. Degenerate drags must leave no selection;
+/// every positive-area case goes through production Copy and must preserve its requested display
+/// edge. Any failed case is recorded after cleanup, then the remaining cases still run for evidence.
+fn execute_selection_boundary_matrix(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let monitor_count = unsafe { GetSystemMetrics(SM_CMONITORS) };
+    if monitor_count != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "W5 selection boundary matrix requires one physical display, observed {monitor_count}"
+            ),
+        ));
+    }
+    if context.display.dpi_x != 96
+        || context.display.dpi_y != 96
+        || (context.display.scale_factor - 1.0).abs() > f32::EPSILON
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "W5 selection boundary matrix requires 96 DPI / 100% scaling, observed {}x{} DPI and scale {}",
+                context.display.dpi_x, context.display.dpi_y, context.display.scale_factor
+            ),
+        ));
+    }
+
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "w5_boundary_controller_ready",
+        controller,
+        None,
+    )?;
+    let display_bounds = context.display.physical_bounds;
+    let ready_state = wait_for_capture_state(context, "W5 initial idle state", |state| {
+        state.session_state == "idle"
+            && state.selection.is_none()
+            && state.overlay_count == 0
+            && state.pinned_count == 0
+            && state.capture_preflight_ready
+    })?;
+    let idle_status = ready_state.status;
+    report.selection_boundary_matrix = Some(SelectionBoundaryMatrixReport {
+        display_bounds,
+        idle_status: idle_status.clone(),
+        status_reset_between_cases: true,
+        cases: Vec::with_capacity(SelectionBoundaryCase::ALL.len()),
+    });
+    write_report(&context.report_path, report)?;
+
+    let mut failed_cases = Vec::new();
+    for case in SelectionBoundaryCase::ALL {
+        if case.is_degenerate() {
+            let plan_for_window =
+                |handle| selection_boundary_plan_for_window(handle, display_bounds, case);
+            let (overlay, _plan, drag) = match begin_capture_overlay_with_plan(
+                context,
+                controller,
+                false,
+                true,
+                plan_for_window,
+            ) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    return match cleanup_active_boundary_overlay(context, controller) {
+                        Ok(()) => Err(error),
+                        Err(cleanup_error) => Err(io::Error::other(format!(
+                            "{error}; W5 overlay cleanup also failed: {cleanup_error}"
+                        ))),
+                    };
+                }
+            };
+            let overlay_bounds = overlay.bounds;
+            let overlay_client_bounds = client_bounds_for_window(overlay.handle)?;
+            let observation = (|| {
+                thread::sleep(context.settle_delay);
+                let state = query_capture_state(context, context.timeout)?;
+                let screenshot_name = format!("w5-{}-no-selection.png", case.label());
+                let evidence = capture_evidence(context, &screenshot_name, overlay)?;
+                let action = match case {
+                    SelectionBoundaryCase::ZeroHeight => "w5_zero_height_no_selection",
+                    SelectionBoundaryCase::ZeroWidth => "w5_zero_width_no_selection",
+                    _ => unreachable!("only degenerate cases use this path"),
+                };
+                record_step(
+                    report,
+                    &context.report_path,
+                    action,
+                    guard_foreground(overlay.handle)?,
+                    Some(&evidence),
+                )?;
+                Ok::<_, io::Error>((state, evidence.file_name))
+            })();
+            let escape_result = (|| {
+                let foreground = focus_and_inject_key(overlay, VK_ESCAPE, context.timeout)?;
+                wait_for_window_gone(overlay.handle, context.timeout, "W5 empty selection Escape")?;
+                record_step(
+                    report,
+                    &context.report_path,
+                    "w5_boundary_escape",
+                    foreground,
+                    None,
+                )
+            })();
+            if escape_result.is_err() {
+                let _ = cleanup_active_boundary_overlay(context, controller);
+            }
+            let cleanup = collect_selection_boundary_cleanup(
+                context,
+                "W5 degenerate cleanup",
+                Some(&idle_status),
+            );
+            let (state, screenshot) = observation?;
+            escape_result?;
+            let cleanup = cleanup?;
+            let requested_axis_is_zero = match case {
+                SelectionBoundaryCase::ZeroHeight => drag.selection.height() == 0,
+                SelectionBoundaryCase::ZeroWidth => drag.selection.width() == 0,
+                _ => unreachable!("only degenerate cases use this path"),
+            };
+            let zero_area_rejected = requested_axis_is_zero && state.selection.is_none();
+            let workspace_surfaces_hidden = state.session_state == "selecting"
+                && state.overlay_count == 1
+                && state.selection.is_none()
+                && !state.more_actions_visible
+                && !state.annotation_controls_visible;
+            let cleanup_passed = cleanup.is_clean();
+            report
+                .selection_boundary_matrix
+                .as_mut()
+                .expect("W5 matrix is initialized before its cases")
+                .status_reset_between_cases &= cleanup.status_reset;
+            report
+                .selection_boundary_matrix
+                .as_mut()
+                .expect("W5 matrix is initialized before its cases")
+                .cases
+                .push(SelectionBoundaryCaseReport::Degenerate {
+                    name: case.label(),
+                    overlay_bounds,
+                    overlay_client_bounds,
+                    requested_drag: drag.selection,
+                    input_start: drag.start,
+                    input_end: drag.end,
+                    observed_selection: state.selection,
+                    zero_area_rejected,
+                    workspace_surfaces_hidden,
+                    screenshot,
+                    cleanup,
+                });
+            write_report(&context.report_path, report)?;
+            if !zero_area_rejected || !workspace_surfaces_hidden || !cleanup_passed {
+                failed_cases.push(case.label());
+            }
+            continue;
+        }
+
+        let evidence_prefix = format!("w5-{}", case.label());
+        ensure_copy_sink_ready(context)?;
+        let plan_for_window =
+            |handle| selection_boundary_plan_for_window(handle, display_bounds, case);
+        let (overlay, plan, drag) = match begin_capture_overlay_with_plan(
+            context,
+            controller,
+            case == SelectionBoundaryCase::OnePixel,
+            true,
+            plan_for_window,
+        ) {
+            Ok(opened) => opened,
+            Err(error) => {
+                return match cleanup_active_boundary_overlay(context, controller) {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(io::Error::other(format!(
+                        "{error}; W5 overlay cleanup also failed: {cleanup_error}"
+                    ))),
+                };
+            }
+        };
+        let overlay_bounds = overlay.bounds;
+        let overlay_client_bounds = match client_bounds_for_window(overlay.handle) {
+            Ok(bounds) => bounds,
+            Err(error) => {
+                let _ = cleanup_active_boundary_overlay(context, controller);
+                return Err(error);
+            }
+        };
+        // Mouse-up completes through a deferred GPUI callback; wait for the committed session
+        // rectangle before classifying a boundary case as missing.
+        thread::sleep(context.settle_delay);
+        let state = match query_capture_state(context, context.timeout) {
+            Ok(state) => state,
+            Err(error) => {
+                return match cleanup_active_boundary_overlay(context, controller) {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(io::Error::other(format!(
+                        "{error}; W5 overlay cleanup also failed: {cleanup_error}"
+                    ))),
+                };
+            }
+        };
+        let selection_ready = state.session_state == "selecting"
+            && state.overlay_count == 1
+            && state.selection.is_some();
+        if !selection_ready {
+            let screenshot_name = format!("{evidence_prefix}-selection-missing.png");
+            let evidence = capture_evidence(context, &screenshot_name, overlay)?;
+            record_step(
+                report,
+                &context.report_path,
+                "w5_boundary_selection_missing",
+                guard_foreground(overlay.handle)?,
+                Some(&evidence),
+            )?;
+            let escape_result = (|| {
+                let foreground = focus_and_inject_key(overlay, VK_ESCAPE, context.timeout)?;
+                wait_for_window_gone(
+                    overlay.handle,
+                    context.timeout,
+                    "W5 missing selection Escape",
+                )?;
+                record_step(
+                    report,
+                    &context.report_path,
+                    "w5_boundary_escape",
+                    foreground,
+                    None,
+                )
+            })();
+            if escape_result.is_err() {
+                let _ = cleanup_active_boundary_overlay(context, controller);
+            }
+            let cleanup = collect_selection_boundary_cleanup(
+                context,
+                "W5 missing selection cleanup",
+                Some(&idle_status),
+            );
+            escape_result?;
+            let cleanup = cleanup?;
+            report
+                .selection_boundary_matrix
+                .as_mut()
+                .expect("W5 matrix is initialized before its cases")
+                .status_reset_between_cases &= cleanup.status_reset;
+            report
+                .selection_boundary_matrix
+                .as_mut()
+                .expect("W5 matrix is initialized before its cases")
+                .cases
+                .push(SelectionBoundaryCaseReport::SelectionMissing {
+                    name: case.label(),
+                    overlay_bounds,
+                    overlay_client_bounds,
+                    requested_drag: drag.selection,
+                    input_start: drag.start,
+                    input_end: drag.end,
+                    observed_selection: state.selection,
+                    status: state.status,
+                    screenshot: evidence.file_name,
+                    cleanup,
+                });
+            write_report(&context.report_path, report)?;
+            failed_cases.push(case.label());
+            continue;
+        }
+        let selection = state
+            .selection
+            .expect("selection_ready proves a committed selection exists");
+        if let Err(error) =
+            validate_selection_geometry(drag.selection, selection, "W5 boundary selection")
+        {
+            let _ = cleanup_active_boundary_overlay(context, controller);
+            return Err(error);
+        }
+        let source = match query_capture_content(context, context.timeout).and_then(|content| {
+            content.selection.ok_or_else(|| {
+                io::Error::other("W5 boundary selection did not expose source pixels")
+            })
+        }) {
+            Ok(source) => source,
+            Err(error) => {
+                return match cleanup_active_boundary_overlay(context, controller) {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(io::Error::other(format!(
+                        "{error}; W5 overlay cleanup also failed: {cleanup_error}"
+                    ))),
+                };
+            }
+        };
+        if let Err(error) = validate_frame_dimensions(&source, selection, "W5 source frame") {
+            let _ = cleanup_active_boundary_overlay(context, controller);
+            return Err(error);
+        }
+        if source.bounds != selection {
+            let error = io::Error::other(format!(
+                "W5 source frame bounds {:?} do not match committed selection {selection:?}",
+                source.bounds
+            ));
+            let _ = cleanup_active_boundary_overlay(context, controller);
+            return Err(error);
+        }
+        let selected = (overlay, plan, selection, drag.selection, source);
+        let copy = match execute_copy_from_selected_overlay(
+            context,
+            report,
+            selected,
+            Some(&evidence_prefix),
+        ) {
+            Ok(copy) => copy,
+            Err(error) => {
+                return match cleanup_active_boundary_overlay(context, controller) {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(io::Error::other(format!(
+                        "{error}; W5 overlay cleanup also failed: {cleanup_error}"
+                    ))),
+                };
+            }
+        };
+        let edge_matches = case.edge_matches(display_bounds, copy.selection);
+        let cleanup =
+            collect_selection_boundary_cleanup(context, "W5 Copy cleanup", Some(&idle_status))?;
+        let cleanup_passed = cleanup.is_clean();
+        report
+            .selection_boundary_matrix
+            .as_mut()
+            .expect("W5 matrix is initialized before its cases")
+            .status_reset_between_cases &= cleanup.status_reset;
+        report
+            .selection_boundary_matrix
+            .as_mut()
+            .expect("W5 matrix is initialized before its cases")
+            .cases
+            .push(SelectionBoundaryCaseReport::Export {
+                name: case.label(),
+                evidence_prefix,
+                overlay_bounds,
+                overlay_client_bounds,
+                input_start: drag.start,
+                input_end: drag.end,
+                expected_edge: case.edge_name(),
+                expected_edge_coordinate: case.expected_edge_coordinate(display_bounds),
+                actual_edge_coordinate: case.actual_edge_coordinate(copy.selection),
+                edge_matches,
+                copy: Box::new(copy),
+                cleanup,
+            });
+        write_report(&context.report_path, report)?;
+        if !edge_matches || !cleanup_passed {
+            failed_cases.push(case.label());
+        }
+    }
+
+    if failed_cases.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "W5 selection boundary matrix failed case(s): {}",
+                failed_cases.join(", ")
+            ),
+        ))
+    }
+}
+
+#[cfg(windows)]
+/// Waits for complete W5 teardown and records visible-window, background-task, and input ownership.
+fn collect_selection_boundary_cleanup(
+    context: &WorkerContext,
+    stage: &str,
+    expected_idle_status: Option<&str>,
+) -> io::Result<SelectionBoundaryCleanupReport> {
+    let state = wait_for_capture_state(context, stage, |state| {
+        state.session_state == "idle"
+            && state.selection.is_none()
+            && state.overlay_count == 0
+            && state.pinned_count == 0
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+    })?;
+    let visible_process_windows = process_windows()?.len();
+    let input_released = ensure_capture_input_released().is_ok();
+    let status_reset = expected_idle_status.is_none_or(|status| state.status == status);
+    Ok(SelectionBoundaryCleanupReport {
+        capture: CleanupReport {
+            session_state: state.session_state,
+            overlay_count: state.overlay_count,
+            pinned_count: state.pinned_count,
+            capture_teardown_pending: state.capture_teardown_pending,
+            visible_process_windows,
+            capture_preflight_ready: state.capture_preflight_ready,
+        },
+        status_reset,
+        background_tasks_idle: state.background_tasks_idle,
+        input_released,
+    })
+}
+
+#[cfg(windows)]
+/// Best-effort Escape cleanup used when a boundary case fails before its normal close step.
+fn cleanup_active_boundary_overlay(
+    context: &WorkerContext,
+    controller: NativeWindow,
+) -> io::Result<()> {
+    let overlay = process_windows()?
+        .into_iter()
+        .filter(|window| window.handle != controller.handle)
+        .filter(|window| overlay_covers_display(*window, context.display.physical_bounds))
+        .max_by_key(window_area);
+    if let Some(overlay) = overlay {
+        focus_and_inject_key(overlay, VK_ESCAPE, context.timeout)?;
+        wait_for_window_gone(overlay.handle, context.timeout, "W5 failure cleanup")?;
+    }
+    let cleanup = collect_selection_boundary_cleanup(context, "W5 failure cleanup", None)?;
+    if cleanup.is_clean() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "W5 cleanup is incomplete: state={}, overlay={}, pins={}, teardown_pending={}, visible_windows={}, preflight_ready={}, status_reset={}, background_idle={}, input_released={}",
+            cleanup.capture.session_state,
+            cleanup.capture.overlay_count,
+            cleanup.capture.pinned_count,
+            cleanup.capture.capture_teardown_pending,
+            cleanup.capture.visible_process_windows,
+            cleanup.capture.capture_preflight_ready,
+            cleanup.status_reset,
+            cleanup.background_tasks_idle,
+            cleanup.input_released
+        )))
+    }
+}
+
+#[cfg(windows)]
 /// Creates three Pins through the real toolbar, drags one, then captures while all three coexist.
 fn execute_pins_coexist_interactions(
     context: &WorkerContext,
@@ -4637,9 +5274,12 @@ fn execute_pins_coexist_interactions(
     let mut pin_reports = Vec::with_capacity(PIN_COEXIST_COUNT);
     for (index, action) in creation_actions.into_iter().enumerate() {
         let (overlay, plan, selection, requested_selection, source) =
-            begin_selected_overlay_with_plan(context, controller, |handle| {
-                pin_coexist_interaction_plan_for_window(handle, index)
-            })?;
+            begin_selected_overlay_with_plan(
+                context,
+                controller,
+                |handle| pin_coexist_interaction_plan_for_window(handle, index),
+                context.timeout.min(Duration::from_secs(1)),
+            )?;
         thread::sleep(context.settle_delay);
         let selected = capture_evidence(context, selection_files[index], overlay)?;
         record_step(
@@ -7282,7 +7922,13 @@ fn execute_capture_interactions(
     };
     let save = execute_save_interaction(context, report, controller)?;
     let pin = execute_pin_interaction(context, report, controller)?;
-    let copy = execute_copy_interaction(context, report, controller)?;
+    let copy = execute_copy_interaction(
+        context,
+        report,
+        controller,
+        interaction_plan_for_window,
+        None,
+    )?;
     let final_state = wait_for_capture_state(context, "final capture cleanup", |state| {
         state.overlay_count == 0
             && state.pinned_count == 0
@@ -7351,7 +7997,13 @@ fn execute_copy_only_interactions(
         None,
     )?;
 
-    let copy = execute_copy_interaction(context, report, controller)?;
+    let copy = execute_copy_interaction(
+        context,
+        report,
+        controller,
+        interaction_plan_for_window,
+        None,
+    )?;
     let final_state = wait_for_capture_state(context, "Copy-only final cleanup", |state| {
         state.session_state == "idle"
             && state.selection.is_none()
@@ -7976,7 +8628,12 @@ fn begin_selected_overlay(
     PhysicalRect,
     CaptureFrame,
 )> {
-    begin_selected_overlay_with_plan(context, controller, interaction_plan_for_window)
+    begin_selected_overlay_with_plan(
+        context,
+        controller,
+        interaction_plan_for_window,
+        context.timeout.min(Duration::from_secs(1)),
+    )
 }
 
 #[cfg(windows)]
@@ -7985,6 +8642,7 @@ fn begin_selected_overlay_with_plan(
     context: &WorkerContext,
     controller: NativeWindow,
     plan_for_window: impl FnOnce(*mut c_void) -> io::Result<InteractionPlan>,
+    source_timeout: Duration,
 ) -> io::Result<(
     NativeWindow,
     InteractionPlan,
@@ -7992,6 +8650,42 @@ fn begin_selected_overlay_with_plan(
     PhysicalRect,
     CaptureFrame,
 )> {
+    let (overlay, plan, drag) =
+        begin_capture_overlay_with_plan(context, controller, false, false, plan_for_window)?;
+    let state = wait_for_capture_state(context, "fresh overlay selection", |state| {
+        state.session_state == "selecting" && state.selection.is_some() && state.overlay_count == 1
+    })?;
+    let selection = state
+        .selection
+        .ok_or_else(|| io::Error::other("fresh overlay did not retain its selection"))?;
+    validate_selection_geometry(drag.selection, selection, "fresh overlay selection")?;
+    let content = query_capture_content(context, source_timeout)?;
+    let source = content
+        .selection
+        .ok_or_else(|| io::Error::other("fresh overlay did not expose selected source pixels"))?;
+    validate_frame_dimensions(&source, selection, "selected source frame")?;
+    if source.bounds != selection {
+        return Err(io::Error::other(format!(
+            "selected source bounds {:?} do not match committed selection {selection:?}",
+            source.bounds
+        )));
+    }
+    Ok((overlay, plan, selection, drag.selection, source))
+}
+
+#[cfg(windows)]
+/// Opens the production overlay and injects one measured physical drag without assuming a selection commits.
+///
+/// The caller supplies the controller owned by this process and a plan recalculated from the live
+/// overlay client. Boundary cases may use display pixels and clear click-to-window state for the
+/// one-pixel probe; other workflows retain the client-relative pointer mapping.
+fn begin_capture_overlay_with_plan(
+    context: &WorkerContext,
+    controller: NativeWindow,
+    prepare_one_pixel_selection: bool,
+    use_display_coordinates: bool,
+    plan_for_window: impl FnOnce(*mut c_void) -> io::Result<InteractionPlan>,
+) -> io::Result<(NativeWindow, InteractionPlan, InjectedDrag)> {
     // The next capture starts after the previous overlay has been cancelled. Native Save-dialog
     // cleanup is verified at its own boundary below; requiring an unrelated whole-desktop freeze
     // here would reject dynamic foreground windows before production has opened the new overlay.
@@ -8020,32 +8714,37 @@ fn begin_selected_overlay_with_plan(
     // process-owned overlay immediately before the first guarded mouse action.
     let overlay = owned_window(overlay.handle)?;
     focus_owned_window(overlay, context.timeout)?;
-    let plan = plan_for_window(overlay.handle)?;
-    let drag = inject_mouse_drag(
-        overlay.handle,
-        plan.drag_start,
-        plan.drag_end,
-        context.display.physical_bounds,
-    )?;
-    let state = wait_for_capture_state(context, "fresh overlay selection", |state| {
-        state.session_state == "selecting" && state.selection.is_some() && state.overlay_count == 1
-    })?;
-    let selection = state
-        .selection
-        .ok_or_else(|| io::Error::other("fresh overlay did not retain its selection"))?;
-    validate_selection_geometry(drag.selection, selection, "fresh overlay selection")?;
-    let content = query_capture_content(context, context.timeout.min(Duration::from_secs(1)))?;
-    let source = content
-        .selection
-        .ok_or_else(|| io::Error::other("fresh overlay did not expose selected source pixels"))?;
-    validate_frame_dimensions(&source, selection, "selected source frame")?;
-    if source.bounds != selection {
-        return Err(io::Error::other(format!(
-            "selected source bounds {:?} do not match committed selection {selection:?}",
-            source.bounds
-        )));
+    if prepare_one_pixel_selection {
+        context
+            .interaction_commands
+            .send_blocking(OverlayInteractionAcceptanceCommand::PrepareOnePixelSelection)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "capture command channel closed before one-pixel selection",
+                )
+            })?;
     }
-    Ok((overlay, plan, selection, drag.selection, source))
+    if prepare_one_pixel_selection {
+        thread::sleep(context.settle_delay);
+    }
+    let plan = plan_for_window(overlay.handle)?;
+    let drag = if use_display_coordinates {
+        inject_mouse_drag_in_display_pixels(
+            overlay.handle,
+            plan.drag_start,
+            plan.drag_end,
+            context.display.physical_bounds,
+        )?
+    } else {
+        inject_mouse_drag(
+            overlay.handle,
+            plan.drag_start,
+            plan.drag_end,
+            context.display.physical_bounds,
+        )?
+    };
+    Ok((overlay, plan, drag))
 }
 
 #[cfg(windows)]
@@ -9226,11 +9925,30 @@ fn execute_pin_interaction(
 
 #[cfg(windows)]
 /// Routes one real Copy trigger to either the isolated sink or the explicitly authorized clipboard.
+///
+/// `plan_for_window` must use the live overlay client rectangle, and an optional evidence prefix
+/// keeps repeated matrix captures from overwriting one another in the same acceptance session.
 fn execute_copy_interaction(
     context: &WorkerContext,
     report: &mut AcceptanceReport,
     controller: NativeWindow,
+    plan_for_window: impl FnOnce(*mut c_void) -> io::Result<InteractionPlan>,
+    evidence_prefix: Option<&str>,
 ) -> io::Result<CopyReport> {
+    ensure_copy_sink_ready(context)?;
+    let source_timeout = if evidence_prefix.is_some() {
+        context.timeout
+    } else {
+        context.timeout.min(Duration::from_secs(1))
+    };
+    let selected =
+        begin_selected_overlay_with_plan(context, controller, plan_for_window, source_timeout)?;
+    execute_copy_from_selected_overlay(context, report, selected, evidence_prefix)
+}
+
+#[cfg(windows)]
+/// Refuses Copy before input unless exactly one isolated sink or explicit clipboard authorization is ready.
+fn ensure_copy_sink_ready(context: &WorkerContext) -> io::Result<()> {
     if let Some(copy_results) = &context.copy_results {
         match copy_results.try_recv() {
             Err(mpsc::TryRecvError::Empty) => {}
@@ -9251,11 +9969,31 @@ fn execute_copy_interaction(
             "standard Copy acceptance has neither an isolated sink nor clipboard authorization",
         ));
     }
-    let (overlay, plan, selection, requested_selection, source) =
-        begin_selected_overlay(context, controller)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+/// Copies and verifies a previously selected frame, retaining its source geometry and pixel oracle.
+fn execute_copy_from_selected_overlay(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    selected: (
+        NativeWindow,
+        InteractionPlan,
+        PhysicalRect,
+        PhysicalRect,
+        CaptureFrame,
+    ),
+    evidence_prefix: Option<&str>,
+) -> io::Result<CopyReport> {
+    let (overlay, plan, selection, requested_selection, source) = selected;
     thread::sleep(context.settle_delay);
     focus_owned_window(overlay, context.timeout)?;
-    let selected = capture_evidence(context, "12-copy-selection.png", overlay)?;
+    let selection_evidence = evidence_prefix.map_or_else(
+        || "12-copy-selection.png".to_owned(),
+        |prefix| format!("{prefix}-selection.png"),
+    );
+    let selected = capture_evidence(context, &selection_evidence, overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -9517,7 +10255,11 @@ fn execute_copy_interaction(
     )?;
     thread::sleep(context.settle_delay);
     focus_owned_window(overlay, context.timeout)?;
-    let retained = capture_evidence(context, "13-copy-complete-editor.png", overlay)?;
+    let retained_evidence = evidence_prefix.map_or_else(
+        || "13-copy-complete-editor.png".to_owned(),
+        |prefix| format!("{prefix}-copy-complete.png"),
+    );
+    let retained = capture_evidence(context, &retained_evidence, overlay)?;
     record_step(
         report,
         &context.report_path,
@@ -9768,10 +10510,11 @@ fn validate_same_pixel_content(
     }
     let source_metrics = frame_content_metrics(source)?;
     let result_metrics = frame_content_metrics(result)?;
-    if source_metrics
-        .luma_max
-        .saturating_sub(source_metrics.luma_min)
-        < 8
+    if !(source.width == 1 && source.height == 1)
+        && source_metrics
+            .luma_max
+            .saturating_sub(source_metrics.luma_min)
+            < 8
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -12635,6 +13378,61 @@ fn interaction_plan_for_window(handle: *mut c_void) -> io::Result<InteractionPla
 }
 
 #[cfg(windows)]
+/// Recalculates one W5 drag against the live client rectangle before every fresh overlay.
+fn selection_boundary_plan_for_window(
+    handle: *mut c_void,
+    capture_bounds: PhysicalRect,
+    case: SelectionBoundaryCase,
+) -> io::Result<InteractionPlan> {
+    let window = owned_window(handle)?;
+    if window.dpi != 96 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "W5 selection boundary matrix requires 96 DPI, observed {} DPI",
+                window.dpi
+            ),
+        ));
+    }
+    let client = client_bounds_for_window(handle)?;
+    if client.width() != capture_bounds.width() || client.height() != capture_bounds.height() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "W5 overlay client {:?} does not match display bounds {:?}",
+                client, capture_bounds
+            ),
+        ));
+    }
+    let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
+    let (width, height) = overlay_logical_size(client, scale)?;
+    if width < 256.0 || height < 256.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("W5 display is too small for the acceptance matrix: {width}x{height}"),
+        ));
+    }
+    let (start, end) = case.logical_drag_points(width, height);
+    let screen_point = |point: (f32, f32)| PhysicalPoint {
+        x: capture_bounds.left + (point.0 * scale).round() as i32,
+        y: capture_bounds.top + (point.1 * scale).round() as i32,
+    };
+    let mut plan = if case.is_degenerate() {
+        interaction_plan_for_window(handle)?
+    } else {
+        interaction_plan_for_logical_selection(client, scale, width, height, start, end)?
+    };
+    plan.drag_start = screen_point(start);
+    plan.drag_end = screen_point(end);
+    // The borderless client ends a few physical pixels above the display edge. Release inside
+    // that client so GPUI receives mouse-up; the native overlay maps this final sample back to
+    // the exclusive display edge.
+    plan.drag_end.x = plan.drag_end.x.min(client.right.saturating_sub(1));
+    plan.drag_end.y = plan.drag_end.y.min(client.bottom.saturating_sub(1));
+    Ok(plan)
+}
+
+#[cfg(windows)]
 fn scroll_roundtrip_interaction_plan_for_window(
     handle: *mut c_void,
 ) -> io::Result<InteractionPlan> {
@@ -13791,6 +14589,29 @@ fn inject_mouse_drag(
     end: PhysicalPoint,
     capture_bounds: PhysicalRect,
 ) -> io::Result<InjectedDrag> {
+    inject_mouse_drag_with_coordinate_mapping(expected, start, end, capture_bounds, false)
+}
+
+#[cfg(windows)]
+/// Injects a W5 boundary drag in physical desktop coordinates, matching capture-frame pixels.
+fn inject_mouse_drag_in_display_pixels(
+    expected: *mut c_void,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+    capture_bounds: PhysicalRect,
+) -> io::Result<InjectedDrag> {
+    inject_mouse_drag_with_coordinate_mapping(expected, start, end, capture_bounds, true)
+}
+
+#[cfg(windows)]
+/// Submits one measured drag and chooses client-relative or physical display coordinates.
+fn inject_mouse_drag_with_coordinate_mapping(
+    expected: *mut c_void,
+    start: PhysicalPoint,
+    end: PhysicalPoint,
+    capture_bounds: PhysicalRect,
+    display_coordinates: bool,
+) -> io::Result<InjectedDrag> {
     let foreground = guard_foreground(expected)?;
     if left_button_held() {
         return Err(io::Error::new(
@@ -13809,6 +14630,9 @@ fn inject_mouse_drag(
         &[mouse_button_input(MOUSEEVENTF_LEFTDOWN)],
         &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
     )?;
+    // GPUI receives the native button-down asynchronously. Let that event establish the anchor
+    // before the first move, otherwise a fast SendInput burst can anchor at a later sample.
+    thread::sleep(Duration::from_millis(25));
 
     let movement_result = (|| {
         for step in 1..=8 {
@@ -13836,17 +14660,36 @@ fn inject_mouse_drag(
         }
         (Ok(_), Err(error)) => return Err(error),
     };
-    let screen_selection = PhysicalRect::new(actual_start, actual_end);
     let client_bounds = client_bounds_for_window(expected)?;
-    let capture_start = map_screen_point_to_capture(actual_start, client_bounds, capture_bounds)?;
-    let capture_end = map_screen_point_to_capture(actual_end, client_bounds, capture_bounds)?;
+    let (capture_start, capture_end, selection) = if display_coordinates {
+        let capture_end = PhysicalPoint {
+            x: if actual_end.x >= client_bounds.right.saturating_sub(1) {
+                capture_bounds.right
+            } else {
+                actual_end.x
+            },
+            y: if actual_end.y >= client_bounds.bottom.saturating_sub(1) {
+                capture_bounds.bottom
+            } else {
+                actual_end.y
+            },
+        };
+        (
+            actual_start,
+            capture_end,
+            PhysicalRect::new(actual_start, capture_end),
+        )
+    } else {
+        let screen_selection = PhysicalRect::new(actual_start, actual_end);
+        (
+            map_screen_point_to_capture(actual_start, client_bounds, capture_bounds)?,
+            map_screen_point_to_capture(actual_end, client_bounds, capture_bounds)?,
+            map_screen_selection_to_capture(screen_selection, client_bounds, capture_bounds)?,
+        )
+    };
     Ok(InjectedDrag {
         foreground,
-        selection: map_screen_selection_to_capture(
-            screen_selection,
-            client_bounds,
-            capture_bounds,
-        )?,
+        selection,
         start: capture_start,
         end: capture_end,
     })
@@ -14158,13 +15001,13 @@ impl Drop for CursorRestore {
 mod tests {
     use super::{
         CaptureScenarioOption, CopyTriggerOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
-        ScrollExportOption, SelectionTransformKind, copy_trigger_acknowledged,
-        ensure_input_authorized, expected_selection_transform, first_stable_recording_match,
-        interaction_command_channel, interaction_plan, map_capture_point_to_screen,
-        map_screen_point_to_capture, map_screen_selection_to_capture, narrow_edge_interaction_plan,
-        normalize_axis, pin_close_button_point, pin_coexist_interaction_plan,
-        recording_control_plan, recording_failed, recording_saved, rect_contains_rect,
-        scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
+        ScrollExportOption, SelectionBoundaryCase, SelectionTransformKind,
+        copy_trigger_acknowledged, ensure_input_authorized, expected_selection_transform,
+        first_stable_recording_match, interaction_command_channel, interaction_plan,
+        map_capture_point_to_screen, map_screen_point_to_capture, map_screen_selection_to_capture,
+        narrow_edge_interaction_plan, normalize_axis, pin_close_button_point,
+        pin_coexist_interaction_plan, recording_control_plan, recording_failed, recording_saved,
+        rect_contains_rect, scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
         scroll_shot_point_for_logical_selection, selection_aspect_ratio_preserved,
         selection_center_preserved, selection_copy_completed_in_editor,
         selection_transform_gesture, translated_rect,
@@ -14376,6 +15219,81 @@ mod tests {
             ]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn parser_accepts_selection_boundary_matrix_without_system_clipboard_access() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "selection-boundary-matrix",
+            "--copy-trigger",
+            "enter",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::SelectionBoundaryMatrix
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_selection_boundary_matrix"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(!options.allow_system_clipboard);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--allow-system-clipboard",
+                "--capture-scenario",
+                "selection-boundary-matrix",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn selection_boundary_matrix_points_cover_degenerate_one_pixel_full_and_all_edges() {
+        let display = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 520,
+            bottom: 640,
+        };
+        let rect_for = |case: SelectionBoundaryCase| {
+            let (start, end) = case.logical_drag_points(520.0, 640.0);
+            PhysicalRect::new(
+                PhysicalPoint {
+                    x: start.0.round() as i32,
+                    y: start.1.round() as i32,
+                },
+                PhysicalPoint {
+                    x: end.0.round() as i32,
+                    y: end.1.round() as i32,
+                },
+            )
+        };
+
+        assert_eq!(rect_for(SelectionBoundaryCase::ZeroHeight).height(), 0);
+        assert_eq!(rect_for(SelectionBoundaryCase::ZeroWidth).width(), 0);
+        let one_pixel = rect_for(SelectionBoundaryCase::OnePixel);
+        assert_eq!((one_pixel.width(), one_pixel.height()), (1, 1));
+        assert!(SelectionBoundaryCase::OnePixel.edge_matches(display, one_pixel));
+        assert_eq!(rect_for(SelectionBoundaryCase::FullDisplay), display);
+        for case in [
+            SelectionBoundaryCase::FullDisplay,
+            SelectionBoundaryCase::TopEdge,
+            SelectionBoundaryCase::BottomEdge,
+            SelectionBoundaryCase::LeftEdge,
+            SelectionBoundaryCase::RightEdge,
+        ] {
+            assert!(
+                case.edge_matches(display, rect_for(case)),
+                "{}",
+                case.label()
+            );
+        }
     }
 
     #[test]

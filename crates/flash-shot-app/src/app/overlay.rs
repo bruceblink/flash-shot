@@ -663,6 +663,9 @@ pub(super) struct CaptureOverlay {
     preview: Arc<RenderImage>,
     // Only full-display overlays may continue a captured mouse drag onto another monitor.
     allow_cross_display_drag: bool,
+    // The selection canvas owns only its own left-button gesture; capture-phase mouse-up must
+    // still finish it after Win32 routes the release outside the display-sized client hitbox.
+    selection_pointer_active: bool,
     // The workflow generation prevents queued input from a closed overlay changing a later
     // capture session after the user presses Capture again.
     operation_generation: u64,
@@ -758,6 +761,7 @@ impl CaptureOverlay {
             display,
             preview,
             allow_cross_display_drag,
+            selection_pointer_active: false,
             operation_generation,
             selection_updates: FrameInputBatch::default(),
             focus_handle: cx.focus_handle(),
@@ -789,12 +793,29 @@ impl CaptureOverlay {
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
             return;
         }
-        let Some(point) = self
-            .transform(viewport)
-            .and_then(|transform| transform.view_to_physical(view_point(event.position)))
-        else {
+        let frame_bounds = self
+            .app
+            .read(cx)
+            .frame
+            .as_ref()
+            .map(|frame| frame.bounds)
+            .unwrap_or(self.display.physical_bounds);
+        let screen_pointer = self
+            .allow_cross_display_drag
+            .then(|| cursor::position().ok())
+            .flatten();
+        let Some(point) = self.transform(viewport).and_then(|transform| {
+            selection_point_from_view_or_screen(
+                transform,
+                event.position,
+                self.allow_cross_display_drag,
+                screen_pointer,
+                frame_bounds,
+            )
+        }) else {
             return;
         };
+        self.selection_pointer_active = true;
         // A new gesture must not consume a hover or drag sample that belonged to the prior one.
         self.selection_updates.invalidate();
         let resize_handle = self
@@ -853,22 +874,26 @@ impl CaptureOverlay {
         let point = transform.view_to_pixel(view);
         let preserve_aspect_ratio = event.modifiers.shift;
         let resize_from_center = event.modifiers.alt;
-        // GPUI events are client-local. Mapping them through the preview keeps the selection in
-        // display pixels even when a borderless Win32 client starts a few pixels off-screen.
+        let frame_bounds = self
+            .app
+            .read(cx)
+            .frame
+            .as_ref()
+            .map(|frame| frame.bounds)
+            .unwrap_or(self.display.physical_bounds);
         let dragging_point = event
             .dragging()
             .then(|| {
-                // Global cursor lookup is only meaningful once a full-display drag leaves this
-                // preview. Avoid a Win32 call for every in-bounds high-rate pointer message.
-                let outside_screen_point = (self.allow_cross_display_drag
-                    && !transform.fitted_view().contains(view))
-                .then(|| cursor::position().ok())
-                .flatten();
+                let screen_pointer = self
+                    .allow_cross_display_drag
+                    .then(|| cursor::position().ok())
+                    .flatten();
                 selection_point_from_view_or_screen(
                     transform,
                     event.position,
                     self.allow_cross_display_drag,
-                    outside_screen_point,
+                    screen_pointer,
+                    frame_bounds,
                 )
             })
             .flatten();
@@ -928,6 +953,7 @@ impl CaptureOverlay {
         viewport: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) {
+        self.selection_pointer_active = false;
         let operation_generation = self.operation_generation;
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
             self.selection_updates.invalidate();
@@ -936,17 +962,24 @@ impl CaptureOverlay {
         // The final mouse position wins over any queued frame update from this gesture, so it
         // cannot overwrite the selection after the button is released.
         self.selection_updates.invalidate();
+        let frame_bounds = self
+            .app
+            .read(cx)
+            .frame
+            .as_ref()
+            .map(|frame| frame.bounds)
+            .unwrap_or(self.display.physical_bounds);
         let point = self.transform(viewport).and_then(|transform| {
-            let view = view_point(event.position);
-            let outside_screen_point = (self.allow_cross_display_drag
-                && !transform.fitted_view().contains(view))
-            .then(|| cursor::position().ok())
-            .flatten();
+            let screen_pointer = self
+                .allow_cross_display_drag
+                .then(|| cursor::position().ok())
+                .flatten();
             selection_point_from_view_or_screen(
                 transform,
                 event.position,
                 self.allow_cross_display_drag,
-                outside_screen_point,
+                screen_pointer,
+                frame_bounds,
             )
         });
         let Some(point) = point else { return };
@@ -1751,12 +1784,13 @@ impl Render for CaptureOverlay {
                         let viewport = local_viewport(window);
                         this.update_selection(event, viewport, window, cx)
                     }))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(move |this, event, window, cx| {
-                            this.finish_selection(event, local_viewport(window), cx)
-                        }),
-                    )
+                    .capture_any_mouse_up(cx.listener(
+                        move |this, event: &MouseUpEvent, window, cx| {
+                            if event.button == MouseButton::Left && this.selection_pointer_active {
+                                this.finish_selection(event, local_viewport(window), cx);
+                            }
+                        },
+                    ))
                     .child(
                         canvas(
                             move |bounds, _, _| {
@@ -3999,21 +4033,121 @@ fn clamp_to_view(transform: PreviewTransform, position: gpui::Point<Pixels>) -> 
     }
 }
 
-/// Uses global pixels outside a full-display overlay, while image-editor letterboxing stays local.
+/// Uses global physical pixels for full-display overlays so off-screen Win32 client insets do not
+/// shift selection edges; windowed image editors continue to use their local preview transform.
 fn selection_point_from_view_or_screen(
     transform: PreviewTransform,
     position: gpui::Point<Pixels>,
     allow_cross_display_drag: bool,
-    outside_screen_point: Option<PhysicalPoint>,
+    screen_pointer: Option<PhysicalPoint>,
+    selection_bounds: PhysicalRect,
 ) -> Option<PhysicalPoint> {
     let view = view_point(position);
-    if transform.fitted_view().contains(view) {
+    if allow_cross_display_drag {
+        let display_bounds = transform.image_bounds();
+        let local_point = transform
+            .view_to_physical(clamp_to_view(transform, position))
+            .map(|point| map_display_point_to_frame(point, display_bounds, selection_bounds));
+        let screen_point = screen_pointer
+            .map(|point| map_display_point_to_frame(point, display_bounds, selection_bounds));
+        match (screen_pointer, screen_point, local_point) {
+            (Some(raw_screen), Some(screen), Some(local)) => Some(PhysicalPoint {
+                // Prefer the local GPUI edge sample when the native pointer is just inside a
+                // borderless client inset; keep the global point for interior/cross-display drag.
+                x: if raw_screen.x >= display_bounds.left
+                    && raw_screen.x < display_bounds.right
+                    && (local.x == selection_bounds.right
+                        || raw_screen.x >= display_bounds.right.saturating_sub(8))
+                {
+                    local.x
+                } else {
+                    screen.x
+                },
+                y: if raw_screen.y >= display_bounds.top
+                    && raw_screen.y < display_bounds.bottom
+                    && (local.y == selection_bounds.bottom
+                        || raw_screen.y >= display_bounds.bottom.saturating_sub(8))
+                {
+                    local.y
+                } else {
+                    screen.y
+                },
+            }),
+            (_, Some(point), None) | (None, None, Some(point)) => Some(point),
+            (None, Some(point), Some(_)) => Some(point),
+            (Some(_), None, Some(point)) => Some(point),
+            (Some(_), None, None) => None,
+            (None, None, None) => None,
+        }
+        .map(|point| snap_selection_pointer_to_frame_edge(point, selection_bounds))
+    } else if transform.fitted_view().contains(view) {
         transform.view_to_physical(view)
     } else {
-        allow_cross_display_drag
-            .then_some(outside_screen_point)
-            .flatten()
-            .or_else(|| transform.view_to_physical(clamp_to_view(transform, position)))
+        transform.view_to_physical(clamp_to_view(transform, position))
+    }
+}
+
+/// Maps a display-space pointer into the captured frame when capture and display dimensions differ.
+fn map_display_point_to_frame(
+    point: PhysicalPoint,
+    display_bounds: PhysicalRect,
+    frame_bounds: PhysicalRect,
+) -> PhysicalPoint {
+    let map_axis = |value: i32,
+                    display_start: i32,
+                    display_extent: u32,
+                    frame_start: i32,
+                    frame_extent: u32| {
+        if value < display_start {
+            return frame_start.saturating_add(value.saturating_sub(display_start));
+        }
+        let display_end = display_start.saturating_add(display_extent as i32);
+        if value >= display_end {
+            return frame_start
+                .saturating_add(frame_extent as i32)
+                .saturating_add(value.saturating_sub(display_end));
+        }
+        let offset = value
+            .saturating_sub(display_start)
+            .clamp(0, display_extent.saturating_sub(1) as i32);
+        frame_start.saturating_add(
+            (i64::from(offset) * i64::from(frame_extent) / i64::from(display_extent.max(1))) as i32,
+        )
+    };
+    PhysicalPoint {
+        x: map_axis(
+            point.x,
+            display_bounds.left,
+            display_bounds.width(),
+            frame_bounds.left,
+            frame_bounds.width(),
+        ),
+        y: map_axis(
+            point.y,
+            display_bounds.top,
+            display_bounds.height(),
+            frame_bounds.top,
+            frame_bounds.height(),
+        ),
+    }
+}
+
+/// Treats the final addressable pixel as the exclusive edge when a physical drag reaches a frame border.
+fn snap_selection_pointer_to_frame_edge(
+    point: PhysicalPoint,
+    bounds: PhysicalRect,
+) -> PhysicalPoint {
+    PhysicalPoint {
+        x: if point.x == bounds.right.saturating_sub(1) {
+            bounds.right
+        } else {
+            point.x
+        },
+        y: if point.y == bounds.bottom.saturating_sub(1) {
+            bounds.bottom
+        } else {
+            point.y
+        },
     }
 }
 
@@ -5224,8 +5358,9 @@ mod tests {
         secondary_action_menu_width, secondary_action_tooltip, secondary_menu_opens_above,
         selection_cursor, selection_dimension_label_layout, selection_point_from_view_or_screen,
         should_stop_overlay_action_key_propagation, smart_target_hud_label,
-        smart_target_hud_layout, status_bottom_inset, status_bottom_inset_for_stacked_annotation,
-        view_rect, visible_selection, workspace_layout_snapshot,
+        smart_target_hud_layout, snap_selection_pointer_to_frame_edge, status_bottom_inset,
+        status_bottom_inset_for_stacked_annotation, view_rect, visible_selection,
+        workspace_layout_snapshot,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle, AnnotationTool},
@@ -5319,14 +5454,15 @@ mod tests {
     }
 
     #[test]
-    fn client_drag_points_preserve_display_crossing_and_image_letterboxing() {
+    fn full_display_drag_uses_global_physical_points_and_preserves_letterboxing() {
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1440,
+        };
         let transform = PreviewTransform::contain(
-            PhysicalRect {
-                left: 0,
-                top: 0,
-                right: 2560,
-                bottom: 1440,
-            },
+            bounds,
             ViewRect {
                 left: 0.0,
                 top: 0.0,
@@ -5342,8 +5478,9 @@ mod tests {
                 point(px(563.0), px(288.0)),
                 true,
                 Some(PhysicalPoint { x: 999, y: 999 }),
+                bounds,
             ),
-            Some(PhysicalPoint { x: 563, y: 288 })
+            Some(PhysicalPoint { x: 999, y: 999 })
         );
         assert_eq!(
             selection_point_from_view_or_screen(
@@ -5351,6 +5488,7 @@ mod tests {
                 point(px(-4.0), px(1444.0)),
                 true,
                 Some(PhysicalPoint { x: -20, y: 1500 }),
+                bounds,
             ),
             Some(PhysicalPoint { x: -20, y: 1500 })
         );
@@ -5360,12 +5498,38 @@ mod tests {
                 point(px(-4.0), px(1444.0)),
                 false,
                 Some(PhysicalPoint { x: -20, y: 1500 }),
+                bounds,
             ),
             Some(PhysicalPoint { x: 0, y: 1440 })
         );
         assert_eq!(
-            selection_point_from_view_or_screen(transform, point(px(-4.0), px(1444.0)), true, None,),
+            selection_point_from_view_or_screen(
+                transform,
+                point(px(-4.0), px(1444.0)),
+                true,
+                None,
+                bounds,
+            ),
             Some(PhysicalPoint { x: 0, y: 1440 })
+        );
+    }
+
+    #[test]
+    fn final_addressable_frame_pixel_maps_to_the_exclusive_selection_edge() {
+        let bounds = PhysicalRect {
+            left: -1920,
+            top: -120,
+            right: 0,
+            bottom: 960,
+        };
+
+        assert_eq!(
+            snap_selection_pointer_to_frame_edge(PhysicalPoint { x: -1, y: 959 }, bounds,),
+            PhysicalPoint { x: 0, y: 960 }
+        );
+        assert_eq!(
+            snap_selection_pointer_to_frame_edge(PhysicalPoint { x: -2, y: 958 }, bounds,),
+            PhysicalPoint { x: -2, y: 958 }
         );
     }
 

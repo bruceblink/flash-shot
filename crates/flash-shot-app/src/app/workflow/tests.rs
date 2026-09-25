@@ -2580,6 +2580,23 @@ fn click_jitter_uses_smart_target_but_drag_keeps_free_selection() {
         bottom: 260,
     };
     assert_eq!(resolve_pointer_selection(drag, Some(target)), Some(drag));
+    assert_eq!(
+        resolve_pointer_selection(
+            PhysicalRect {
+                left: 200,
+                top: 200,
+                right: 201,
+                bottom: 201,
+            },
+            None
+        ),
+        Some(PhysicalRect {
+            left: 200,
+            top: 200,
+            right: 201,
+            bottom: 201,
+        })
+    );
 }
 
 #[test]

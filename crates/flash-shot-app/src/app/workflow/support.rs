@@ -388,7 +388,10 @@ pub(in crate::app) fn resolve_pointer_selection(
 ) -> Option<PhysicalRect> {
     const CLICK_TOLERANCE: u32 = 3;
     if dragged.width() <= CLICK_TOLERANCE && dragged.height() <= CLICK_TOLERANCE {
-        smart_target.map(|target| target.bounds)
+        smart_target.map_or_else(
+            || (dragged.width() > 0 && dragged.height() > 0).then_some(dragged),
+            |target| Some(target.bounds),
+        )
     } else if dragged.width() > 0 && dragged.height() > 0 {
         Some(dragged)
     } else {

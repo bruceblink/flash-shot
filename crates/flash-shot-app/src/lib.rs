@@ -172,6 +172,7 @@ pub enum OverlayInteractionAcceptanceCommand {
     CaptureSnapshot(SyncSender<OverlayInteractionCaptureState>),
     CaptureContent(SyncSender<OverlayInteractionCaptureContent>),
     ShowCaptureSettings,
+    PrepareOnePixelSelection,
     ShowRecordingSettings,
 }
 

@@ -1152,6 +1152,13 @@ impl FlashShotApp {
                             this.select_settings_section(SettingsSection::Capture, cx);
                             this.show_settings_window(cx);
                         }
+                        crate::OverlayInteractionAcceptanceCommand::PrepareOnePixelSelection => {
+                            // One-pixel acceptance checks selection geometry, not click-to-window behavior.
+                            this.hover_pixel = None;
+                            this.inspection_request = None;
+                            this.inspection_target = None;
+                            this.pending_click_target = None;
+                        }
                         crate::OverlayInteractionAcceptanceCommand::ShowRecordingSettings => {
                             this.select_settings_section(SettingsSection::Recording, cx);
                             this.show_settings_window(cx);
