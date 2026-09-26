@@ -474,10 +474,10 @@ English/简体中文 Release 截图及同名 JSON 均通过 `scale_match=true`�
 动态文案迁移，不代表生产录屏、真实翻译端点、OCR 依赖失败重试和其他 workflow 的动态文案已全部迁移；真实窗口中的
 打开图片失败提示仍需后续原生验收。
 
-随后在 `main` 上完成四个独立 U1 子切片：`9ca0790` 将 Library 条目的文件名、来源和相对时间改为
+随后在 `main` 上完成五个独立 U1 子切片：`9ca0790` 将 Library 条目的文件名、来源和相对时间改为
 `LibraryEntryLabel` 参数模板；`ee2f014` 将截图覆盖层图层列表的序号和工具名称改为 `OverlayLayerLabel`；
 `868b4f2` 将 Pin 不透明度按钮的百分比改为 `PinOpacityValue`；`690addc` 将标注样式栏的不透明度百分比改为
-`AnnotationOpacityValue`。四个切片均补充 English/简体中文参数化测试，并分别通过对应模块测试、
+`AnnotationOpacityValue`；`3cd8d37` 将 Library 快速保存文件名预览改为 `LibraryFileNamePattern`。五个切片均补充 English/简体中文参数化测试，并分别通过对应模块测试、
 `cargo fmt --all -- --check` 与 `cargo clippy --workspace --all-targets -- -D warnings`；U1 仍保持“部分完成”。
 
 ### U2：收敛入口和恢复动作
