@@ -459,7 +459,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     OverlayUiAcceptanceScenario::SelectedRegion {
                         placement: OverlayUiAcceptanceSelectionPlacement::Centered,
                         show_more_actions: false,
-                        show_annotation_controls: false,
+                        show_annotation_controls: true,
                         show_annotation_tool_group: false,
                     }
                 }
@@ -467,7 +467,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     OverlayUiAcceptanceScenario::SelectedRegion {
                         placement: OverlayUiAcceptanceSelectionPlacement::Centered,
                         show_more_actions: true,
-                        show_annotation_controls: false,
+                        show_annotation_controls: true,
                         show_annotation_tool_group: false,
                     }
                 }
@@ -475,7 +475,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     OverlayUiAcceptanceScenario::SelectedRegion {
                         placement: OverlayUiAcceptanceSelectionPlacement::BottomRight,
                         show_more_actions: true,
-                        show_annotation_controls: false,
+                        show_annotation_controls: true,
                         show_annotation_tool_group: false,
                     }
                 }

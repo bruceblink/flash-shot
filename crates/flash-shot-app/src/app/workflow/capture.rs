@@ -1094,6 +1094,12 @@ impl FlashShotApp {
                 cx.notify();
                 return;
             }
+            // Snow Shot keeps the complete editing palette visible as soon as a region is
+            // committed. This makes the screenshot workspace immediately legible and avoids
+            // hiding the primary annotation tools behind a second More interaction.
+            self.overlay_annotation_controls = true;
+            self.close_annotation_tool_group();
+            self.overlay_more_actions = false;
             self.status = selection_status(self.settings.locale, selection);
             if copy_on_double_click {
                 self.copy_selection(cx);

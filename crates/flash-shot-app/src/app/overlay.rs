@@ -2747,6 +2747,22 @@ impl Render for CaptureOverlay {
                                         .flex()
                                         .items_center()
                                         .gap(px(ANNOTATION_TOOL_PALETTE_GAP))
+                                        .child(annotation_icon_button(
+                                            "overlay-tool-selection",
+                                            "✥",
+                                            locale.text(UiText::OverlaySelect),
+                                            locale.text(UiText::OverlaySelect),
+                                            workspace_colors,
+                                            selected_tool.is_none(),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.select_selection_tool(cx);
+                                                    });
+                                                });
+                                            }),
+                                        ))
                                         .children(ANNOTATION_TOOL_GROUP_SPECS.iter().copied().map(
                                             |spec| {
                                                 let group = spec.group;
@@ -2797,22 +2813,6 @@ impl Render for CaptureOverlay {
                                                             AnnotationTool::Highlight,
                                                             cx,
                                                         );
-                                                    });
-                                                });
-                                            }),
-                                        ))
-                                        .child(annotation_icon_button(
-                                            "overlay-tool-selection",
-                                            "↖",
-                                            locale.text(UiText::OverlaySelect),
-                                            locale.text(UiText::OverlaySelect),
-                                            workspace_colors,
-                                            selected_tool.is_none(),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.select_selection_tool(cx);
                                                     });
                                                 });
                                             }),
@@ -2892,11 +2892,7 @@ impl Render for CaptureOverlay {
                                             locale.text(UiText::OverlayCopy),
                                             WorkspaceButtonConfig::icon(
                                                 workspace_colors,
-                                                if show_annotation_controls {
-                                                    WorkspaceButtonTone::Neutral
-                                                } else {
-                                                    WorkspaceButtonTone::Primary
-                                                },
+                                                WorkspaceButtonTone::Primary,
                                                 false,
                                                 !selection_copy_in_progress,
                                                 if selection_copy_in_progress {

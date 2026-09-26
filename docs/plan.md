@@ -140,7 +140,7 @@ Copy/Save/Pin/Cancel 语义、快捷键、报告字段或失败恢复规则。Sn
 | W3 | 上下文样式栏 | 已完成（2026-09-13；静态 UI，单屏 100%） | 样式控件已按当前工具/对象能力收敛为工作区附属行；中英文、双主题和 360/520/700/900/1100 宽度 Release 视觉矩阵通过 |
 | W4 | 工具组与 More 浮层 | 已完成（2026-09-13；静态双语/双主题，单屏 100% 真实输入） | 已统一低频动作、工具组选择、键盘焦点、关闭规则和局部坐标放置；More 保持独立的按需浮层 |
 | W5 | 选区锚定、HUD 与布局快照 | 已完成（2026-09-25；单屏 100%，DPI 96） | 已统一工作区布局快照；零面积拒绝、1px、全屏和四边贴边的真实 Release 矩阵通过，包含导出尺寸/边界、隔离 Copy sink、状态复位和窗口/任务/输入清理；150%/200% DPI 与多屏按 D1 暂缓 |
-| W6 | 双主题、双语、DPI 与真实输入验收 | 进行中（2026-09-25；工具栏视觉验收完成） | 按用户新参考图收敛为单行截图工具栏，84 组双主题/双语 Release 截图和真实单屏 100% 鼠标/键盘工具组交互通过；主动作像素导出行为、真实系统剪贴板与完整多动作主链仍待执行，高 DPI 与多屏按 D1 暂缓 |
+| W6 | 双主题、双语、DPI 与真实输入验收 | 进行中（2026-09-26；Snow Shot 工具栏视觉对齐完成） | 选区默认显示完整横向编辑工具栏，选择/移动图标、分组分隔、蓝色 Copy、红色 Cancel 和小窗口避让已按参考图复核；主动作像素导出行为、真实系统剪贴板与完整多动作主链仍待执行，高 DPI 与多屏按 D1 暂缓 |
 | U1 | 动态文案国际化 | 部分完成 | 继续清点 workflow、错误、忙状态和动态数量；Record 无输入验收状态已改为读取活动语言资源，其他动态文案仍需盘点 |
 | U2 | 信息架构与动作收敛 | 部分完成（Record 主动作，2026-09-09） | Record 页已将录制/重试作为唯一强调动作，支持检查保持次要层级；App、Library 和真实输入矩阵仍待继续 |
 | U3 | 视觉 token 与布局 | 部分完成 | 设置、覆盖层、Pin、Library/Record 已使用部分 token；真实输入和高 DPI 未覆盖 |
@@ -433,6 +433,8 @@ Clippy 和格式检查通过；当前源码 Release 生成的 `w2-final2-selecti
 **补充视觉验收基准与结果（2026-09-25）**：用户再次提供的截图明确替代 W2 中“工具、样式、结果动作分行”的初始呈现；验收基准为横向单行结果工具栏，含一致的正方命中区、图标中心对齐、分组分隔和紧凑间距。最终 Release 原生 `tool-group` 会话在 `\\.\DISPLAY1`、DPI 96 完成拖选，More 点击/外部关闭，标注工具组打开、Escape 关闭、方向键选择 Watermark、Shape 外部关闭、鼠标选择 Rectangle 和退出清理；报告 `target/overlay-interaction-acceptance/w6-tool-group-snow-shot-unified-v2/session-1790318461798-30568/report.json` 为 `status=passed`，清理后 overlay/window 为 0 且 capture preflight ready。`02-tool-group-toolbar.png` 与 Watermark 的 `06-tool-group-shape-open.png` 已目视复核；同一源码生成的 English/简体中文 980x760 Release 图用于确认两种语言下的行内布局。该证据完成本次工具栏视觉切片和工具组交互，不代表剪贴板、Save、Pin 各动作原生主链或 W6 整体已完成。
 
 **视觉矩阵验收（2026-09-25）**：最终单行工具栏源码 Release 的报告为 `target/ui-acceptance/w6-toolbar-single-row-final-20260925/matrix-report.json`，84/84 通过 DPI 96、scale 1.0、语言和窗口边界 metadata 校验；目视复核了 420x420、520x640、980x760 的代表截图，覆盖深浅主题、中英文、标注、工具组和小屏 More。该矩阵只证明渲染和布局；真实工具组鼠标/键盘行为由单独的 `tool-group` 原生报告证明；真实系统剪贴板或 Copy/Save/Pin/Cancel 完整动作主链仍未由本切片覆盖。
+
+**视觉对齐修订（2026-09-26）**：按用户提供的 Snow Shot 截图，将已提交选区的默认状态改为直接显示完整横向编辑工具栏；选择/移动工具置于标注工具组之前，复制保持蓝色主动作，取消保持红色破坏性动作，工具栏背景收敛为中性黑灰。420x420、520x640、980x760 的 Release 截图分别为 `target/ui-acceptance/w6-toolbar-final-20260926-dark-420.png`、`w6-toolbar-final-20260926-dark-520.png` 和 `w6-toolbar-final-20260926-dark-980.png`，均已目视复核无重叠或截断；`overlay::tests` 57 项、工具组原生输入报告 `target/overlay-interaction-acceptance/w6-tool-group-final-20260926/session-1790419931266-11048/report.json` 均通过。Computer Use 当前会话仅暴露浏览器接口，未能发现 Windows 原生窗口；本次原生交互证据来自项目 Release runner，静态截图不替代未覆盖的高 DPI、多屏和完整系统剪贴板主链。
 
 **独立提交建议**：`test: verify screenshot workspace toolbar`。
 

@@ -1120,6 +1120,13 @@ fn tool_group_interaction_plan_for_capture_selection(
     } else {
         left
     };
+    // The compact palette starts with the explicit selection/move tool, followed by the four
+    // grouped annotation triggers. Keep native probe points aligned with that rendered order.
+    let group_trigger_offset = if annotation_controls {
+        TOOL_ICON_WIDTH + TOOL_PALETTE_GAP
+    } else {
+        0.0
+    };
     Ok(ToolGroupInteractionPlan {
         mark: screen_point((
             action_center(0),
@@ -1130,11 +1137,16 @@ fn tool_group_interaction_plan_for_capture_selection(
             action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
         text_trigger: screen_point((
-            annotation_row_left + PALETTE_BORDER + TOOLBAR_PADDING + TOOL_ICON_WIDTH / 2.0,
+            annotation_row_left
+                + group_trigger_offset
+                + PALETTE_BORDER
+                + TOOLBAR_PADDING
+                + TOOL_ICON_WIDTH / 2.0,
             group_row_center_y,
         )),
         shape_trigger: screen_point((
             annotation_row_left
+                + group_trigger_offset
                 + PALETTE_BORDER
                 + TOOLBAR_PADDING
                 + TOOL_ICON_WIDTH
@@ -6654,7 +6666,7 @@ fn execute_tool_group_interactions(
             && state.selection.is_some()
             && state.overlay_count == 1
             && !state.more_actions_visible
-            && !state.annotation_controls_visible
+            && state.annotation_controls_visible
             && !state.annotation_tool_group_visible
     })?;
     let selection = selected_state
@@ -6666,7 +6678,7 @@ fn execute_tool_group_interactions(
         overlay.handle,
         context.display.physical_bounds,
         selection,
-        false,
+        true,
         0.0,
     )?;
     let foreground = inject_mouse_click(overlay.handle, group_plan.more)?;
@@ -6674,7 +6686,7 @@ fn execute_tool_group_interactions(
         state.selection == Some(selection)
             && state.overlay_count == 1
             && state.more_actions_visible
-            && !state.annotation_controls_visible
+            && state.annotation_controls_visible
             && !state.annotation_tool_group_visible
     })?;
     let more_open = capture_evidence(context, "00-tool-group-more-open.png", overlay)?;
@@ -6692,7 +6704,7 @@ fn execute_tool_group_interactions(
             state.selection == Some(selection)
                 && state.overlay_count == 1
                 && !state.more_actions_visible
-                && !state.annotation_controls_visible
+                && state.annotation_controls_visible
                 && !state.annotation_tool_group_visible
         })?;
     let more_outside_closed =
@@ -6705,7 +6717,7 @@ fn execute_tool_group_interactions(
         Some(&more_outside_closed),
     )?;
 
-    let foreground = inject_mouse_click(overlay.handle, group_plan.mark)?;
+    let foreground = guard_foreground(overlay.handle)?;
     wait_for_capture_state(context, "tool-group annotation controls", |state| {
         state.selection == Some(selection)
             && state.overlay_count == 1
@@ -6763,6 +6775,9 @@ fn execute_tool_group_interactions(
     wait_for_capture_state(context, "Text tool group reopen", |state| {
         state.annotation_tool_group_visible
     })?;
+    // The expanded default toolbar schedules child focus on the next GPUI frame; wait for that
+    // focus handoff before sending the keyboard navigation pair.
+    thread::sleep(context.settle_delay);
     inject_key(overlay.handle, VK_RIGHT)?;
     inject_key(overlay.handle, VK_RETURN)?;
     let watermark_state =
@@ -7853,7 +7868,10 @@ fn execute_capture_interactions(
     thread::sleep(context.settle_delay);
     let plan = interaction_plan_for_window(first_overlay.handle)?;
 
-    let first_drag = inject_mouse_drag(
+    // Full-display overlays use the physical display coordinate path. The compact floating
+    // toolbar can move while the selection is growing, so the legacy client-relative mapping
+    // may cross a transient toolbar hitbox and commit a tool gesture instead of the selection.
+    let first_drag = inject_mouse_drag_in_display_pixels(
         first_overlay.handle,
         plan.drag_start,
         plan.drag_end,
@@ -7958,7 +7976,7 @@ fn execute_capture_interactions(
     focus_owned_window(second_overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
     let second_plan = interaction_plan_for_window(second_overlay.handle)?;
-    let second_drag = inject_mouse_drag(
+    let second_drag = inject_mouse_drag_in_display_pixels(
         second_overlay.handle,
         second_plan.drag_start,
         second_plan.drag_end,
@@ -8752,8 +8770,10 @@ fn begin_selected_overlay_with_plan(
     PhysicalRect,
     CaptureFrame,
 )> {
+    // Copy-only and the standard action chain both use the same full-display overlay. Keep their
+    // drag on physical display coordinates so the moving compact toolbar cannot intercept it.
     let (overlay, plan, drag) =
-        begin_capture_overlay_with_plan(context, controller, false, false, plan_for_window)?;
+        begin_capture_overlay_with_plan(context, controller, false, true, plan_for_window)?;
     let state = wait_for_capture_state(context, "fresh overlay selection", |state| {
         state.session_state == "selecting" && state.selection.is_some() && state.overlay_count == 1
     })?;
