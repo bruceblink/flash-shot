@@ -1321,7 +1321,9 @@ fn system_settings(
             )),
         )
         .child(
-            settings_row(locale.text(UiText::Updates), colors).child(settings_button(
+            // Update checking is the App page's single workflow action; appearance, language,
+            // and startup controls remain preference-level secondary controls.
+            settings_row(locale.text(UiText::Updates), colors).child(settings_primary_button(
                 "settings-check-updates",
                 update_check_label_for_locale(locale, app_state.update_check_in_flight),
                 colors,
