@@ -869,7 +869,7 @@ fn file_settings(
         .child(
             settings_row(locale.text(UiText::LibraryFileName), colors).child(settings_button(
                 "settings-quick-save-prefix",
-                &format!("{}+time+UUIDv7", app_state.settings.quick_save_prefix),
+                &quick_save_prefix_label(locale, &app_state.settings.quick_save_prefix),
                 colors,
                 is_idle,
                 {
@@ -960,6 +960,11 @@ fn settings_path_label(path: &std::path::Path) -> String {
         .strip_prefix(r"\\?\")
         .unwrap_or(label.as_ref())
         .to_owned()
+}
+
+/// Formats the quick-save filename preview through the active catalog while preserving its prefix.
+fn quick_save_prefix_label(locale: Locale, prefix: &str) -> String {
+    locale.format_template(UiText::LibraryFileNamePattern, &[("prefix", prefix)])
 }
 
 /// Makes the retention action explicit so a user knows the number refers to saved captures.
@@ -2833,13 +2838,13 @@ mod tests {
         capture_shortcut_summary, history_clear_confirmation_label, history_entry_label,
         history_entry_matches, history_result_summary, history_retention_label,
         history_thumbnail_status, history_visibility_label, ocr_support_check_label,
-        recording_progress_label, recording_source_discovery_busy, recording_status_visible,
-        recording_support_check_label, recording_toggle_enabled, recording_toggle_label,
-        relative_timestamp_label, settings_actions_available, settings_navigation_activation,
-        settings_navigation_direction, settings_navigation_items_for_locale,
-        settings_page_copy_for_locale, settings_page_intro, settings_path_label,
-        status_indicator_color, translation_service_test_label, update_check_label_for_locale,
-        uses_compact_settings_navigation, visible_history_entries,
+        quick_save_prefix_label, recording_progress_label, recording_source_discovery_busy,
+        recording_status_visible, recording_support_check_label, recording_toggle_enabled,
+        recording_toggle_label, relative_timestamp_label, settings_actions_available,
+        settings_navigation_activation, settings_navigation_direction,
+        settings_navigation_items_for_locale, settings_page_copy_for_locale, settings_page_intro,
+        settings_path_label, status_indicator_color, translation_service_test_label,
+        update_check_label_for_locale, uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -3277,6 +3282,14 @@ mod tests {
             r"C:\captures"
         );
         assert_eq!(settings_path_label(Path::new("F:/captures")), "F:/captures");
+        assert_eq!(
+            quick_save_prefix_label(Locale::English, "FlashShot"),
+            "FlashShot+time+UUIDv7"
+        );
+        assert_eq!(
+            quick_save_prefix_label(Locale::SimplifiedChinese, "截图"),
+            "截图+time+UUIDv7"
+        );
     }
 
     #[test]
