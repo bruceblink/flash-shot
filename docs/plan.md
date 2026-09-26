@@ -478,7 +478,11 @@ English/简体中文 Release 截图及同名 JSON 均通过 `scale_match=true`�
 `LibraryEntryLabel` 参数模板；`ee2f014` 将截图覆盖层图层列表的序号和工具名称改为 `OverlayLayerLabel`；
 `868b4f2` 将 Pin 不透明度按钮的百分比改为 `PinOpacityValue`；`690addc` 将标注样式栏的不透明度百分比改为
 `AnnotationOpacityValue`；`3cd8d37` 将 Library 快速保存文件名预览改为 `LibraryFileNamePattern`。五个切片均补充 English/简体中文参数化测试，并分别通过对应模块测试、
-`cargo fmt --all -- --check` 与 `cargo clippy --workspace --all-targets -- -D warnings`；U1 仍保持“部分完成”。
+`cargo fmt --all -- --check` 与 `cargo clippy --workspace --all-targets -- -D warnings`。随后以当前 Release
+运行 `settings-ui-acceptance` 生成 `target/ui-acceptance/u1-library-prefix-{en,zh}-20260926.*`、
+`u1-overlay-marking-{en,zh}-20260926.*` 和 `u1-pin-{en,zh}-20260926.*` 六组 PNG/JSON；全部记录
+`dpi=96`、`scale_factor=1.0`、`scale_match=true`，Library 中文和 Pin English 图已目视复核无截断或重叠。
+本次没有真实 Computer Use 原生窗口输入证据；U1 仍保持“部分完成”。
 
 ### U2：收敛入口和恢复动作
 
