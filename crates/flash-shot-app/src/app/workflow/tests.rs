@@ -1726,6 +1726,18 @@ fn recording_status_uses_ffmpeg_progress_without_exposing_process_output() {
         ),
         "Recording selected area: 3s, 117 frames"
     );
+    assert_eq!(
+        format_recording_progress(
+            Locale::SimplifiedChinese,
+            "所选区域",
+            crate::recording::RecordingProgress {
+                output_time_us: Some(3_900_000),
+                frame: Some(117),
+                finished: false,
+            }
+        ),
+        "正在录制所选区域：3 秒，117 帧"
+    );
 }
 
 #[test]
@@ -1733,6 +1745,10 @@ fn recording_stop_status_names_the_target_during_late_progress() {
     assert_eq!(
         format_recording_stopping(Locale::English, "display"),
         "Stopping display recording..."
+    );
+    assert_eq!(
+        format_recording_stopping(Locale::SimplifiedChinese, "显示器"),
+        "正在停止显示器录屏..."
     );
 }
 
@@ -2012,24 +2028,21 @@ fn recording_output_requires_at_least_one_available_directory() {
 
 #[test]
 fn recording_status_identifies_each_capture_target() {
-    assert_eq!(
-        recording_target_label(
-            Locale::English,
-            &crate::recording::RecordingTarget::Display {
+    let targets = [
+        (
+            crate::recording::RecordingTarget::Display {
                 bounds: PhysicalRect {
                     left: 0,
                     top: 0,
                     right: 1920,
                     bottom: 1080,
                 },
-            }
+            },
+            "display",
+            "显示器",
         ),
-        "display"
-    );
-    assert_eq!(
-        recording_target_label(
-            Locale::English,
-            &crate::recording::RecordingTarget::Window {
+        (
+            crate::recording::RecordingTarget::Window {
                 title: "Editor".to_owned(),
                 bounds: PhysicalRect {
                     left: 10,
@@ -2037,24 +2050,31 @@ fn recording_status_identifies_each_capture_target() {
                     right: 100,
                     bottom: 100,
                 },
-            }
+            },
+            "window",
+            "窗口",
         ),
-        "window"
-    );
-    assert_eq!(
-        recording_target_label(
-            Locale::English,
-            &crate::recording::RecordingTarget::Region {
+        (
+            crate::recording::RecordingTarget::Region {
                 bounds: PhysicalRect {
                     left: 10,
                     top: 10,
                     right: 100,
                     bottom: 100,
                 },
-            }
+            },
+            "selected area",
+            "所选区域",
         ),
-        "selected area"
-    );
+    ];
+
+    for (target, english, chinese) in targets {
+        assert_eq!(recording_target_label(Locale::English, &target), english);
+        assert_eq!(
+            recording_target_label(Locale::SimplifiedChinese, &target),
+            chinese
+        );
+    }
 }
 
 #[test]
