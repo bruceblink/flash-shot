@@ -474,16 +474,18 @@ English/简体中文 Release 截图及同名 JSON 均通过 `scale_match=true`�
 动态文案迁移，不代表生产录屏、真实翻译端点、OCR 依赖失败重试和其他 workflow 的动态文案已全部迁移；真实窗口中的
 打开图片失败提示仍需后续原生验收。
 
-随后在 `main` 上完成七个独立 U1 子切片：`9ca0790` 将 Library 条目的文件名、来源和相对时间改为
+随后在 `main` 上完成八个独立 U1 子切片：`9ca0790` 将 Library 条目的文件名、来源和相对时间改为
 `LibraryEntryLabel` 参数模板；`ee2f014` 将截图覆盖层图层列表的序号和工具名称改为 `OverlayLayerLabel`；
 `868b4f2` 将 Pin 不透明度按钮的百分比改为 `PinOpacityValue`；`690addc` 将标注样式栏的不透明度百分比改为
-`AnnotationOpacityValue`；`3cd8d37` 将 Library 快速保存文件名预览改为 `LibraryFileNamePattern`；`93cc3af` 将标注样式栏的线宽和文字大小数值改为 `AnnotationWidthValue` 与 `AnnotationTextSizeValue`；`e67e4b9` 将选中序号标注的动态数字改为 `AnnotationNumberValue`。七个切片均补充 English/简体中文参数化测试，并分别通过对应模块测试、
+`AnnotationOpacityValue`；`3cd8d37` 将 Library 快速保存文件名预览改为 `LibraryFileNamePattern`；`93cc3af` 将标注样式栏的线宽和文字大小数值改为 `AnnotationWidthValue` 与 `AnnotationTextSizeValue`；`e67e4b9` 将选中序号标注的动态数字改为 `AnnotationNumberValue`；`1714ec3` 将录屏显示器的序号和物理尺寸改为 `RecordingDisplayLabel` 参数模板。八个切片均补充 English/简体中文参数化测试，并分别通过对应模块测试、
 `cargo fmt --all -- --check` 与 `cargo clippy --workspace --all-targets -- -D warnings`。随后以当前 Release
 运行 `settings-ui-acceptance` 生成 `target/ui-acceptance/u1-library-prefix-{en,zh}-20260926.*`、
 `u1-overlay-marking-{en,zh}-20260926.*` 和 `u1-pin-{en,zh}-20260926.*` 六组 PNG/JSON；全部记录
 `dpi=96`、`scale_factor=1.0`、`scale_match=true`，Library 中文和 Pin English 图已目视复核无截断或重叠。
 `93cc3af` 又以当前 Release 生成 `u1-overlay-values-{en,zh}-20260926.*` 两组 PNG/JSON，均记录
 `scale_match=true`，用于复核线宽、文字大小和透明度样式行的中英文紧凑布局。
+`1714ec3` 又生成 `u1-record-display-{en,zh}-20260926.*` 两组 PNG/JSON，均记录
+`scale_match=true`，用于复核 Record 页面中英文显示器选择布局。
 本次没有真实 Computer Use 原生窗口输入证据；U1 仍保持“部分完成”。
 
 ### U2：收敛入口和恢复动作
