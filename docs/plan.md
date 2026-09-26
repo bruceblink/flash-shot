@@ -521,6 +521,11 @@ English 深色 980x760 以及更新检查忙态 Release 探针均记录 `dpi=96`
 并已目视复核主按钮、取消按钮和状态栏无截断或重叠。该证据不替代真实鼠标触发、更新端点响应或高 DPI/多屏验收；
 U2 继续保持“部分完成”。
 
+**U3 视觉 token 切片（2026-09-27）**：手动滚动控制器的按钮高度、四个动作的最小宽度和状态摘要最大宽度已迁移到
+`ThemeMetrics`，删除组件内重复几何常量；`scroll_control` 与主题测试继续锁定 520 px 紧凑行的宽度预算，保持现有行为和
+本地化布局不变。该切片通过 `cargo test -p flash-shot-app --lib`（396 项）、`cargo fmt --all -- --check` 和
+`cargo clippy --workspace --all-targets -- -D warnings`；它只完成 token 集中化，不替代 U3 的真实输入、高 DPI 或多屏验收。
+
 ### U3/U4：完成视觉与 Pin 原生矩阵
 
 **目标**：把已完成的 token 和隔离探针扩展到真实中英文输入与窗口生命周期。

@@ -147,6 +147,12 @@ impl ThemeMetrics {
     pub const WORKSPACE_STYLE_VALUE_WIDTH: f32 = 32.0;
     pub const WORKSPACE_STYLE_OPACITY_WIDTH: f32 = 44.0;
     pub const WORKSPACE_STYLE_FILL_WIDTH: f32 = 48.0;
+    pub const SCROLL_BUTTON_HEIGHT: f32 = 32.0;
+    pub const SCROLL_AUTO_CAPTURE_MIN_WIDTH: f32 = 176.0;
+    pub const SCROLL_CAPTURE_MIN_WIDTH: f32 = 122.0;
+    pub const SCROLL_FINISH_MIN_WIDTH: f32 = 84.0;
+    pub const SCROLL_CANCEL_MIN_WIDTH: f32 = 80.0;
+    pub const SCROLL_STATUS_MAX_WIDTH: f32 = 200.0;
     pub const LIBRARY_THUMBNAIL_WIDTH: f32 = 72.0;
     pub const LIBRARY_THUMBNAIL_HEIGHT: f32 = 46.0;
     pub const LIBRARY_ROW_PADDING: f32 = 12.0;
@@ -433,5 +439,24 @@ mod tests {
         assert_eq!(ThemeMetrics::PIN_TOOLBAR_GAP, metrics.space_2);
         assert_eq!(ThemeMetrics::PIN_CONTROL_HEIGHT, 30.0);
         assert_eq!(ThemeMetrics::PIN_TOP_CONTROLS_HEIGHT, 62.0);
+    }
+
+    #[test]
+    fn scroll_controls_keep_localized_actions_inside_the_compact_row() {
+        assert_eq!(ThemeMetrics::SCROLL_BUTTON_HEIGHT, 32.0);
+        assert_eq!(ThemeMetrics::SCROLL_AUTO_CAPTURE_MIN_WIDTH, 176.0);
+        assert_eq!(ThemeMetrics::SCROLL_CAPTURE_MIN_WIDTH, 122.0);
+        assert_eq!(ThemeMetrics::SCROLL_FINISH_MIN_WIDTH, 84.0);
+        assert_eq!(ThemeMetrics::SCROLL_CANCEL_MIN_WIDTH, 80.0);
+        assert_eq!(ThemeMetrics::SCROLL_STATUS_MAX_WIDTH, 200.0);
+        const {
+            assert!(
+                ThemeMetrics::SCROLL_AUTO_CAPTURE_MIN_WIDTH
+                    + ThemeMetrics::SCROLL_CAPTURE_MIN_WIDTH
+                    + ThemeMetrics::SCROLL_FINISH_MIN_WIDTH
+                    + ThemeMetrics::SCROLL_CANCEL_MIN_WIDTH
+                    <= 472.0
+            );
+        }
     }
 }

@@ -8,13 +8,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::FlashShotApp;
 use crate::i18n::{Locale, UiText};
-
-const MANUAL_SCROLL_BUTTON_HEIGHT: f32 = 32.0;
-const MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH: f32 = 176.0;
-const MANUAL_SCROLL_CAPTURE_BUTTON_MIN_WIDTH: f32 = 122.0;
-const MANUAL_SCROLL_FINISH_BUTTON_MIN_WIDTH: f32 = 84.0;
-const MANUAL_SCROLL_CANCEL_BUTTON_MIN_WIDTH: f32 = 80.0;
-const MANUAL_SCROLL_STATUS_MAX_WIDTH: f32 = 200.0;
+use crate::theme::ThemeMetrics;
 
 pub(super) struct ManualScrollControl {
     app: Entity<FlashShotApp>,
@@ -89,10 +83,10 @@ impl ManualScrollShortcut {
     /// Gives longer commands more room while keeping all four actions on one 520 px row.
     const fn min_width(self) -> f32 {
         match self {
-            Self::AutoCapture => MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH,
-            Self::Capture => MANUAL_SCROLL_CAPTURE_BUTTON_MIN_WIDTH,
-            Self::Finish => MANUAL_SCROLL_FINISH_BUTTON_MIN_WIDTH,
-            Self::Cancel => MANUAL_SCROLL_CANCEL_BUTTON_MIN_WIDTH,
+            Self::AutoCapture => ThemeMetrics::SCROLL_AUTO_CAPTURE_MIN_WIDTH,
+            Self::Capture => ThemeMetrics::SCROLL_CAPTURE_MIN_WIDTH,
+            Self::Finish => ThemeMetrics::SCROLL_FINISH_MIN_WIDTH,
+            Self::Cancel => ThemeMetrics::SCROLL_CANCEL_MIN_WIDTH,
         }
     }
 }
@@ -115,7 +109,7 @@ fn manual_scroll_button(
     };
     div()
         .id(id)
-        .h(px(MANUAL_SCROLL_BUTTON_HEIGHT))
+        .h(px(ThemeMetrics::SCROLL_BUTTON_HEIGHT))
         .flex_1()
         .min_w(px(action.min_width()))
         .px_2()
@@ -226,7 +220,7 @@ impl Render for ManualScrollControl {
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .max_w(px(MANUAL_SCROLL_STATUS_MAX_WIDTH))
+                            .max_w(px(ThemeMetrics::SCROLL_STATUS_MAX_WIDTH))
                             .px_2()
                             .py_1()
                             .rounded_sm()
@@ -394,12 +388,11 @@ fn manual_scroll_frame_count_label(locale: Locale, frame_count: usize, can_finis
 #[cfg(test)]
 mod tests {
     use super::{
-        MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH, MANUAL_SCROLL_CANCEL_BUTTON_MIN_WIDTH,
-        MANUAL_SCROLL_CAPTURE_BUTTON_MIN_WIDTH, MANUAL_SCROLL_FINISH_BUTTON_MIN_WIDTH,
         ManualScrollShortcut, auto_scroll_capture_label, manual_scroll_capture_label,
         manual_scroll_finish_label, manual_scroll_frame_count_label, manual_scroll_shortcut,
     };
     use crate::i18n::Locale;
+    use crate::theme::ThemeMetrics;
     use gpui::Keystroke;
 
     #[test]
@@ -479,19 +472,19 @@ mod tests {
         assert_eq!(ManualScrollShortcut::Cancel.tab_index(), 3);
         assert_eq!(
             ManualScrollShortcut::AutoCapture.min_width(),
-            MANUAL_SCROLL_AUTO_BUTTON_MIN_WIDTH
+            ThemeMetrics::SCROLL_AUTO_CAPTURE_MIN_WIDTH
         );
         assert_eq!(
             ManualScrollShortcut::Capture.min_width(),
-            MANUAL_SCROLL_CAPTURE_BUTTON_MIN_WIDTH
+            ThemeMetrics::SCROLL_CAPTURE_MIN_WIDTH
         );
         assert_eq!(
             ManualScrollShortcut::Finish.min_width(),
-            MANUAL_SCROLL_FINISH_BUTTON_MIN_WIDTH
+            ThemeMetrics::SCROLL_FINISH_MIN_WIDTH
         );
         assert_eq!(
             ManualScrollShortcut::Cancel.min_width(),
-            MANUAL_SCROLL_CANCEL_BUTTON_MIN_WIDTH
+            ThemeMetrics::SCROLL_CANCEL_MIN_WIDTH
         );
         let minimum_buttons = [
             ManualScrollShortcut::AutoCapture,
