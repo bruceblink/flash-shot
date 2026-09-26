@@ -2270,7 +2270,9 @@ impl Render for CaptureOverlay {
                                                     .rounded_md()
                                                     .bg(workspace_colors.toolbar_elevated)
                                                     .text_color(workspace_colors.text)
-                                                    .child(value.to_string()),
+                                                    .child(annotation_number_value_label(
+                                                        locale, value,
+                                                    )),
                                             )
                                             .child(annotation_action_button(
                                                 "overlay-number-increment",
@@ -3692,6 +3694,12 @@ fn annotation_width_value_label(locale: Locale, width: u32) -> String {
 fn annotation_text_size_value_label(locale: Locale, size: u32) -> String {
     let size = size.to_string();
     locale.format_template(UiText::AnnotationTextSizeValue, &[("size", &size)])
+}
+
+/// Formats the compact number-marker value through the active catalog.
+fn annotation_number_value_label(locale: Locale, value: u32) -> String {
+    let value = value.to_string();
+    locale.format_template(UiText::AnnotationNumberValue, &[("value", &value)])
 }
 
 #[cfg(test)]
@@ -5566,17 +5574,17 @@ mod tests {
         SmartTargetHudLayout, WorkspaceLayoutInput, WorkspaceSelectionAnchor,
         accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
         action_toolbar_natural_width, action_toolbar_row_count, annotation_controls_visible,
-        annotation_layer_entry_label, annotation_layer_label, annotation_opacity_value_label,
-        annotation_style_capabilities_for_tool, annotation_style_row_height,
-        annotation_style_row_preferred_width, annotation_style_row_width,
-        annotation_text_size_value_label, annotation_tool_group_focus_direction,
-        annotation_tool_group_focus_target, annotation_tool_group_popover_height,
-        annotation_tool_group_popover_width, annotation_tool_palette_width,
-        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
-        annotation_toolbar_preferred_width, annotation_width_value_label,
-        arrange_context_for_selection, arrow_head_points, capture_double_click,
-        close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
-        more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
+        annotation_layer_entry_label, annotation_layer_label, annotation_number_value_label,
+        annotation_opacity_value_label, annotation_style_capabilities_for_tool,
+        annotation_style_row_height, annotation_style_row_preferred_width,
+        annotation_style_row_width, annotation_text_size_value_label,
+        annotation_tool_group_focus_direction, annotation_tool_group_focus_target,
+        annotation_tool_group_popover_height, annotation_tool_group_popover_width,
+        annotation_tool_palette_width, annotation_toolbar_height, annotation_toolbar_items,
+        annotation_toolbar_layout, annotation_toolbar_preferred_width,
+        annotation_width_value_label, arrange_context_for_selection, arrow_head_points,
+        capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
+        magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
         recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
@@ -6251,6 +6259,15 @@ mod tests {
         assert_eq!(
             annotation_text_size_value_label(Locale::SimplifiedChinese, 24),
             "24"
+        );
+    }
+
+    #[test]
+    fn annotation_number_value_uses_the_active_catalog() {
+        assert_eq!(annotation_number_value_label(Locale::English, 12), "12");
+        assert_eq!(
+            annotation_number_value_label(Locale::SimplifiedChinese, 12),
+            "12"
         );
     }
 
