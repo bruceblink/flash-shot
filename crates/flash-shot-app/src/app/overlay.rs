@@ -623,7 +623,7 @@ fn annotation_tool_button(
 /// and in the hover tooltip so the drawing row can use stable icon-sized hit targets.
 fn annotation_icon_button(
     id: impl Into<gpui::ElementId>,
-    glyph: &'static str,
+    icon: super::overlay_toolbar::WorkspaceIcon,
     label: &'static str,
     tooltip: &'static str,
     colors: ThemeColors,
@@ -632,7 +632,7 @@ fn annotation_icon_button(
 ) -> gpui::Stateful<gpui::Div> {
     workspace_icon_button(
         id,
-        glyph,
+        icon,
         label,
         WorkspaceButtonConfig::icon(
             colors,
@@ -650,13 +650,15 @@ fn annotation_icon_button(
     .on_key_down(stop_overlay_action_key_propagation)
 }
 
-/// Returns one stable glyph for the four annotation tool groups shown in the compact palette.
-const fn annotation_tool_group_icon(group: AnnotationToolGroup) -> &'static str {
+/// Returns one stable vector icon for the four annotation tool groups shown in the compact palette.
+const fn annotation_tool_group_icon(
+    group: AnnotationToolGroup,
+) -> super::overlay_toolbar::WorkspaceIcon {
     match group {
-        AnnotationToolGroup::Text => "T",
-        AnnotationToolGroup::Shape => "□",
-        AnnotationToolGroup::Line => "↗",
-        AnnotationToolGroup::Obscure => "▦",
+        AnnotationToolGroup::Text => icon::TEXT,
+        AnnotationToolGroup::Shape => icon::SHAPE,
+        AnnotationToolGroup::Line => icon::LINE,
+        AnnotationToolGroup::Obscure => icon::OBSCURE,
     }
 }
 
@@ -2688,68 +2690,13 @@ impl Render for CaptureOverlay {
                             .when(show_annotation_controls, |actions| {
                                 actions.child(
                                     div()
-                                        .id("overlay-annotation-context-actions")
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(OVERLAY_ACTION_ITEM_GAP))
-                                        .child(workspace_icon_button(
-                                            "overlay-undo",
-                                            icon::UNDO,
-                                            locale.text(UiText::OverlayUndo),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Neutral,
-                                                false,
-                                                can_undo,
-                                                locale.text(UiText::OverlayUndo),
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.undo_annotation(cx)
-                                                    });
-                                                });
-                                            }),
-                                        ))
-                                        .child(workspace_icon_button(
-                                            "overlay-redo",
-                                            icon::REDO,
-                                            locale.text(UiText::OverlayRedo),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Neutral,
-                                                false,
-                                                can_redo,
-                                                locale.text(UiText::OverlayRedo),
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.redo_annotation(cx)
-                                                    });
-                                                });
-                                            }),
-                                        )),
-                                )
-                            })
-                            .when(show_annotation_controls, |actions| {
-                                actions.child(workspace_separator(
-                                    "overlay-action-context-separator",
-                                    workspace_colors,
-                                ))
-                            })
-                            .when(show_annotation_controls, |actions| {
-                                actions.child(
-                                    div()
                                         .id("overlay-inline-annotation-tools")
                                         .flex()
                                         .items_center()
                                         .gap(px(ANNOTATION_TOOL_PALETTE_GAP))
                                         .child(annotation_icon_button(
                                             "overlay-tool-selection",
-                                            "✥",
+                                            icon::MOVE,
                                             locale.text(UiText::OverlaySelect),
                                             locale.text(UiText::OverlaySelect),
                                             workspace_colors,
@@ -2761,9 +2708,13 @@ impl Render for CaptureOverlay {
                                                         app.select_selection_tool(cx);
                                                     });
                                                 });
-                                            }),
-                                        ))
-                                        .children(ANNOTATION_TOOL_GROUP_SPECS.iter().copied().map(
+                                             }),
+                                         ))
+                                         .child(workspace_separator(
+                                             "overlay-tool-selection-separator",
+                                             workspace_colors,
+                                         ))
+                                         .children(ANNOTATION_TOOL_GROUP_SPECS.iter().copied().map(
                                             |spec| {
                                                 let group = spec.group;
                                                 let active = annotation_tool_group == Some(group)
@@ -2813,6 +2764,61 @@ impl Render for CaptureOverlay {
                                                             AnnotationTool::Highlight,
                                                             cx,
                                                         );
+                                                    });
+                                                });
+                                            }),
+                                        )),
+                                )
+                            })
+                            .when(show_annotation_controls, |actions| {
+                                actions.child(workspace_separator(
+                                    "overlay-action-context-separator",
+                                    workspace_colors,
+                                ))
+                            })
+                            .when(show_annotation_controls, |actions| {
+                                actions.child(
+                                    div()
+                                        .id("overlay-annotation-context-actions")
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(OVERLAY_ACTION_ITEM_GAP))
+                                        .child(workspace_icon_button(
+                                            "overlay-undo",
+                                            icon::UNDO,
+                                            locale.text(UiText::OverlayUndo),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                can_undo,
+                                                locale.text(UiText::OverlayUndo),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.undo_annotation(cx)
+                                                    });
+                                                });
+                                            }),
+                                        ))
+                                        .child(workspace_icon_button(
+                                            "overlay-redo",
+                                            icon::REDO,
+                                            locale.text(UiText::OverlayRedo),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                can_redo,
+                                                locale.text(UiText::OverlayRedo),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.redo_annotation(cx)
                                                     });
                                                 });
                                             }),
@@ -2880,31 +2886,6 @@ impl Render for CaptureOverlay {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
                                                     app.update(cx, |app, cx| app.pin_selection(cx))
-                                                });
-                                            }),
-                                        )
-                                        .on_key_down(stop_overlay_action_key_propagation),
-                                    )
-                                    .child(
-                                        workspace_icon_button(
-                                            "overlay-copy",
-                                            icon::COPY,
-                                            locale.text(UiText::OverlayCopy),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Primary,
-                                                false,
-                                                !selection_copy_in_progress,
-                                                if selection_copy_in_progress {
-                                                    locale.text(UiText::OverlayCopyingTooltip)
-                                                } else {
-                                                    primary_action_tooltip(locale, "copy")
-                                                },
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| app.copy_selection(cx))
                                                 });
                                             }),
                                         )
@@ -2987,6 +2968,31 @@ impl Render for CaptureOverlay {
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
                                                     app.update(cx, |app, cx| app.reset(cx))
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-copy",
+                                            icon::COPY,
+                                            locale.text(UiText::OverlayCopy),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Primary,
+                                                false,
+                                                !selection_copy_in_progress,
+                                                if selection_copy_in_progress {
+                                                    locale.text(UiText::OverlayCopyingTooltip)
+                                                } else {
+                                                    primary_action_tooltip(locale, "copy")
+                                                },
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| app.copy_selection(cx))
                                                 });
                                             }),
                                         )
@@ -5417,7 +5423,8 @@ fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
         let context_width =
             2.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + OVERLAY_ACTION_ITEM_GAP;
         let annotation_width = ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_ICON_WIDTH
-            + ANNOTATION_TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * ANNOTATION_TOOL_PALETTE_GAP;
+            + ANNOTATION_TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * ANNOTATION_TOOL_PALETTE_GAP
+            + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
         let result_width =
             5.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + 4.0 * OVERLAY_ACTION_ITEM_GAP;
         vec![
@@ -6906,9 +6913,9 @@ mod tests {
         assert_eq!(
             primary,
             ActionToolbarLayout {
-                left: 1984.0,
+                left: 1983.0,
                 top: 1270.0,
-                width: 558.0,
+                width: 559.0,
                 height: 50.0,
             }
         );
@@ -6922,11 +6929,11 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(marking.left, 1984.0);
+        assert_eq!(marking.left, 1983.0);
         assert_eq!(marking.top, 1270.0);
-        assert_eq!(marking.width, 558.0);
+        assert_eq!(marking.width, 559.0);
         assert_eq!(marking.height, 50.0);
-        assert_eq!(marking.tools_width, 558.0);
+        assert_eq!(marking.tools_width, 559.0);
         assert_eq!(marking.tools_top, 1270.0);
         assert_eq!(marking.style_left, marking.left);
         assert_eq!(marking.style_top, 1320.0);
@@ -7253,9 +7260,9 @@ mod tests {
         assert_eq!(action_toolbar_height(324.0, false), 50.0);
         assert_eq!(action_toolbar_height(288.0, false), 50.0);
         assert_eq!(action_toolbar_natural_width(false), 260.0);
-        assert_eq!(action_toolbar_natural_width(true), 558.0);
+        assert_eq!(action_toolbar_natural_width(true), 559.0);
         assert_eq!(action_toolbar_height(358.0, true), 92.0);
-        assert_eq!(action_toolbar_height(558.0, true), 50.0);
+        assert_eq!(action_toolbar_height(559.0, true), 50.0);
         assert_eq!(secondary_action_menu_width(420.0, false, false), 352.0);
         assert_eq!(
             action_toolbar_row_count(352.0, OVERLAY_MORE_ACTION_WIDTHS),

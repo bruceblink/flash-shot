@@ -436,6 +436,8 @@ Clippy 和格式检查通过；当前源码 Release 生成的 `w2-final2-selecti
 
 **视觉对齐修订（2026-09-26）**：按用户提供的 Snow Shot 截图，将已提交选区的默认状态改为直接显示完整横向编辑工具栏；选择/移动工具置于标注工具组之前，复制保持蓝色主动作，取消保持红色破坏性动作，工具栏背景收敛为中性黑灰。420x420、520x640、980x760 的 Release 截图分别为 `target/ui-acceptance/w6-toolbar-final-20260926-dark-420.png`、`w6-toolbar-final-20260926-dark-520.png` 和 `w6-toolbar-final-20260926-dark-980.png`，均已目视复核无重叠或截断；`overlay::tests` 57 项、工具组原生输入报告 `target/overlay-interaction-acceptance/w6-tool-group-final-20260926/session-1790419931266-11048/report.json` 均通过。Computer Use 当前会话仅暴露浏览器接口，未能发现 Windows 原生窗口；本次原生交互证据来自项目 Release runner，静态截图不替代未覆盖的高 DPI、多屏和完整系统剪贴板主链。
 
+**工具栏图标对齐修订（2026-09-26）**：将截图工作区按钮从字体 Unicode 字符改为统一 16px 画布内的矢量线稿，统一笔画宽度、内边距和视觉中心；工具顺序固定为选择/移动、标注工具组、撤销/重做、Pin、Save、More、Cancel、Copy，Copy 仍为唯一蓝色主动作，Cancel 仍为红色破坏性动作。`target/ui-acceptance/w6-toolbar-icons-20260926/overlay-tool-group-{420,520,980}.png` 及同名 JSON 均由当前 Release 生成并目视复核，三种尺寸均无图标偏移、重叠或截断；布局测试同步更新为 559px 标注态工具栏宽度。
+
 **W6 主动作验收（2026-09-26）**：当前 `main` 的 Release runner 已完成单屏 2560x1440、DPI 96 的完整 Capture -> 重捕获 -> Cancel -> Save -> Pin -> Copy -> Escape 清理链，报告 `target/overlay-interaction-acceptance/w6-standard-final-20260926/session-1790420532956-25568/report.json` 为 schema 30、`status=passed`；Save/Pin/隔离 Copy 均与源帧 `exact_match=true`，Cancel 对话框恢复选区，最终 overlay/window/task/input 全部清零。当前提交的真实系统剪贴板 Copy-only 报告 `target/overlay-interaction-acceptance/w6-copy-system-final-20260926/session-1790420623195-24696/report.json` 记录 PNG、CF_DIB 和独立消费者逐像素一致，`consumer_ready_before_click=true`、`consumer_observing_before_click=true`、`consumer_cleaned_up=true`。W6 在当前单屏 100% 范围的主动作证据完成；125%/150%/200% DPI、多屏和其他设备继续由 D1 暂缓，不把环境缺失写成通过。
 
 **独立提交建议**：`test: verify screenshot workspace toolbar`。
