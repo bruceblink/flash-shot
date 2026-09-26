@@ -524,7 +524,7 @@ impl Render for PinnedImage {
                     ))
                     .child(pinned_tool_button(
                         "pinned-opacity",
-                        format!("{}%", opacity_percentage(self.opacity)),
+                        pin_opacity_button_label(locale, self.opacity),
                         "opacity",
                         colors,
                         locale,
@@ -725,6 +725,12 @@ fn opacity_percentage(opacity: u8) -> u8 {
     ((u16::from(opacity) * 100 + 127) / 255) as u8
 }
 
+/// Formats the compact opacity value through the active catalog while preserving the control size.
+fn pin_opacity_button_label(locale: Locale, opacity: u8) -> String {
+    let percent = opacity_percentage(opacity).to_string();
+    locale.format_template(UiText::PinOpacityValue, &[("percent", &percent)])
+}
+
 /// Converts a bounded opacity level into a localized feedback label for the active Pin.
 fn pin_opacity_label(locale: Locale, opacity: u8) -> &'static str {
     match opacity {
@@ -753,9 +759,9 @@ fn pin_feedback_timer_is_current(current_generation: u64, timer_generation: u64)
 mod tests {
     use super::{
         PinnedKeyboardCommand, copy_pinned_image, next_pin_opacity, next_pin_zoom_size,
-        opacity_percentage, pin_feedback_timer_is_current, pin_zoom_target_reached,
-        pinned_close_key, pinned_control_tooltip, pinned_copy_can_start, pinned_keyboard_command,
-        pinned_save_result_status,
+        opacity_percentage, pin_feedback_timer_is_current, pin_opacity_button_label,
+        pin_zoom_target_reached, pinned_close_key, pinned_control_tooltip, pinned_copy_can_start,
+        pinned_keyboard_command, pinned_save_result_status,
     };
     use crate::i18n::Locale;
     use crate::{
@@ -929,6 +935,15 @@ mod tests {
         assert_eq!(next_pin_opacity(64), 255);
         assert_eq!(next_pin_opacity(99), 255);
         assert_eq!(opacity_percentage(191), 75);
+    }
+
+    #[test]
+    fn opacity_button_label_uses_the_active_catalog_for_its_dynamic_value() {
+        assert_eq!(pin_opacity_button_label(Locale::English, 191), "75%");
+        assert_eq!(
+            pin_opacity_button_label(Locale::SimplifiedChinese, 191),
+            "75%"
+        );
     }
 
     #[test]
