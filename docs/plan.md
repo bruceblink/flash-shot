@@ -486,6 +486,11 @@ English/简体中文 Release 截图及同名 JSON 均通过 `scale_match=true`�
 `scale_match=true`，用于复核线宽、文字大小和透明度样式行的中英文紧凑布局。
 `1714ec3` 又生成 `u1-record-display-{en,zh}-20260926.*` 两组 PNG/JSON，均记录
 `scale_match=true`，用于复核 Record 页面中英文显示器选择布局。
+提交 `9f31942` 补齐录屏目标、进度和停止状态的双语参数化测试，覆盖显示器、窗口和所选区域三类目标；
+当前 Release 又生成 `u1-record-progress-{en,zh-CN}-20260926.*` 与
+`u1-record-stopping-{en,zh-CN}-20260926.*` 四组 PNG/JSON，均记录 `dpi=96`、`scale_factor=1.0`、
+`scale_match=true`，并目视复核状态栏和底部反馈无截断或重叠。该切片只增加确定性双语验收覆盖，
+不宣称已完成真实录屏、真实窗口输入或高 DPI/多屏验证。
 本次没有真实 Computer Use 原生窗口输入证据；U1 仍保持“部分完成”。
 
 ### U2：收敛入口和恢复动作
