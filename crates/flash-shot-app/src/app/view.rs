@@ -2110,10 +2110,11 @@ fn history_entry_label(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(locale.text(UiText::LibraryEntryFallback));
-    format!(
-        "{name} - {} - {}",
-        history_source_label(locale, entry.source),
-        relative_timestamp_label(locale, entry.created_at_ms, now_ms),
+    let source = history_source_label(locale, entry.source);
+    let time = relative_timestamp_label(locale, entry.created_at_ms, now_ms);
+    locale.format_template(
+        UiText::LibraryEntryLabel,
+        &[("name", name), ("source", source), ("time", &time)],
     )
 }
 
