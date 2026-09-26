@@ -2521,7 +2521,7 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .gap(px(ANNOTATION_STYLE_CONTROL_GAP))
                                     .children(ANNOTATION_WIDTHS.into_iter().map(|width| {
-                                        let value = width.to_string();
+                                        let value = annotation_width_value_label(locale, width);
                                         let aria_label = locale.format_template(
                                             UiText::AnnotationWidth,
                                             &[("width", &value)],
@@ -2599,7 +2599,7 @@ impl Render for CaptureOverlay {
                                     .items_center()
                                     .gap(px(ANNOTATION_STYLE_CONTROL_GAP))
                                     .children(ANNOTATION_FONT_SIZES.into_iter().map(|font_size| {
-                                        let value = font_size.to_string();
+                                        let value = annotation_text_size_value_label(locale, font_size);
                                         let aria_label = locale.format_template(
                                             UiText::AnnotationTextSize,
                                             &[("size", &value)],
@@ -3680,6 +3680,18 @@ fn annotation_layer_entry_label(locale: Locale, position: usize, kind: &Annotati
 fn annotation_opacity_value_label(locale: Locale, opacity: u8) -> String {
     let percent = (u16::from(opacity) * 100 / 255).to_string();
     locale.format_template(UiText::AnnotationOpacityValue, &[("percent", &percent)])
+}
+
+/// Formats a compact line-width value through the active catalog.
+fn annotation_width_value_label(locale: Locale, width: u32) -> String {
+    let width = width.to_string();
+    locale.format_template(UiText::AnnotationWidthValue, &[("width", &width)])
+}
+
+/// Formats a compact text-size value through the active catalog.
+fn annotation_text_size_value_label(locale: Locale, size: u32) -> String {
+    let size = size.to_string();
+    locale.format_template(UiText::AnnotationTextSizeValue, &[("size", &size)])
 }
 
 #[cfg(test)]
@@ -5557,10 +5569,11 @@ mod tests {
         annotation_layer_entry_label, annotation_layer_label, annotation_opacity_value_label,
         annotation_style_capabilities_for_tool, annotation_style_row_height,
         annotation_style_row_preferred_width, annotation_style_row_width,
-        annotation_tool_group_focus_direction, annotation_tool_group_focus_target,
-        annotation_tool_group_popover_height, annotation_tool_group_popover_width,
-        annotation_tool_palette_width, annotation_toolbar_height, annotation_toolbar_items,
-        annotation_toolbar_layout, annotation_toolbar_preferred_width,
+        annotation_text_size_value_label, annotation_tool_group_focus_direction,
+        annotation_tool_group_focus_target, annotation_tool_group_popover_height,
+        annotation_tool_group_popover_width, annotation_tool_palette_width,
+        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
+        annotation_toolbar_preferred_width, annotation_width_value_label,
         arrange_context_for_selection, arrow_head_points, capture_double_click,
         close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
         more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
@@ -6229,6 +6242,15 @@ mod tests {
         assert_eq!(
             annotation_opacity_value_label(Locale::SimplifiedChinese, 128),
             "50%"
+        );
+    }
+
+    #[test]
+    fn annotation_numeric_style_values_use_the_active_catalog() {
+        assert_eq!(annotation_width_value_label(Locale::English, 4), "4");
+        assert_eq!(
+            annotation_text_size_value_label(Locale::SimplifiedChinese, 24),
+            "24"
         );
     }
 
