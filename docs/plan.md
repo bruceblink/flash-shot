@@ -466,8 +466,11 @@ overlay 职责拆分，避免在工作区行为尚未稳定时搬移大型模块
 **当前进展**：提交 `c39572a` 将 `settings-ui-acceptance` 的 Record 状态种子改为使用活动 `Locale`/`UiText`，覆盖
 Starting、Recording、Paused、Stopping、Failed 和 Cancelled；English 与简体中文的 520x640 Release 截图均已生成、
 目视复核并登记。提交 `8356640` 又将打开图片时标注附属文件加载失败的路径、错误前缀和双语文案统一迁移到
-`UiText`，并以 workflow 测试验证原始错误细节和 English/简体中文输出。该切片仍只完成局部动态文案迁移，不代表生产
-录屏和其他 workflow 的动态文案已全部迁移；真实窗口中的打开图片失败提示仍需后续原生验收。
+`UiText`，并以 workflow 测试验证原始错误细节和 English/简体中文输出。2026-09-26 的第一组 U1 状态探针又覆盖
+Record 暂停/失败、Translation 测试中和 Local OCR 检查中；`target/ui-acceptance/u1-dynamic-status-20260926/` 下四张
+English/简体中文 Release 截图及同名 JSON 均通过 `scale_match=true`，并已目视复核无截断或重叠。该切片仍只完成局部
+动态文案迁移，不代表生产录屏、真实翻译端点、OCR 依赖失败重试和其他 workflow 的动态文案已全部迁移；真实窗口中的
+打开图片失败提示仍需后续原生验收。
 
 ### U2：收敛入口和恢复动作
 
