@@ -2051,9 +2051,10 @@ impl Render for CaptureOverlay {
                                             });
                                         });
                                     }))
-                                    .child(format!(
-                                        "{position}. {}",
-                                        annotation_layer_label(locale, &annotation.kind)
+                                    .child(annotation_layer_entry_label(
+                                        locale,
+                                        position,
+                                        &annotation.kind,
                                     ))
                             },
                         )),
@@ -3663,6 +3664,16 @@ fn annotation_layer_label(locale: Locale, kind: &AnnotationKind) -> &'static str
         AnnotationKind::Arrow { .. } => locale.text(UiText::OverlayArrow),
         AnnotationKind::Freehand { .. } => locale.text(UiText::OverlayFreehand),
     }
+}
+
+/// Formats one visible layer row through the active catalog while preserving its stable number.
+fn annotation_layer_entry_label(locale: Locale, position: usize, kind: &AnnotationKind) -> String {
+    let position = position.to_string();
+    let kind = annotation_layer_label(locale, kind);
+    locale.format_template(
+        UiText::OverlayLayerLabel,
+        &[("position", &position), ("kind", kind)],
+    )
 }
 
 #[cfg(test)]
@@ -5537,15 +5548,16 @@ mod tests {
         SmartTargetHudLayout, WorkspaceLayoutInput, WorkspaceSelectionAnchor,
         accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
         action_toolbar_natural_width, action_toolbar_row_count, annotation_controls_visible,
-        annotation_layer_label, annotation_style_capabilities_for_tool,
-        annotation_style_row_height, annotation_style_row_preferred_width,
-        annotation_style_row_width, annotation_tool_group_focus_direction,
-        annotation_tool_group_focus_target, annotation_tool_group_popover_height,
-        annotation_tool_group_popover_width, annotation_tool_palette_width,
-        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
-        annotation_toolbar_preferred_width, arrange_context_for_selection, arrow_head_points,
-        capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
-        magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
+        annotation_layer_entry_label, annotation_layer_label,
+        annotation_style_capabilities_for_tool, annotation_style_row_height,
+        annotation_style_row_preferred_width, annotation_style_row_width,
+        annotation_tool_group_focus_direction, annotation_tool_group_focus_target,
+        annotation_tool_group_popover_height, annotation_tool_group_popover_width,
+        annotation_tool_palette_width, annotation_toolbar_height, annotation_toolbar_items,
+        annotation_toolbar_layout, annotation_toolbar_preferred_width,
+        arrange_context_for_selection, arrow_head_points, capture_double_click,
+        close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
+        more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
         recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
@@ -6185,6 +6197,23 @@ mod tests {
                 }
             ),
             "画笔"
+        );
+    }
+
+    #[test]
+    fn annotation_layer_entry_labels_localize_the_position_and_kind_template() {
+        let text = AnnotationKind::Text {
+            origin: PhysicalPoint { x: 0, y: 0 },
+            content: "Note".to_owned(),
+        };
+
+        assert_eq!(
+            annotation_layer_entry_label(Locale::English, 3, &text),
+            "3. Text"
+        );
+        assert_eq!(
+            annotation_layer_entry_label(Locale::SimplifiedChinese, 3, &text),
+            "3. 文字"
         );
     }
 
