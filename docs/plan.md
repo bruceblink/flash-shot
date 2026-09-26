@@ -436,18 +436,22 @@ Clippy 和格式检查通过；当前源码 Release 生成的 `w2-final2-selecti
 
 **视觉对齐修订（2026-09-26）**：按用户提供的 Snow Shot 截图，将已提交选区的默认状态改为直接显示完整横向编辑工具栏；选择/移动工具置于标注工具组之前，复制保持蓝色主动作，取消保持红色破坏性动作，工具栏背景收敛为中性黑灰。420x420、520x640、980x760 的 Release 截图分别为 `target/ui-acceptance/w6-toolbar-final-20260926-dark-420.png`、`w6-toolbar-final-20260926-dark-520.png` 和 `w6-toolbar-final-20260926-dark-980.png`，均已目视复核无重叠或截断；`overlay::tests` 57 项、工具组原生输入报告 `target/overlay-interaction-acceptance/w6-tool-group-final-20260926/session-1790419931266-11048/report.json` 均通过。Computer Use 当前会话仅暴露浏览器接口，未能发现 Windows 原生窗口；本次原生交互证据来自项目 Release runner，静态截图不替代未覆盖的高 DPI、多屏和完整系统剪贴板主链。
 
+**W6 主动作验收（2026-09-26）**：当前 `main` 的 Release runner 已完成单屏 2560x1440、DPI 96 的完整 Capture -> 重捕获 -> Cancel -> Save -> Pin -> Copy -> Escape 清理链，报告 `target/overlay-interaction-acceptance/w6-standard-final-20260926/session-1790420532956-25568/report.json` 为 schema 30、`status=passed`；Save/Pin/隔离 Copy 均与源帧 `exact_match=true`，Cancel 对话框恢复选区，最终 overlay/window/task/input 全部清零。当前提交的真实系统剪贴板 Copy-only 报告 `target/overlay-interaction-acceptance/w6-copy-system-final-20260926/session-1790420623195-24696/report.json` 记录 PNG、CF_DIB 和独立消费者逐像素一致，`consumer_ready_before_click=true`、`consumer_observing_before_click=true`、`consumer_cleaned_up=true`。W6 在当前单屏 100% 范围的主动作证据完成；125%/150%/200% DPI、多屏和其他设备继续由 D1 暂缓，不把环境缺失写成通过。
+
 **独立提交建议**：`test: verify screenshot workspace toolbar`。
 
 **第一块已交付（2026-09-25）**：新增 `scripts/run-w6-workspace-matrix.ps1`，固定覆盖 2 个主题、2 种语言、3 种窗口尺寸和 7 个工作区 surface，共 84 个隔离 `settings-ui-acceptance` Release 会话。每个会话验证 PNG、相邻 JSON、locale、DPI/scale、物理窗口边界和退出码，并在全部用例结束后生成可复核的 `matrix-report.json`；`-DryRun` 可在不启动应用时检查矩阵规模和报告格式。
 
 当前 Release 报告为 `target/ui-acceptance/w6-workspace-matrix-20260925-v2/matrix-report.json`，`status=passed`、`case_count=84`、`passed_count=84`、`failed_count=0`；English/简体中文和浅色/深色代表截图已目视复核。该切片是静态状态与布局证据，不包含真实鼠标/键盘、系统剪贴板、Copy/Save/Pin/Cancel 或高 DPI/多屏行为；这些验收继续由 W6 原生输入和 D1 负责，不能据此标记 W6 完成。
 
-**W 路线执行顺序**：B1 外部失败恢复、B4 当前 HEAD 的真实标注输入、W1 工作区视觉基础与共享控件、W2 主工具栏重排、W3 上下文样式栏、W4 工具组与 More 浮层以及 W5 选区边界矩阵均已完成当前环境范围；W6 状态矩阵与本次单行工具栏/工具组验收已完成相应切片，下一步继续 W6 的 Copy/Save/Pin/Cancel 真实动作验收。
+**W 路线执行顺序**：B1 外部失败恢复、B4 当前 HEAD 的真实标注输入、W1 工作区视觉基础与共享控件、W2 主工具栏重排、W3 上下文样式栏、W4 工具组与 More 浮层以及 W5 选区边界矩阵均已完成当前环境范围；W6 在当前单屏 100% 范围的状态矩阵、工具栏视觉、工具组和 Copy/Save/Pin/Cancel 主动作验收已完成，下一步转入 U1 动态文案迁移。高 DPI/多屏仍由 D1 暂缓。
 W0 的路线文档切片已完成，随后严格按 W5、W6 顺序推进。W1-W4 新增的可见文案同时登记到 `UiText`；U1 继续负责非截图工作区的
 动态文案，U2 继续负责 App/Library/Record 入口，U3 负责其他页面视觉矩阵，U4 负责 Pin 原生窗口。W6 通过后才开始 M1 的 runner/
 overlay 职责拆分，避免在工作区行为尚未稳定时搬移大型模块。
 
 **2026-09-25 后续执行顺序**：后续切片直接在 `main` 开发，不重建或经由 `dev` 分支；每个独立可验收功能先完成风险匹配的 Rust 检查和 UI 验收，再以一次独立 Conventional Commit 推送到 `main`。下一步继续 W6 的 100% 单屏真实鼠标/键盘输入与 Copy/Save/Pin/Cancel 验收；随后仅在具备真实硬件时补充 DPI 证据，再按 U1-U4、M1 最小职责拆分和 `0.2.0` 发布收尾的顺序推进；不得用确定性布局或单个静态探针替代原生验收。
+
+**2026-09-26 后续执行顺序**：W6 当前单屏 100% 主动作验收已完成；继续在 `main` 上推进 U1，优先迁移截图 workflow 中仍直接拼接的用户可见动态状态，保持错误详情、路径和数量作为参数，不改变状态机、快捷键、报告字段或导出协议。每个 U1 子切片先做中英文参数化测试和 Release 静态/原生可达性检查，再独立提交并推送；D1 高 DPI/多屏证据在具备对应硬件后补齐。
 
 ### U1：完成动态文案迁移
 
