@@ -1655,7 +1655,9 @@ fn history_settings(
                                 }
                             },
                         ))
-                        .child(settings_button(
+                        // Opening a saved capture is the primary Library workflow; Copy and Pin
+                        // remain available beside it without competing for the same emphasis.
+                        .child(settings_primary_button(
                             format!("settings-open-history-{}", entry.created_at_ms),
                             locale.text(UiText::LibraryOpen),
                             colors,
