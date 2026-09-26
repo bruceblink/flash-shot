@@ -1182,12 +1182,9 @@ pub(in crate::app) fn next_recording_display_selection(
     selections.extend(displays.iter().enumerate().map(|(index, display)| {
         RecordingDisplaySelection::Display {
             id: display.id.clone(),
-            label: format!(
-                "{} ({}x{})",
-                index + 1,
-                display.physical_bounds.width(),
-                display.physical_bounds.height()
-            ),
+            index: index + 1,
+            width: display.physical_bounds.width(),
+            height: display.physical_bounds.height(),
         }
     }));
     let index = selections
@@ -1206,8 +1203,19 @@ pub(in crate::app) fn recording_display_selection_label(
         RecordingDisplaySelection::Primary => {
             locale.text(UiText::RecordingDisplayPrimary).to_owned()
         }
-        RecordingDisplaySelection::Display { label, .. } => {
-            locale.format_template(UiText::RecordingDisplayLabel, &[("label", label)])
+        RecordingDisplaySelection::Display {
+            index,
+            width,
+            height,
+            ..
+        } => {
+            let index = index.to_string();
+            let width = width.to_string();
+            let height = height.to_string();
+            locale.format_template(
+                UiText::RecordingDisplayLabel,
+                &[("index", &index), ("width", &width), ("height", &height)],
+            )
         }
     }
 }

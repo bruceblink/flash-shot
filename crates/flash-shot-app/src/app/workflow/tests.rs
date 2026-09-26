@@ -2125,7 +2125,9 @@ fn recording_display_selection_cycles_in_stable_primary_first_order() {
         selected,
         super::RecordingDisplaySelection::Display {
             id: "primary".to_owned(),
-            label: "1 (1920x1080)".to_owned(),
+            index: 1,
+            width: 1920,
+            height: 1080,
         }
     );
     let secondary = next_recording_display_selection(selected, &displays);
@@ -2133,7 +2135,9 @@ fn recording_display_selection_cycles_in_stable_primary_first_order() {
         secondary,
         super::RecordingDisplaySelection::Display {
             id: "secondary".to_owned(),
-            label: "2 (2560x1440)".to_owned(),
+            index: 2,
+            width: 2560,
+            height: 1440,
         }
     );
     assert_eq!(

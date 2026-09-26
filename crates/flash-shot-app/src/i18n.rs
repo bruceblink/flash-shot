@@ -1071,7 +1071,7 @@ impl UiText {
             Self::RecordingAudioMicrophone => "mic: {device}",
             Self::RecordingAudioSystem => "system audio",
             Self::RecordingDisplayPrimary => "primary",
-            Self::RecordingDisplayLabel => "display {label}",
+            Self::RecordingDisplayLabel => "display {index} ({width}x{height})",
             Self::RecordingStartFailureMissingFfmpeg => {
                 "Recording is unavailable because FFmpeg was not found. Install FFmpeg or set FLASH_SHOT_FFMPEG: {error}"
             }
@@ -1883,7 +1883,7 @@ impl UiText {
             Self::RecordingAudioMicrophone => "麦克风：{device}",
             Self::RecordingAudioSystem => "系统声音",
             Self::RecordingDisplayPrimary => "主显示器",
-            Self::RecordingDisplayLabel => "显示器 {label}",
+            Self::RecordingDisplayLabel => "显示器 {index} ({width}x{height})",
             Self::RecordingStartFailureMissingFfmpeg => {
                 "录屏不可用，因为未找到 FFmpeg。请安装 FFmpeg，或设置 FLASH_SHOT_FFMPEG：{error}"
             }

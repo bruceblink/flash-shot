@@ -522,7 +522,9 @@ pub(super) enum RecordingDisplaySelection {
     Primary,
     Display {
         id: String,
-        label: String,
+        index: usize,
+        width: u32,
+        height: u32,
     },
 }
 
