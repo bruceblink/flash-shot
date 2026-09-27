@@ -9,8 +9,9 @@ use std::{
 };
 
 use super::native::{
-    CursorRestore, WindowZOrderRestore, capture_step, click_navigation_item, click_record_support,
-    click_update_action, ensure_input_idle, focus_window, send_key, snapshot, visible_window,
+    CursorRestore, WindowZOrderRestore, capture_step, click_library_format, click_navigation_item,
+    click_record_support, click_update_action, ensure_input_idle, focus_window, send_key, snapshot,
+    visible_window,
 };
 use super::{
     ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, Report, StepReport, WindowBounds,
@@ -32,6 +33,7 @@ pub(super) struct WorkerOptions {
     pub(super) theme: ThemeMode,
     pub(super) exercise_app_update: bool,
     pub(super) exercise_record_support: bool,
+    pub(super) exercise_library_format: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
 
@@ -222,6 +224,56 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             screenshot: after_screenshot,
         });
     }
+    if options.exercise_library_format {
+        focus_window(window)?;
+        click_navigation_item(window, compact, 1)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let before = snapshot(&options.commands)?;
+        let before_screenshot =
+            capture_step(&window, &options.output_dir, "action-library-before")?;
+        let before_passed = before.section == "library"
+            && before.export_format == "PNG"
+            && before.status
+                == options
+                    .locale
+                    .ready_with_shortcut("Ctrl+Shift+Print Screen");
+        action_steps.push(ActionStepReport {
+            action: "mouse-click-library-format-before".to_owned(),
+            expected_section: "library".to_owned(),
+            observed_section: before.section,
+            expected_busy: false,
+            observed_busy: false,
+            expected_status: options
+                .locale
+                .ready_with_shortcut("Ctrl+Shift+Print Screen"),
+            observed_status: before.status,
+            passed: before_passed,
+            screenshot: before_screenshot,
+        });
+
+        focus_window(window)?;
+        click_library_format(window, compact)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let after = snapshot(&options.commands)?;
+        let after_screenshot = capture_step(&window, &options.output_dir, "action-library-after")?;
+        let expected_status = options
+            .locale
+            .format_template(UiText::ExportFormatChanged, &[("format", "JPEG")]);
+        let after_passed = after.section == "library"
+            && after.export_format == "JPEG"
+            && after.status == expected_status;
+        action_steps.push(ActionStepReport {
+            action: "mouse-click-library-format-cycle".to_owned(),
+            expected_section: "library".to_owned(),
+            observed_section: after.section,
+            expected_busy: false,
+            observed_busy: false,
+            expected_status,
+            observed_status: after.status,
+            passed: after_passed,
+            screenshot: after_screenshot,
+        });
+    }
     let cursor_restored = cursor_restore.restore()?;
     let input_released = [
         VK_LBUTTON, VK_DOWN, VK_F4, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
@@ -230,7 +282,10 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     .all(|key| unsafe { GetAsyncKeyState(key as i32) >= 0 });
     let window_demoted = window_z_order.restore();
     let report = Report {
-        schema: if options.exercise_app_update || options.exercise_record_support {
+        schema: if options.exercise_app_update
+            || options.exercise_record_support
+            || options.exercise_library_format
+        {
             2
         } else {
             1

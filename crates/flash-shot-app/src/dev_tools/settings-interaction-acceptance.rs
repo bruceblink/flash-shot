@@ -22,6 +22,7 @@ const DEFAULT_OUTPUT_DIR: &str = "target/settings-interaction-acceptance";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_SETTLE: Duration = Duration::from_millis(700);
 const ACCEPTANCE_RECORDING_DIRECTORY: &str = r"C:\FlashShotAcceptance";
+const ACCEPTANCE_LIBRARY_ROOT: &str = r"C:\FSA";
 #[cfg(windows)]
 const INPUT_SETTLE_DELAY: Duration = Duration::from_millis(120);
 
@@ -30,6 +31,7 @@ struct Options {
     allow_input: bool,
     exercise_app_update: bool,
     exercise_record_support: bool,
+    exercise_library_format: bool,
     output_dir: PathBuf,
     width: i32,
     height: i32,
@@ -114,6 +116,7 @@ impl Options {
             allow_input: false,
             exercise_app_update: false,
             exercise_record_support: false,
+            exercise_library_format: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
             height: 640,
@@ -130,6 +133,7 @@ impl Options {
                 "--allow-input" => options.allow_input = true,
                 "--exercise-app-update" => options.exercise_app_update = true,
                 "--exercise-record-support" => options.exercise_record_support = true,
+                "--exercise-library-format" => options.exercise_library_format = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
                 }
@@ -162,7 +166,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-library-format] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -237,7 +241,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = std::path::absolute(&options.output_dir)?;
     let session_dir = output_dir.join(format!("session-{}", std::process::id()));
     fs::create_dir_all(&session_dir)?;
-    let history_dir = session_dir.join("history");
+    let history_dir = if options.exercise_library_format {
+        PathBuf::from(format!(r"{ACCEPTANCE_LIBRARY_ROOT}\h-{}", process::id()))
+    } else {
+        session_dir.join("history")
+    };
     fs::create_dir_all(&history_dir)?;
     let history = ScreenshotHistory::open_with_limit(&history_dir, 30)?;
     let performance = PerformanceRecorder::new(session_dir.join("metrics"))?;
@@ -266,6 +274,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         theme: options.theme,
         exercise_app_update: options.exercise_app_update,
         exercise_record_support: options.exercise_record_support,
+        exercise_library_format: options.exercise_library_format,
         commands: command_tx,
     };
     thread::spawn(move || {
@@ -296,7 +305,31 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             commands: command_rx,
         },
     )?;
+    if options.exercise_library_format {
+        remove_acceptance_history_root(&history_dir)?;
+    }
     Ok(())
+}
+
+#[cfg(windows)]
+/// Removes the short Library acceptance root after GPUI releases its history handles.
+fn remove_acceptance_history_root(path: &std::path::Path) -> io::Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if !path.exists() {
+            return Ok(());
+        }
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) if std::time::Instant::now() >= deadline => return Err(error),
+            Err(_) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 #[cfg(test)]
@@ -324,6 +357,7 @@ mod tests {
         assert!(options.allow_input);
         assert!(!options.exercise_app_update);
         assert!(!options.exercise_record_support);
+        assert!(!options.exercise_library_format);
         let options = Options::parse_args(
             [
                 OsString::from("--allow-input"),
@@ -342,5 +376,14 @@ mod tests {
         )
         .unwrap();
         assert!(options.exercise_record_support);
+        let options = Options::parse_args(
+            [
+                OsString::from("--allow-input"),
+                OsString::from("--exercise-library-format"),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        assert!(options.exercise_library_format);
     }
 }

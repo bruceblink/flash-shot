@@ -220,6 +220,7 @@ pub struct SettingsInteractionState {
     pub theme: String,
     pub update_check_in_flight: bool,
     pub recording_support_check_in_flight: bool,
+    pub export_format: String,
     pub status: String,
 }
 

@@ -1203,6 +1203,7 @@ impl FlashShotApp {
                                 update_check_in_flight: this.update_check_in_flight,
                                 recording_support_check_in_flight: this
                                     .recording_support_check_in_flight,
+                                export_format: this.export_format_label().to_owned(),
                                 status: this.status.clone(),
                             });
                         }

@@ -220,6 +220,19 @@ pub(super) fn click_record_support(window: NativeWindow, compact: bool) -> io::R
 }
 
 #[cfg(windows)]
+/// Clicks the Library export-format action after the acceptance runner fixes the history root to
+/// a short path, keeping the content rows at stable coordinates in both layout modes.
+pub(super) fn click_library_format(window: NativeWindow, compact: bool) -> io::Result<()> {
+    let (logical_x, logical_y) = if compact { (435, 525) } else { (520, 472) };
+    guard_foreground(window)?;
+    move_and_click(
+        window,
+        window.left + scale_logical_extent(window, logical_x),
+        window.top + scale_logical_extent(window, logical_y),
+    )
+}
+
+#[cfg(windows)]
 /// Sends one key press/release pair and repairs a partially accepted SendInput batch.
 pub(super) fn send_key(window: NativeWindow, virtual_key: u16) -> io::Result<()> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
