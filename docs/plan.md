@@ -199,6 +199,9 @@ Save 与 Pin 均 `exact_match=true`，Copy 的隔离观察器结果与源帧逐�
 当前源码 Release 在单屏 2560x1440、DPI 96、`scale_factor=1.0` 下完成 English/简体中文、浅色/深色、420x420/520x640/980x760 共 12 例 Capture 设置截图，
 截图和同名 JSON 位于 `target/ui-acceptance/u5-settings-simplification-20260927/`，全部 `scale_match=true`，代表性窄、中、宽窗口已目视复核。
 
+**U5.2 当前结果（2026-09-27）**：设置页宽窗侧栏改为单行任务导航，删除与内容页标题和说明重复的侧栏描述，保留稳定语义 ID、鼠标点击、Enter/Space 激活、方向键切换和窄窗顶部导航。
+Capture 页在同一单屏 Release 矩阵下重新生成 12 例 PNG/JSON，所有 `scale_match=true`，宽窗侧栏和窄窗顶部导航均已目视复核；移除的描述键不再进入生产 UI。
+
 **验收条件**：
 
 1. 每个现有设置键都能从一个明确位置访问，重复标签、重复开关和重复说明被移除；

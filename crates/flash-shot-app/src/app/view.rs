@@ -2260,41 +2260,36 @@ fn settings_navigation(
 struct SettingsNavigationItem {
     id: &'static str,
     label: &'static str,
-    description: &'static str,
     section: SettingsSection,
 }
 
-/// Keeps the navigation vocabulary task-oriented so the compact and wide layouts tell the same story.
+/// Keeps the navigation vocabulary task-oriented while the page header owns the longer explanation.
 fn settings_navigation_items_for_locale(locale: Locale) -> [SettingsNavigationItem; 4] {
     [
         SettingsNavigationItem {
             id: "settings-nav-capture",
             label: locale.text(UiText::Capture),
-            description: locale.text(UiText::CaptureDescription),
             section: SettingsSection::Capture,
         },
         SettingsNavigationItem {
             id: "settings-nav-files",
             label: locale.text(UiText::Library),
-            description: locale.text(UiText::LibraryDescription),
             section: SettingsSection::Files,
         },
         SettingsNavigationItem {
             id: "settings-nav-recording",
             label: locale.text(UiText::Record),
-            description: locale.text(UiText::RecordDescription),
             section: SettingsSection::Recording,
         },
         SettingsNavigationItem {
             id: "settings-nav-system",
             label: locale.text(UiText::App),
-            description: locale.text(UiText::AppDescription),
             section: SettingsSection::System,
         },
     ]
 }
 
-/// Keeps each section reachable at the minimum window size without taking a second line for detail text.
+/// Keeps each section reachable at the minimum window size with one compact navigation row.
 fn settings_navigation_item(
     item: SettingsNavigationItem,
     selected: SettingsSection,
@@ -2320,12 +2315,10 @@ fn settings_navigation_item(
         })
         .when(!compact, |item| {
             item.w_full()
-                .min_h(px(metrics.row_min_height + metrics.space_3))
+                .min_h(px(metrics.row_min_height))
                 .px_3()
-                .py_2()
-                .flex_col()
-                .justify_center()
-                .gap_1()
+                .py_1()
+                .items_center()
         })
         .rounded_sm()
         .border_1()
@@ -2387,14 +2380,6 @@ fn settings_navigation_item(
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(item.label),
         )
-        .when(!compact, |element| {
-            element.child(
-                div()
-                    .text_xs()
-                    .text_color(colors.text_muted)
-                    .child(item.description),
-            )
-        })
 }
 
 /// Gives every section a stable task-oriented title.
@@ -2981,12 +2966,12 @@ mod tests {
             ["Capture", "Library", "Record", "App"]
         );
         assert_eq!(
-            items.map(|item| item.description),
+            items.map(|item| item.id),
             [
-                "Screenshot, annotate, export",
-                "Saved images and history",
-                "Screen and audio",
-                "Theme, language, startup, updates",
+                "settings-nav-capture",
+                "settings-nav-files",
+                "settings-nav-recording",
+                "settings-nav-system",
             ]
         );
     }
