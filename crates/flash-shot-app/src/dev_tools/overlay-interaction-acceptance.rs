@@ -1640,6 +1640,68 @@ fn pin_coexist_interaction_plan(
     interaction_plan_for_logical_selection(bounds, scale, width, height, start, end)
 }
 
+#[cfg(windows)]
+/// Computes a disposable colored desktop window that contains every Pin source selection.
+///
+/// The real-input runner must not use an arbitrary user's desktop as its pixel oracle: a flat
+/// wallpaper can make an otherwise correct Copy/Pin path look blank. The fixture stays inside
+/// the measured display, leaves a margin around the three selections, and is later shut down
+/// before the Pin row is arranged and the follow-up Capture is exercised.
+fn pin_coexist_fixture_bounds(display: PhysicalRect) -> io::Result<PhysicalRect> {
+    let group_width = (PIN_COEXIST_SELECTION_WIDTH * PIN_COEXIST_COUNT as f32
+        + PIN_COEXIST_SELECTION_GAP * (PIN_COEXIST_COUNT - 1) as f32)
+        .round() as i32;
+    let selection_height = PIN_COEXIST_SELECTION_HEIGHT.round() as i32;
+    let display_width = i32::try_from(display.width())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "display width overflowed"))?;
+    let display_height = i32::try_from(display.height())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "display height overflowed"))?;
+    let group_left = display.left + (display_width - group_width) / 2;
+    let group = PhysicalRect {
+        left: group_left,
+        top: display.top + PIN_COEXIST_SELECTION_TOP.round() as i32,
+        right: group_left + group_width,
+        bottom: display.top + PIN_COEXIST_SELECTION_TOP.round() as i32 + selection_height,
+    };
+    if group.left < display.left
+        || group.top < display.top
+        || group.right > display.right
+        || group.bottom > display.bottom
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "display is too small for three compact Pin selections",
+        ));
+    }
+    const FIXTURE_MARGIN: i32 = 24;
+    let fixture = PhysicalRect {
+        left: group.left.saturating_sub(FIXTURE_MARGIN).max(display.left),
+        top: group.top.saturating_sub(FIXTURE_MARGIN).max(display.top),
+        right: group
+            .right
+            .saturating_add(FIXTURE_MARGIN)
+            .min(display.right),
+        bottom: group
+            .bottom
+            .saturating_add(FIXTURE_MARGIN)
+            .min(display.bottom),
+    };
+    if !rect_contains_rect(fixture, group) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "display bounds cannot contain the Pin source fixture",
+        ));
+    }
+    validate_recording_fixture_bounds(fixture)?;
+    if display_height <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "display height must be positive",
+        ));
+    }
+    Ok(fixture)
+}
+
 /// Builds one physical-pixel gesture with enough room to avoid desktop-edge clamping.
 fn selection_transform_gesture(
     selection: PhysicalRect,
@@ -2234,6 +2296,9 @@ impl SelectionBoundaryCleanupReport {
 
 #[derive(serde::Serialize)]
 struct PinsCoexistReport {
+    source_fixture_process_id: u32,
+    source_fixture_window: WindowReport,
+    source_fixture_cleaned_up: bool,
     pins: Vec<PinReport>,
     arranged_windows: Vec<WindowReport>,
     pointer_drag: WindowDragReport,
@@ -3088,9 +3153,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 30 records the W5
-        // one-pixel boundary case and verifies that cleanup restores the ready status.
-        schema_version: 30,
+        // Increment when the machine-readable report shape changes. Schema 31 records the
+        // deterministic source fixture used by the real-input Pins coexistence workflow.
+        schema_version: 31,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -5642,6 +5707,14 @@ fn execute_pins_coexist_interactions(
         None,
     )?;
 
+    // Keep every selected source deterministic and visibly non-flat while the real overlay is
+    // active. The fixture is no-activate and process-isolated, so it cannot receive the toolbar
+    // clicks; it is lowered after each source sample and shut down before Pin layout checks.
+    let fixture_bounds = pin_coexist_fixture_bounds(context.display.physical_bounds)?;
+    let mut source_fixture = ScrollWindowFixture::launch(fixture_bounds, context.timeout)?;
+    let source_fixture_window = source_fixture.report()?;
+    focus_owned_window(controller, context.timeout)?;
+
     let creation_actions = ["pin_one_created", "pin_two_created", "pin_three_created"];
     let selection_actions = [
         "pin_one_selection_ready",
@@ -5657,6 +5730,9 @@ fn execute_pins_coexist_interactions(
     let mut sources = Vec::with_capacity(PIN_COEXIST_COUNT);
     let mut pin_reports = Vec::with_capacity(PIN_COEXIST_COUNT);
     for (index, action) in creation_actions.into_iter().enumerate() {
+        if index > 0 {
+            raise_scroll_fixture_for_capture(source_fixture.target, fixture_bounds)?;
+        }
         let (overlay, plan, selection, requested_selection, source) =
             begin_selected_overlay_with_plan(
                 context,
@@ -5665,6 +5741,7 @@ fn execute_pins_coexist_interactions(
                 context.timeout.min(Duration::from_secs(1)),
             )?;
         thread::sleep(context.settle_delay);
+        validate_scroll_fixture_frame(&source, fixture_bounds, 0)?;
         let selected = capture_evidence(context, selection_files[index], overlay)?;
         record_step(
             report,
@@ -5673,6 +5750,7 @@ fn execute_pins_coexist_interactions(
             guard_foreground(overlay.handle)?,
             Some(&selected),
         )?;
+        lower_scroll_fixture(source_fixture.target)?;
         let foreground = inject_mouse_click(overlay.handle, plan.pin)?;
         let state = wait_for_capture_state(context, action, |state| {
             state.session_state == "idle"
@@ -5714,6 +5792,14 @@ fn execute_pins_coexist_interactions(
         handles.push(pin.handle);
         sources.push(pinned);
         record_step(report, &context.report_path, action, foreground, None)?;
+    }
+
+    source_fixture.shutdown(context.timeout.min(Duration::from_secs(3)))?;
+    let source_fixture_cleaned_up = source_fixture.stopped;
+    if !source_fixture_cleaned_up {
+        return Err(io::Error::other(
+            "Pin source fixture did not report a completed cleanup",
+        ));
     }
 
     let initial_windows = owned_windows(&handles)?;
@@ -5830,7 +5916,10 @@ fn execute_pins_coexist_interactions(
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
     let plan = interaction_plan_for_window(overlay.handle)?;
-    let capture_drag = inject_mouse_drag(
+    // The full-display overlay consumes physical screen pixels directly. Reuse the same
+    // display-coordinate path as Pin creation so the measured gesture and committed selection do
+    // not apply the native client origin twice.
+    let capture_drag = inject_mouse_drag_in_display_pixels(
         overlay.handle,
         plan.drag_start,
         plan.drag_end,
@@ -5961,6 +6050,9 @@ fn execute_pins_coexist_interactions(
         )));
     }
     report.pins_coexist = Some(PinsCoexistReport {
+        source_fixture_process_id: source_fixture.process_id,
+        source_fixture_window,
+        source_fixture_cleaned_up,
         pins: pin_reports,
         arranged_windows: arranged_windows
             .into_iter()
@@ -15540,10 +15632,10 @@ mod tests {
         FixturePhaseState, NativeWindow, decode_clipboard_dib, foreground_assist_ready,
         has_safe_titlebar_band, horizontal_pin_layout, is_default_image_filename,
         is_foreground_change_abort, panic_payload_message,
-        parse_recording_window_fixture_arguments, recording_fixture_dynamic_bounds,
-        request_recording_state, titlebar_fallback_ready, validate_fixture_phase_state,
-        validate_recording_frame_content, validate_same_pixel_content,
-        validate_scroll_fixture_frame, watermark_style_row_width,
+        parse_recording_window_fixture_arguments, pin_coexist_fixture_bounds,
+        recording_fixture_dynamic_bounds, request_recording_state, titlebar_fallback_ready,
+        validate_fixture_phase_state, validate_recording_frame_content,
+        validate_same_pixel_content, validate_scroll_fixture_frame, watermark_style_row_width,
     };
     use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
@@ -15569,6 +15661,31 @@ mod tests {
             progress_time_us: 0,
             status: status.to_owned(),
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pin_fixture_contains_all_sources_on_a_negative_coordinate_display() {
+        let display = PhysicalRect {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        let fixture = pin_coexist_fixture_bounds(display).unwrap();
+        assert!(fixture.left >= display.left);
+        assert!(fixture.top >= display.top);
+        assert!(fixture.right <= display.right);
+        assert!(fixture.bottom <= display.bottom);
+        assert!(fixture.width() >= 240);
+        assert!(fixture.height() >= 120);
+        let group = PhysicalRect {
+            left: -1920 + (1920 - 1240) / 2,
+            top: 160,
+            right: -1920 + (1920 - 1240) / 2 + 1240,
+            bottom: 400,
+        };
+        assert!(rect_contains_rect(fixture, group));
     }
 
     #[test]
