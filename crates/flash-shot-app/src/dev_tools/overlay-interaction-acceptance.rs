@@ -20,6 +20,7 @@ use flash_shot::{
     performance::PerformanceRecorder,
     platform::display::{DisplayInfo, DisplayProvider, SystemDisplayProvider},
     settings::UserSettings,
+    theme::ThemeMetrics,
 };
 #[cfg(windows)]
 use flash_shot::{
@@ -30,7 +31,6 @@ use flash_shot::{
         window_inspector::{SystemWindowInspector, WindowInspector},
     },
     recording::discover,
-    theme::ThemeMetrics,
 };
 
 use super::support::recording_probe;
@@ -90,15 +90,15 @@ use windows_sys::Win32::{
             GUITHREADINFO, GW_OWNER, GWLP_USERDATA, GetClassNameW, GetClientRect, GetCursorPos,
             GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindow,
             GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-            GetWindowThreadProcessId, HTCAPTION, HWND_TOP, IsChild, IsIconic, IsWindow,
-            IsWindowVisible, MOUSEWHEEL_ROUTING_MOUSE_POS, MSG, PostMessageW, PostQuitMessage,
-            RegisterClassW, SM_CMONITORS, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            GetWindowThreadProcessId, HTCAPTION, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IsChild,
+            IsIconic, IsWindow, IsWindowVisible, MOUSEWHEEL_ROUTING_MOUSE_POS, MSG, PostMessageW,
+            PostQuitMessage, RegisterClassW, SM_CMONITORS, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
             SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETMOUSEWHEELROUTING, SW_HIDE, SW_MINIMIZE,
-            SW_RESTORE, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW,
-            SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-            SystemParametersInfoW, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
-            WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-            WS_POPUP, WS_VISIBLE, WindowFromPoint,
+            SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+            SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+            ShowWindow, SystemParametersInfoW, TranslateMessage, WM_CLOSE, WM_DESTROY,
+            WM_ERASEBKGND, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE, WindowFromPoint,
         },
     },
 };
@@ -130,6 +130,7 @@ const DESKTOP_QUIESCENCE_SETTLE: Duration = Duration::from_millis(300);
 const MAX_RECORDING_GRID_MAE: f64 = 18.0;
 const WINDOW_TARGET_CHILD_MODE: &str = "--window-target-child";
 const SCROLL_TARGET_CHILD_MODE: &str = "--scroll-target-child";
+const SCROLL_FIXTURE_OFFSET_MESSAGE: u32 = 0x0400 + 0x53;
 const CLIPBOARD_CONSUMER_CHILD_MODE: &str = "--clipboard-consumer-child";
 const CLIPBOARD_CONTENTION_HOLDER_CHILD_MODE: &str = "--clipboard-contention-holder-child";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -148,6 +149,14 @@ const NARROW_EDGE_BOTTOM_INSET: f32 = 12.0;
 const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 900.0;
 // The wide marking dock is one 42px tool row, an 8px separation, and a 50px action row.
 const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 100.0;
+const ACTION_TOOLBAR_ITEM_COUNT: usize = 6;
+const ACTION_TOOLBAR_MARK_INDEX: usize = 0;
+const ACTION_TOOLBAR_PIN_INDEX: usize = 1;
+const ACTION_TOOLBAR_SAVE_INDEX: usize = 2;
+const ACTION_TOOLBAR_MORE_INDEX: usize = 3;
+const ACTION_TOOLBAR_CANCEL_INDEX: usize = 4;
+const ACTION_TOOLBAR_COPY_INDEX: usize = 5;
+const RESULT_ACTION_MORE_INDEX: usize = 2;
 const PIN_COEXIST_COUNT: usize = 3;
 const PIN_COEXIST_SELECTION_WIDTH: f32 = 360.0;
 const PIN_COEXIST_SELECTION_HEIGHT: f32 = 240.0;
@@ -159,10 +168,10 @@ const SELECTION_MOVE_DELTA: PhysicalPoint = PhysicalPoint { x: 120, y: 72 };
 const SELECTION_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 144, y: -80 };
 const SELECTION_SHIFT_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 120, y: -24 };
 const SELECTION_ALT_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 80, y: -56 };
-const SCROLL_SECONDARY_MENU_HEIGHT: f32 = 218.0;
-const SCROLL_SECONDARY_MENU_ROW: f32 = 90.0;
-const SCROLL_SECONDARY_MENU_SCROLL_ROW_WIDTH: f32 = 323.0;
-const SCROLL_SECONDARY_MENU_CONTENT_RIGHT_INSET: f32 = 7.0;
+// Keep the scroll-menu hit-test model aligned with `OVERLAY_MORE_ACTION_WIDTHS` in overlay.rs.
+const SCROLL_SECONDARY_ACTION_WIDTHS: [f32; 11] = [
+    138.0, 128.0, 143.0, 92.0, 91.0, 72.0, 84.0, 92.0, 81.0, 101.0, 126.0,
+];
 const SCROLL_FIXTURE_SCROLL_STEP: i32 = 96;
 #[cfg(windows)]
 const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
@@ -863,8 +872,8 @@ fn interaction_plan_for_logical_selection(
     const ACTION_ITEM_GAP: f32 = 6.0;
     const ACTION_PADDING: f32 = 6.0;
     const ACTION_BORDER: f32 = 1.0;
-    const ACTION_TOOLBAR_WIDTH: f32 = 6.0 * ACTION_ITEM_WIDTH
-        + 5.0 * ACTION_ITEM_GAP
+    const ACTION_TOOLBAR_WIDTH: f32 = ACTION_TOOLBAR_ITEM_COUNT as f32 * ACTION_ITEM_WIDTH
+        + (ACTION_TOOLBAR_ITEM_COUNT - 1) as f32 * ACTION_ITEM_GAP
         + 2.0 * ACTION_PADDING
         + 2.0 * ACTION_BORDER;
 
@@ -909,13 +918,16 @@ fn interaction_plan_for_logical_selection(
     Ok(InteractionPlan {
         drag_start: screen_point(start),
         drag_end: screen_point(end),
-        // The primary row is fixed: Mark, Pin, Copy, Save, More, then Cancel.
-        mark: screen_point((action_center(0), toolbar_top + 25.0)),
-        pin: screen_point((action_center(1), toolbar_top + 25.0)),
-        copy: screen_point((action_center(2), toolbar_top + 25.0)),
-        save: screen_point((action_center(3), toolbar_top + 25.0)),
-        more: screen_point((action_center(4), toolbar_top + 25.0)),
-        cancel: screen_point((action_center(5), toolbar_top + 25.0)),
+        // The production row order is Mark, Pin, Save, More, Cancel, then Copy.
+        mark: screen_point((action_center(ACTION_TOOLBAR_MARK_INDEX), toolbar_top + 25.0)),
+        pin: screen_point((action_center(ACTION_TOOLBAR_PIN_INDEX), toolbar_top + 25.0)),
+        save: screen_point((action_center(ACTION_TOOLBAR_SAVE_INDEX), toolbar_top + 25.0)),
+        more: screen_point((action_center(ACTION_TOOLBAR_MORE_INDEX), toolbar_top + 25.0)),
+        cancel: screen_point((
+            action_center(ACTION_TOOLBAR_CANCEL_INDEX),
+            toolbar_top + 25.0,
+        )),
+        copy: screen_point((action_center(ACTION_TOOLBAR_COPY_INDEX), toolbar_top + 25.0)),
         // The expanded 334 px menu wraps into five right-aligned rows. Recording occupies the
         // final item of row four and the sole item of row five above this toolbar.
         record_area: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 75.0)),
@@ -961,6 +973,7 @@ fn tool_group_interaction_plan_for_capture_selection(
     selection: PhysicalRect,
     annotation_controls: bool,
     style_width: f32,
+    locale: Locale,
 ) -> io::Result<ToolGroupInteractionPlan> {
     const EDGE_INSET: f32 = 18.0;
     const BOTTOM_SAFE_INSET: f32 = ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET;
@@ -978,7 +991,6 @@ fn tool_group_interaction_plan_for_capture_selection(
     const ACTION_TOOLBAR_HEIGHT: f32 =
         ACTION_ITEM_WIDTH + ACTION_PADDING * 2.0 + ACTION_BORDER * 2.0;
     const POPUP_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
-    const POPUP_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOL_CELL_WIDTH_COMPACT;
     const POPUP_ITEM_HEIGHT: f32 = ThemeMetrics::WORKSPACE_TOOL_ROW_HEIGHT;
     const PALETTE_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
 
@@ -986,13 +998,13 @@ fn tool_group_interaction_plan_for_capture_selection(
     let client = client_bounds_for_window(handle)?;
     let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
     let (width, height) = overlay_logical_size(client, scale)?;
-    let mark_action_width = ACTION_ITEM_WIDTH
-        + 5.0 * ACTION_ITEM_WIDTH
-        + 5.0 * ACTION_ITEM_GAP
+    let mark_action_width = ACTION_TOOLBAR_ITEM_COUNT as f32 * ACTION_ITEM_WIDTH
+        + (ACTION_TOOLBAR_ITEM_COUNT - 1) as f32 * ACTION_ITEM_GAP
         + ACTION_PADDING * 2.0
         + ACTION_BORDER * 2.0;
     let annotation_palette_width = TOOL_PALETTE_ITEMS as f32 * TOOL_ICON_WIDTH
-        + TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * TOOL_PALETTE_GAP;
+        + TOOL_PALETTE_ITEMS as f32 * TOOL_PALETTE_GAP
+        + PALETTE_BORDER;
     let context_width = 2.0 * ACTION_ITEM_WIDTH + ACTION_ITEM_GAP;
     let result_width = 5.0 * ACTION_ITEM_WIDTH + 4.0 * ACTION_ITEM_GAP;
     let annotation_action_width = context_width
@@ -1046,6 +1058,11 @@ fn tool_group_interaction_plan_for_capture_selection(
         + palette_rows.saturating_sub(1) as f32 * TOOL_PALETTE_GAP
         + TOOLBAR_PADDING * 2.0
         + PALETTE_BORDER * 2.0;
+    let popup_item_width = if locale == Locale::SimplifiedChinese {
+        ThemeMetrics::WORKSPACE_TOOL_CELL_WIDTH_COMPACT
+    } else {
+        ThemeMetrics::WORKSPACE_TOOL_CELL_WIDTH
+    };
     let tools_height = if annotation_controls {
         ACTION_TOOLBAR_HEIGHT
     } else {
@@ -1103,11 +1120,9 @@ fn tool_group_interaction_plan_for_capture_selection(
     };
     let tools_top = top;
     let group_row_center_y = tools_top + PALETTE_BORDER + TOOLBAR_PADDING + TOOL_ICON_WIDTH / 2.0;
-    let popup_top = if annotation_controls {
-        tools_top + ACTION_TOOLBAR_HEIGHT + TOOL_GAP
-    } else {
-        tools_top + palette_height + TOOL_GAP
-    };
+    // The renderer anchors the popover after the measured palette row. The action row is 4px
+    // taller than that palette, so using its height would move the click into the style row.
+    let popup_top = tools_top + palette_height + TOOL_GAP;
     let action_center = |index: usize| {
         action_left
             + ACTION_BORDER
@@ -1115,47 +1130,62 @@ fn tool_group_interaction_plan_for_capture_selection(
             + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP)
             + ACTION_ITEM_WIDTH / 2.0
     };
-    let annotation_row_left = if annotation_controls {
-        left + context_width + ACTION_ITEM_GAP + ACTION_BORDER
-    } else {
-        left
+    // In marking mode the result group is the rightmost child of the wide row. Its left edge is
+    // not the compact six-button toolbar edge used by the default Mark-only row; using that old
+    // anchor clicks Cancel/Copy instead of More and makes the native tool-group probe abort.
+    let result_left = left
+        + ACTION_BORDER
+        + ACTION_PADDING
+        + annotation_palette_width
+        + ACTION_ITEM_GAP
+        + ACTION_BORDER
+        + ACTION_ITEM_GAP
+        + context_width
+        + ACTION_ITEM_GAP
+        + ACTION_BORDER
+        + ACTION_ITEM_GAP;
+    let result_center = |index: usize| {
+        result_left + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP) + ACTION_ITEM_WIDTH / 2.0
     };
-    // The compact palette starts with the explicit selection/move tool, followed by the four
-    // grouped annotation triggers. Keep native probe points aligned with that rendered order.
-    let group_trigger_offset = if annotation_controls {
-        TOOL_ICON_WIDTH + TOOL_PALETTE_GAP
+    let (annotation_row_left, group_trigger_offset, annotation_inner_inset) = if annotation_controls
+    {
+        (
+            left + ACTION_BORDER + ACTION_PADDING,
+            TOOL_ICON_WIDTH + TOOL_PALETTE_GAP + PALETTE_BORDER + TOOL_PALETTE_GAP,
+            0.0,
+        )
     } else {
-        0.0
+        (left, 0.0, PALETTE_BORDER + TOOLBAR_PADDING)
     };
+    // The inline palette starts with selection, a divider, then the grouped annotation tools.
+    // The detached palette uses the same icon hit area but has its own bordered padding.
     Ok(ToolGroupInteractionPlan {
         mark: screen_point((
             action_center(0),
             action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
         more: screen_point((
-            action_center(4),
+            result_center(RESULT_ACTION_MORE_INDEX),
             action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
         text_trigger: screen_point((
             annotation_row_left
                 + group_trigger_offset
-                + PALETTE_BORDER
-                + TOOLBAR_PADDING
+                + annotation_inner_inset
                 + TOOL_ICON_WIDTH / 2.0,
             group_row_center_y,
         )),
         shape_trigger: screen_point((
             annotation_row_left
                 + group_trigger_offset
-                + PALETTE_BORDER
-                + TOOLBAR_PADDING
+                + annotation_inner_inset
                 + TOOL_ICON_WIDTH
                 + TOOL_PALETTE_GAP
                 + TOOL_ICON_WIDTH / 2.0,
             group_row_center_y,
         )),
         shape_rectangle: screen_point((
-            left + PALETTE_BORDER + POPUP_PADDING + POPUP_ITEM_WIDTH / 2.0,
+            left + PALETTE_BORDER + POPUP_PADDING + popup_item_width / 2.0,
             popup_top + PALETTE_BORDER + POPUP_PADDING + POPUP_ITEM_HEIGHT / 2.0,
         )),
         outside: map_capture_point_to_screen(
@@ -1177,6 +1207,7 @@ fn scroll_shot_point_for_logical_selection(
     height: f32,
     start: (f32, f32),
     end: (f32, f32),
+    annotation_controls_visible: bool,
 ) -> io::Result<PhysicalPoint> {
     if start.0 < 0.0
         || start.1 < 0.0
@@ -1190,41 +1221,242 @@ fn scroll_shot_point_for_logical_selection(
             "scroll-shot selection must be increasing and inside the overlay client",
         ));
     }
-    const ACTION_TOOLBAR_WIDTH: f32 = 260.0;
-    let toolbar_width = ACTION_TOOLBAR_WIDTH.min(width - 36.0);
-    let toolbar_height = 50.0;
-    let left_min = 18.0;
-    let left_limit = (width - 18.0 - toolbar_width).max(left_min);
-    let toolbar_left = (end.0 - toolbar_width).clamp(left_min, left_limit);
-    let lowest_top = (height - 96.0 - toolbar_height).max(18.0);
-    let below = end.1 + 12.0;
-    let above = start.1 - toolbar_height - 12.0;
-    let toolbar_top = if below <= lowest_top {
+    let (toolbar_width, toolbar_height, _) = scroll_toolbar_dimensions(annotation_controls_visible);
+    if width < toolbar_width + 36.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "scroll roundtrip acceptance requires room for the complete action toolbar",
+        ));
+    }
+    let toolbar_left = (end.0 - toolbar_width).clamp(18.0, width - 18.0 - toolbar_width);
+    let top_limit = (height - 96.0 - toolbar_height).max(18.0);
+    let below = end.1 + ThemeMetrics::WORKSPACE_SELECTION_GAP;
+    let above = start.1 - ThemeMetrics::WORKSPACE_SELECTION_GAP - toolbar_height;
+    let toolbar_top = if below <= top_limit {
         below
     } else {
-        above.max(18.0).min(lowest_top)
+        above.max(18.0).min(top_limit)
     };
 
-    // The 11 production secondary actions wrap into five natural-width rows at the 334px
-    // toolbar width; Scroll shot is the leftmost item in the 323px third row (65px wide).
-    let menu_above = toolbar_top - 8.0 - SCROLL_SECONDARY_MENU_HEIGHT >= 18.0
-        || toolbar_top + toolbar_height + 8.0 + SCROLL_SECONDARY_MENU_HEIGHT > height - 96.0;
-    let menu_top = if menu_above {
-        toolbar_top - 8.0 - SCROLL_SECONDARY_MENU_HEIGHT
+    let menu_width = scroll_secondary_menu_width();
+    let menu_height = scroll_secondary_menu_height(menu_width);
+    let menu_offset = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+        + ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
+        + ThemeMetrics::WORKSPACE_POPOVER_GAP;
+    let above_menu_top = toolbar_top - menu_offset - menu_height;
+    let below_menu_bottom = toolbar_top + toolbar_height + menu_offset + menu_height;
+    let actions_above = below > top_limit;
+    let opens_above =
+        if annotation_controls_visible && !actions_above && below_menu_bottom <= height - 96.0 {
+            false
+        } else if annotation_controls_visible && actions_above && above_menu_top >= 18.0 {
+            true
+        } else {
+            above_menu_top >= 18.0 || below_menu_bottom > height - 96.0
+        };
+    let menu_top = if opens_above {
+        toolbar_top - menu_offset - menu_height
     } else {
-        toolbar_top + toolbar_height + 8.0
+        toolbar_top + menu_offset
     };
-    let scroll_center = (
-        toolbar_left + toolbar_width
-            - SCROLL_SECONDARY_MENU_CONTENT_RIGHT_INSET
-            - SCROLL_SECONDARY_MENU_SCROLL_ROW_WIDTH
-            + 32.5,
-        menu_top + SCROLL_SECONDARY_MENU_ROW + 18.0,
+    let menu_left_offset = ((toolbar_width - menu_width) / 2.0).clamp(
+        18.0 - toolbar_left,
+        width - 18.0 - menu_width - toolbar_left,
     );
+    let menu_left = toolbar_left + menu_left_offset;
+    let scroll_center = scroll_menu_item_center(menu_left, menu_top, menu_width, 4)?;
     Ok(PhysicalPoint {
         x: bounds.left + (scroll_center.0 * scale).round() as i32,
         y: bounds.top + (scroll_center.1 * scale).round() as i32,
     })
+}
+
+/// Measures the compact production action row from shared icon and spacing tokens.
+fn scroll_toolbar_dimensions(annotation_controls_visible: bool) -> (f32, f32, f32) {
+    let button = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
+    let gap = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+    let border = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
+    let padding = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+    let leading_width = if annotation_controls_visible {
+        let inline_tools = 6.0 * button + 6.0 * ThemeMetrics::SPACE_1 + border;
+        let context_actions = 2.0 * button + gap;
+        inline_tools + context_actions + 2.0 * border + 4.0 * gap
+    } else {
+        button + gap
+    };
+    let result_width = 5.0 * button + 4.0 * gap;
+    let width = leading_width + result_width + padding * 2.0 + border * 2.0;
+    let height = button + padding * 2.0 + border * 2.0;
+    (width, height, leading_width)
+}
+
+#[cfg(windows)]
+/// Recomputes the rendered More button center for the current compact or annotation toolbar.
+fn scroll_toolbar_more_point_for_capture_selection(
+    handle: *mut c_void,
+    capture_bounds: PhysicalRect,
+    selection: PhysicalRect,
+    annotation_controls_visible: bool,
+) -> io::Result<PhysicalPoint> {
+    let window = owned_window(handle)?;
+    let client = client_bounds_for_window(handle)?;
+    let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
+    let (width, height) = overlay_logical_size(client, scale)?;
+    let top_left = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: selection.left,
+            y: selection.top,
+        },
+        client,
+        capture_bounds,
+    )?;
+    let bottom_right = map_capture_point_to_screen(
+        PhysicalPoint {
+            x: selection.right,
+            y: selection.bottom,
+        },
+        client,
+        capture_bounds,
+    )?;
+    let selection_top = (top_left.y - client.top) as f32 / scale;
+    let selection_right = (bottom_right.x - client.left) as f32 / scale;
+    let selection_bottom = (bottom_right.y - client.top) as f32 / scale;
+    let (toolbar_width, toolbar_height, leading_width) =
+        scroll_toolbar_dimensions(annotation_controls_visible);
+    if width < toolbar_width + ThemeMetrics::OVERLAY_EDGE_INSET * 2.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "More-button geometry requires room for the full rendered action toolbar",
+        ));
+    }
+    let toolbar_left = (selection_right - toolbar_width).clamp(
+        ThemeMetrics::OVERLAY_EDGE_INSET,
+        width - ThemeMetrics::OVERLAY_EDGE_INSET - toolbar_width,
+    );
+    let top_limit = (height - ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET - toolbar_height)
+        .max(ThemeMetrics::OVERLAY_EDGE_INSET);
+    let below = selection_bottom + ThemeMetrics::WORKSPACE_SELECTION_GAP;
+    let above = selection_top - ThemeMetrics::WORKSPACE_SELECTION_GAP - toolbar_height;
+    let toolbar_top = if below <= top_limit {
+        below
+    } else {
+        above.max(ThemeMetrics::OVERLAY_EDGE_INSET).min(top_limit)
+    };
+    let button = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
+    let gap = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+    let border = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
+    let padding = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+    let logical_point = (
+        toolbar_left + border + padding + leading_width + 2.0 * (button + gap) + button / 2.0,
+        toolbar_top + border + padding + button / 2.0,
+    );
+    Ok(PhysicalPoint {
+        x: client.left + (logical_point.0 * scale).round() as i32,
+        y: client.top + (logical_point.1 * scale).round() as i32,
+    })
+}
+
+/// Finds the narrowest More-menu width whose fixed action labels fit in four production rows.
+fn scroll_secondary_menu_width() -> f32 {
+    let gap = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+    let chrome = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
+        + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH * 2.0;
+    let minimum = SCROLL_SECONDARY_ACTION_WIDTHS
+        .iter()
+        .copied()
+        .fold(0.0, f32::max)
+        + chrome;
+    let maximum = SCROLL_SECONDARY_ACTION_WIDTHS.iter().sum::<f32>()
+        + (SCROLL_SECONDARY_ACTION_WIDTHS.len() - 1) as f32 * gap
+        + chrome;
+    let mut width = minimum.ceil();
+    while width <= maximum {
+        if scroll_secondary_menu_row_count(width) <= 4 {
+            return width;
+        }
+        width += 1.0;
+    }
+    maximum
+}
+
+/// Computes the More panel height from its wrapped rows and shared toolbar tokens.
+fn scroll_secondary_menu_height(width: f32) -> f32 {
+    let rows = scroll_secondary_menu_row_count(width) as f32;
+    rows * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+        + (rows - 1.0).max(0.0) * ThemeMetrics::WORKSPACE_TOOLBAR_GAP
+        + ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
+        + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH * 2.0
+}
+
+/// Applies the same greedy flex wrapping as the More action renderer.
+fn scroll_secondary_menu_row_count(width: f32) -> usize {
+    let content_width = (width
+        - ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
+        - ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH * 2.0)
+        .max(1.0);
+    let mut rows = 1;
+    let mut row_width = 0.0;
+    for item_width in SCROLL_SECONDARY_ACTION_WIDTHS {
+        let next_width = if row_width == 0.0 {
+            item_width
+        } else {
+            row_width + ThemeMetrics::WORKSPACE_TOOLBAR_GAP + item_width
+        };
+        if row_width > 0.0 && next_width > content_width {
+            rows += 1;
+            row_width = item_width;
+        } else {
+            row_width = next_width;
+        }
+    }
+    rows
+}
+
+/// Returns an item's centered hit point after the menu's right-aligned flex wrapping.
+fn scroll_menu_item_center(
+    menu_left: f32,
+    menu_top: f32,
+    menu_width: f32,
+    item_index: usize,
+) -> io::Result<(f32, f32)> {
+    let border = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
+    let padding = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+    let gap = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+    let button = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
+    let content_width = (menu_width - padding * 2.0 - border * 2.0).max(1.0);
+    let mut rows = Vec::<(usize, usize, f32)>::new();
+    let mut row_start = 0;
+    let mut row_width = 0.0;
+    for (index, item_width) in SCROLL_SECONDARY_ACTION_WIDTHS.iter().copied().enumerate() {
+        let next_width = if row_width == 0.0 {
+            item_width
+        } else {
+            row_width + gap + item_width
+        };
+        if row_width > 0.0 && next_width > content_width {
+            rows.push((row_start, index, row_width));
+            row_start = index;
+            row_width = item_width;
+        } else {
+            row_width = next_width;
+        }
+    }
+    rows.push((row_start, SCROLL_SECONDARY_ACTION_WIDTHS.len(), row_width));
+    let (row_index, (first, _last, row_width)) = rows
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, (first, last, _))| (*first..*last).contains(&item_index))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "More item index is absent"))?;
+    let row_offset = content_width - row_width;
+    let preceding_width = SCROLL_SECONDARY_ACTION_WIDTHS[first..item_index]
+        .iter()
+        .sum::<f32>()
+        + item_index.saturating_sub(first) as f32 * gap;
+    let item_width = SCROLL_SECONDARY_ACTION_WIDTHS[item_index];
+    let x = menu_left + border + padding + row_offset + preceding_width + item_width / 2.0;
+    let y = menu_top + border + padding + row_index as f32 * (button + gap) + button / 2.0;
+    Ok((x, y))
 }
 
 /// Chooses a tall viewport that stays inside the fixture and above the scrolling controller.
@@ -3299,6 +3531,7 @@ unsafe extern "system" fn scroll_fixture_window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match message {
+        SCROLL_FIXTURE_OFFSET_MESSAGE => SCROLL_FIXTURE_OFFSET.load(Ordering::Acquire) as LRESULT,
         WM_PAINT => {
             paint_scroll_fixture_window(window);
             0
@@ -3913,6 +4146,20 @@ impl ScrollWindowFixture {
                 unsafe { IsWindowVisible(target) } != 0
             )));
         }
+        // Keep the no-activate fixture above the user's desktop windows without stealing
+        // foreground focus from the acceptance controller. The production overlay captures its
+        // selected pixels while this fixture is topmost, then the runner lowers it before toolbar
+        // input so the fixture cannot cover the controls.
+        if let Err(error) = raise_scroll_fixture_for_capture(target, target_bounds) {
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "scroll fixture could not be raised without activation ({error}); cleanup={cleanup:?}"
+            )));
+        }
         Ok(Self {
             child,
             process_group,
@@ -3942,6 +4189,18 @@ impl ScrollWindowFixture {
             handle: self.target as usize,
             bounds,
             dpi,
+        })
+    }
+
+    /// Reads the fixture's vertical document offset through its process-owned test message.
+    fn offset(&self) -> io::Result<i32> {
+        self.report()?;
+        let offset = unsafe { SendMessageW(self.target, SCROLL_FIXTURE_OFFSET_MESSAGE, 0, 0) };
+        i32::try_from(offset).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("scroll fixture reported out-of-range offset {offset}"),
+            )
         })
     }
 
@@ -4502,6 +4761,46 @@ fn set_fixture_window_bounds(window: HWND, bounds: PhysicalRect, show: bool) -> 
             bounds.width() as i32,
             bounds.height() as i32,
             flags,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+/// Removes topmost status from the scroll fixture after its pixels have been sampled.
+fn lower_scroll_fixture(window: HWND) -> io::Result<()> {
+    if unsafe {
+        SetWindowPos(
+            window,
+            HWND_NOTOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+/// Keeps the disposable scroll target visible above other apps without taking foreground focus.
+fn raise_scroll_fixture_for_capture(window: HWND, bounds: PhysicalRect) -> io::Result<()> {
+    if unsafe {
+        SetWindowPos(
+            window,
+            HWND_TOPMOST,
+            bounds.left,
+            bounds.top,
+            bounds.width() as i32,
+            bounds.height() as i32,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
         )
     } == 0
     {
@@ -6230,6 +6529,7 @@ fn execute_annotation_regression_interactions(
         selection,
         false,
         0.0,
+        context.locale,
     )?;
     let foreground = inject_mouse_click(overlay.handle, group_plan.mark)?;
     let _marking_state = wait_for_capture_state(context, "annotation controls", |state| {
@@ -6680,6 +6980,7 @@ fn execute_tool_group_interactions(
         selection,
         true,
         0.0,
+        context.locale,
     )?;
     let foreground = inject_mouse_click(overlay.handle, group_plan.more)?;
     let more_open_state = wait_for_capture_state(context, "tool-group More open", |state| {
@@ -6740,6 +7041,7 @@ fn execute_tool_group_interactions(
         selection,
         true,
         0.0,
+        context.locale,
     )?;
     let foreground = inject_mouse_click(overlay.handle, controls_group_plan.text_trigger)?;
     wait_for_capture_state(context, "Text tool group open", |state| {
@@ -6747,6 +7049,9 @@ fn execute_tool_group_interactions(
             && state.annotation_controls_visible
             && state.annotation_tool_group_visible
     })?;
+    // State IPC can observe the toggle before GPUI has painted the transient popover. Give the
+    // native surface one full settle interval before recording pixels or sending the next click.
+    thread::sleep(context.settle_delay);
     let text_open = capture_evidence(context, "03-tool-group-text-open.png", overlay)?;
     record_step(
         report,
@@ -6804,6 +7109,7 @@ fn execute_tool_group_interactions(
         selection,
         true,
         watermark_style_row_width(),
+        context.locale,
     )?;
     let foreground = inject_mouse_click(overlay.handle, expanded_group_plan.shape_trigger)?;
     wait_for_capture_state(context, "Shape tool group open", |state| {
@@ -6811,6 +7117,7 @@ fn execute_tool_group_interactions(
             && state.annotation_controls_visible
             && state.annotation_tool_group_visible
     })?;
+    thread::sleep(context.settle_delay);
     let shape_open = capture_evidence(context, "06-tool-group-shape-open.png", overlay)?;
     record_step(
         report,
@@ -6839,6 +7146,7 @@ fn execute_tool_group_interactions(
     wait_for_capture_state(context, "Shape tool group reopen", |state| {
         state.annotation_tool_group_visible
     })?;
+    thread::sleep(context.settle_delay);
     let foreground = inject_mouse_click(overlay.handle, expanded_group_plan.shape_rectangle)?;
     wait_for_capture_state(context, "Shape child click", |state| {
         state.selection == Some(selection)
@@ -7004,7 +7312,15 @@ fn execute_scroll_roundtrip_interactions(
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
     let plan = scroll_roundtrip_interaction_plan_for_window(overlay.handle)?;
-    let drag = inject_mouse_drag(overlay.handle, plan.drag_start, plan.drag_end, display)?;
+    // The production capture overlay consumes global physical points while it spans the full
+    // display. Keep the acceptance request in that same coordinate space; remapping through the
+    // borderless client rectangle would apply the native inset a second time.
+    let drag = inject_mouse_drag_in_display_pixels(
+        overlay.handle,
+        plan.drag_start,
+        plan.drag_end,
+        display,
+    )?;
     let selected = capture_evidence(context, "00-scroll-selected.png", drag.foreground)?;
     record_step(
         report,
@@ -7033,6 +7349,17 @@ fn execute_scroll_roundtrip_interactions(
             ),
         ));
     }
+    // Recompute the action row from the committed selection. The initial drag plan is only a
+    // safe viewport seed; the production toolbar may clamp above/below or against the display
+    // edge after GPUI normalizes the final selection geometry.
+    let mut plan =
+        interaction_plan_for_capture_selection(overlay.handle, display, initial_selection)?;
+    plan.more = scroll_toolbar_more_point_for_capture_selection(
+        overlay.handle,
+        display,
+        initial_selection,
+        initial_state.annotation_controls_visible,
+    )?;
 
     let initial_frame = query_capture_content(context, context.timeout)?
         .selection
@@ -7042,6 +7369,24 @@ fn execute_scroll_roundtrip_interactions(
     validate_scroll_fixture_frame(&initial_frame, fixture.target_bounds, 0)?;
     let initial_frame_report =
         save_scroll_frame_report(context, "01-scroll-initial-frame.png", initial_frame)?;
+    lower_scroll_fixture(fixture.target)?;
+    focus_owned_window(overlay, context.timeout)?;
+    raise_owned_window_above_topmost(overlay)?;
+    let more_hit = unsafe {
+        WindowFromPoint(POINT {
+            x: plan.more.x,
+            y: plan.more.y,
+        })
+    };
+    if more_hit != overlay.handle {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "scroll roundtrip More point {:?} resolves to {:?}, expected overlay {:?}",
+                plan.more, more_hit, overlay.handle
+            ),
+        ));
+    }
 
     let foreground = inject_mouse_click(overlay.handle, plan.more)?;
     let _more_state = wait_for_capture_state(context, "scroll roundtrip More", |state| {
@@ -7060,8 +7405,12 @@ fn execute_scroll_roundtrip_interactions(
         foreground,
         Some(&more),
     )?;
-    let scroll_point =
-        scroll_shot_point_for_capture_selection(overlay.handle, display, initial_selection)?;
+    let scroll_point = scroll_shot_point_for_capture_selection(
+        overlay.handle,
+        display,
+        initial_selection,
+        initial_state.annotation_controls_visible,
+    )?;
     if !overlay.bounds.contains(scroll_point) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -7110,6 +7459,11 @@ fn execute_scroll_roundtrip_interactions(
     focus_owned_window(scroll_control, context.timeout)?;
     let scroll_control_report = scroll_control.report();
     set_fixture_window_bounds(fixture.target, fixture.target_bounds, true)?;
+    raise_scroll_fixture_for_capture(fixture.target, fixture.target_bounds)?;
+    // Keep the foreground control above the fixture while it remains visible. When auto capture
+    // hides the control, the fixture stays topmost so the desktop app behind it cannot replace
+    // the pixels that the production capture backend samples.
+    raise_owned_window_above_topmost(scroll_control)?;
     let wheel_routing = preflight_scroll_input(initial_selection, fixture.target)?;
 
     let foreground = inject_scroll_auto_capture(scroll_control.handle)?;
@@ -7121,8 +7475,28 @@ fn execute_scroll_roundtrip_interactions(
         None,
     )?;
     let auto = wait_for_capture_state(context, "scroll roundtrip auto capture", |state| {
-        state.overlay_count == 0 && state.status.starts_with("Captured scroll frame 2 (")
+        state.overlay_count == 0
+            && (state.status.starts_with("Captured scroll frame 2 (")
+                || state
+                    .status
+                    .starts_with("That frame did not overlap the previous one:"))
     })?;
+    if !auto.status.starts_with("Captured scroll frame 2 (") {
+        let fixture_offset = fixture.offset()?;
+        let failed_frame = SystemCaptureBackend.capture(initial_selection)?;
+        let diagnostic_path = context
+            .session_root
+            .join("screenshots")
+            .join("03-scroll-failed-frame.png");
+        failed_frame.save_png(&diagnostic_path)?;
+        let fixture_validation =
+            validate_scroll_fixture_frame(&failed_frame, fixture.target_bounds, fixture_offset);
+        return Err(io::Error::other(format!(
+            "auto-scroll append was rejected: {}; fixture_offset={fixture_offset}; diagnostic_frame={}; fixture_validation={fixture_validation:?}",
+            auto.status,
+            diagnostic_path.display()
+        )));
+    }
     thread::sleep(context.settle_delay);
     let second_frame_report = capture_scroll_region_evidence(
         context,
@@ -7138,6 +7512,7 @@ fn execute_scroll_roundtrip_interactions(
             "auto scroll completed but the fixture viewport did not change",
         ));
     }
+    lower_scroll_fixture(fixture.target)?;
 
     focus_owned_window(scroll_control, context.timeout)?;
     thread::sleep(context.settle_delay);
@@ -13613,6 +13988,7 @@ fn scroll_shot_point_for_capture_selection(
     handle: *mut c_void,
     capture_bounds: PhysicalRect,
     selection: PhysicalRect,
+    annotation_controls_visible: bool,
 ) -> io::Result<PhysicalPoint> {
     let window = owned_window(handle)?;
     let client = client_bounds_for_window(handle)?;
@@ -13647,6 +14023,7 @@ fn scroll_shot_point_for_capture_selection(
         height,
         logical(top_left),
         logical(bottom_right),
+        annotation_controls_visible,
     )
 }
 
@@ -14110,6 +14487,26 @@ fn focus_owned_window(window: NativeWindow, timeout: Duration) -> io::Result<()>
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+/// Raises the capture surface above the fixture without changing foreground focus.
+fn raise_owned_window_above_topmost(window: NativeWindow) -> io::Result<()> {
+    owned_window(window.handle)?;
+    if unsafe {
+        SetWindowPos(
+            window.handle,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -15130,9 +15527,10 @@ mod tests {
         narrow_edge_interaction_plan, normalize_axis, pin_close_button_point,
         pin_coexist_interaction_plan, recording_control_plan, recording_failed, recording_saved,
         rect_contains_rect, scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
-        scroll_shot_point_for_logical_selection, selection_aspect_ratio_preserved,
-        selection_center_preserved, selection_copy_completed_in_editor,
-        selection_transform_gesture, translated_rect,
+        scroll_secondary_menu_height, scroll_secondary_menu_width,
+        scroll_shot_point_for_logical_selection, scroll_toolbar_dimensions,
+        selection_aspect_ratio_preserved, selection_center_preserved,
+        selection_copy_completed_in_editor, selection_transform_gesture, translated_rect,
         validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
         window_drag_matches,
@@ -15936,6 +16334,7 @@ mod tests {
             1440.0,
             (2560.0 * 0.16, (1440.0_f32 * 0.12).max(120.0)),
             (2560.0 * 0.74, (1440.0_f32 * 0.12).max(120.0) + 380.0),
+            false,
         )
         .unwrap();
         assert_eq!(
@@ -15947,8 +16346,25 @@ mod tests {
                 bottom: 549,
             }
         );
-        assert_eq!(point, PhysicalPoint { x: 1597, y: 443 });
+        assert_eq!(point, PhysicalPoint { x: 1888, y: 396 });
         assert!(bounds.contains(point));
+
+        let annotation_point = scroll_shot_point_for_logical_selection(
+            bounds,
+            1.0,
+            2560.0,
+            1440.0,
+            (2560.0 * 0.16, (1440.0_f32 * 0.12).max(120.0)),
+            (2560.0 * 0.74, (1440.0_f32 * 0.12).max(120.0) + 380.0),
+            true,
+        )
+        .unwrap();
+        assert_eq!(annotation_point, PhysicalPoint { x: 1736, y: 684 });
+        assert!(bounds.contains(annotation_point));
+        assert_eq!(scroll_toolbar_dimensions(false), (260.0, 50.0, 42.0));
+        assert_eq!(scroll_toolbar_dimensions(true), (563.0, 50.0, 345.0));
+        assert_eq!(scroll_secondary_menu_width(), 352.0);
+        assert_eq!(scroll_secondary_menu_height(352.0), 176.0);
     }
 
     #[test]
@@ -16316,10 +16732,10 @@ mod tests {
         assert!(plan.drag_start.x < plan.drag_end.x);
         assert!(plan.drag_start.y < plan.drag_end.y);
         assert!(plan.mark.x < plan.pin.x);
-        assert!(plan.pin.x < plan.copy.x);
-        assert!(plan.copy.x < plan.save.x);
+        assert!(plan.pin.x < plan.save.x);
         assert!(plan.save.x < plan.more.x);
         assert!(plan.more.x < plan.cancel.x);
+        assert!(plan.cancel.x < plan.copy.x);
         assert!(plan.more.y > plan.drag_end.y);
         assert_eq!(plan.record_area.x, plan.record_window.x);
         assert!(plan.record_area.y < plan.record_window.y);
@@ -16345,8 +16761,8 @@ mod tests {
         assert_eq!(plan.base.drag_start, PhysicalPoint { x: 2382, y: 1328 });
         assert_eq!(plan.base.drag_end, PhysicalPoint { x: 2542, y: 1424 });
         assert_eq!(plan.base.mark, PhysicalPoint { x: 2307, y: 1291 });
-        assert_eq!(plan.base.more, PhysicalPoint { x: 2475, y: 1291 });
-        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2517, y: 1291 });
+        assert_eq!(plan.base.more, PhysicalPoint { x: 2433, y: 1291 });
+        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2475, y: 1291 });
         assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2299, y: 1241 });
         assert_eq!(plan.evidence_rest, PhysicalPoint { x: 24, y: 20 });
         assert_eq!(

@@ -80,7 +80,7 @@ tooltip、键盘可达性和选区边缘呈现。只借鉴可观察的视觉层�
 | --- | --- | --- | --- |
 | G0 | 整合并冻结本主线计划 | 本次完成 | 只有 `docs/plan.md` 维护路线；旧完成段落不再作为待办 |
 | G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | `gpui-kit 0.6.6` 的组件、图标、tooltip、焦点、popover 和 420x420 Release 探针可编译；生产应用仍保留当前 GPUI 0.2.2，待 W7 后再评估全量迁移 |
-| W7 | 截图 UI 与工具栏完整复刻验收 | 进行中（W7.2 主动作映射，2026-09-27） | 视觉矩阵、真实交互、截图/JSON 报告和最终清理全部通过 |
+| W7 | 截图 UI 与工具栏完整复刻验收 | 进行中（W7.3 工具组原生交互，2026-09-27） | 视觉矩阵、真实交互、截图/JSON 报告和最终清理全部通过 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 待开始 | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠 |
 | U1 | 动态文案国际化收尾 | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试 |
 | U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
@@ -152,6 +152,14 @@ G1 已通过隔离兼容性范围；W7 可以继续使用当前 GPUI 的 ThemeMe
 **W7.2 当前结果（2026-09-27）**：新增 `WorkspaceResultAction` 主动作目录，冻结 Pin → Save → More → Cancel → Copy 的稳定 ID、图标和顺序。
 生产 overlay 的结果动作按钮和工具栏宽度计算均读取该目录，避免按钮顺序、图标和几何数量分别维护；已有 handler、快捷键、Copy busy 状态和 More 焦点身份保持不变。
 相关 overlay/toolbar 测试 74 项通过，严格 Clippy 和格式检查通过。验收 runner 的真实输入矩阵仍待 W7.3/W7.4 执行。
+
+**W7.3 当前结果（2026-09-27）**：当前源码 Release `overlay-interaction-acceptance --allow-input --capture-scenario tool-group`
+在单屏 `2560x1440`、DPI 96、`scale_factor=1.0` 下通过 More 打开/外部关闭、Text/Shape 工具组、Escape、方向键 Watermark、鼠标 Rectangle 和最终清理。
+报告 `target/overlay-interaction-acceptance-w7-tool-group/session-1790484880670-29100/report.json` 为 schema 30、`status=passed`，
+`selected_tool=rectangle`，清理状态为 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、
+`capture_teardown_pending=false`、`capture_preflight_ready=true`。关键截图 `02-tool-group-toolbar.png`、`03-tool-group-text-open.png`、
+`06-tool-group-shape-open.png` 和 `08-tool-group-child-clicked.png` 已目视复核；Computer Use 当前没有可操作的 Flash Shot 原生窗口，
+因此本次证据标记为 Release runner 原生输入，不宣称为 Computer Use 证据。
 
 **不做**：不新增标注能力，不改变选区像素、标注文档坐标、导出合成、快捷键、报告 schema 或失败恢复；不移植 Snow Shot 设置页和 Qt/Tauri/Web 架构。
 
