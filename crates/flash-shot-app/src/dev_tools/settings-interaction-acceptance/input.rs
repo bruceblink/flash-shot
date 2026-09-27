@@ -10,8 +10,8 @@ use std::{
 
 use super::native::{
     CursorRestore, WindowZOrderRestore, capture_step, click_library_format, click_navigation_item,
-    click_record_support, click_update_action, ensure_input_idle, focus_window, send_key, snapshot,
-    visible_window,
+    click_record_support, click_record_toggle, click_update_action, ensure_input_idle,
+    focus_window, send_key, snapshot, visible_window,
 };
 use super::{
     ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, Report, StepReport, WindowBounds,
@@ -33,6 +33,7 @@ pub(super) struct WorkerOptions {
     pub(super) theme: ThemeMode,
     pub(super) exercise_app_update: bool,
     pub(super) exercise_record_support: bool,
+    pub(super) exercise_record_start: bool,
     pub(super) exercise_library_format: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
@@ -224,6 +225,57 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             screenshot: after_screenshot,
         });
     }
+    if options.exercise_record_start {
+        focus_window(window)?;
+        click_navigation_item(window, compact, 2)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let before = snapshot(&options.commands)?;
+        let before_screenshot =
+            capture_step(&window, &options.output_dir, "action-record-start-before")?;
+        let expected_status = options
+            .locale
+            .text(UiText::RecordingPreparingDisplay)
+            .to_owned();
+        let before_passed = before.section == "record"
+            && before.recording_start_in_flight
+            && before.status == expected_status;
+        action_steps.push(ActionStepReport {
+            action: "mouse-click-record-start-before".to_owned(),
+            expected_section: "record".to_owned(),
+            observed_section: before.section,
+            expected_busy: true,
+            observed_busy: before.recording_start_in_flight,
+            expected_status: expected_status.clone(),
+            observed_status: before.status,
+            passed: before_passed,
+            screenshot: before_screenshot,
+        });
+
+        focus_window(window)?;
+        click_record_toggle(window, compact)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let after = snapshot(&options.commands)?;
+        let after_screenshot =
+            capture_step(&window, &options.output_dir, "action-record-start-after")?;
+        let cancelled_status = options
+            .locale
+            .text(UiText::RecordingStartupCancelled)
+            .to_owned();
+        let after_passed = after.section == "record"
+            && !after.recording_start_in_flight
+            && after.status == cancelled_status;
+        action_steps.push(ActionStepReport {
+            action: "mouse-click-record-start-cancel".to_owned(),
+            expected_section: "record".to_owned(),
+            observed_section: after.section,
+            expected_busy: false,
+            observed_busy: after.recording_start_in_flight,
+            expected_status: cancelled_status,
+            observed_status: after.status,
+            passed: after_passed,
+            screenshot: after_screenshot,
+        });
+    }
     if options.exercise_library_format {
         focus_window(window)?;
         click_navigation_item(window, compact, 1)?;
@@ -284,6 +336,7 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     let report = Report {
         schema: if options.exercise_app_update
             || options.exercise_record_support
+            || options.exercise_record_start
             || options.exercise_library_format
         {
             2

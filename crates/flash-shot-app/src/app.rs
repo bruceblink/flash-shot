@@ -1201,6 +1201,7 @@ impl FlashShotApp {
                                 locale: this.settings.locale.label().to_owned(),
                                 theme: this.settings.theme_mode.label().to_owned(),
                                 update_check_in_flight: this.update_check_in_flight,
+                                recording_start_in_flight: this.recording_start_in_flight,
                                 recording_support_check_in_flight: this
                                     .recording_support_check_in_flight,
                                 export_format: this.export_format_label().to_owned(),

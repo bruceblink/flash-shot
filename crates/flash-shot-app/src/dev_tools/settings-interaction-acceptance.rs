@@ -31,6 +31,7 @@ struct Options {
     allow_input: bool,
     exercise_app_update: bool,
     exercise_record_support: bool,
+    exercise_record_start: bool,
     exercise_library_format: bool,
     output_dir: PathBuf,
     width: i32,
@@ -116,6 +117,7 @@ impl Options {
             allow_input: false,
             exercise_app_update: false,
             exercise_record_support: false,
+            exercise_record_start: false,
             exercise_library_format: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
@@ -133,6 +135,7 @@ impl Options {
                 "--allow-input" => options.allow_input = true,
                 "--exercise-app-update" => options.exercise_app_update = true,
                 "--exercise-record-support" => options.exercise_record_support = true,
+                "--exercise-record-start" => options.exercise_record_start = true,
                 "--exercise-library-format" => options.exercise_library_format = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
@@ -166,7 +169,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-library-format] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-library-format] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -253,7 +256,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     settings.locale = options.locale;
     settings.theme_mode = options.theme;
     let settings_path = session_dir.join("settings.json");
-    if options.exercise_record_support {
+    if options.exercise_record_support || options.exercise_record_start {
         // SAFETY: the isolated runner sets this before starting GPUI or the input worker, and
         // the process exits after the single acceptance session completes.
         unsafe {
@@ -274,6 +277,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         theme: options.theme,
         exercise_app_update: options.exercise_app_update,
         exercise_record_support: options.exercise_record_support,
+        exercise_record_start: options.exercise_record_start,
         exercise_library_format: options.exercise_library_format,
         commands: command_tx,
     };
@@ -301,6 +305,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
                 flash_shot::RecordingSupportUiAcceptanceState::Checking
             } else {
                 flash_shot::RecordingSupportUiAcceptanceState::Idle
+            },
+            recording_state: if options.exercise_record_start {
+                flash_shot::RecordingUiAcceptanceState::Starting
+            } else {
+                flash_shot::RecordingUiAcceptanceState::Idle
             },
             commands: command_rx,
         },
@@ -357,6 +366,7 @@ mod tests {
         assert!(options.allow_input);
         assert!(!options.exercise_app_update);
         assert!(!options.exercise_record_support);
+        assert!(!options.exercise_record_start);
         assert!(!options.exercise_library_format);
         let options = Options::parse_args(
             [
@@ -376,6 +386,15 @@ mod tests {
         )
         .unwrap();
         assert!(options.exercise_record_support);
+        let options = Options::parse_args(
+            [
+                OsString::from("--allow-input"),
+                OsString::from("--exercise-record-start"),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        assert!(options.exercise_record_start);
         let options = Options::parse_args(
             [
                 OsString::from("--allow-input"),

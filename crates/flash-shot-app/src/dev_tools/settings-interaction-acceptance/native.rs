@@ -220,6 +220,18 @@ pub(super) fn click_record_support(window: NativeWindow, compact: bool) -> io::R
 }
 
 #[cfg(windows)]
+/// Clicks the Record primary toggle in the deterministic short-directory acceptance layout.
+pub(super) fn click_record_toggle(window: NativeWindow, compact: bool) -> io::Result<()> {
+    let (logical_x, logical_y) = if compact { (225, 530) } else { (326, 441) };
+    guard_foreground(window)?;
+    move_and_click(
+        window,
+        window.left + scale_logical_extent(window, logical_x),
+        window.top + scale_logical_extent(window, logical_y),
+    )
+}
+
+#[cfg(windows)]
 /// Clicks the Library export-format action after the acceptance runner fixes the history root to
 /// a short path, keeping the content rows at stable coordinates in both layout modes.
 pub(super) fn click_library_format(window: NativeWindow, compact: bool) -> io::Result<()> {

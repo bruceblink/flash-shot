@@ -134,6 +134,7 @@ pub fn run_settings_interaction_acceptance(
             height: acceptance.height.max(420.0),
             show: true,
             section: "capture".to_owned(),
+            recording_state: acceptance.recording_state,
             update_check_state: acceptance.update_check_state,
             recording_support_check_state: acceptance.recording_support_check_state,
             settings_interaction_commands: Some(acceptance.commands),
@@ -219,6 +220,7 @@ pub struct SettingsInteractionState {
     pub locale: String,
     pub theme: String,
     pub update_check_in_flight: bool,
+    pub recording_start_in_flight: bool,
     pub recording_support_check_in_flight: bool,
     pub export_format: String,
     pub status: String,
@@ -710,6 +712,8 @@ pub struct SettingsInteractionAcceptanceOptions {
     pub width: f32,
     pub height: f32,
     pub commands: async_channel::Receiver<SettingsInteractionAcceptanceCommand>,
+    /// Seeds the Record lifecycle for the optional real-input primary-action probe.
+    pub recording_state: RecordingUiAcceptanceState,
     /// Seeds the App update action for the optional real-input business-action probe.
     pub update_check_state: UpdateUiAcceptanceState,
     /// Seeds the Record support action for the optional real-input recovery probe.
