@@ -887,9 +887,9 @@ fn button_colors(
 ) -> (Hsla, Hsla, Hsla) {
     if !enabled {
         return (
-            colors.toolbar_elevated,
+            colors.toolbar_surface,
             colors.text_disabled,
-            colors.toolbar_border,
+            colors.toolbar_surface,
         );
     }
     match tone {
@@ -907,15 +907,16 @@ fn button_colors(
             if active {
                 colors.toolbar_hover
             } else {
-                colors.toolbar_elevated
+                // Resting controls share the continuous toolbar surface. The target workspace
+                // uses the active, hover, and focus states to reveal affordances without turning
+                // every icon into a separate tile.
+                colors.toolbar_surface
             },
             colors.text,
-            // Keep resting neutral actions visually quiet; hover, focus, and active states
-            // provide the affordance without stacking a border around every button.
             if active {
                 colors.toolbar_focus
             } else {
-                colors.toolbar_elevated
+                colors.toolbar_surface
             },
         ),
     }
@@ -967,9 +968,9 @@ mod tests {
             let (background, foreground, border) =
                 button_colors(colors, WorkspaceButtonTone::Neutral, false, true);
 
-            assert_eq!(background, colors.toolbar_elevated);
+            assert_eq!(background, colors.toolbar_surface);
             assert_eq!(foreground, colors.text);
-            assert_eq!(border, colors.toolbar_elevated);
+            assert_eq!(border, colors.toolbar_surface);
         }
     }
 

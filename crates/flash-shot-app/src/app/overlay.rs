@@ -1731,7 +1731,16 @@ impl Render for CaptureOverlay {
             app.annotation_tool_group_owner.as_deref() == Some(self.display.id.as_str())
         });
         let show_annotation_tool_group_dismiss = app.annotation_tool_group.is_some();
-        let show_annotation_style = show_annotation_controls && style_capabilities.has_controls();
+        // Keep the resting workspace as one compact icon row like Snow Shot. Renderer-backed
+        // style values remain available from More, so the primary screenshot surface stays
+        // focused on capture actions instead of opening a second permanent control row.
+        let show_annotation_style =
+            show_more_actions && show_annotation_controls && style_capabilities.has_controls();
+        let visible_style_capabilities = if show_annotation_style {
+            style_capabilities
+        } else {
+            AnnotationStyleCapabilities::EMPTY
+        };
         let layout_snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
             selection,
             display_bounds,
@@ -1741,7 +1750,7 @@ impl Render for CaptureOverlay {
             inspection_target,
             show_annotation_controls,
             annotation_toolbar_items,
-            annotation_style_capabilities: style_capabilities,
+            annotation_style_capabilities: visible_style_capabilities,
             annotation_tool_group,
             annotation_tool_width,
             has_recognition_result: recognition_result.is_some(),
