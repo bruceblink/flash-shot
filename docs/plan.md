@@ -524,7 +524,9 @@ U2 继续保持“部分完成”。
 **U3 视觉 token 切片（2026-09-27）**：手动滚动控制器的按钮高度、四个动作的最小宽度和状态摘要最大宽度已迁移到
 `ThemeMetrics`，删除组件内重复几何常量；`scroll_control` 与主题测试继续锁定 520 px 紧凑行的宽度预算，保持现有行为和
 本地化布局不变。该切片通过 `cargo test -p flash-shot-app --lib`（396 项）、`cargo fmt --all -- --check` 和
-`cargo clippy --workspace --all-targets -- -D warnings`；它只完成 token 集中化，不替代 U3 的真实输入、高 DPI 或多屏验收。
+`cargo clippy --workspace --all-targets -- -D warnings`；随后尝试 Release `overlay-interaction-acceptance` 的
+`scroll-roundtrip` 真实输入流程，但在选区提交阶段因环境实际边界与请求边界相差 4 px 而失败（报告位于
+`target/overlay-interaction-acceptance-u3-scroll-20260927/`）。它只完成 token 集中化，不替代 U3 的真实输入、高 DPI 或多屏验收。
 
 **U4 Pin 生命周期切片（2026-09-27）**：Release `pin-lifecycle-acceptance` 已在 English/深色和简体中文/浅色组合下通过，
 报告分别位于 `target/pin-lifecycle-acceptance-u4-20260927-en/` 与
