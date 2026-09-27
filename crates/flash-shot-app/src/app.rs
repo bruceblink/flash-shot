@@ -458,8 +458,8 @@ pub(super) fn history_entry_matches(
     if query.is_empty() {
         return true;
     }
-    let localized_source_label = locale.text(entry.source.ui_text()).to_lowercase();
-    let stable_source_label = entry.source.label().to_lowercase();
+    let localized_source_label = entry.source.localized_label(locale).to_lowercase();
+    let stable_source_label = entry.source.stable_label().to_lowercase();
     entry
         .path
         .file_name()
@@ -1802,7 +1802,18 @@ mod tests {
             "",
             Locale::English,
         ));
-        assert_eq!(HistorySource::Scrolling.label(), "Scrolling screenshot");
+        assert_eq!(
+            HistorySource::Scrolling.stable_label(),
+            "Scrolling screenshot"
+        );
+        assert_eq!(
+            HistorySource::Pinned.localized_label(Locale::English),
+            "Pinned image"
+        );
+        assert_eq!(
+            HistorySource::Pinned.localized_label(Locale::SimplifiedChinese),
+            "贴图"
+        );
     }
 
     #[test]

@@ -86,8 +86,8 @@ pub enum HistorySource {
 }
 
 impl HistorySource {
-    /// Keeps list metadata short and understandable without leaking internal workflow names.
-    pub const fn label(self) -> &'static str {
+    /// Keeps the English source name stable for persisted search compatibility and diagnostics.
+    pub const fn stable_label(self) -> &'static str {
         match self {
             Self::Unknown => "Saved capture",
             Self::Selection => "Selection",
@@ -95,6 +95,11 @@ impl HistorySource {
             Self::FullScreen => "Full screen",
             Self::Pinned => "Pinned image",
         }
+    }
+
+    /// Preserves the historical English accessor for callers that use source names in reports.
+    pub const fn label(self) -> &'static str {
+        self.stable_label()
     }
 
     /// Returns the catalog key used for this source in visible UI labels and searches.
@@ -106,6 +111,11 @@ impl HistorySource {
             Self::FullScreen => crate::i18n::UiText::LibrarySourceFullScreen,
             Self::Pinned => crate::i18n::UiText::LibrarySourcePinned,
         }
+    }
+
+    /// Returns the source label shown in the active locale without changing its stable identity.
+    pub const fn localized_label(self, locale: crate::i18n::Locale) -> &'static str {
+        locale.text(self.ui_text())
     }
 }
 

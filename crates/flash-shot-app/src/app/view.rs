@@ -2114,7 +2114,7 @@ fn history_entry_label(
 }
 
 fn history_source_label(locale: Locale, source: crate::history::HistorySource) -> &'static str {
-    locale.text(source.ui_text())
+    source.localized_label(locale)
 }
 
 fn relative_timestamp_label(locale: Locale, created_at_ms: u128, now_ms: u128) -> String {
