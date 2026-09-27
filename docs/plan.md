@@ -79,7 +79,7 @@ tooltip、键盘可达性和选区边缘呈现。只借鉴可观察的视觉层�
 | 编号 | 主线切片 | 状态 | 退出条件 |
 | --- | --- | --- | --- |
 | G0 | 整合并冻结本主线计划 | 本次完成 | 只有 `docs/plan.md` 维护路线；旧完成段落不再作为待办 |
-| G1 | gpui-kit 兼容性与回滚评估 | 待开始 | 编译、运行时、主题、图标、浮层、焦点和 Release 冒烟结果明确；失败可回到当前 GPUI |
+| G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | `gpui-kit 0.6.6` 的组件、图标、tooltip、焦点、popover 和 420x420 Release 探针可编译；生产应用仍保留当前 GPUI 0.2.2，待 W7 后再评估全量迁移 |
 | W7 | 截图 UI 与工具栏完整复刻验收 | 计划冻结，待实现 | 视觉矩阵、真实交互、截图/JSON 报告和最终清理全部通过 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 待开始 | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠 |
 | U1 | 动态文案国际化收尾 | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试 |
@@ -96,7 +96,7 @@ P3 不插入 `0.2.0`；任何切片都必须先通过其自身验收，再进入
 
 ## 4. 未完成切片
 
-### G1：gpui-kit 兼容性与回滚评估
+### G1：gpui-kit 兼容性与回滚评估（已完成）
 
 **目标**：在当前 Rust + GPUI 应用上确认 gpui-kit 是否适合作为组件和图标层，形成可执行的采用或放弃结论。
 
@@ -105,14 +105,23 @@ English/简体中文、浅色/深色；Windows Release 编译和启动冒烟。
 
 **不做**：不迁移 Capture/Save/Pin/Copy/Cancel 状态机，不替换截图后端，不一次性改造所有页面，不把未验证的 GPUI/Zed 跟随升级写入依赖。
 
-**退出条件**：
+**结果**（2026-09-27）：
+
+- 新增隔离 workspace crate `flash-shot-gpui-kit-spike`，固定 `gpui-kit = 0.6.6`，不导入生产 `flash-shot-app` 状态机；
+- `cargo check -p flash-shot-gpui-kit-spike`、`cargo build --release -p flash-shot-gpui-kit-spike` 和组件 headless 测试均通过；
+- headless 测试验证主按钮回调、图标按钮可访问名称、tooltip 组件和 popover 打开状态；
+- Release 探针启动后保持响应并创建非零 Windows 窗口句柄；当前 Computer Use 会话没有返回可操作的 Windows 原生窗口，因此没有把进程启动或 headless 结果写成 Computer Use 证据；原生窗口完整流程留给 W7 的 Release runner 验收；
+- gpui-kit 0.6.6 固定使用 `gpui-pre 0.3.6`，当前 Flash Shot 仍使用 Zed GPUI `0.2.2`。两套 GPUI 类型不能直接混用，因此本切片只证明隔离组件层可用，不宣称生产应用已完成全量依赖迁移；
+- 若 W7 需要生产组件迁移，必须另建依赖升级子切片，先完成 GPUI 类型迁移、窗口启动、性能和回滚验证。
+
+**原计划退出条件复核**：
 
 1. 最小组件样例能在当前 workspace 编译，并能在真实 Release 窗口绘制、点击、获得焦点和关闭浮层；
 2. 图标资源、主题颜色、命中区和文本测量在三种尺寸及双语/双主题下没有截断或重叠；
 3. 现有 workspace 测试、严格 Clippy 和 Release 冒烟通过；
 4. 任何 API、运行时、许可或性能问题都有记录，并能回滚到当前 GPUI 实现。
 
-G1 未通过时，W7 仍可使用当前 GPUI 的 ThemeMetrics 和图标封装完成；不得把“尝试接入”写成迁移完成。
+G1 已通过隔离兼容性范围；W7 可以继续使用当前 GPUI 的 ThemeMetrics 和图标封装，或在独立依赖迁移切片通过后采用 gpui-kit 组件。不得把隔离探针写成生产应用迁移完成。
 
 ### W7：截图 UI 与工具栏完整复刻验收
 

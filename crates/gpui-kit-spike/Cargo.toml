@@ -1,0 +1,19 @@
+[package]
+name = "flash-shot-gpui-kit-spike"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Compatibility probe for the gpui-kit component and icon layer"
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "flash-shot-gpui-kit-spike"
+path = "src/probe_main.rs"
+
+[dependencies]
+gpui-kit.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
