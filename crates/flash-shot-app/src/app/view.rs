@@ -1029,22 +1029,18 @@ fn recording_settings(
             ),
         )
         .child(
-            settings_row(locale.text(UiText::RecordingSettingsVideoFolder), colors).child(
+            settings_row_with_description(
+                locale.text(UiText::RecordingSettingsVideoFolder),
+                directory.path.to_owned(),
+                colors,
+            )
+            .child(
                 div()
                     .flex_1()
                     .min_w(px(metrics.settings_control_column_min_width))
                     .flex()
                     .flex_col()
                     .gap(px(metrics.space_2))
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w(px(0.0))
-                            .text_ellipsis_start()
-                            .text_sm()
-                            .text_color(colors.text)
-                            .child(directory.path.to_owned()),
-                    )
                     .child(
                         div()
                             .w_full()
