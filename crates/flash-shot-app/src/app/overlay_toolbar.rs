@@ -51,6 +51,54 @@ pub(crate) enum WorkspaceIcon {
     Cancel,
 }
 
+#[cfg(test)]
+impl WorkspaceIcon {
+    /// Returns the stable semantic name used by layout probes and accessibility review.
+    ///
+    /// Keeping this catalog beside the painter prevents a visual icon from silently losing its
+    /// action identity when a toolbar row is reordered or a localized label changes.
+    pub(crate) const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Move => "move",
+            Self::Text => "text",
+            Self::Shape => "shape",
+            Self::Line => "line",
+            Self::Highlight => "highlight",
+            Self::Obscure => "obscure",
+            Self::Undo => "undo",
+            Self::Redo => "redo",
+            Self::Pin => "pin",
+            Self::Copy => "copy",
+            Self::Save => "save",
+            Self::More => "more",
+            Self::Cancel => "cancel",
+        }
+    }
+
+    /// Lists every icon that can appear in a screenshot workspace surface.
+    ///
+    /// The order is the review order, not a promise about every responsive toolbar row. Callers
+    /// still derive placement from the active workflow, while this list gives tests one complete
+    /// source for icon and accessibility coverage.
+    pub(crate) const fn catalog() -> &'static [Self; 13] {
+        &[
+            Self::Move,
+            Self::Text,
+            Self::Shape,
+            Self::Line,
+            Self::Highlight,
+            Self::Obscure,
+            Self::Undo,
+            Self::Redo,
+            Self::Pin,
+            Self::Copy,
+            Self::Save,
+            Self::More,
+            Self::Cancel,
+        ]
+    }
+}
+
 impl WorkspaceButtonConfig {
     /// Creates an icon configuration using the workspace's stable toolbar hit height.
     pub(crate) fn icon(
@@ -749,7 +797,7 @@ fn button_active_colors(colors: ThemeColors, tone: WorkspaceButtonTone) -> (Hsla
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkspaceButtonTone, button_colors};
+    use super::{WorkspaceButtonTone, WorkspaceIcon, button_colors};
     use crate::theme::{ThemeColors, ThemeMode};
 
     #[test]
@@ -775,6 +823,34 @@ mod tests {
             assert_eq!(background, colors.toolbar_hover);
             assert_eq!(foreground, colors.text);
             assert_eq!(border, colors.toolbar_focus);
+        }
+    }
+
+    #[test]
+    fn workspace_icon_catalog_has_unique_stable_ids() {
+        let icons = WorkspaceIcon::catalog();
+        let ids = icons.map(WorkspaceIcon::stable_id);
+
+        assert_eq!(
+            ids,
+            [
+                "move",
+                "text",
+                "shape",
+                "line",
+                "highlight",
+                "obscure",
+                "undo",
+                "redo",
+                "pin",
+                "copy",
+                "save",
+                "more",
+                "cancel",
+            ]
+        );
+        for (index, id) in ids.iter().enumerate() {
+            assert!(ids[index + 1..].iter().all(|other| other != id));
         }
     }
 }
