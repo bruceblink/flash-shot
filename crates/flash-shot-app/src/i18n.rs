@@ -2767,4 +2767,34 @@ mod tests {
             "本次会话的历史保留数量为 50 张截图，但无法保存：磁盘已满"
         );
     }
+
+    #[test]
+    fn recording_status_templates_keep_targets_progress_paths_and_failures_localized() {
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::RecordingProgress,
+                &[("target", "display"), ("seconds", "12"), ("frames", "240")],
+            ),
+            "Recording display: 12s, 240 frames"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(
+                UiText::RecordingProgress,
+                &[("target", "显示器"), ("seconds", "12"), ("frames", "240")],
+            ),
+            "正在录制显示器：12 秒，240 帧"
+        );
+        assert_eq!(
+            Locale::English.format_template(
+                UiText::RecordingDirectorySaved,
+                &[("path", "D:\\Recordings")],
+            ),
+            "MP4 recordings now use D:\\Recordings"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese
+                .format_template(UiText::RecordingFailed, &[("error", "FFmpeg exited")],),
+            "屏幕录制失败：FFmpeg exited。请检查 FFmpeg 和输出目录，然后重试。"
+        );
+    }
 }
