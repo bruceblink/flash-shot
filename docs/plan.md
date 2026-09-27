@@ -205,7 +205,7 @@ Capture 页在同一单屏 Release 矩阵下重新生成 12 例 PNG/JSON，所�
 **U5.3 当前结果（2026-09-27）**：为四个设置导航项增加统一 16px 线性图标（截图、图库、录屏、应用），图标仅承担视觉识别，既有文字标签、稳定 ID、焦点和键盘行为保持不变。
 图标在宽窗侧栏和窄窗顶部导航中共享同一坐标网格与主题色；窄窗通过隐藏重复的活动竖线并缩小标签字号避免截断。当前源码 Release 重新生成 12 例 Capture 设置截图，代表性浅色/深色、中英文和窄窗样本已目视复核。
 
-U5.1-U5.3 合并验收：当前源码 Release 已完成四页 `App/Library/Record/Capture × dark/light × en/zh-CN × 420x420/520x640/980x760` 共 48 例设置页矩阵，输出位于 `target/ui-acceptance/u5-settings-full-20260927/`；四页代表性截图已目视复核，当前未发现文本截断、控件重叠或导航图标错位。
+U5.1-U5.4 合并验收：当前源码 Release 已完成四页 `App/Library/Record/Capture × dark/light × en/zh-CN × 420x420/520x640/980x760` 共 48 例设置页矩阵，输出位于 `target/ui-acceptance/u5-settings-full-20260927/`；四页代表性截图已目视复核，当前未发现文本截断、控件重叠或导航图标错位。
 
 **验收条件**：
 

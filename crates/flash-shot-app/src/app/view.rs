@@ -817,15 +817,6 @@ fn file_settings(
 ) -> gpui::Div {
     settings_section(locale.text(UiText::LibraryQuickSave), colors)
         .child(
-            div()
-                .w_full()
-                .min_w(px(0.0))
-                .text_ellipsis_start()
-                .text_sm()
-                .text_color(colors.muted)
-                .child(settings_path_label(app_state.history.root())),
-        )
-        .child(
             settings_row(locale.text(UiText::LibraryFolderAccess), colors).child(settings_button(
                 "settings-check-quick-save-folder",
                 if app_state.quick_save_directory_check_in_flight {
@@ -845,7 +836,12 @@ fn file_settings(
             )),
         )
         .child(
-            settings_row(locale.text(UiText::LibrarySaveFolder), colors).child(settings_button(
+            settings_row_with_description(
+                locale.text(UiText::LibrarySaveFolder),
+                settings_path_label(app_state.history.root()),
+                colors,
+            )
+            .child(settings_button(
                 "settings-quick-save-folder",
                 locale.text(UiText::LibraryChooseFolder),
                 colors,
