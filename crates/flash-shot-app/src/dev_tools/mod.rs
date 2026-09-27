@@ -28,6 +28,8 @@ mod recognition_acceptance;
 mod recording_acceptance;
 #[path = "scroll-acceptance.rs"]
 mod scroll_acceptance;
+#[path = "settings-interaction-acceptance.rs"]
+mod settings_interaction_acceptance;
 #[path = "settings-ui-acceptance.rs"]
 mod settings_ui_acceptance;
 mod support;
@@ -73,6 +75,7 @@ const TOOL_NAMES: &[&str] = &[
     "recording-acceptance",
     "scroll-acceptance",
     "settings-ui-acceptance",
+    "settings-interaction-acceptance",
     "windows-acceptance-probe",
 ];
 
@@ -92,6 +95,7 @@ fn resolve(name: &OsStr) -> Option<Entrypoint> {
         "recording-acceptance" => Some(recording_acceptance::entrypoint),
         "scroll-acceptance" => Some(scroll_acceptance::entrypoint),
         "settings-ui-acceptance" => Some(settings_ui_acceptance::entrypoint),
+        "settings-interaction-acceptance" => Some(settings_interaction_acceptance::entrypoint),
         "windows-acceptance-probe" => Some(windows_acceptance_probe::entrypoint),
         _ => None,
     }

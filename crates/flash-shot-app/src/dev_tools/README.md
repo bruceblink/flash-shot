@@ -30,3 +30,18 @@ The existing area and window recording flows remain separate:
 
 The failure injection is enabled only by the `dev-tools` feature and is consumed once per process.
 It does not change normal application recording behavior.
+
+## Settings interaction acceptance
+
+`settings-interaction-acceptance` uses real Windows mouse and keyboard input against the settings
+navigation shell. It clicks Capture, Library, Record, and App, then walks the same destinations
+with the layout-appropriate arrow key. Each step is read back through the GPUI command channel and
+stores a native screenshot plus `report.json`; input is disabled unless `--allow-input` is present.
+
+```powershell
+.\scripts\run-dev-tool.ps1 -Release settings-interaction-acceptance `
+  --allow-input --output-dir target\settings-interaction-acceptance
+```
+
+Run it only in a disposable Windows desktop session. The report proves settings-section state and
+input cleanup; it does not cover the screenshot overlay's Copy/Save/Pin workflow.

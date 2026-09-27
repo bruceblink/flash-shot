@@ -16,6 +16,7 @@ param(
         "recording-acceptance",
         "scroll-acceptance",
         "settings-ui-acceptance",
+        "settings-interaction-acceptance",
         "windows-acceptance-probe"
     )]
     [string]$Tool,

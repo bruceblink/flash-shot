@@ -227,6 +227,8 @@ U5.1-U5.4 合并验收：当前源码 Release 已完成四页 `App/Library/Recor
 
 **U3.1 当前结果（2026-09-27）**：设置页、状态栏和历史操作控件中原本散落的状态指示器、页面标记、说明间距、快捷操作最小宽度、开关圆钮和历史选择按钮高度，现统一由 `ThemeMetrics` 提供；默认像素值保持不变，减少后续真实输入与 DPI 调整时的重复几何来源。验证包括 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` 和 `cargo test -p flash-shot-app --lib`（399 项通过）。U3 仍为部分完成，真实窗口键鼠与高 DPI/多屏证据尚未补齐。
 
+**U2.1 当前结果（2026-09-27）**：新增 `settings-interaction-acceptance` Release runner，使用真实 Windows 鼠标点击四个设置入口，再用紧凑布局的右箭头或宽布局的下箭头循环导航，并验证 Enter/Space 激活；每一步通过 GPUI 命令通道回读 `SettingsSection`，保存窗口物理边界/DPI、原生窗口截图和输入清理状态。runner 需要显式 `--allow-input`，会在输入前确认修饰键/鼠标按钮已释放，输入时核对前景 HWND，并在异常时恢复鼠标与窗口层级。单屏 100% 的 520x640 English/深色与 980x760 简体中文/浅色可丢弃会话均通过 4 次鼠标点击、5 次方向导航、Enter/Space 和资源清理；证据分别为 `target/settings-interaction-acceptance-u2-final-520-en/session-23124/report.json` 和 `target/settings-interaction-acceptance-u2-final-980-zh/session-29084/report.json`，每个目录保存 10 张 PNG、DPI 96、scale 1.0。U2 仍需补齐 App/Library/Record 主动作、恢复入口及更多语言/主题/尺寸矩阵，因此保持部分完成。
+
 
 ### M1：按职责拆分大型模块
 

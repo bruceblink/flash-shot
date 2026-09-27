@@ -1172,6 +1172,47 @@ impl FlashShotApp {
         .detach();
     }
 
+    /// Bridges real settings navigation input to a bounded state snapshot for the native probe.
+    ///
+    /// The probe can only observe the selected page and persisted appearance choices; all page
+    /// transitions still pass through the same focusable controls and production handlers used by
+    /// the settings window.
+    pub(crate) fn listen_for_settings_interaction_commands(
+        commands: async_channel::Receiver<crate::SettingsInteractionAcceptanceCommand>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                while let Ok(command) = commands.recv().await {
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    this.update(&mut cx, |this, cx| match command {
+                        crate::SettingsInteractionAcceptanceCommand::Snapshot(reply) => {
+                            let section = match this.settings_section {
+                                SettingsSection::Capture => "capture",
+                                SettingsSection::Files => "library",
+                                SettingsSection::Recording => "record",
+                                SettingsSection::System => "app",
+                            };
+                            let _ = reply.send(crate::SettingsInteractionState {
+                                section: section.to_owned(),
+                                locale: this.settings.locale.label().to_owned(),
+                                theme: this.settings.theme_mode.label().to_owned(),
+                            });
+                        }
+                        crate::SettingsInteractionAcceptanceCommand::Quit(reply) => {
+                            let _ = reply.send(());
+                            cx.quit();
+                        }
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Bridges no-input Library resource probes to the real thumbnail queue without exposing
     /// mutable production state. Every reply is a bounded snapshot taken on the GPUI thread.
     pub(crate) fn listen_for_history_resource_commands(

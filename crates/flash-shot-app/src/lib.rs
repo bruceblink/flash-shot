@@ -109,6 +109,33 @@ pub fn run_settings_ui_acceptance(
             #[cfg(feature = "dev-tools")]
             interaction_copy_race: None,
             history_resource_commands: None,
+            settings_interaction_commands: None,
+        },
+    )
+}
+
+/// Runs the real settings surface while an isolated Windows input probe observes section changes.
+pub fn run_settings_interaction_acceptance(
+    started_at: Instant,
+    performance: PerformanceRecorder,
+    history: ScreenshotHistory,
+    settings: UserSettings,
+    settings_path: PathBuf,
+    acceptance: SettingsInteractionAcceptanceOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_with_settings_window(
+        started_at,
+        performance,
+        history,
+        settings,
+        settings_path,
+        SettingsWindowOptions {
+            width: acceptance.width.max(420.0),
+            height: acceptance.height.max(420.0),
+            show: true,
+            section: "capture".to_owned(),
+            settings_interaction_commands: Some(acceptance.commands),
+            ..SettingsWindowOptions::default()
         },
     )
 }
@@ -174,6 +201,21 @@ pub enum OverlayInteractionAcceptanceCommand {
     ShowCaptureSettings,
     PrepareOnePixelSelection,
     ShowRecordingSettings,
+}
+
+/// Commands used by the real settings input probe to observe product navigation state.
+#[derive(Debug)]
+pub enum SettingsInteractionAcceptanceCommand {
+    Snapshot(SyncSender<SettingsInteractionState>),
+    Quit(SyncSender<()>),
+}
+
+/// Minimal settings state returned after a real pointer or keyboard action.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettingsInteractionState {
+    pub section: String,
+    pub locale: String,
+    pub theme: String,
 }
 
 /// Minimal production recording state returned to the isolated input probe.
@@ -657,6 +699,13 @@ pub struct SettingsUiAcceptanceOptions {
     pub pinned_saved_feedback_preview: bool,
 }
 
+/// Configuration for the isolated settings navigation input probe.
+pub struct SettingsInteractionAcceptanceOptions {
+    pub width: f32,
+    pub height: f32,
+    pub commands: async_channel::Receiver<SettingsInteractionAcceptanceCommand>,
+}
+
 /// Describes a synthetic but fully rendered capture overlay used for native screenshot QA.
 #[derive(Clone, Copy, Debug)]
 pub struct OverlayUiAcceptanceOptions {
@@ -761,6 +810,9 @@ struct SettingsWindowOptions {
     interaction_copy_race: Option<OverlayInteractionCopyRace>,
     /// Receives no-input history expansion and snapshot commands from the resource runner.
     history_resource_commands: Option<async_channel::Receiver<HistoryResourceAcceptanceCommand>>,
+    /// Receives real-input navigation snapshots from the settings acceptance runner.
+    settings_interaction_commands:
+        Option<async_channel::Receiver<SettingsInteractionAcceptanceCommand>>,
 }
 
 impl Default for SettingsWindowOptions {
@@ -783,6 +835,7 @@ impl Default for SettingsWindowOptions {
             #[cfg(feature = "dev-tools")]
             interaction_copy_race: None,
             history_resource_commands: None,
+            settings_interaction_commands: None,
         }
     }
 }
@@ -848,6 +901,7 @@ fn run_with_settings_window(
         #[cfg(feature = "dev-tools")]
         let interaction_copy_race = window_options.interaction_copy_race;
         let history_resource_commands = window_options.history_resource_commands;
+        let settings_interaction_commands = window_options.settings_interaction_commands;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
@@ -901,6 +955,11 @@ fn run_with_settings_window(
             if let Some(commands) = interaction_commands {
                 app.update(cx, |_, cx| {
                     FlashShotApp::listen_for_overlay_interaction_commands(commands, cx)
+                });
+            }
+            if let Some(commands) = settings_interaction_commands {
+                app.update(cx, |_, cx| {
+                    FlashShotApp::listen_for_settings_interaction_commands(commands, cx)
                 });
             }
             app.update(cx, |app, _| {
