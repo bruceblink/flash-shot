@@ -1196,6 +1196,16 @@ impl FlashShotApp {
                                 SettingsSection::Recording => "record",
                                 SettingsSection::System => "app",
                             };
+                            let recording_target = this.recording_control.as_ref().map(|control| {
+                                match control.target() {
+                                    crate::recording::RecordingTarget::Display { .. } => "display",
+                                    crate::recording::RecordingTarget::Window { .. } => "window",
+                                    crate::recording::RecordingTarget::Region { .. } => {
+                                        "selected area"
+                                    }
+                                }
+                                .to_owned()
+                            });
                             let _ = reply.send(crate::SettingsInteractionState {
                                 section: section.to_owned(),
                                 locale: this.settings.locale.label().to_owned(),
@@ -1204,6 +1214,15 @@ impl FlashShotApp {
                                 recording_start_in_flight: this.recording_start_in_flight,
                                 recording_support_check_in_flight: this
                                     .recording_support_check_in_flight,
+                                recording_active: this.recording_control.is_some()
+                                    && !this.recording_stopping,
+                                recording_paused: this.recording_paused,
+                                recording_stopping: this.recording_stopping,
+                                recording_target,
+                                recording_progress_frames: this
+                                    .recording_progress
+                                    .frame
+                                    .unwrap_or_default(),
                                 export_format: this.export_format_label().to_owned(),
                                 status: this.status.clone(),
                             });

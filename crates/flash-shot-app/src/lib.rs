@@ -222,6 +222,11 @@ pub struct SettingsInteractionState {
     pub update_check_in_flight: bool,
     pub recording_start_in_flight: bool,
     pub recording_support_check_in_flight: bool,
+    pub recording_active: bool,
+    pub recording_paused: bool,
+    pub recording_stopping: bool,
+    pub recording_target: Option<String>,
+    pub recording_progress_frames: u64,
     pub export_format: String,
     pub status: String,
 }

@@ -232,6 +232,18 @@ pub(super) fn click_record_toggle(window: NativeWindow, compact: bool) -> io::Re
 }
 
 #[cfg(windows)]
+/// Clicks the idle Record primary action, whose row moves down before a status row exists.
+pub(super) fn click_record_idle_toggle(window: NativeWindow, compact: bool) -> io::Result<()> {
+    let (logical_x, logical_y) = if compact { (225, 550) } else { (326, 498) };
+    guard_foreground(window)?;
+    move_and_click(
+        window,
+        window.left + scale_logical_extent(window, logical_x),
+        window.top + scale_logical_extent(window, logical_y),
+    )
+}
+
+#[cfg(windows)]
 /// Clicks the Library export-format action after the acceptance runner fixes the history root to
 /// a short path, keeping the content rows at stable coordinates in both layout modes.
 pub(super) fn click_library_format(window: NativeWindow, compact: bool) -> io::Result<()> {
