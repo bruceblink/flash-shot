@@ -5,6 +5,7 @@ param(
     [int]$TimeoutMilliseconds = 30000,
     [ValidateRange(100, 3000)]
     [int]$SettleMilliseconds = 700,
+    [switch]$SwitchAppearance,
     [switch]$DebugBuild
 )
 
@@ -35,6 +36,9 @@ foreach ($combination in $combinations) {
         Theme = $combination.Theme
         TimeoutMilliseconds = $TimeoutMilliseconds
         SettleMilliseconds = $SettleMilliseconds
+    }
+    if ($SwitchAppearance) {
+        $runnerParameters["SwitchAppearance"] = $true
     }
     if ($DebugBuild) {
         $runnerParameters["DebugBuild"] = $true

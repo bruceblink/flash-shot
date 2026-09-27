@@ -78,6 +78,7 @@ mod windows {
         registered_windows_after_show_all: Option<usize>,
         live_windows_after_close: Option<usize>,
         capture_preflight_ready: Option<bool>,
+        live_appearance: Option<LiveAppearanceReport>,
         soak: Option<PinSoakReport>,
         screenshots: Vec<String>,
         error: Option<String>,
@@ -171,6 +172,15 @@ mod windows {
         working_set_bytes: u64,
         private_commit_bytes: u64,
         native_bounds: Vec<PhysicalRect>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct LiveAppearanceReport {
+        before_locale: &'static str,
+        before_theme: &'static str,
+        after_locale: &'static str,
+        after_theme: &'static str,
+        all_pins_updated: bool,
     }
 
     struct ProcessMemorySample {
@@ -323,7 +333,7 @@ mod windows {
     impl PinLifecycleReport {
         fn new(acceptance: &PinLifecycleAcceptanceOptions) -> Self {
             Self {
-                schema_version: 5,
+                schema_version: 6,
                 test: "pin_lifecycle_acceptance",
                 status: "running".to_owned(),
                 process_id: unsafe { GetCurrentProcessId() },
@@ -350,6 +360,7 @@ mod windows {
                 registered_windows_after_show_all: None,
                 live_windows_after_close: None,
                 capture_preflight_ready: None,
+                live_appearance: None,
                 soak: None,
                 screenshots: Vec::new(),
                 error: None,
@@ -437,6 +448,58 @@ mod windows {
                 arranged_bounds: arranged_bounds[index],
             })
             .collect();
+
+        if acceptance.switch_appearance {
+            let before = app.update(cx, |app, app_cx| -> io::Result<_> {
+                let appearances = handles
+                    .iter()
+                    .map(|handle| {
+                        handle
+                            .update(app_cx, |pin, _, _| pin.appearance_for_acceptance())
+                            .map_err(|error| io::Error::other(error.to_string()))
+                    })
+                    .collect::<io::Result<Vec<_>>>()?;
+                Ok((app.settings.locale, app.settings.theme_mode, appearances))
+            })?;
+            let before_locale = locale_report_value(before.0);
+            let before_theme = theme_report_value(before.1);
+            app.update(cx, |app, cx| {
+                app.cycle_locale(cx);
+                app.toggle_theme_mode(cx);
+            });
+            cx.background_executor()
+                .timer(acceptance.settle_delay)
+                .await;
+            let after = app.update(cx, |app, app_cx| -> io::Result<_> {
+                let appearances = handles
+                    .iter()
+                    .map(|handle| {
+                        handle
+                            .update(app_cx, |pin, _, _| pin.appearance_for_acceptance())
+                            .map_err(|error| io::Error::other(error.to_string()))
+                    })
+                    .collect::<io::Result<Vec<_>>>()?;
+                Ok((app.settings.locale, app.settings.theme_mode, appearances))
+            })?;
+            let after_locale = locale_report_value(after.0);
+            let after_theme = theme_report_value(after.1);
+            let all_pins_updated = after
+                .2
+                .iter()
+                .all(|appearance| appearance.0 == after_locale && appearance.1 == after_theme);
+            if !all_pins_updated {
+                return Err(io::Error::other(
+                    "one or more existing Pins did not receive the live appearance update",
+                ));
+            }
+            report.live_appearance = Some(LiveAppearanceReport {
+                before_locale,
+                before_theme,
+                after_locale,
+                after_theme,
+                all_pins_updated,
+            });
+        }
 
         let initial_path = acceptance.session_root.join("screenshots/pins-initial.png");
         capture_windows(

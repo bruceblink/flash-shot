@@ -43,6 +43,7 @@ pub(super) struct PinnedImage {
     frame: CaptureFrame,
     app: Entity<FlashShotApp>,
     colors: crate::theme::ThemeColors,
+    theme_mode: crate::theme::ThemeMode,
     locale: Locale,
     focus_handle: FocusHandle,
     topmost_requested: bool,
@@ -62,6 +63,7 @@ impl PinnedImage {
         frame: CaptureFrame,
         app: Entity<FlashShotApp>,
         colors: crate::theme::ThemeColors,
+        theme_mode: crate::theme::ThemeMode,
         locale: Locale,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -70,6 +72,7 @@ impl PinnedImage {
             frame,
             app,
             colors,
+            theme_mode,
             locale,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
@@ -153,6 +156,39 @@ impl PinnedImage {
     /// Keeps controls visible while a no-input acceptance runner exercises native Pin actions.
     pub(super) fn show_controls_for_acceptance(&mut self, cx: &mut Context<Self>) {
         self.show_operation_feedback(self.locale.text(UiText::PinCapture), cx);
+    }
+
+    /// Applies the app-level language and color palette to an existing Pin window.
+    ///
+    /// Pins normally snapshot these values when they open, but Settings can change them while a
+    /// Pin remains visible. Clearing transient feedback avoids leaving an old-language message
+    /// on screen; the immutable source frame and all window state stay unchanged.
+    pub(super) fn update_appearance(
+        &mut self,
+        colors: crate::theme::ThemeColors,
+        theme_mode: crate::theme::ThemeMode,
+        locale: Locale,
+        cx: &mut Context<Self>,
+    ) {
+        self.colors = colors;
+        self.theme_mode = theme_mode;
+        self.locale = locale;
+        self.status = locale.text(UiText::PinCapture);
+        self.feedback_visible = false;
+        cx.notify();
+    }
+
+    /// Returns the active Pin language and theme labels for the isolated lifecycle report.
+    pub(super) fn appearance_for_acceptance(&self) -> (&'static str, &'static str) {
+        let theme = match self.theme_mode {
+            crate::theme::ThemeMode::Dark => "dark",
+            crate::theme::ThemeMode::Light => "light",
+        };
+        let locale = match self.locale {
+            Locale::English => "en",
+            Locale::SimplifiedChinese => "zh-CN",
+        };
+        (locale, theme)
     }
 
     /// Exposes only task completion to the no-input Pin lifecycle probe.

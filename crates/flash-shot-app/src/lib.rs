@@ -664,6 +664,8 @@ pub struct PinLifecycleAcceptanceOptions {
     pub locale: crate::i18n::Locale,
     /// Theme used by the Pin windows and recorded in the acceptance report.
     pub theme_mode: crate::theme::ThemeMode,
+    /// When enabled, switches locale and theme while all Pin windows remain open.
+    pub switch_appearance: bool,
 }
 
 /// Runs three real Pin windows without the production tray, hotkeys, or single-instance mutex.

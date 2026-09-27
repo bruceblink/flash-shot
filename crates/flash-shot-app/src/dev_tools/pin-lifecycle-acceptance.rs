@@ -37,6 +37,7 @@ struct Options {
     output_dir: PathBuf,
     locale: Locale,
     theme_mode: ThemeMode,
+    switch_appearance: bool,
     timeout: Duration,
     settle_delay: Duration,
     soak_duration: Duration,
@@ -53,6 +54,7 @@ impl Options {
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             locale: DEFAULT_LOCALE,
             theme_mode: DEFAULT_THEME,
+            switch_appearance: false,
             timeout: DEFAULT_TIMEOUT,
             settle_delay: DEFAULT_SETTLE_DELAY,
             soak_duration: DEFAULT_SOAK_DURATION,
@@ -64,6 +66,7 @@ impl Options {
         let mut timeout_seen = false;
         let mut settle_seen = false;
         let mut soak_seen = false;
+        let mut switch_appearance_seen = false;
         while let Some(argument) = arguments.next() {
             let argument = argument
                 .into_string()
@@ -86,6 +89,10 @@ impl Options {
                 "--theme" if !theme_seen => {
                     options.theme_mode = parse_theme(arguments.next())?;
                     theme_seen = true;
+                }
+                "--switch-appearance" if !switch_appearance_seen => {
+                    options.switch_appearance = true;
+                    switch_appearance_seen = true;
                 }
                 "--timeout-ms" if !timeout_seen => {
                     options.timeout =
@@ -113,6 +120,9 @@ impl Options {
                 "--output-dir" | "--locale" | "--theme" | "--timeout-ms" | "--settle-ms"
                 | "--soak-ms" => {
                     return Err(format!("{argument} may only be supplied once"));
+                }
+                "--switch-appearance" => {
+                    return Err("--switch-appearance may only be supplied once".to_owned());
                 }
                 _ => return Err(usage()),
             }
@@ -179,7 +189,7 @@ fn parse_duration(
 }
 
 fn usage() -> String {
-    "usage: pin-lifecycle-acceptance [--output-dir <path>] [--locale <en|zh-CN>] [--theme <dark|light>] [--timeout-ms <3000-900000>] [--settle-ms <100-3000>] [--soak-ms <10000-600000>]".to_owned()
+    "usage: pin-lifecycle-acceptance [--output-dir <path>] [--locale <en|zh-CN>] [--theme <dark|light>] [--switch-appearance] [--timeout-ms <3000-900000>] [--settle-ms <100-3000>] [--soak-ms <10000-600000>]".to_owned()
 }
 
 pub(super) fn entrypoint() {
@@ -255,6 +265,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 timeout: options.timeout,
                 settle_delay: options.settle_delay,
                 soak_duration: options.soak_duration,
+                switch_appearance: options.switch_appearance,
                 locale: options.locale,
                 theme_mode: options.theme_mode,
             },
@@ -278,6 +289,7 @@ mod tests {
         assert_eq!(defaults.output_dir, PathBuf::from(DEFAULT_OUTPUT_DIR));
         assert_eq!(defaults.locale, DEFAULT_LOCALE);
         assert_eq!(defaults.theme_mode, DEFAULT_THEME);
+        assert!(!defaults.switch_appearance);
         assert_eq!(defaults.timeout, Duration::from_secs(15));
         assert_eq!(defaults.soak_duration, Duration::ZERO);
 
@@ -288,6 +300,7 @@ mod tests {
             "zh-CN",
             "--theme",
             "light",
+            "--switch-appearance",
             "--timeout-ms",
             "20000",
             "--settle-ms",
@@ -302,6 +315,7 @@ mod tests {
         assert_eq!(options.timeout, Duration::from_secs(20));
         assert_eq!(options.settle_delay, Duration::from_millis(500));
         assert_eq!(options.soak_duration, Duration::from_secs(10));
+        assert!(options.switch_appearance);
     }
 
     #[test]
@@ -313,6 +327,10 @@ mod tests {
         assert!(Options::parse_from(arguments(&["--locale", "fr"])).is_err());
         assert!(Options::parse_from(arguments(&["--theme", "blue"])).is_err());
         assert!(Options::parse_from(arguments(&["--theme", "dark", "--theme", "light"])).is_err());
+        assert!(
+            Options::parse_from(arguments(&["--switch-appearance", "--switch-appearance"]))
+                .is_err()
+        );
         assert!(Options::parse_from(arguments(&["--timeout-ms", "2999"])).is_err());
         assert!(Options::parse_from(arguments(&["--settle-ms", "3001"])).is_err());
         assert!(Options::parse_from(arguments(&["--soak-ms", "9999"])).is_err());

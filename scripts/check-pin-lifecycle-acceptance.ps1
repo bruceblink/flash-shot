@@ -10,6 +10,7 @@ param(
     [int]$SettleMilliseconds = 700,
     [ValidateRange(0, 600000)]
     [int]$SoakMilliseconds = 0,
+    [switch]$SwitchAppearance,
     [switch]$DebugBuild
 )
 
@@ -39,6 +40,9 @@ $runnerArguments = @{
         "--timeout-ms", $TimeoutMilliseconds,
         "--settle-ms", $SettleMilliseconds
     )
+}
+if ($SwitchAppearance) {
+    $runnerArguments["ToolArguments"] += "--switch-appearance"
 }
 if (-not $DebugBuild) {
     $runnerArguments["Release"] = $true
@@ -73,8 +77,20 @@ $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
 if ($report.status -ne "passed" -or $null -ne $report.error) {
     throw "Pin lifecycle acceptance report did not pass: $($report.error)"
 }
-if ($report.schema_version -ne 5 -or $report.locale -ne $Locale -or $report.theme -ne $Theme) {
+if ($report.schema_version -ne 6 -or $report.locale -ne $Locale -or $report.theme -ne $Theme) {
     throw "Pin lifecycle acceptance report does not match locale/theme $Locale/$Theme"
+}
+if ($SwitchAppearance) {
+    if ($null -eq $report.live_appearance -or
+        $report.live_appearance.before_locale -ne $Locale -or
+        $report.live_appearance.before_theme -ne $Theme -or
+        $report.live_appearance.after_locale -eq $Locale -or
+        $report.live_appearance.after_theme -eq $Theme -or
+        -not $report.live_appearance.all_pins_updated) {
+        throw "Pin lifecycle acceptance did not update all existing Pins after the live appearance switch"
+    }
+} elseif ($null -ne $report.live_appearance) {
+    throw "Pin lifecycle acceptance unexpectedly switched the live appearance"
 }
 if (-not $report.system_services_disabled -or $report.windows.Count -ne 3) {
     throw "Pin lifecycle acceptance did not preserve its isolated three-window boundary"

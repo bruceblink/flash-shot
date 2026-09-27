@@ -353,6 +353,7 @@ impl FlashShotApp {
         let window_bounds = WindowBounds::centered(window_size, cx);
         let pinned_app = cx.entity();
         let pinned_colors = self.colors;
+        let pinned_theme_mode = self.settings.theme_mode;
         let pinned_locale = self.settings.locale;
         match cx.open_window(
             WindowOptions {
@@ -370,7 +371,15 @@ impl FlashShotApp {
             },
             move |window, cx| {
                 let pinned = cx.new(|cx| {
-                    PinnedImage::new(image, frame, pinned_app, pinned_colors, pinned_locale, cx)
+                    PinnedImage::new(
+                        image,
+                        frame,
+                        pinned_app,
+                        pinned_colors,
+                        pinned_theme_mode,
+                        pinned_locale,
+                        cx,
+                    )
                 });
                 if show_saved_feedback {
                     pinned.update(cx, |pinned, cx| pinned.finish_save_status(true, cx));

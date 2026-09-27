@@ -974,7 +974,13 @@ impl FlashShotApp {
             return;
         }
         self.colors = crate::theme::ThemeColors::for_mode(next);
+        let colors = self.colors;
         let locale = self.settings.locale;
+        for pin in &self.pinned_windows {
+            let _ = pin.update(cx, |pin, _, cx| {
+                pin.update_appearance(colors, next, locale, cx);
+            });
+        }
         let mode = locale.text(match next {
             crate::theme::ThemeMode::Dark => UiText::Dark,
             crate::theme::ThemeMode::Light => UiText::Light,
@@ -995,6 +1001,13 @@ impl FlashShotApp {
             return;
         }
         self.set_tray_locale(next);
+        let colors = self.colors;
+        let theme_mode = self.settings.theme_mode;
+        for pin in &self.pinned_windows {
+            let _ = pin.update(cx, |pin, _, cx| {
+                pin.update_appearance(colors, theme_mode, next, cx);
+            });
+        }
         self.status = next.language_changed(next.label());
         cx.notify();
     }
