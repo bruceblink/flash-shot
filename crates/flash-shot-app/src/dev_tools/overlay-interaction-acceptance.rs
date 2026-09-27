@@ -20,7 +20,7 @@ use flash_shot::{
     performance::PerformanceRecorder,
     platform::display::{DisplayInfo, DisplayProvider, SystemDisplayProvider},
     settings::UserSettings,
-    theme::ThemeMetrics,
+    theme::{ThemeMetrics, ThemeMode},
 };
 #[cfg(windows)]
 use flash_shot::{
@@ -200,6 +200,8 @@ struct Options {
     capture_scenario: CaptureScenarioOption,
     scroll_export: ScrollExportOption,
     record_target: Option<RecordTargetOption>,
+    locale: Locale,
+    theme_mode: ThemeMode,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -430,6 +432,8 @@ impl Options {
             capture_scenario: CaptureScenarioOption::Standard,
             scroll_export: ScrollExportOption::Cancel,
             record_target: None,
+            locale: Locale::English,
+            theme_mode: ThemeMode::Dark,
         };
         let mut arguments = arguments.into_iter();
         let mut output_seen = false;
@@ -439,6 +443,8 @@ impl Options {
         let mut scroll_export_seen = false;
         let mut record_target_seen = false;
         let mut copy_trigger_seen = false;
+        let mut locale_seen = false;
+        let mut theme_seen = false;
         while let Some(argument) = arguments.next() {
             let argument = argument
                 .into_string()
@@ -556,8 +562,17 @@ impl Options {
                     });
                     record_target_seen = true;
                 }
+                "--locale" if !locale_seen => {
+                    options.locale = parse_locale(arguments.next())?;
+                    locale_seen = true;
+                }
+                "--theme" if !theme_seen => {
+                    options.theme_mode = parse_theme(arguments.next())?;
+                    theme_seen = true;
+                }
                 "--output-dir" | "--timeout-ms" | "--settle-ms" | "--capture-scenario"
-                | "--scroll-export" | "--record-target" | "--copy-trigger" => {
+                | "--scroll-export" | "--record-target" | "--copy-trigger" | "--locale"
+                | "--theme" => {
                     return Err(format!("{argument} may only be supplied once"));
                 }
                 _ => return Err(usage()),
@@ -653,8 +668,34 @@ fn parse_duration(
     Ok(duration)
 }
 
+/// Parses the stable locale identifiers used by the native evidence matrix.
+fn parse_locale(value: Option<OsString>) -> Result<Locale, String> {
+    match value
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(usage)?
+        .as_str()
+    {
+        "en" => Ok(Locale::English),
+        "zh-CN" => Ok(Locale::SimplifiedChinese),
+        _ => Err("locale must be en or zh-CN".to_owned()),
+    }
+}
+
+/// Parses the stable theme identifiers used by the native evidence matrix.
+fn parse_theme(value: Option<OsString>) -> Result<ThemeMode, String> {
+    match value
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(usage)?
+        .as_str()
+    {
+        "dark" => Ok(ThemeMode::Dark),
+        "light" => Ok(ThemeMode::Light),
+        _ => Err("theme must be dark or light".to_owned()),
+    }
+}
+
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -2017,6 +2058,8 @@ struct AcceptanceReport {
     shortcut: &'static str,
     shortcut_registered: bool,
     isolated_profile: String,
+    locale: &'static str,
+    theme: &'static str,
     display: DisplayReport,
     controller_window: Option<WindowReport>,
     steps: Vec<StepReport>,
@@ -2882,6 +2925,7 @@ struct WorkerContext {
     scroll_export: ScrollExportOption,
     record_target: Option<RecordTargetOption>,
     locale: Locale,
+    theme_mode: ThemeMode,
 }
 
 #[cfg(windows)]
@@ -3033,10 +3077,12 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     );
     let settings_path = session_root.join("settings.json");
     let mut settings = UserSettings::default();
-    // Keep native acceptance deterministic while still deriving visible status text from the
-    // application catalog rather than duplicating English wording in the runner.
-    let locale = Locale::English;
+    // Keep native acceptance deterministic while deriving visible text and colors from the
+    // selected production catalog and theme rather than duplicating them in the runner.
+    let locale = options.locale;
+    let theme_mode = options.theme_mode;
     settings.locale = locale;
+    settings.theme_mode = theme_mode;
     settings.capture_shortcut = Some(CAPTURE_SHORTCUT.to_owned());
     settings.full_screen_shortcut = None;
     settings.focused_window_shortcut = None;
@@ -3096,6 +3142,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         scroll_export: options.scroll_export,
         record_target: options.record_target,
         locale,
+        theme_mode,
     };
     let mut report = initial_report(&worker_context);
     write_report(&worker_context.report_path, &report)?;
@@ -3153,9 +3200,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 31 records the
-        // deterministic source fixture used by the real-input Pins coexistence workflow.
-        schema_version: 31,
+        // Increment when the machine-readable report shape changes. Schema 32 records the
+        // selected locale/theme alongside the deterministic Pins source fixture.
+        schema_version: 32,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -3166,6 +3213,8 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         shortcut: CAPTURE_SHORTCUT,
         shortcut_registered: false,
         isolated_profile: context.session_root.to_string_lossy().into_owned(),
+        locale: locale_report_value(context.locale),
+        theme: theme_report_value(context.theme_mode),
         display: DisplayReport {
             id: context.display.id.clone(),
             bounds: context.display.physical_bounds,
@@ -3192,6 +3241,22 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         save_dialog_permission_retry: None,
         recording_failure_retry: None,
         error: None,
+    }
+}
+
+#[cfg(windows)]
+fn locale_report_value(locale: Locale) -> &'static str {
+    match locale {
+        Locale::English => "en",
+        Locale::SimplifiedChinese => "zh-CN",
+    }
+}
+
+#[cfg(windows)]
+fn theme_report_value(theme: ThemeMode) -> &'static str {
+    match theme {
+        ThemeMode::Dark => "dark",
+        ThemeMode::Light => "light",
     }
 }
 
@@ -15641,6 +15706,7 @@ mod tests {
     use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
     #[cfg(windows)]
     use flash_shot::platform::capture::{CaptureFrame, PixelFormat};
+    use flash_shot::{i18n::Locale, theme::ThemeMode};
     use std::{ffi::OsString, path::PathBuf, time::Duration};
     #[cfg(windows)]
     use std::{sync::Arc, time::Instant};
@@ -15853,6 +15919,42 @@ mod tests {
                 "narrow-edge",
                 "--record-target",
                 "area",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_accepts_the_locale_and_theme_matrix_and_rejects_duplicates() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--locale",
+            "zh-CN",
+            "--theme",
+            "light",
+        ]))
+        .unwrap();
+        assert_eq!(options.locale, Locale::SimplifiedChinese);
+        assert_eq!(options.theme_mode, ThemeMode::Light);
+        assert!(Options::parse_from(arguments(&["--allow-input", "--locale", "fr"])).is_err());
+        assert!(Options::parse_from(arguments(&["--allow-input", "--theme", "blue"])).is_err());
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--locale",
+                "en",
+                "--locale",
+                "zh-CN",
+            ]))
+            .is_err()
+        );
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--theme",
+                "dark",
+                "--theme",
+                "light",
             ]))
             .is_err()
         );
