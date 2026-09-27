@@ -192,6 +192,22 @@ pub(super) fn click_navigation_item(
 }
 
 #[cfg(windows)]
+/// Clicks the App page's update action using the layout coordinates from the production page.
+///
+/// The acceptance window intentionally uses the documented 520px compact and 980px wide
+/// layouts. Keeping the two targets explicit makes the probe fail loudly if the page geometry
+/// moves instead of silently clicking another preference.
+pub(super) fn click_update_action(window: NativeWindow, compact: bool) -> io::Result<()> {
+    let (logical_x, logical_y) = if compact { (300, 486) } else { (453, 432) };
+    guard_foreground(window)?;
+    move_and_click(
+        window,
+        window.left + scale_logical_extent(window, logical_x),
+        window.top + scale_logical_extent(window, logical_y),
+    )
+}
+
+#[cfg(windows)]
 /// Sends one key press/release pair and repairs a partially accepted SendInput batch.
 pub(super) fn send_key(window: NativeWindow, virtual_key: u16) -> io::Result<()> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{

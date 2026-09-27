@@ -9,11 +9,17 @@ use std::{
 };
 
 use super::native::{
-    CursorRestore, WindowZOrderRestore, capture_step, click_navigation_item, ensure_input_idle,
-    focus_window, send_key, snapshot, visible_window,
+    CursorRestore, WindowZOrderRestore, capture_step, click_navigation_item, click_update_action,
+    ensure_input_idle, focus_window, send_key, snapshot, visible_window,
 };
-use super::{CleanupReport, INPUT_SETTLE_DELAY, Report, StepReport, WindowBounds};
-use flash_shot::{SettingsInteractionAcceptanceCommand, i18n::Locale, theme::ThemeMode};
+use super::{
+    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, Report, StepReport, WindowBounds,
+};
+use flash_shot::{
+    SettingsInteractionAcceptanceCommand,
+    i18n::{Locale, UiText},
+    theme::ThemeMode,
+};
 
 #[cfg(windows)]
 pub(super) struct WorkerOptions {
@@ -24,6 +30,7 @@ pub(super) struct WorkerOptions {
     pub(super) settle: Duration,
     pub(super) locale: Locale,
     pub(super) theme: ThemeMode,
+    pub(super) exercise_app_update: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
 
@@ -118,6 +125,53 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             screenshot,
         });
     }
+    let mut action_steps = Vec::new();
+    if options.exercise_app_update {
+        focus_window(window)?;
+        click_navigation_item(window, compact, 3)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let before = snapshot(&options.commands)?;
+        let before_screenshot = capture_step(&window, &options.output_dir, "action-app-before")?;
+        let expected_status = options
+            .locale
+            .text(UiText::UpdateCheckInProgress)
+            .to_owned();
+        let before_passed = before.section == "app"
+            && before.update_check_in_flight
+            && before.status == expected_status;
+        action_steps.push(ActionStepReport {
+            action: "mouse-click-app-update-before".to_owned(),
+            expected_section: "app".to_owned(),
+            observed_section: before.section,
+            expected_busy: true,
+            observed_busy: before.update_check_in_flight,
+            expected_status: expected_status.clone(),
+            observed_status: before.status,
+            passed: before_passed,
+            screenshot: before_screenshot,
+        });
+
+        focus_window(window)?;
+        click_update_action(window, compact)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let after = snapshot(&options.commands)?;
+        let after_screenshot = capture_step(&window, &options.output_dir, "action-app-after")?;
+        let cancelled_status = options.locale.text(UiText::UpdateCheckCancelled).to_owned();
+        let after_passed = after.section == "app"
+            && !after.update_check_in_flight
+            && after.status == cancelled_status;
+        action_steps.push(ActionStepReport {
+            action: "mouse-click-app-update-cancel".to_owned(),
+            expected_section: "app".to_owned(),
+            observed_section: after.section,
+            expected_busy: false,
+            observed_busy: after.update_check_in_flight,
+            expected_status: cancelled_status,
+            observed_status: after.status,
+            passed: after_passed,
+            screenshot: after_screenshot,
+        });
+    }
     let cursor_restored = cursor_restore.restore()?;
     let input_released = [
         VK_LBUTTON, VK_DOWN, VK_F4, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
@@ -126,11 +180,12 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     .all(|key| unsafe { GetAsyncKeyState(key as i32) >= 0 });
     let window_demoted = window_z_order.restore();
     let report = Report {
-        schema: 1,
+        schema: if options.exercise_app_update { 2 } else { 1 },
         status: if click_steps
             .iter()
             .chain(keyboard_steps.iter())
             .all(|step| step.passed)
+            && action_steps.iter().all(|step| step.passed)
             && cursor_restored
             && input_released
             && window_demoted
@@ -154,6 +209,7 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
         scale_factor: window.dpi as f32 / 96.0,
         click_steps,
         keyboard_steps,
+        action_steps,
         cleanup: CleanupReport {
             cursor_restored,
             input_released,

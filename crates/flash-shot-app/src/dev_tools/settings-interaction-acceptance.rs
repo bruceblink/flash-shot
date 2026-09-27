@@ -27,6 +27,7 @@ const INPUT_SETTLE_DELAY: Duration = Duration::from_millis(120);
 #[derive(Debug)]
 struct Options {
     allow_input: bool,
+    exercise_app_update: bool,
     output_dir: PathBuf,
     width: i32,
     height: i32,
@@ -51,6 +52,7 @@ struct Report {
     scale_factor: f32,
     click_steps: Vec<StepReport>,
     keyboard_steps: Vec<StepReport>,
+    action_steps: Vec<ActionStepReport>,
     cleanup: CleanupReport,
 }
 
@@ -77,6 +79,20 @@ struct StepReport {
 
 #[cfg(windows)]
 #[derive(Serialize)]
+struct ActionStepReport {
+    action: String,
+    expected_section: String,
+    observed_section: String,
+    expected_busy: bool,
+    observed_busy: bool,
+    expected_status: String,
+    observed_status: String,
+    passed: bool,
+    screenshot: String,
+}
+
+#[cfg(windows)]
+#[derive(Serialize)]
 struct CleanupReport {
     cursor_restored: bool,
     input_released: bool,
@@ -94,6 +110,7 @@ impl Options {
     fn parse_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> Result<Self, String> {
         let mut options = Self {
             allow_input: false,
+            exercise_app_update: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
             height: 640,
@@ -108,6 +125,7 @@ impl Options {
                 .map_err(|_| "arguments must be valid UTF-8".to_owned())?;
             match argument.as_str() {
                 "--allow-input" => options.allow_input = true,
+                "--exercise-app-update" => options.exercise_app_update = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
                 }
@@ -140,7 +158,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -232,6 +250,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         settle: options.settle,
         locale: options.locale,
         theme: options.theme,
+        exercise_app_update: options.exercise_app_update,
         commands: command_tx,
     };
     thread::spawn(move || {
@@ -249,6 +268,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         SettingsInteractionAcceptanceOptions {
             width: options.width as f32,
             height: options.height as f32,
+            update_check_state: if options.exercise_app_update {
+                flash_shot::UpdateUiAcceptanceState::Checking
+            } else {
+                flash_shot::UpdateUiAcceptanceState::Idle
+            },
             commands: command_rx,
         },
     )?;
@@ -278,5 +302,15 @@ mod tests {
         assert!(Options::parse_args(std::iter::empty()).is_err());
         let options = Options::parse_args([OsString::from("--allow-input")].into_iter()).unwrap();
         assert!(options.allow_input);
+        assert!(!options.exercise_app_update);
+        let options = Options::parse_args(
+            [
+                OsString::from("--allow-input"),
+                OsString::from("--exercise-app-update"),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        assert!(options.exercise_app_update);
     }
 }

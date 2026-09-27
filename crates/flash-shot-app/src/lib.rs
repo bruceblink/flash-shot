@@ -134,6 +134,7 @@ pub fn run_settings_interaction_acceptance(
             height: acceptance.height.max(420.0),
             show: true,
             section: "capture".to_owned(),
+            update_check_state: acceptance.update_check_state,
             settings_interaction_commands: Some(acceptance.commands),
             ..SettingsWindowOptions::default()
         },
@@ -216,6 +217,8 @@ pub struct SettingsInteractionState {
     pub section: String,
     pub locale: String,
     pub theme: String,
+    pub update_check_in_flight: bool,
+    pub status: String,
 }
 
 /// Minimal production recording state returned to the isolated input probe.
@@ -704,6 +707,8 @@ pub struct SettingsInteractionAcceptanceOptions {
     pub width: f32,
     pub height: f32,
     pub commands: async_channel::Receiver<SettingsInteractionAcceptanceCommand>,
+    /// Seeds the App update action for the optional real-input business-action probe.
+    pub update_check_state: UpdateUiAcceptanceState,
 }
 
 /// Describes a synthetic but fully rendered capture overlay used for native screenshot QA.
