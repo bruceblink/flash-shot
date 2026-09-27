@@ -88,26 +88,24 @@ impl Locale {
 
     /// Formats the confirmation shown after the interface language changes.
     pub fn language_changed(self, language: &str) -> String {
-        self.text(UiText::LanguageChanged)
-            .replace("{language}", language)
+        self.format_template(UiText::LanguageChanged, &[("language", language)])
     }
 
     /// Formats a persistence failure while preserving the operating system's error detail.
     pub fn language_preference_save_failed(self, error: &dyn std::fmt::Display) -> String {
-        self.text(UiText::LanguagePreferenceSaveFailed)
-            .replace("{error}", &error.to_string())
+        let error = error.to_string();
+        self.format_template(UiText::LanguagePreferenceSaveFailed, &[("error", &error)])
     }
 
     /// Formats the result of a recovery command that restores click handling for Pins.
     pub fn pinned_window_input_restored(self, count: usize) -> String {
-        self.text(UiText::PinnedWindowInputRestored)
-            .replace("{count}", &count.to_string())
+        let count = count.to_string();
+        self.format_template(UiText::PinnedWindowInputRestored, &[("count", &count)])
     }
 
     /// Formats the idle capture status while retaining the user's configured shortcut.
     pub fn ready_with_shortcut(self, shortcut: &str) -> String {
-        self.text(UiText::ReadyWithShortcut)
-            .replace("{shortcut}", shortcut)
+        self.format_template(UiText::ReadyWithShortcut, &[("shortcut", shortcut)])
     }
 }
 
@@ -2677,16 +2675,32 @@ mod tests {
         assert_eq!(Locale::English.code(), "en");
         assert_eq!(Locale::SimplifiedChinese.code(), "zh-CN");
         assert_eq!(
+            Locale::English.language_changed("English"),
+            "Language changed to English"
+        );
+        assert_eq!(
             Locale::SimplifiedChinese.language_changed("简体中文"),
             "语言已切换为 简体中文"
+        );
+        assert_eq!(
+            Locale::English.language_preference_save_failed(&"access denied"),
+            "Could not save language preference: access denied"
         );
         assert_eq!(
             Locale::SimplifiedChinese.language_preference_save_failed(&"access denied"),
             "无法保存语言偏好：access denied"
         );
         assert_eq!(
+            Locale::English.pinned_window_input_restored(2),
+            "Restored mouse input for 2 pinned window(s)"
+        );
+        assert_eq!(
             Locale::SimplifiedChinese.pinned_window_input_restored(2),
             "已恢复 2 个 Pin 窗口的鼠标输入"
+        );
+        assert_eq!(
+            Locale::English.ready_with_shortcut("Ctrl+Shift+Print Screen"),
+            "Ready - Ctrl+Shift+Print Screen"
         );
         assert_eq!(
             Locale::SimplifiedChinese.ready_with_shortcut("Ctrl+Shift+Print Screen"),

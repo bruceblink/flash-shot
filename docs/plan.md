@@ -219,7 +219,7 @@ U5.1-U5.4 合并验收：当前源码 Release 已完成四页 `App/Library/Recor
 
 这些切片保留原有目标，但删除已经完成的逐次日志，只处理剩余缺口：
 
-- `U1`：清点 workflow、错误、忙状态、数量、路径、耗时和进度等动态文案，全部进入 `UiText` 参数模板，并补齐双语参数化测试；当前先完成录屏状态模板参数化测试，剩余文案按相同边界继续收敛；
+- `U1`：清点 workflow、错误、忙状态、数量、路径、耗时和进度等动态文案，全部进入 `UiText` 参数模板，并补齐双语参数化测试；已完成录屏状态模板和语言反馈辅助方法的统一，剩余文案按相同边界继续收敛；
 - `U2`：完成 App/Library/Record 主动作、恢复入口和真实键鼠矩阵，保持稳定语义 ID 和现有 handler；
 - `U3`：继续收敛 ThemeMetrics、滚动控制器、页面布局和可用 DPI，清除组件内重复几何常量；
 - `U4`：完成 Pin 的真实点击、焦点保持、关闭、Copy/Save、语言切换和再次 Capture 恢复；
@@ -228,6 +228,8 @@ U5.1-U5.4 合并验收：当前源码 Release 已完成四页 `App/Library/Recor
 **U3.1 当前结果（2026-09-27）**：设置页、状态栏和历史操作控件中原本散落的状态指示器、页面标记、说明间距、快捷操作最小宽度、开关圆钮和历史选择按钮高度，现统一由 `ThemeMetrics` 提供；默认像素值保持不变，减少后续真实输入与 DPI 调整时的重复几何来源。验证包括 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` 和 `cargo test -p flash-shot-app --lib`（399 项通过）。U3 仍为部分完成，真实窗口键鼠与高 DPI/多屏证据尚未补齐。
 
 **U2.1 当前结果（2026-09-27）**：新增 `settings-interaction-acceptance` Release runner，使用真实 Windows 鼠标点击四个设置入口，再用紧凑布局的右箭头或宽布局的下箭头循环导航，并验证 Enter/Space 激活；每一步通过 GPUI 命令通道回读 `SettingsSection`，保存窗口物理边界/DPI、原生窗口截图和输入清理状态。runner 需要显式 `--allow-input`，会在输入前确认修饰键/鼠标按钮已释放，输入时核对前景 HWND，并在异常时恢复鼠标与窗口层级。单屏 100% 的 520x640 English/深色与 980x760 简体中文/浅色可丢弃会话均通过 4 次鼠标点击、5 次方向导航、Enter/Space 和资源清理；证据分别为 `target/settings-interaction-acceptance-u2-final-520-en/session-23124/report.json` 和 `target/settings-interaction-acceptance-u2-final-980-zh/session-29084/report.json`，每个目录保存 10 张 PNG、DPI 96、scale 1.0。U2 仍需补齐 App/Library/Record 主动作、恢复入口及更多语言/主题/尺寸矩阵，因此保持部分完成。
+
+**U1.2 当前结果（2026-09-27）**：`Locale::language_changed`、`language_preference_save_failed`、`pinned_window_input_restored` 和 `ready_with_shortcut` 四个动态反馈入口统一调用 `Locale::format_template`，不再各自直接替换占位符；English/简体中文回归测试覆盖语言切换、错误详情、Pin 数量和快捷键值。`cargo test -p flash-shot-app --lib i18n::tests` 10 项通过；U1 仍需继续清点实际窗口中的动态文案并补齐真实双语交互矩阵。
 
 
 ### M1：按职责拆分大型模块
