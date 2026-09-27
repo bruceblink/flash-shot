@@ -526,6 +526,13 @@ U2 继续保持“部分完成”。
 本地化布局不变。该切片通过 `cargo test -p flash-shot-app --lib`（396 项）、`cargo fmt --all -- --check` 和
 `cargo clippy --workspace --all-targets -- -D warnings`；它只完成 token 集中化，不替代 U3 的真实输入、高 DPI 或多屏验收。
 
+**U4 Pin 生命周期切片（2026-09-27）**：Release `pin-lifecycle-acceptance` 已在 English/深色和简体中文/浅色组合下通过，
+报告分别位于 `target/pin-lifecycle-acceptance-u4-20260927-en/` 与
+`target/pin-lifecycle-acceptance-u4-20260927-zh/`；两组均为 `status=passed`，在 2560x1440、DPI 96、`scale_factor=1.0`
+下覆盖三窗口创建与关闭、缩放、透明度、Copy、Save、Solo/Show all、焦点保持和保存文件存在性。`pins-final.png` 已目视复核
+深色/浅色工具栏无截断或重叠。当前 Computer Use 原生 helper 仅启用 browser surface，无法绑定 Flash Shot 窗口，因此本切片
+仍不宣称真实鼠标/键盘输入证据；U4 保持“部分完成”。
+
 ### U3/U4：完成视觉与 Pin 原生矩阵
 
 **目标**：把已完成的 token 和隔离探针扩展到真实中英文输入与窗口生命周期。
