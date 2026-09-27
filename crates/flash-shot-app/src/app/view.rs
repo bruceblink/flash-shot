@@ -607,26 +607,19 @@ fn capture_settings(
     );
 
     let recovery_app = app.clone();
+    let shortcut_summary = capture_shortcut_summary(
+        locale,
+        &app_state.capture_shortcut,
+        app_state.capture_shortcut_enabled,
+    );
     let preferences = settings_section(locale.text(UiText::CapturePreferences), colors)
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_sm().child(locale.text(UiText::GlobalShortcut)))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(colors.muted)
-                        .child(capture_shortcut_summary(
-                            locale,
-                            &app_state.capture_shortcut,
-                            app_state.capture_shortcut_enabled,
-                        )),
-                ),
-        )
-        .child(
-            settings_row(locale.text(UiText::GlobalShortcut), colors).child(settings_toggle(
+            settings_row_with_description(
+                locale.text(UiText::GlobalShortcut),
+                shortcut_summary,
+                colors,
+            )
+            .child(settings_toggle(
                 "settings-shortcut-enabled",
                 app_state.capture_shortcut_enabled,
                 colors,
@@ -2508,6 +2501,42 @@ fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
                 .text_sm()
                 .text_color(colors.muted)
                 .child(label.to_owned()),
+        )
+}
+
+/// Renders one setting label with its compact status text so a row owns all information about a
+/// preference. Keeping the description in the same label column removes duplicate section text
+/// while preserving the registered or disabled shortcut state beside its toggle.
+fn settings_row_with_description(
+    label: &str,
+    description: impl Into<String>,
+    colors: crate::theme::ThemeColors,
+) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
+    let description = description.into();
+    div()
+        .w_full()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(px(metrics.settings_row_gap))
+        .min_h(px(metrics.row_min_height))
+        .py_1()
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(metrics.settings_label_min_width))
+                .max_w(px(metrics.settings_label_max_width))
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(colors.muted)
+                        .child(label.to_owned()),
+                )
+                .child(div().text_xs().text_color(colors.muted).child(description)),
         )
 }
 
