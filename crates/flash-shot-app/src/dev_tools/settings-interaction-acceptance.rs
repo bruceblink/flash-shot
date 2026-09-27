@@ -21,6 +21,7 @@ mod native;
 const DEFAULT_OUTPUT_DIR: &str = "target/settings-interaction-acceptance";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_SETTLE: Duration = Duration::from_millis(700);
+const ACCEPTANCE_RECORDING_DIRECTORY: &str = r"C:\FlashShotAcceptance";
 #[cfg(windows)]
 const INPUT_SETTLE_DELAY: Duration = Duration::from_millis(120);
 
@@ -28,6 +29,7 @@ const INPUT_SETTLE_DELAY: Duration = Duration::from_millis(120);
 struct Options {
     allow_input: bool,
     exercise_app_update: bool,
+    exercise_record_support: bool,
     output_dir: PathBuf,
     width: i32,
     height: i32,
@@ -111,6 +113,7 @@ impl Options {
         let mut options = Self {
             allow_input: false,
             exercise_app_update: false,
+            exercise_record_support: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
             height: 640,
@@ -126,6 +129,7 @@ impl Options {
             match argument.as_str() {
                 "--allow-input" => options.allow_input = true,
                 "--exercise-app-update" => options.exercise_app_update = true,
+                "--exercise-record-support" => options.exercise_record_support = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
                 }
@@ -158,7 +162,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -241,6 +245,16 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     settings.locale = options.locale;
     settings.theme_mode = options.theme;
     let settings_path = session_dir.join("settings.json");
+    if options.exercise_record_support {
+        // SAFETY: the isolated runner sets this before starting GPUI or the input worker, and
+        // the process exits after the single acceptance session completes.
+        unsafe {
+            std::env::set_var(
+                "FLASH_SHOT_RECORDING_DIRECTORY",
+                ACCEPTANCE_RECORDING_DIRECTORY,
+            );
+        }
+    }
     let (command_tx, command_rx) = async_channel::bounded(1);
     let worker_options = input::WorkerOptions {
         output_dir: session_dir.clone(),
@@ -251,6 +265,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         locale: options.locale,
         theme: options.theme,
         exercise_app_update: options.exercise_app_update,
+        exercise_record_support: options.exercise_record_support,
         commands: command_tx,
     };
     thread::spawn(move || {
@@ -272,6 +287,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
                 flash_shot::UpdateUiAcceptanceState::Checking
             } else {
                 flash_shot::UpdateUiAcceptanceState::Idle
+            },
+            recording_support_check_state: if options.exercise_record_support {
+                flash_shot::RecordingSupportUiAcceptanceState::Checking
+            } else {
+                flash_shot::RecordingSupportUiAcceptanceState::Idle
             },
             commands: command_rx,
         },
@@ -303,6 +323,7 @@ mod tests {
         let options = Options::parse_args([OsString::from("--allow-input")].into_iter()).unwrap();
         assert!(options.allow_input);
         assert!(!options.exercise_app_update);
+        assert!(!options.exercise_record_support);
         let options = Options::parse_args(
             [
                 OsString::from("--allow-input"),
@@ -312,5 +333,14 @@ mod tests {
         )
         .unwrap();
         assert!(options.exercise_app_update);
+        let options = Options::parse_args(
+            [
+                OsString::from("--allow-input"),
+                OsString::from("--exercise-record-support"),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        assert!(options.exercise_record_support);
     }
 }

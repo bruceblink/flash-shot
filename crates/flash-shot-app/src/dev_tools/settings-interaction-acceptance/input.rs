@@ -9,8 +9,8 @@ use std::{
 };
 
 use super::native::{
-    CursorRestore, WindowZOrderRestore, capture_step, click_navigation_item, click_update_action,
-    ensure_input_idle, focus_window, send_key, snapshot, visible_window,
+    CursorRestore, WindowZOrderRestore, capture_step, click_navigation_item, click_record_support,
+    click_update_action, ensure_input_idle, focus_window, send_key, snapshot, visible_window,
 };
 use super::{
     ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, Report, StepReport, WindowBounds,
@@ -31,6 +31,7 @@ pub(super) struct WorkerOptions {
     pub(super) locale: Locale,
     pub(super) theme: ThemeMode,
     pub(super) exercise_app_update: bool,
+    pub(super) exercise_record_support: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
 
@@ -172,6 +173,55 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             screenshot: after_screenshot,
         });
     }
+    if options.exercise_record_support {
+        focus_window(window)?;
+        click_navigation_item(window, compact, 2)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let before = snapshot(&options.commands)?;
+        let before_screenshot = capture_step(&window, &options.output_dir, "action-record-before")?;
+        let expected_status = options
+            .locale
+            .text(UiText::RecordingSupportCheckInProgress)
+            .to_owned();
+        let before_passed = before.section == "record"
+            && before.recording_support_check_in_flight
+            && before.status == expected_status;
+        action_steps.push(ActionStepReport {
+            action: "mouse-click-record-support-before".to_owned(),
+            expected_section: "record".to_owned(),
+            observed_section: before.section,
+            expected_busy: true,
+            observed_busy: before.recording_support_check_in_flight,
+            expected_status: expected_status.clone(),
+            observed_status: before.status,
+            passed: before_passed,
+            screenshot: before_screenshot,
+        });
+
+        focus_window(window)?;
+        click_record_support(window, compact)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let after = snapshot(&options.commands)?;
+        let after_screenshot = capture_step(&window, &options.output_dir, "action-record-after")?;
+        let cancelled_status = options
+            .locale
+            .text(UiText::RecordingSupportCheckCancelled)
+            .to_owned();
+        let after_passed = after.section == "record"
+            && !after.recording_support_check_in_flight
+            && after.status == cancelled_status;
+        action_steps.push(ActionStepReport {
+            action: "mouse-click-record-support-cancel".to_owned(),
+            expected_section: "record".to_owned(),
+            observed_section: after.section,
+            expected_busy: false,
+            observed_busy: after.recording_support_check_in_flight,
+            expected_status: cancelled_status,
+            observed_status: after.status,
+            passed: after_passed,
+            screenshot: after_screenshot,
+        });
+    }
     let cursor_restored = cursor_restore.restore()?;
     let input_released = [
         VK_LBUTTON, VK_DOWN, VK_F4, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
@@ -180,7 +230,11 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     .all(|key| unsafe { GetAsyncKeyState(key as i32) >= 0 });
     let window_demoted = window_z_order.restore();
     let report = Report {
-        schema: if options.exercise_app_update { 2 } else { 1 },
+        schema: if options.exercise_app_update || options.exercise_record_support {
+            2
+        } else {
+            1
+        },
         status: if click_steps
             .iter()
             .chain(keyboard_steps.iter())
