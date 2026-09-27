@@ -51,6 +51,49 @@ pub(crate) enum WorkspaceIcon {
     Cancel,
 }
 
+/// Identifies the result actions that make up the compact screenshot toolbar.
+///
+/// The order is part of the screenshot workspace contract: Pin, Save, More, Cancel, Copy.
+/// Keeping the IDs and icons in one catalog lets the renderer and acceptance review refer to the
+/// same action vocabulary while each action keeps its existing handler and state semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkspaceResultAction {
+    Pin,
+    Save,
+    More,
+    Cancel,
+    Copy,
+}
+
+impl WorkspaceResultAction {
+    /// Returns the stable element ID used by the production toolbar.
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::Pin => "overlay-pin",
+            Self::Save => "overlay-save",
+            Self::More => "overlay-more-actions",
+            Self::Cancel => "overlay-cancel",
+            Self::Copy => "overlay-copy",
+        }
+    }
+
+    /// Returns the line icon associated with this result action.
+    pub(crate) const fn icon(self) -> WorkspaceIcon {
+        match self {
+            Self::Pin => WorkspaceIcon::Pin,
+            Self::Save => WorkspaceIcon::Save,
+            Self::More => WorkspaceIcon::More,
+            Self::Cancel => WorkspaceIcon::Cancel,
+            Self::Copy => WorkspaceIcon::Copy,
+        }
+    }
+
+    /// Lists the compact toolbar order used by the screenshot workspace.
+    pub(crate) const fn catalog() -> &'static [Self; 5] {
+        &[Self::Pin, Self::Save, Self::More, Self::Cancel, Self::Copy]
+    }
+}
+
 #[cfg(test)]
 impl WorkspaceIcon {
     /// Returns the stable semantic name used by layout probes and accessibility review.
@@ -153,11 +196,6 @@ pub(crate) mod icon {
     pub(crate) const LINE: WorkspaceIcon = WorkspaceIcon::Line;
     pub(crate) const MARK: WorkspaceIcon = WorkspaceIcon::Highlight;
     pub(crate) const OBSCURE: WorkspaceIcon = WorkspaceIcon::Obscure;
-    pub(crate) const PIN: WorkspaceIcon = WorkspaceIcon::Pin;
-    pub(crate) const COPY: WorkspaceIcon = WorkspaceIcon::Copy;
-    pub(crate) const SAVE: WorkspaceIcon = WorkspaceIcon::Save;
-    pub(crate) const MORE: WorkspaceIcon = WorkspaceIcon::More;
-    pub(crate) const CANCEL: WorkspaceIcon = WorkspaceIcon::Cancel;
     pub(crate) const UNDO: WorkspaceIcon = WorkspaceIcon::Undo;
     pub(crate) const REDO: WorkspaceIcon = WorkspaceIcon::Redo;
 }
@@ -797,7 +835,7 @@ fn button_active_colors(colors: ThemeColors, tone: WorkspaceButtonTone) -> (Hsla
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkspaceButtonTone, WorkspaceIcon, button_colors};
+    use super::{WorkspaceButtonTone, WorkspaceIcon, WorkspaceResultAction, button_colors};
     use crate::theme::{ThemeColors, ThemeMode};
 
     #[test]
@@ -852,5 +890,31 @@ mod tests {
         for (index, id) in ids.iter().enumerate() {
             assert!(ids[index + 1..].iter().all(|other| other != id));
         }
+    }
+
+    #[test]
+    fn result_action_catalog_matches_the_compact_toolbar_contract() {
+        let actions = WorkspaceResultAction::catalog();
+
+        assert_eq!(
+            actions.map(WorkspaceResultAction::id),
+            [
+                "overlay-pin",
+                "overlay-save",
+                "overlay-more-actions",
+                "overlay-cancel",
+                "overlay-copy",
+            ]
+        );
+        assert_eq!(
+            actions.map(WorkspaceResultAction::icon),
+            [
+                WorkspaceIcon::Pin,
+                WorkspaceIcon::Save,
+                WorkspaceIcon::More,
+                WorkspaceIcon::Cancel,
+                WorkspaceIcon::Copy,
+            ]
+        );
     }
 }

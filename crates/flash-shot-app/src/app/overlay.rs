@@ -18,9 +18,9 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use super::{
     AnnotationToolGroup, FlashShotApp,
     overlay_toolbar::{
-        WorkspaceButtonConfig, WorkspaceButtonTone, icon, workspace_icon_button,
-        workspace_separator, workspace_surface, workspace_swatch, workspace_text_button,
-        workspace_text_button_with_aria,
+        WorkspaceButtonConfig, WorkspaceButtonTone, WorkspaceResultAction, icon,
+        workspace_icon_button, workspace_separator, workspace_surface, workspace_swatch,
+        workspace_text_button, workspace_text_button_with_aria,
     },
     workflow::{inspection_kind_label, selection_dimension_label},
 };
@@ -93,7 +93,6 @@ const ANNOTATION_STYLE_FILL_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_FILL_WIDT
 const ANNOTATION_LAYERS_WIDTH: f32 = 180.0;
 const ANNOTATION_LAYERS_PREFERRED_HEIGHT: f32 = 200.0;
 const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 900.0;
-const OVERLAY_MORE_ACTIONS_ID: &str = "overlay-more-actions";
 const SECONDARY_ACTION_COUNT: usize = 14;
 // Chinese Save Editable, QR, and OCR labels need more room than their English counterparts.
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
@@ -2875,8 +2874,8 @@ impl Render for CaptureOverlay {
                                     .gap(px(OVERLAY_ACTION_ITEM_GAP))
                                     .child(
                                         workspace_icon_button(
-                                            "overlay-pin",
-                                            icon::PIN,
+                                            WorkspaceResultAction::Pin.id(),
+                                            WorkspaceResultAction::Pin.icon(),
                                             locale.text(UiText::OverlayPin),
                                             WorkspaceButtonConfig::icon(
                                                 workspace_colors,
@@ -2896,8 +2895,8 @@ impl Render for CaptureOverlay {
                                     )
                                     .child(
                                         workspace_icon_button(
-                                            "overlay-save",
-                                            icon::SAVE,
+                                            WorkspaceResultAction::Save.id(),
+                                            WorkspaceResultAction::Save.icon(),
                                             locale.text(UiText::OverlaySave),
                                             WorkspaceButtonConfig::icon(
                                                 workspace_colors,
@@ -2917,8 +2916,8 @@ impl Render for CaptureOverlay {
                                     )
                                     .child(
                                         workspace_icon_button(
-                                            OVERLAY_MORE_ACTIONS_ID,
-                                            icon::MORE,
+                                            WorkspaceResultAction::More.id(),
+                                            WorkspaceResultAction::More.icon(),
                                             more_actions_button_label(locale, show_more_actions),
                                             WorkspaceButtonConfig::icon(
                                                 workspace_colors,
@@ -2957,8 +2956,8 @@ impl Render for CaptureOverlay {
                                     )
                                     .child(
                                         workspace_icon_button(
-                                            "overlay-cancel",
-                                            icon::CANCEL,
+                                            WorkspaceResultAction::Cancel.id(),
+                                            WorkspaceResultAction::Cancel.icon(),
                                             locale.text(UiText::OverlayCancel),
                                             WorkspaceButtonConfig::icon(
                                                 workspace_colors,
@@ -2978,8 +2977,8 @@ impl Render for CaptureOverlay {
                                     )
                                     .child(
                                         workspace_icon_button(
-                                            "overlay-copy",
-                                            icon::COPY,
+                                            WorkspaceResultAction::Copy.id(),
+                                            WorkspaceResultAction::Copy.icon(),
                                             locale.text(UiText::OverlayCopy),
                                             WorkspaceButtonConfig::icon(
                                                 workspace_colors,
@@ -5460,10 +5459,11 @@ fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
         let context_width =
             2.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + OVERLAY_ACTION_ITEM_GAP;
         let annotation_width = ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_ICON_WIDTH
-            + ANNOTATION_TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * ANNOTATION_TOOL_PALETTE_GAP
+            + ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_PALETTE_GAP
             + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
-        let result_width =
-            5.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + 4.0 * OVERLAY_ACTION_ITEM_GAP;
+        let result_action_count = WorkspaceResultAction::catalog().len() as f32;
+        let result_width = result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+            + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP;
         vec![
             context_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
@@ -5472,10 +5472,11 @@ fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
             result_width,
         ]
     } else {
-        vec![
-            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            5.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + 4.0 * OVERLAY_ACTION_ITEM_GAP,
-        ]
+        vec![ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA, {
+            let result_action_count = WorkspaceResultAction::catalog().len() as f32;
+            result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+                + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP
+        }]
     }
 }
 
@@ -5568,23 +5569,23 @@ mod tests {
         AnnotationStyleCapabilities, AnnotationToolGroup, AnnotationToolbarLayout, FrameInputBatch,
         MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING,
         OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET,
-        OVERLAY_MORE_ACTION_WIDTHS, OVERLAY_MORE_ACTIONS_ID, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
-        OVERLAY_SECONDARY_MENU_GAP, OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction,
-        SecondaryActionFocusDirection, SelectionCursor, SelectionDimensionLayout,
-        SmartTargetHudLayout, WorkspaceLayoutInput, WorkspaceSelectionAnchor,
-        accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
-        action_toolbar_natural_width, action_toolbar_row_count, annotation_controls_visible,
-        annotation_layer_entry_label, annotation_layer_label, annotation_number_value_label,
-        annotation_opacity_value_label, annotation_style_capabilities_for_tool,
-        annotation_style_row_height, annotation_style_row_preferred_width,
-        annotation_style_row_width, annotation_text_size_value_label,
-        annotation_tool_group_focus_direction, annotation_tool_group_focus_target,
-        annotation_tool_group_popover_height, annotation_tool_group_popover_width,
-        annotation_tool_palette_width, annotation_toolbar_height, annotation_toolbar_items,
-        annotation_toolbar_layout, annotation_toolbar_preferred_width,
-        annotation_width_value_label, arrange_context_for_selection, arrow_head_points,
-        capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
-        magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
+        OVERLAY_MORE_ACTION_WIDTHS, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
+        OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
+        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, WorkspaceLayoutInput,
+        WorkspaceResultAction, WorkspaceSelectionAnchor, accepts_overlay_input,
+        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
+        action_toolbar_row_count, annotation_controls_visible, annotation_layer_entry_label,
+        annotation_layer_label, annotation_number_value_label, annotation_opacity_value_label,
+        annotation_style_capabilities_for_tool, annotation_style_row_height,
+        annotation_style_row_preferred_width, annotation_style_row_width,
+        annotation_text_size_value_label, annotation_tool_group_focus_direction,
+        annotation_tool_group_focus_target, annotation_tool_group_popover_height,
+        annotation_tool_group_popover_width, annotation_tool_palette_width,
+        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
+        annotation_toolbar_preferred_width, annotation_width_value_label,
+        arrange_context_for_selection, arrow_head_points, capture_double_click,
+        close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
+        more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
         recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
@@ -5889,7 +5890,7 @@ mod tests {
 
     #[test]
     fn more_actions_control_keeps_focus_identity_when_label_changes() {
-        assert_eq!(OVERLAY_MORE_ACTIONS_ID, "overlay-more-actions");
+        assert_eq!(WorkspaceResultAction::More.id(), "overlay-more-actions");
         assert_eq!(more_actions_button_label(Locale::English, false), "More");
         assert_eq!(more_actions_button_label(Locale::English, true), "Less");
         assert_eq!(
@@ -6996,9 +6997,9 @@ mod tests {
         assert_eq!(
             primary,
             ActionToolbarLayout {
-                left: 1983.0,
+                left: 1979.0,
                 top: 1270.0,
-                width: 559.0,
+                width: 563.0,
                 height: 50.0,
             }
         );
@@ -7012,11 +7013,11 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(marking.left, 1983.0);
+        assert_eq!(marking.left, 1979.0);
         assert_eq!(marking.top, 1270.0);
-        assert_eq!(marking.width, 559.0);
+        assert_eq!(marking.width, 563.0);
         assert_eq!(marking.height, 50.0);
-        assert_eq!(marking.tools_width, 559.0);
+        assert_eq!(marking.tools_width, 563.0);
         assert_eq!(marking.tools_top, 1270.0);
         assert_eq!(marking.style_left, marking.left);
         assert_eq!(marking.style_top, 1320.0);
@@ -7343,9 +7344,10 @@ mod tests {
         assert_eq!(action_toolbar_height(324.0, false), 50.0);
         assert_eq!(action_toolbar_height(288.0, false), 50.0);
         assert_eq!(action_toolbar_natural_width(false), 260.0);
-        assert_eq!(action_toolbar_natural_width(true), 559.0);
+        assert_eq!(action_toolbar_natural_width(true), 563.0);
         assert_eq!(action_toolbar_height(358.0, true), 92.0);
-        assert_eq!(action_toolbar_height(559.0, true), 50.0);
+        assert_eq!(action_toolbar_height(559.0, true), 92.0);
+        assert_eq!(action_toolbar_height(563.0, true), 50.0);
         assert_eq!(secondary_action_menu_width(420.0, false, false), 352.0);
         assert_eq!(
             action_toolbar_row_count(352.0, OVERLAY_MORE_ACTION_WIDTHS),
