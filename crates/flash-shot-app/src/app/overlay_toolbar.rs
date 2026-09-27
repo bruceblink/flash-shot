@@ -36,6 +36,7 @@ pub(crate) struct WorkspaceButtonConfig {
 /// application icon dependency or change the accessible labels that already describe each action.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WorkspaceIcon {
+    DragHandle,
     Move,
     Text,
     Shape,
@@ -49,6 +50,11 @@ pub(crate) enum WorkspaceIcon {
     Save,
     More,
     Cancel,
+    Scroll,
+    Qr,
+    Ocr,
+    Translate,
+    Record,
 }
 
 /// Names the small line icons used by the settings navigation rail and compact section picker.
@@ -114,6 +120,7 @@ impl WorkspaceIcon {
     /// action identity when a toolbar row is reordered or a localized label changes.
     pub(crate) const fn stable_id(self) -> &'static str {
         match self {
+            Self::DragHandle => "drag-handle",
             Self::Move => "move",
             Self::Text => "text",
             Self::Shape => "shape",
@@ -127,6 +134,11 @@ impl WorkspaceIcon {
             Self::Save => "save",
             Self::More => "more",
             Self::Cancel => "cancel",
+            Self::Scroll => "scroll",
+            Self::Qr => "qr",
+            Self::Ocr => "ocr",
+            Self::Translate => "translate",
+            Self::Record => "record",
         }
     }
 
@@ -135,8 +147,9 @@ impl WorkspaceIcon {
     /// The order is the review order, not a promise about every responsive toolbar row. Callers
     /// still derive placement from the active workflow, while this list gives tests one complete
     /// source for icon and accessibility coverage.
-    pub(crate) const fn catalog() -> &'static [Self; 13] {
+    pub(crate) const fn catalog() -> &'static [Self; 19] {
         &[
+            Self::DragHandle,
             Self::Move,
             Self::Text,
             Self::Shape,
@@ -150,6 +163,11 @@ impl WorkspaceIcon {
             Self::Save,
             Self::More,
             Self::Cancel,
+            Self::Scroll,
+            Self::Qr,
+            Self::Ocr,
+            Self::Translate,
+            Self::Record,
         ]
     }
 }
@@ -210,6 +228,11 @@ pub(crate) mod icon {
     pub(crate) const OBSCURE: WorkspaceIcon = WorkspaceIcon::Obscure;
     pub(crate) const UNDO: WorkspaceIcon = WorkspaceIcon::Undo;
     pub(crate) const REDO: WorkspaceIcon = WorkspaceIcon::Redo;
+    pub(crate) const SCROLL: WorkspaceIcon = WorkspaceIcon::Scroll;
+    pub(crate) const QR: WorkspaceIcon = WorkspaceIcon::Qr;
+    pub(crate) const OCR: WorkspaceIcon = WorkspaceIcon::Ocr;
+    pub(crate) const TRANSLATE: WorkspaceIcon = WorkspaceIcon::Translate;
+    pub(crate) const RECORD: WorkspaceIcon = WorkspaceIcon::Record;
 }
 
 const ICON_STROKE_WIDTH: f32 = 1.6;
@@ -241,6 +264,26 @@ pub(crate) fn workspace_separator(
         .w(px(metrics.workspace_separator_width))
         .h(px(metrics.workspace_separator_height))
         .bg(colors.toolbar_border)
+}
+
+/// Builds the decorative grip at the start of the Snow-style toolbar rail.
+///
+/// The grip is intentionally not focusable or clickable: the capture overlay owns positioning and
+/// the existing selection gestures remain the only drag interaction. Keeping it decorative gives
+/// the long icon row the same visual starting edge as Snow Shot without changing input routing.
+pub(crate) fn workspace_drag_handle(colors: ThemeColors) -> Stateful<Div> {
+    let metrics = ThemeMetrics::default();
+    div()
+        .id("overlay-toolbar-drag-handle")
+        .w(px(ThemeMetrics::WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH))
+        .h(px(metrics.workspace_icon_button_hit_area))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(workspace_icon_element(
+            WorkspaceIcon::DragHandle,
+            colors.overlay_muted,
+        ))
 }
 
 /// Builds one icon-first workspace action with shared focus, hover, busy, and accessibility state.
@@ -431,6 +474,12 @@ fn paint_workspace_icon(
     let center_y = (top + bottom) / 2.0;
 
     match icon {
+        WorkspaceIcon::DragHandle => {
+            for offset in [-4.0, 0.0, 4.0] {
+                draw_icon_dot(window, color, center_x, center_y + offset, 1.15);
+                draw_icon_dot(window, color, center_x + 4.0, center_y + offset, 1.15);
+            }
+        }
         WorkspaceIcon::Move => {
             draw_icon_stroke(window, color, &[(left, center_y), (right, center_y)]);
             draw_icon_stroke(window, color, &[(center_x, top), (center_x, bottom)]);
@@ -665,6 +714,124 @@ fn paint_workspace_icon(
                 color,
                 &[(right - 3.0, top + 3.0), (left + 3.0, bottom - 3.0)],
             );
+        }
+        WorkspaceIcon::Scroll => {
+            draw_icon_stroke(
+                window,
+                color,
+                &[(center_x, top + 1.5), (center_x, bottom - 1.5)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (center_x, top + 1.5),
+                    (center_x - 3.0, top + 4.5),
+                    (center_x + 3.0, top + 4.5),
+                ],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (center_x, bottom - 1.5),
+                    (center_x - 3.0, bottom - 4.5),
+                    (center_x + 3.0, bottom - 4.5),
+                ],
+            );
+        }
+        WorkspaceIcon::Qr => {
+            for (x, y) in [
+                (left + 2.0, top + 2.0),
+                (right - 5.0, top + 2.0),
+                (left + 2.0, bottom - 5.0),
+            ] {
+                draw_icon_closed_stroke(
+                    window,
+                    color,
+                    &[(x, y), (x + 3.0, y), (x + 3.0, y + 3.0), (x, y + 3.0)],
+                );
+            }
+            draw_icon_dot(window, color, right - 3.0, bottom - 3.0, 1.3);
+        }
+        WorkspaceIcon::Ocr => {
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (left + 2.0, top + 3.0),
+                    (left + 2.0, top + 1.0),
+                    (left + 5.0, top + 1.0),
+                ],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (right - 2.0, top + 3.0),
+                    (right - 2.0, top + 1.0),
+                    (right - 5.0, top + 1.0),
+                ],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (left + 2.0, bottom - 3.0),
+                    (left + 2.0, bottom - 1.0),
+                    (left + 5.0, bottom - 1.0),
+                ],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (right - 2.0, bottom - 3.0),
+                    (right - 2.0, bottom - 1.0),
+                    (right - 5.0, bottom - 1.0),
+                ],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(left + 5.0, center_y), (right - 5.0, center_y)],
+            );
+        }
+        WorkspaceIcon::Translate => {
+            draw_icon_stroke(
+                window,
+                color,
+                &[(left + 2.0, top + 3.0), (right - 2.0, top + 3.0)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(center_x - 2.0, top + 1.0), (center_x - 2.0, top + 6.0)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(left + 4.0, top + 6.0), (left + 2.0, bottom - 2.0)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(left + 2.0, bottom - 2.0), (left + 6.0, bottom - 2.0)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(right - 5.0, top + 8.0), (right - 2.0, bottom - 2.0)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(right - 8.0, bottom - 4.0), (right - 2.0, bottom - 4.0)],
+            );
+        }
+        WorkspaceIcon::Record => {
+            draw_icon_circle_stroke(window, color, center_x, center_y, 4.5);
+            draw_icon_dot(window, color, center_x, center_y, 2.0);
         }
     }
 }
@@ -995,6 +1162,7 @@ mod tests {
         assert_eq!(
             ids,
             [
+                "drag-handle",
                 "move",
                 "text",
                 "shape",
@@ -1008,6 +1176,11 @@ mod tests {
                 "save",
                 "more",
                 "cancel",
+                "scroll",
+                "qr",
+                "ocr",
+                "translate",
+                "record",
             ]
         );
         for (index, id) in ids.iter().enumerate() {

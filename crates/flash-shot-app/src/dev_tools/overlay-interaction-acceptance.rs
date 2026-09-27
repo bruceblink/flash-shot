@@ -149,7 +149,11 @@ const NARROW_EDGE_BOTTOM_INSET: f32 = 12.0;
 const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 900.0;
 // The wide marking dock is one 42px tool row, an 8px separation, and a 50px action row.
 const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 100.0;
-const ACTION_TOOLBAR_ITEM_COUNT: usize = 6;
+const ACTION_TOOLBAR_LEADING_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH;
+const INLINE_SECONDARY_ACTION_COUNT: usize = 6;
+const INLINE_SECONDARY_ACTION_WIDTH: f32 = INLINE_SECONDARY_ACTION_COUNT as f32
+    * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+    + (INLINE_SECONDARY_ACTION_COUNT - 1) as f32 * ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
 const ACTION_TOOLBAR_MARK_INDEX: usize = 0;
 const ACTION_TOOLBAR_PIN_INDEX: usize = 1;
 const ACTION_TOOLBAR_SAVE_INDEX: usize = 2;
@@ -913,8 +917,13 @@ fn interaction_plan_for_logical_selection(
     const ACTION_ITEM_GAP: f32 = 6.0;
     const ACTION_PADDING: f32 = 6.0;
     const ACTION_BORDER: f32 = 1.0;
-    const ACTION_TOOLBAR_WIDTH: f32 = ACTION_TOOLBAR_ITEM_COUNT as f32 * ACTION_ITEM_WIDTH
-        + (ACTION_TOOLBAR_ITEM_COUNT - 1) as f32 * ACTION_ITEM_GAP
+    const RESULT_WIDTH: f32 = 5.0 * ACTION_ITEM_WIDTH + 4.0 * ACTION_ITEM_GAP;
+    const ACTION_TOOLBAR_WIDTH: f32 = ACTION_TOOLBAR_LEADING_WIDTH
+        + ACTION_ITEM_WIDTH
+        + RESULT_WIDTH
+        + ACTION_BORDER
+        + INLINE_SECONDARY_ACTION_WIDTH
+        + 4.0 * ACTION_ITEM_GAP
         + 2.0 * ACTION_PADDING
         + 2.0 * ACTION_BORDER;
 
@@ -953,6 +962,8 @@ fn interaction_plan_for_logical_selection(
         toolbar_left
             + ACTION_BORDER
             + ACTION_PADDING
+            + ACTION_TOOLBAR_LEADING_WIDTH
+            + ACTION_ITEM_GAP
             + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP)
             + ACTION_ITEM_WIDTH / 2.0
     };
@@ -1039,20 +1050,27 @@ fn tool_group_interaction_plan_for_capture_selection(
     let client = client_bounds_for_window(handle)?;
     let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
     let (width, height) = overlay_logical_size(client, scale)?;
-    let mark_action_width = ACTION_TOOLBAR_ITEM_COUNT as f32 * ACTION_ITEM_WIDTH
-        + (ACTION_TOOLBAR_ITEM_COUNT - 1) as f32 * ACTION_ITEM_GAP
+    let result_width = 5.0 * ACTION_ITEM_WIDTH + 4.0 * ACTION_ITEM_GAP;
+    let mark_action_width = ACTION_TOOLBAR_LEADING_WIDTH
+        + ACTION_ITEM_WIDTH
+        + result_width
+        + INLINE_SECONDARY_ACTION_WIDTH
+        + ACTION_BORDER
+        + 4.0 * ACTION_ITEM_GAP
         + ACTION_PADDING * 2.0
         + ACTION_BORDER * 2.0;
     let annotation_palette_width = TOOL_PALETTE_ITEMS as f32 * TOOL_ICON_WIDTH
         + TOOL_PALETTE_ITEMS as f32 * TOOL_PALETTE_GAP
         + PALETTE_BORDER;
     let context_width = 2.0 * ACTION_ITEM_WIDTH + ACTION_ITEM_GAP;
-    let result_width = 5.0 * ACTION_ITEM_WIDTH + 4.0 * ACTION_ITEM_GAP;
-    let annotation_action_width = context_width
+    let annotation_action_width = ACTION_TOOLBAR_LEADING_WIDTH
+        + ACTION_ITEM_GAP
+        + context_width
         + result_width
         + annotation_palette_width
-        + 4.0 * ACTION_BORDER
-        + 4.0 * ACTION_ITEM_GAP
+        + INLINE_SECONDARY_ACTION_WIDTH
+        + 3.0 * ACTION_BORDER
+        + 7.0 * ACTION_ITEM_GAP
         + ACTION_PADDING * 2.0;
     let palette_width = TOOL_PALETTE_ITEMS as f32 * TOOL_ICON_WIDTH
         + TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * TOOL_PALETTE_GAP
@@ -1168,6 +1186,8 @@ fn tool_group_interaction_plan_for_capture_selection(
         action_left
             + ACTION_BORDER
             + ACTION_PADDING
+            + ACTION_TOOLBAR_LEADING_WIDTH
+            + ACTION_ITEM_GAP
             + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP)
             + ACTION_ITEM_WIDTH / 2.0
     };
@@ -1177,6 +1197,8 @@ fn tool_group_interaction_plan_for_capture_selection(
     let result_left = left
         + ACTION_BORDER
         + ACTION_PADDING
+        + ACTION_TOOLBAR_LEADING_WIDTH
+        + ACTION_ITEM_GAP
         + annotation_palette_width
         + ACTION_ITEM_GAP
         + ACTION_BORDER
@@ -1191,7 +1213,7 @@ fn tool_group_interaction_plan_for_capture_selection(
     let (annotation_row_left, group_trigger_offset, annotation_inner_inset) = if annotation_controls
     {
         (
-            left + ACTION_BORDER + ACTION_PADDING,
+            left + ACTION_BORDER + ACTION_PADDING + ACTION_TOOLBAR_LEADING_WIDTH + ACTION_ITEM_GAP,
             TOOL_ICON_WIDTH + TOOL_PALETTE_GAP + PALETTE_BORDER + TOOL_PALETTE_GAP,
             0.0,
         )
@@ -16979,9 +17001,9 @@ mod tests {
 
         assert_eq!(plan.base.drag_start, PhysicalPoint { x: 2382, y: 1328 });
         assert_eq!(plan.base.drag_end, PhysicalPoint { x: 2542, y: 1424 });
-        assert_eq!(plan.base.mark, PhysicalPoint { x: 2307, y: 1291 });
-        assert_eq!(plan.base.more, PhysicalPoint { x: 2433, y: 1291 });
-        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2475, y: 1291 });
+        assert_eq!(plan.base.mark, PhysicalPoint { x: 2048, y: 1291 });
+        assert_eq!(plan.base.more, PhysicalPoint { x: 2174, y: 1291 });
+        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2216, y: 1291 });
         assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2299, y: 1241 });
         assert_eq!(plan.evidence_rest, PhysicalPoint { x: 24, y: 20 });
         assert_eq!(

@@ -141,6 +141,7 @@ impl ThemeMetrics {
     pub const WORKSPACE_STYLE_ROW_HEIGHT: f32 = 32.0;
     pub const WORKSPACE_TOOLBAR_PADDING: f32 = 6.0;
     pub const WORKSPACE_TOOLBAR_GAP: f32 = 6.0;
+    pub const WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH: f32 = 18.0;
     pub const WORKSPACE_TOOL_GAP: f32 = 8.0;
     pub const WORKSPACE_ICON_BUTTON_HIT_AREA: f32 = Self::WORKSPACE_TOOLBAR_HEIGHT;
     pub const WORKSPACE_ICON_SIZE: f32 = 16.0;

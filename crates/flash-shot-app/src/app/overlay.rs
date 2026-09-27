@@ -19,8 +19,8 @@ use super::{
     AnnotationToolGroup, FlashShotApp,
     overlay_toolbar::{
         WorkspaceButtonConfig, WorkspaceButtonTone, WorkspaceResultAction, icon,
-        workspace_icon_button, workspace_separator, workspace_surface, workspace_swatch,
-        workspace_text_button, workspace_text_button_with_aria,
+        workspace_drag_handle, workspace_icon_button, workspace_separator, workspace_surface,
+        workspace_swatch, workspace_text_button, workspace_text_button_with_aria,
     },
     workflow::{inspection_kind_label, selection_dimension_label},
 };
@@ -52,6 +52,7 @@ const OVERLAY_EDGE_INSET: f32 = ThemeMetrics::OVERLAY_EDGE_INSET;
 const OVERLAY_BOTTOM_SAFE_INSET: f32 = ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET;
 const OVERLAY_ACTION_BAR_GAP: f32 = ThemeMetrics::WORKSPACE_SELECTION_GAP;
 const OVERLAY_ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+const OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH;
 const OVERLAY_ACTION_ITEM_HEIGHT: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_HEIGHT;
 const OVERLAY_ACTION_BAR_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
 const OVERLAY_ACTION_BAR_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
@@ -85,6 +86,11 @@ const ANNOTATION_TOOL_GROUP_POPUP_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR
 const ANNOTATION_TOOL_GROUP_POPUP_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
 const ANNOTATION_STYLE_PANEL_GAP: f32 = ThemeMetrics::WORKSPACE_POPOVER_GAP;
 const ANNOTATION_STYLE_CONTROL_HEIGHT: f32 = ThemeMetrics::WORKSPACE_STYLE_ROW_HEIGHT;
+const INLINE_SECONDARY_ACTION_COUNT: usize = 6;
+const INLINE_SECONDARY_ACTION_WIDTH: f32 = INLINE_SECONDARY_ACTION_COUNT as f32
+    * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+    + (INLINE_SECONDARY_ACTION_COUNT - 1) as f32 * OVERLAY_ACTION_ITEM_GAP;
+const INLINE_SECONDARY_ACTIONS_MIN_VIEWPORT_WIDTH: f32 = 640.0;
 const ANNOTATION_STYLE_CONTROL_GAP: f32 = ThemeMetrics::SPACE_1;
 const ANNOTATION_STYLE_ROW_PADDING: f32 = ThemeMetrics::SPACE_1;
 const ANNOTATION_STYLE_VALUE_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_VALUE_WIDTH;
@@ -1705,6 +1711,8 @@ impl Render for CaptureOverlay {
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
+        let show_inline_secondary_actions =
+            view_rect(viewport).width >= INLINE_SECONDARY_ACTIONS_MIN_VIEWPORT_WIDTH;
         self.annotation_arrange_actions_for =
             arrange_context_for_selection(self.annotation_arrange_actions_for, selected_annotation);
         let show_annotation_arrange_actions = self.annotation_arrange_actions_for.is_some();
@@ -2698,6 +2706,7 @@ impl Render for CaptureOverlay {
                     .font_weight(FontWeight::SEMIBOLD)
                     .when(can_export, |actions| {
                         actions
+                            .child(workspace_drag_handle(workspace_colors))
                             .when(show_annotation_controls, |actions| {
                                 actions.child(
                                     div()
@@ -2867,7 +2876,7 @@ impl Render for CaptureOverlay {
                                             }),
                                         )
                                         .on_key_down(stop_overlay_action_key_propagation),
-                                    ),
+                                    )
                             ))
                             .when(show_annotation_controls, |actions| {
                                 actions.child(workspace_separator(
@@ -3010,6 +3019,156 @@ impl Render for CaptureOverlay {
                                         .on_key_down(stop_overlay_action_key_propagation),
                                     ),
                             )
+                            .when(show_inline_secondary_actions, |actions| {
+                                actions
+                                    .child(workspace_separator(
+                                        "overlay-inline-secondary-separator",
+                                        workspace_colors,
+                                    ))
+                                    .child(
+                                        div()
+                                            .id("overlay-inline-secondary-actions")
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(OVERLAY_ACTION_ITEM_GAP))
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-manual-scroll-inline",
+                                            icon::SCROLL,
+                                            locale.text(UiText::OverlayScrollShot),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                true,
+                                                secondary_action_tooltip(locale, "scroll"),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| app.start_manual_scroll(cx))
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-qr-inline",
+                                            icon::QR,
+                                            locale.text(UiText::OverlayQr),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                true,
+                                                secondary_action_tooltip(locale, "qr"),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.recognize_qr_selection(cx)
+                                                    })
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-ocr-inline",
+                                            icon::OCR,
+                                            locale.text(UiText::OverlayOcr),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                true,
+                                                secondary_action_tooltip(locale, "ocr"),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.recognize_text_selection(cx)
+                                                    })
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-translate-inline",
+                                            icon::TRANSLATE,
+                                            locale.text(UiText::OverlayTranslate),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                true,
+                                                secondary_action_tooltip(locale, "translate"),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.translate_selection(cx)
+                                                    })
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-record-area-inline",
+                                            icon::RECORD,
+                                            locale.text(UiText::OverlayRecordArea),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                true,
+                                                secondary_action_tooltip(locale, "record-area"),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.start_region_recording(cx)
+                                                    })
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    .child(
+                                        workspace_icon_button(
+                                            "overlay-record-window-inline",
+                                            icon::RECORD,
+                                            locale.text(UiText::OverlayRecordWindow),
+                                            WorkspaceButtonConfig::icon(
+                                                workspace_colors,
+                                                WorkspaceButtonTone::Neutral,
+                                                false,
+                                                true,
+                                                secondary_action_tooltip(locale, "record-window"),
+                                            ),
+                                            cx.listener(|this, _, _, cx| {
+                                                let app = this.app.clone();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.start_selected_window_recording(cx)
+                                                    })
+                                                });
+                                            }),
+                                        )
+                                        .on_key_down(stop_overlay_action_key_propagation),
+                                    )
+                                    )
+                            })
                             .when(show_more_actions, |actions| {
                                 actions.child(
                                     workspace_surface(workspace_colors, false)
@@ -5118,8 +5277,21 @@ fn action_toolbar_layout(
     let selection_anchor = selection_anchor?;
     let viewport = view_rect(viewport);
     let available_width = (viewport.width - OVERLAY_EDGE_INSET * 2.0).max(1.0);
-    let width = action_toolbar_natural_width(show_annotation_controls).min(available_width);
-    let height = action_toolbar_height(width, show_annotation_controls);
+    let include_inline_secondary = viewport.width >= INLINE_SECONDARY_ACTIONS_MIN_VIEWPORT_WIDTH;
+    let natural_width = if include_inline_secondary {
+        action_toolbar_natural_width(show_annotation_controls)
+    } else {
+        action_toolbar_width_for(show_annotation_controls, false)
+    };
+    let width = natural_width.min(available_width);
+    let height = if include_inline_secondary {
+        action_toolbar_height(width, show_annotation_controls)
+    } else {
+        action_toolbar_height_for(
+            width,
+            compact_action_toolbar_item_widths(show_annotation_controls),
+        )
+    };
     let selection_top = selection_anchor.top_left.y;
     let selection_bottom = selection_anchor.bottom_right.y;
     let selection_right = selection_anchor.bottom_right.x;
@@ -5474,6 +5646,43 @@ fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
         let result_width = result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
             + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP;
         vec![
+            OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
+            context_width,
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+            annotation_width,
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+            result_width,
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+            INLINE_SECONDARY_ACTION_WIDTH,
+        ]
+    } else {
+        vec![
+            OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            {
+                let result_action_count = WorkspaceResultAction::catalog().len() as f32;
+                result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+                    + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP
+            },
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+            INLINE_SECONDARY_ACTION_WIDTH,
+        ]
+    }
+}
+
+/// Returns the compact item groups used when a narrow window cannot fit the full Snow-style rail.
+fn compact_action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
+    if show_annotation_controls {
+        let context_width =
+            2.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + OVERLAY_ACTION_ITEM_GAP;
+        let annotation_width = ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_ICON_WIDTH
+            + ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_PALETTE_GAP
+            + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
+        let result_action_count = WorkspaceResultAction::catalog().len() as f32;
+        let result_width = result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+            + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP;
+        vec![
+            OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
             context_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
             annotation_width,
@@ -5481,21 +5690,32 @@ fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
             result_width,
         ]
     } else {
-        vec![ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA, {
-            let result_action_count = WorkspaceResultAction::catalog().len() as f32;
+        let result_action_count = WorkspaceResultAction::catalog().len() as f32;
+        vec![
+            OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
             result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-                + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP
-        }]
+                + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP,
+        ]
     }
 }
 
-/// Measures the visible main row from shared geometry instead of a per-action width table.
-fn action_toolbar_natural_width(show_annotation_controls: bool) -> f32 {
-    let widths = action_toolbar_item_widths(show_annotation_controls);
+/// Measures the toolbar using a selected set of visible groups and shared border/padding tokens.
+fn action_toolbar_width_for(show_annotation_controls: bool, include_inline_secondary: bool) -> f32 {
+    let widths = if include_inline_secondary {
+        action_toolbar_item_widths(show_annotation_controls)
+    } else {
+        compact_action_toolbar_item_widths(show_annotation_controls)
+    };
     widths.iter().sum::<f32>()
         + widths.len().saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
         + OVERLAY_ACTION_BAR_PADDING * 2.0
         + OVERLAY_ACTION_BAR_BORDER * 2.0
+}
+
+/// Measures the visible main row from shared geometry instead of a per-action width table.
+fn action_toolbar_natural_width(show_annotation_controls: bool) -> f32 {
+    action_toolbar_width_for(show_annotation_controls, true)
 }
 
 /// Computes wrapped-row height from the shared icon hit size when a narrow viewport requires it.
@@ -6664,9 +6884,9 @@ mod tests {
         assert_eq!(
             snapshot.action_toolbar,
             Some(ActionToolbarLayout {
-                left: 142.0,
+                left: 118.0,
                 top: 250.0,
-                width: 260.0,
+                width: 284.0,
                 height: 50.0,
             })
         );
@@ -6674,7 +6894,7 @@ mod tests {
         assert_eq!(menu.width, 352.0);
         assert_eq!(menu.height, 176.0);
         assert!(menu.opens_above);
-        assert_eq!(menu.left, -92.0);
+        assert_eq!(menu.left, -68.0);
         assert_eq!(
             snapshot.dimension,
             Some(SelectionDimensionLayout {
@@ -6767,9 +6987,9 @@ mod tests {
         assert_eq!(
             action_toolbar_layout(workspace_anchor(selection, transform), viewport, false),
             Some(ActionToolbarLayout {
-                left: 940.0,
+                left: 657.0,
                 top: 518.0,
-                width: 260.0,
+                width: 543.0,
                 height: 50.0,
             })
         );
@@ -6943,9 +7163,9 @@ mod tests {
         assert_eq!(
             toolbar,
             ActionToolbarLayout {
-                left: 142.0,
+                left: 118.0,
                 top: 250.0,
-                width: 260.0,
+                width: 284.0,
                 height: 50.0,
             }
         );
@@ -7006,9 +7226,9 @@ mod tests {
         assert_eq!(
             primary,
             ActionToolbarLayout {
-                left: 1979.0,
+                left: 1696.0,
                 top: 1270.0,
-                width: 563.0,
+                width: 846.0,
                 height: 50.0,
             }
         );
@@ -7022,11 +7242,11 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(marking.left, 1979.0);
+        assert_eq!(marking.left, 1696.0);
         assert_eq!(marking.top, 1270.0);
-        assert_eq!(marking.width, 563.0);
+        assert_eq!(marking.width, 846.0);
         assert_eq!(marking.height, 50.0);
-        assert_eq!(marking.tools_width, 563.0);
+        assert_eq!(marking.tools_width, 846.0);
         assert_eq!(marking.tools_top, 1270.0);
         assert_eq!(marking.style_left, marking.left);
         assert_eq!(marking.style_top, 1320.0);
@@ -7350,13 +7570,14 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false), 50.0);
-        assert_eq!(action_toolbar_height(288.0, false), 50.0);
-        assert_eq!(action_toolbar_natural_width(false), 260.0);
-        assert_eq!(action_toolbar_natural_width(true), 563.0);
-        assert_eq!(action_toolbar_height(358.0, true), 92.0);
+        assert_eq!(action_toolbar_height(324.0, false), 92.0);
+        assert_eq!(action_toolbar_height(288.0, false), 92.0);
+        assert_eq!(action_toolbar_natural_width(false), 543.0);
+        assert_eq!(action_toolbar_natural_width(true), 846.0);
+        assert_eq!(action_toolbar_height(358.0, true), 176.0);
         assert_eq!(action_toolbar_height(559.0, true), 92.0);
-        assert_eq!(action_toolbar_height(563.0, true), 50.0);
+        assert_eq!(action_toolbar_height(587.0, true), 92.0);
+        assert_eq!(action_toolbar_height(846.0, true), 50.0);
         assert_eq!(secondary_action_menu_width(420.0, false, false), 352.0);
         assert_eq!(
             action_toolbar_row_count(352.0, OVERLAY_MORE_ACTION_WIDTHS),
@@ -7371,11 +7592,11 @@ mod tests {
                 secondary_action_menu_width(360.0, false, false),
                 viewport,
             ),
-            -62.0
+            -38.0
         );
-        assert_eq!(layout.left, 80.0);
+        assert_eq!(layout.left, 56.0);
         assert!((layout.top - 338.0).abs() < 0.01);
-        assert_eq!(layout.width, 260.0);
+        assert_eq!(layout.width, 284.0);
         assert_eq!(layout.height, 50.0);
         assert_eq!(
             secondary_action_menu_height(324.0, false, false, false),
