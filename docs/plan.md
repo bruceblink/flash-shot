@@ -225,6 +225,9 @@ U5.1-U5.4 合并验收：当前源码 Release 已完成四页 `App/Library/Recor
 - `U4`：完成 Pin 的真实点击、焦点保持、关闭、Copy/Save、语言切换和再次 Capture 恢复；
 - 每个子切片都必须单独验证、单独提交和立即推送，不能把多个页面改造合并成一个无法回滚的提交。
 
+**U3.1 当前结果（2026-09-27）**：设置页、状态栏和历史操作控件中原本散落的状态指示器、页面标记、说明间距、快捷操作最小宽度、开关圆钮和历史选择按钮高度，现统一由 `ThemeMetrics` 提供；默认像素值保持不变，减少后续真实输入与 DPI 调整时的重复几何来源。验证包括 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` 和 `cargo test -p flash-shot-app --lib`（399 项通过）。U3 仍为部分完成，真实窗口键鼠与高 DPI/多屏证据尚未补齐。
+
+
 ### M1：按职责拆分大型模块
 
 前置条件是 W7、U1-U4 的行为证据和报告 schema 稳定。先拆 `overlay-interaction-acceptance` 的 Capture/Copy/Pin/Scroll/Recording runner，

@@ -111,6 +111,16 @@ pub struct ThemeMetrics {
     pub settings_label_min_width: f32,
     pub settings_label_max_width: f32,
     pub settings_control_column_min_width: f32,
+    pub status_indicator_width: f32,
+    pub status_indicator_height: f32,
+    pub status_line_height: f32,
+    pub settings_marker_width: f32,
+    pub settings_marker_height: f32,
+    pub settings_navigation_marker_height: f32,
+    pub settings_description_gap: f32,
+    pub settings_quick_action_min_width: f32,
+    pub settings_toggle_thumb_size: f32,
+    pub history_selection_height: f32,
 }
 
 impl ThemeMetrics {
@@ -165,6 +175,16 @@ impl ThemeMetrics {
     pub const SETTINGS_LABEL_MIN_WIDTH: f32 = 160.0;
     pub const SETTINGS_LABEL_MAX_WIDTH: f32 = 220.0;
     pub const SETTINGS_CONTROL_COLUMN_MIN_WIDTH: f32 = 160.0;
+    pub const STATUS_INDICATOR_WIDTH: f32 = 3.0;
+    pub const STATUS_INDICATOR_HEIGHT: f32 = 20.0;
+    pub const STATUS_LINE_HEIGHT: f32 = 18.0;
+    pub const SETTINGS_MARKER_WIDTH: f32 = 3.0;
+    pub const SETTINGS_MARKER_HEIGHT: f32 = 20.0;
+    pub const SETTINGS_NAVIGATION_MARKER_HEIGHT: f32 = 22.0;
+    pub const SETTINGS_DESCRIPTION_GAP: f32 = 2.0;
+    pub const SETTINGS_QUICK_ACTION_MIN_WIDTH: f32 = 140.0;
+    pub const SETTINGS_TOGGLE_THUMB_SIZE: f32 = 14.0;
+    pub const HISTORY_SELECTION_HEIGHT: f32 = 34.0;
     pub const OVERLAY_EDGE_INSET: f32 = 18.0;
     pub const OVERLAY_BOTTOM_SAFE_INSET: f32 = 96.0;
     pub const PIN_CONTROL_HEIGHT: f32 = 30.0;
@@ -225,6 +245,16 @@ impl Default for ThemeMetrics {
             settings_label_min_width: Self::SETTINGS_LABEL_MIN_WIDTH,
             settings_label_max_width: Self::SETTINGS_LABEL_MAX_WIDTH,
             settings_control_column_min_width: Self::SETTINGS_CONTROL_COLUMN_MIN_WIDTH,
+            status_indicator_width: Self::STATUS_INDICATOR_WIDTH,
+            status_indicator_height: Self::STATUS_INDICATOR_HEIGHT,
+            status_line_height: Self::STATUS_LINE_HEIGHT,
+            settings_marker_width: Self::SETTINGS_MARKER_WIDTH,
+            settings_marker_height: Self::SETTINGS_MARKER_HEIGHT,
+            settings_navigation_marker_height: Self::SETTINGS_NAVIGATION_MARKER_HEIGHT,
+            settings_description_gap: Self::SETTINGS_DESCRIPTION_GAP,
+            settings_quick_action_min_width: Self::SETTINGS_QUICK_ACTION_MIN_WIDTH,
+            settings_toggle_thumb_size: Self::SETTINGS_TOGGLE_THUMB_SIZE,
+            history_selection_height: Self::HISTORY_SELECTION_HEIGHT,
         }
     }
 }
@@ -428,6 +458,16 @@ mod tests {
         assert_eq!(metrics.settings_label_min_width, 160.0);
         assert_eq!(metrics.settings_label_max_width, 220.0);
         assert_eq!(metrics.settings_control_column_min_width, 160.0);
+        assert_eq!(metrics.status_indicator_width, 3.0);
+        assert_eq!(metrics.status_indicator_height, 20.0);
+        assert_eq!(metrics.status_line_height, 18.0);
+        assert_eq!(metrics.settings_marker_width, 3.0);
+        assert_eq!(metrics.settings_marker_height, 20.0);
+        assert_eq!(metrics.settings_navigation_marker_height, 22.0);
+        assert_eq!(metrics.settings_description_gap, 2.0);
+        assert_eq!(metrics.settings_quick_action_min_width, 140.0);
+        assert_eq!(metrics.settings_toggle_thumb_size, 14.0);
+        assert_eq!(metrics.history_selection_height, 34.0);
     }
 
     #[test]

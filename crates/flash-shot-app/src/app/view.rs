@@ -311,8 +311,8 @@ impl gpui::Render for FlashShotApp {
                     .text_color(colors.text_muted)
                     .child(
                         div()
-                            .w(px(3.0))
-                            .h(px(20.0))
+                            .w(px(metrics.status_indicator_width))
+                            .h(px(metrics.status_indicator_height))
                             .rounded_full()
                             .bg(status_indicator_color(&self.status, is_idle, colors)),
                     )
@@ -323,7 +323,7 @@ impl gpui::Render for FlashShotApp {
                             .flex_1()
                             .min_w(px(0.0))
                             .whitespace_normal()
-                            .line_height(px(18.0))
+                            .line_height(px(metrics.status_line_height))
                             .child(self.status.clone()),
                     ),
             )
@@ -2370,8 +2370,8 @@ fn settings_navigation_item(
         })
         .child(
             div()
-                .w(px(3.0))
-                .h(px(22.0))
+                .w(px(metrics.settings_marker_width))
+                .h(px(metrics.settings_navigation_marker_height))
                 .when(compact, |bar| bar.w(px(0.0)))
                 .rounded_full()
                 .bg(if active {
@@ -2403,6 +2403,7 @@ fn settings_page_intro(
     colors: crate::theme::ThemeColors,
     locale: Locale,
 ) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
     let (title, description) = settings_page_copy_for_locale(section, locale);
     div()
         .pb_4()
@@ -2418,8 +2419,8 @@ fn settings_page_intro(
                 .gap_2()
                 .child(
                     div()
-                        .w(px(3.0))
-                        .h(px(20.0))
+                        .w(px(metrics.settings_marker_width))
+                        .h(px(metrics.settings_marker_height))
                         .rounded_full()
                         .bg(colors.accent),
                 )
@@ -2529,7 +2530,7 @@ fn settings_row_with_description(
                 .max_w(px(metrics.settings_label_max_width))
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
+                .gap(px(metrics.settings_description_gap))
                 .child(
                     div()
                         .text_sm()
@@ -2654,7 +2655,11 @@ fn quick_action_button(
         .id(id)
         .h(px(metrics.toolbar_height))
         .when(primary, |button| button.w_full())
-        .when(!primary, |button| button.flex_1().min_w(px(140.0)))
+        .when(!primary, |button| {
+            button
+                .flex_1()
+                .min_w(px(metrics.settings_quick_action_min_width))
+        })
         .px_3()
         .flex()
         .items_center()
@@ -2743,7 +2748,12 @@ fn settings_toggle(
                 .active(|style| style.bg(colors.accent_pressed))
                 .on_click(on_click)
         })
-        .child(div().size(px(14.0)).rounded_full().bg(colors.text))
+        .child(
+            div()
+                .size(px(metrics.settings_toggle_thumb_size))
+                .rounded_full()
+                .bg(colors.text),
+        )
 }
 
 fn settings_segment_button(
@@ -2780,9 +2790,10 @@ fn history_selection_button(
     enabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    let metrics = ThemeMetrics::default();
     div()
         .id(id)
-        .h(px(34.0))
+        .h(px(metrics.history_selection_height))
         .px_3()
         .flex()
         .items_center()
