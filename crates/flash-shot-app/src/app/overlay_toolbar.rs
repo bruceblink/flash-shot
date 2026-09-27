@@ -51,6 +51,18 @@ pub(crate) enum WorkspaceIcon {
     Cancel,
 }
 
+/// Names the small line icons used by the settings navigation rail and compact section picker.
+///
+/// These icons are kept separate from screenshot-workspace actions so a settings change cannot
+/// silently alter the toolbar's semantic catalog or its acceptance order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SettingsIcon {
+    Capture,
+    Library,
+    Record,
+    App,
+}
+
 /// Identifies the result actions that make up the compact screenshot toolbar.
 ///
 /// The order is part of the screenshot workspace contract: Pin, Save, More, Cancel, Copy.
@@ -389,6 +401,21 @@ fn workspace_icon_element(icon: WorkspaceIcon, color: Hsla) -> impl IntoElement 
     .flex_none()
 }
 
+/// Creates a fixed-size decorative canvas for one settings navigation icon. The surrounding
+/// navigation item keeps the visible label and keyboard semantics, so the canvas is visual only.
+pub(crate) fn settings_icon_element(icon: SettingsIcon, color: Hsla) -> impl IntoElement {
+    let size = ThemeMetrics::default().workspace_icon_size;
+    canvas(
+        move |_, _, _| (icon, color),
+        move |bounds, (icon, color), window, _| {
+            paint_settings_icon(window, bounds, icon, color);
+        },
+    )
+    .w(px(size))
+    .h(px(size))
+    .flex_none()
+}
+
 /// Paints a compact line icon using one coordinate system and one stroke width.
 fn paint_workspace_icon(
     window: &mut Window,
@@ -642,6 +669,82 @@ fn paint_workspace_icon(
     }
 }
 
+/// Paints the four settings icons on the same coordinate grid as the screenshot toolbar icons.
+fn paint_settings_icon(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    icon: SettingsIcon,
+    color: Hsla,
+) {
+    let left = f32::from(bounds.origin.x) + ICON_INSET;
+    let top = f32::from(bounds.origin.y) + ICON_INSET;
+    let right = f32::from(bounds.origin.x + bounds.size.width) - ICON_INSET;
+    let bottom = f32::from(bounds.origin.y + bounds.size.height) - ICON_INSET;
+    let center_x = (left + right) / 2.0;
+    let center_y = (top + bottom) / 2.0;
+
+    match icon {
+        SettingsIcon::Capture => {
+            draw_icon_stroke(
+                window,
+                color,
+                &[(left, top + 4.0), (left, top), (left + 4.0, top)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(right - 4.0, top), (right, top), (right, top + 4.0)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(left, bottom - 4.0), (left, bottom), (left + 4.0, bottom)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (right - 4.0, bottom),
+                    (right, bottom),
+                    (right, bottom - 4.0),
+                ],
+            );
+            draw_icon_dot(window, color, center_x, center_y, 1.4);
+        }
+        SettingsIcon::Library => {
+            draw_icon_closed_stroke(
+                window,
+                color,
+                &[
+                    (left + 2.0, top + 3.0),
+                    (right - 2.0, top + 3.0),
+                    (right - 2.0, bottom - 1.0),
+                    (left + 2.0, bottom - 1.0),
+                ],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[(left + 4.0, top + 1.0), (right, top + 1.0)],
+            );
+        }
+        SettingsIcon::Record => {
+            draw_icon_circle_stroke(window, color, center_x, center_y, 5.5);
+            draw_icon_dot(window, color, center_x, center_y, 2.3);
+        }
+        SettingsIcon::App => {
+            for (y, knob_x) in [
+                (top + 2.0, left + 4.0),
+                (center_y, right - 4.0),
+                (bottom - 2.0, left + 7.0),
+            ] {
+                draw_icon_stroke(window, color, &[(left + 1.0, y), (right - 1.0, y)]);
+                draw_icon_dot(window, color, knob_x, y, 1.5);
+            }
+        }
+    }
+}
+
 fn draw_icon_stroke(window: &mut Window, color: Hsla, points: &[(f32, f32)]) {
     if points.len() < 2 {
         return;
@@ -687,6 +790,25 @@ fn draw_icon_dot(window: &mut Window, color: Hsla, center_x: f32, center_y: f32,
     if let Ok(path) = path.build() {
         window.paint_path(path, color);
     }
+}
+
+fn draw_icon_circle_stroke(
+    window: &mut Window,
+    color: Hsla,
+    center_x: f32,
+    center_y: f32,
+    radius: f32,
+) {
+    let points = (0..=16)
+        .map(|index| {
+            let angle = std::f32::consts::TAU * index as f32 / 16.0;
+            (
+                center_x + radius * angle.cos(),
+                center_y + radius * angle.sin(),
+            )
+        })
+        .collect::<Vec<_>>();
+    draw_icon_stroke(window, color, &points);
 }
 
 /// Builds a compact color swatch with a stable hit area and an accessible name.

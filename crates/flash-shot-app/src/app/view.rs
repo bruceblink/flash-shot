@@ -7,6 +7,7 @@ use gpui::{
     canvas, div, img, prelude::*, px,
 };
 
+use super::overlay_toolbar::{SettingsIcon, settings_icon_element};
 use super::{
     FlashShotApp, HistoryClearScope, HistoryFilter, SettingsSection, history_entry_matches,
 };
@@ -2260,6 +2261,7 @@ fn settings_navigation(
 struct SettingsNavigationItem {
     id: &'static str,
     label: &'static str,
+    icon: SettingsIcon,
     section: SettingsSection,
 }
 
@@ -2269,21 +2271,25 @@ fn settings_navigation_items_for_locale(locale: Locale) -> [SettingsNavigationIt
         SettingsNavigationItem {
             id: "settings-nav-capture",
             label: locale.text(UiText::Capture),
+            icon: SettingsIcon::Capture,
             section: SettingsSection::Capture,
         },
         SettingsNavigationItem {
             id: "settings-nav-files",
             label: locale.text(UiText::Library),
+            icon: SettingsIcon::Library,
             section: SettingsSection::Files,
         },
         SettingsNavigationItem {
             id: "settings-nav-recording",
             label: locale.text(UiText::Record),
+            icon: SettingsIcon::Record,
             section: SettingsSection::Recording,
         },
         SettingsNavigationItem {
             id: "settings-nav-system",
             label: locale.text(UiText::App),
+            icon: SettingsIcon::App,
             section: SettingsSection::System,
         },
     ]
@@ -2312,6 +2318,7 @@ fn settings_navigation_item(
                 .px_2()
                 .items_center()
                 .justify_center()
+                .gap(px(metrics.space_1))
         })
         .when(!compact, |item| {
             item.w_full()
@@ -2319,6 +2326,7 @@ fn settings_navigation_item(
                 .px_3()
                 .py_1()
                 .items_center()
+                .gap(px(metrics.space_2))
         })
         .rounded_sm()
         .border_1()
@@ -2368,15 +2376,30 @@ fn settings_navigation_item(
                 this.select_settings_section(item.section, cx)
             })
         })
-        .child(div().w(px(3.0)).h(px(22.0)).rounded_full().bg(if active {
-            colors.accent
-        } else {
-            colors.surface
-        }))
+        .child(
+            div()
+                .w(px(3.0))
+                .h(px(22.0))
+                .when(compact, |bar| bar.w(px(0.0)))
+                .rounded_full()
+                .bg(if active {
+                    colors.accent
+                } else {
+                    colors.surface
+                }),
+        )
+        .child(settings_icon_element(
+            item.icon,
+            if active {
+                colors.accent
+            } else {
+                colors.text_muted
+            },
+        ))
         .child(
             div()
                 .min_w(px(0.0))
-                .when(compact, |label| label.text_ellipsis().flex_1())
+                .when(compact, |label| label.text_xs().text_ellipsis().flex_1())
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(item.label),
         )
@@ -2852,7 +2875,7 @@ fn settings_delay_button(
 #[cfg(test)]
 mod tests {
     use super::{
-        RecordingViewState, adjacent_settings_section, capture_command_label,
+        RecordingViewState, SettingsIcon, adjacent_settings_section, capture_command_label,
         capture_shortcut_summary, history_clear_confirmation_label, history_entry_label,
         history_entry_matches, history_result_summary, history_retention_label,
         history_thumbnail_status, history_visibility_label, ocr_support_check_label,
@@ -2972,6 +2995,15 @@ mod tests {
                 "settings-nav-files",
                 "settings-nav-recording",
                 "settings-nav-system",
+            ]
+        );
+        assert_eq!(
+            items.map(|item| item.icon),
+            [
+                SettingsIcon::Capture,
+                SettingsIcon::Library,
+                SettingsIcon::Record,
+                SettingsIcon::App,
             ]
         );
     }
