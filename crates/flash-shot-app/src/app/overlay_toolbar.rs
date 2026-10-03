@@ -7,7 +7,11 @@ use gpui::{
 };
 use gpui::{Div, Hsla, Role};
 
-use crate::theme::{ThemeColors, ThemeMetrics};
+use crate::{
+    domain::annotation::AnnotationTool,
+    i18n::UiText,
+    theme::{ThemeColors, ThemeMetrics},
+};
 
 /// Names the visual emphasis used by a workspace control.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,6 +66,258 @@ pub(crate) enum WorkspaceIcon {
     Number,
     Watermark,
 }
+
+/// Names the annotation tool groups that can open a workspace popover.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AnnotationToolGroup {
+    Text,
+    Shape,
+    Line,
+    Obscure,
+}
+
+impl AnnotationToolGroup {
+    /// Returns the stable focus slot used by one overlay.
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::Text => 0,
+            Self::Shape => 1,
+            Self::Line => 2,
+            Self::Obscure => 3,
+        }
+    }
+
+    /// Returns the stable semantic key used by the popover element ID.
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Shape => "shape",
+            Self::Line => "line",
+            Self::Obscure => "obscure",
+        }
+    }
+
+    /// Lists groups in the order used by overlay focus storage.
+    pub(crate) const fn catalog() -> &'static [Self; 4] {
+        &[Self::Text, Self::Shape, Self::Line, Self::Obscure]
+    }
+}
+
+/// Describes one directly visible annotation action and its related-tool membership.
+///
+/// This catalog owns the drawing row order, stable element key, icon, accessible label key, and
+/// group-local child order. The overlay renders it while the native acceptance runner uses its
+/// index to target the same production hitbox.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WorkspaceAnnotationToolSpec {
+    tool: AnnotationTool,
+    index: usize,
+    id: &'static str,
+    #[cfg(feature = "dev-tools")]
+    acceptance_step: &'static str,
+    icon: WorkspaceIcon,
+    label: UiText,
+    group: Option<AnnotationToolGroup>,
+    group_order: Option<u8>,
+}
+
+impl WorkspaceAnnotationToolSpec {
+    /// Returns the domain tool selected by this workspace action.
+    pub(crate) const fn tool(self) -> AnnotationTool {
+        self.tool
+    }
+
+    /// Returns the stable action key used by the production element ID and acceptance report.
+    pub(crate) const fn id(self) -> &'static str {
+        self.id
+    }
+
+    /// Returns the stable native-runner step name for this action.
+    #[cfg(feature = "dev-tools")]
+    pub(crate) const fn acceptance_step(self) -> &'static str {
+        self.acceptance_step
+    }
+
+    /// Returns the icon rendered for this action.
+    pub(crate) const fn icon(self) -> WorkspaceIcon {
+        self.icon
+    }
+
+    /// Returns the localized label key used by the button and its related popover.
+    pub(crate) const fn label(self) -> UiText {
+        self.label
+    }
+
+    /// Returns the related-tool group, if repeat activation can open a popover.
+    pub(crate) const fn group(self) -> Option<AnnotationToolGroup> {
+        self.group
+    }
+
+    /// Returns the index of this direct action in the annotation toolbar.
+    #[cfg(any(test, feature = "dev-tools"))]
+    pub(crate) const fn index(self) -> usize {
+        self.index
+    }
+
+    /// Returns the stable direct-action order used by the screenshot workspace.
+    pub(crate) const fn catalog() -> &'static [Self; 11] {
+        &WORKSPACE_ANNOTATION_TOOLS
+    }
+
+    /// Looks up the complete visual descriptor for a domain annotation tool.
+    pub(crate) fn for_tool(tool: AnnotationTool) -> Self {
+        Self::catalog()
+            .iter()
+            .copied()
+            .find(|spec| spec.tool == tool)
+            .expect("every domain annotation tool must have a workspace catalog entry")
+    }
+
+    /// Returns a group's child tools in their stable local keyboard and popover order.
+    pub(crate) fn group_tools(
+        group: AnnotationToolGroup,
+    ) -> [Option<AnnotationTool>; MAX_GROUP_TOOL_COUNT] {
+        let mut tools = [None; MAX_GROUP_TOOL_COUNT];
+        for spec in Self::catalog() {
+            if spec.group == Some(group)
+                && let Some(index) = spec.group_order
+            {
+                tools[usize::from(index)] = Some(spec.tool);
+            }
+        }
+        tools
+    }
+
+    /// Returns the number of children that are actually present in a group.
+    pub(crate) fn group_tool_count(group: AnnotationToolGroup) -> usize {
+        Self::group_tools(group).iter().flatten().count()
+    }
+}
+
+pub(crate) const MAX_GROUP_TOOL_COUNT: usize = 3;
+const WORKSPACE_ANNOTATION_TOOLS: [WorkspaceAnnotationToolSpec; 11] = [
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Rectangle,
+        index: 0,
+        id: "rectangle",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_rectangle_selected",
+        icon: WorkspaceIcon::Shape,
+        label: UiText::OverlayRectangle,
+        group: Some(AnnotationToolGroup::Shape),
+        group_order: Some(0),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Ellipse,
+        index: 1,
+        id: "ellipse",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_ellipse_selected",
+        icon: WorkspaceIcon::Ellipse,
+        label: UiText::OverlayEllipse,
+        group: Some(AnnotationToolGroup::Shape),
+        group_order: Some(1),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Arrow,
+        index: 2,
+        id: "arrow",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_arrow_selected",
+        icon: WorkspaceIcon::Arrow,
+        label: UiText::OverlayArrow,
+        group: Some(AnnotationToolGroup::Line),
+        group_order: Some(1),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Line,
+        index: 3,
+        id: "line",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_line_selected",
+        icon: WorkspaceIcon::Line,
+        label: UiText::OverlayLine,
+        group: Some(AnnotationToolGroup::Line),
+        group_order: Some(0),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Freehand,
+        index: 4,
+        id: "freehand",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_freehand_selected",
+        icon: WorkspaceIcon::Freehand,
+        label: UiText::OverlayFreehand,
+        group: Some(AnnotationToolGroup::Line),
+        group_order: Some(2),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Highlight,
+        index: 5,
+        id: "highlight",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_highlight_selected",
+        icon: WorkspaceIcon::Highlight,
+        label: UiText::OverlayHighlight,
+        group: None,
+        group_order: None,
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Text,
+        index: 6,
+        id: "text",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_text_selected",
+        icon: WorkspaceIcon::Text,
+        label: UiText::OverlayText,
+        group: Some(AnnotationToolGroup::Text),
+        group_order: Some(0),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Number,
+        index: 7,
+        id: "number",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_number_selected",
+        icon: WorkspaceIcon::Number,
+        label: UiText::OverlayNumber,
+        group: Some(AnnotationToolGroup::Text),
+        group_order: Some(2),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Blur,
+        index: 8,
+        id: "blur",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_blur_selected",
+        icon: WorkspaceIcon::Obscure,
+        label: UiText::OverlayBlur,
+        group: Some(AnnotationToolGroup::Obscure),
+        group_order: Some(0),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Mosaic,
+        index: 9,
+        id: "mosaic",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_mosaic_selected",
+        icon: WorkspaceIcon::Mosaic,
+        label: UiText::OverlayMosaic,
+        group: Some(AnnotationToolGroup::Obscure),
+        group_order: Some(1),
+    },
+    WorkspaceAnnotationToolSpec {
+        tool: AnnotationTool::Watermark,
+        index: 10,
+        id: "watermark",
+        #[cfg(feature = "dev-tools")]
+        acceptance_step: "annotation_toolbar_watermark_selected",
+        icon: WorkspaceIcon::Watermark,
+        label: UiText::OverlayWatermark,
+        group: Some(AnnotationToolGroup::Text),
+        group_order: Some(1),
+    },
+];
 
 /// Names the small line icons used by the settings navigation rail and compact section picker.
 ///
@@ -448,11 +704,7 @@ pub(crate) mod icon {
     use super::WorkspaceIcon;
 
     pub(crate) const MOVE: WorkspaceIcon = WorkspaceIcon::Move;
-    pub(crate) const TEXT: WorkspaceIcon = WorkspaceIcon::Text;
-    pub(crate) const SHAPE: WorkspaceIcon = WorkspaceIcon::Shape;
-    pub(crate) const LINE: WorkspaceIcon = WorkspaceIcon::Line;
     pub(crate) const MARK: WorkspaceIcon = WorkspaceIcon::Highlight;
-    pub(crate) const OBSCURE: WorkspaceIcon = WorkspaceIcon::Obscure;
     pub(crate) const UNDO: WorkspaceIcon = WorkspaceIcon::Undo;
     pub(crate) const REDO: WorkspaceIcon = WorkspaceIcon::Redo;
 }
@@ -1428,10 +1680,14 @@ fn button_active_colors(colors: ThemeColors, tone: WorkspaceButtonTone) -> (Hsla
 #[cfg(test)]
 mod tests {
     use super::{
-        WorkspaceButtonTone, WorkspaceIcon, WorkspaceInlineAction, WorkspaceMoreAction,
-        WorkspaceResultAction, button_colors,
+        AnnotationToolGroup, WorkspaceAnnotationToolSpec, WorkspaceButtonTone, WorkspaceIcon,
+        WorkspaceInlineAction, WorkspaceMoreAction, WorkspaceResultAction, button_colors,
     };
-    use crate::theme::{ThemeColors, ThemeMetrics, ThemeMode};
+    use crate::{
+        domain::annotation::AnnotationTool,
+        i18n::UiText,
+        theme::{ThemeColors, ThemeMetrics, ThemeMode},
+    };
 
     #[test]
     fn resting_neutral_buttons_blend_into_the_toolbar_surface() {
@@ -1566,6 +1822,153 @@ mod tests {
             WorkspaceInlineAction::total_width(ThemeMetrics::WORKSPACE_TOOLBAR_GAP),
             6.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
                 + 5.0 * ThemeMetrics::WORKSPACE_TOOLBAR_GAP
+        );
+    }
+
+    #[test]
+    fn annotation_tool_catalog_owns_order_icons_ids_labels_and_groups() {
+        let tools = WorkspaceAnnotationToolSpec::catalog();
+
+        assert_eq!(
+            tools.map(|spec| spec.tool()),
+            [
+                AnnotationTool::Rectangle,
+                AnnotationTool::Ellipse,
+                AnnotationTool::Arrow,
+                AnnotationTool::Line,
+                AnnotationTool::Freehand,
+                AnnotationTool::Highlight,
+                AnnotationTool::Text,
+                AnnotationTool::Number,
+                AnnotationTool::Blur,
+                AnnotationTool::Mosaic,
+                AnnotationTool::Watermark,
+            ]
+        );
+        assert_eq!(
+            tools.map(|spec| spec.id()),
+            [
+                "rectangle",
+                "ellipse",
+                "arrow",
+                "line",
+                "freehand",
+                "highlight",
+                "text",
+                "number",
+                "blur",
+                "mosaic",
+                "watermark",
+            ]
+        );
+        assert_eq!(
+            tools.map(|spec| spec.icon().stable_id()),
+            [
+                "shape",
+                "ellipse",
+                "arrow",
+                "line",
+                "freehand",
+                "highlight",
+                "text",
+                "number",
+                "obscure",
+                "mosaic",
+                "watermark",
+            ]
+        );
+        assert_eq!(
+            tools.map(|spec| spec.index()),
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        );
+        assert_eq!(
+            tools.map(|spec| spec.label()),
+            [
+                UiText::OverlayRectangle,
+                UiText::OverlayEllipse,
+                UiText::OverlayArrow,
+                UiText::OverlayLine,
+                UiText::OverlayFreehand,
+                UiText::OverlayHighlight,
+                UiText::OverlayText,
+                UiText::OverlayNumber,
+                UiText::OverlayBlur,
+                UiText::OverlayMosaic,
+                UiText::OverlayWatermark,
+            ]
+        );
+        for (index, spec) in tools.iter().enumerate() {
+            assert_eq!(WorkspaceAnnotationToolSpec::for_tool(spec.tool()), *spec);
+            assert_eq!(spec.index(), index);
+        }
+    }
+
+    #[cfg(feature = "dev-tools")]
+    #[test]
+    fn annotation_tool_catalog_keeps_native_acceptance_steps_stable() {
+        assert_eq!(
+            WorkspaceAnnotationToolSpec::catalog().map(|spec| spec.acceptance_step()),
+            [
+                "annotation_toolbar_rectangle_selected",
+                "annotation_toolbar_ellipse_selected",
+                "annotation_toolbar_arrow_selected",
+                "annotation_toolbar_line_selected",
+                "annotation_toolbar_freehand_selected",
+                "annotation_toolbar_highlight_selected",
+                "annotation_toolbar_text_selected",
+                "annotation_toolbar_number_selected",
+                "annotation_toolbar_blur_selected",
+                "annotation_toolbar_mosaic_selected",
+                "annotation_toolbar_watermark_selected",
+            ]
+        );
+    }
+
+    #[test]
+    fn annotation_tool_group_catalog_matches_popover_keyboard_order() {
+        assert_eq!(
+            AnnotationToolGroup::catalog().map(AnnotationToolGroup::index),
+            [0, 1, 2, 3]
+        );
+        assert_eq!(
+            AnnotationToolGroup::catalog().map(AnnotationToolGroup::id),
+            ["text", "shape", "line", "obscure"]
+        );
+        assert_eq!(
+            WorkspaceAnnotationToolSpec::group_tools(AnnotationToolGroup::Text),
+            [
+                Some(AnnotationTool::Text),
+                Some(AnnotationTool::Watermark),
+                Some(AnnotationTool::Number),
+            ]
+        );
+        assert_eq!(
+            WorkspaceAnnotationToolSpec::group_tools(AnnotationToolGroup::Shape),
+            [
+                Some(AnnotationTool::Rectangle),
+                Some(AnnotationTool::Ellipse),
+                None,
+            ]
+        );
+        assert_eq!(
+            WorkspaceAnnotationToolSpec::group_tools(AnnotationToolGroup::Line),
+            [
+                Some(AnnotationTool::Line),
+                Some(AnnotationTool::Arrow),
+                Some(AnnotationTool::Freehand),
+            ]
+        );
+        assert_eq!(
+            WorkspaceAnnotationToolSpec::group_tools(AnnotationToolGroup::Obscure),
+            [
+                Some(AnnotationTool::Blur),
+                Some(AnnotationTool::Mosaic),
+                None,
+            ]
+        );
+        assert_eq!(
+            AnnotationToolGroup::catalog().map(WorkspaceAnnotationToolSpec::group_tool_count),
+            [3, 2, 3, 2]
         );
     }
 

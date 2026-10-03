@@ -3,6 +3,7 @@
 mod history_search;
 mod overlay;
 pub(crate) mod overlay_toolbar;
+pub(crate) use overlay_toolbar::AnnotationToolGroup;
 mod pin_acceptance;
 mod pinned;
 mod render_image;
@@ -94,15 +95,6 @@ pub(crate) fn open_pin_lifecycle_acceptance(
         acceptance,
         cx,
     )
-}
-
-/// Names the compact annotation tool groups that can own one transient workspace popover.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AnnotationToolGroup {
-    Text,
-    Shape,
-    Line,
-    Obscure,
 }
 
 pub struct FlashShotApp {

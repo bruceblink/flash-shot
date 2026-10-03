@@ -13,7 +13,10 @@ use flash_shot::{
     OverlayInteractionAcceptanceCommand, OverlayInteractionAcceptanceOptions,
     OverlayInteractionAnnotationState, OverlayInteractionCaptureContent,
     OverlayInteractionCaptureState, OverlayInteractionRecordingState,
-    app::overlay_toolbar::{WorkspaceInlineAction, WorkspaceResultAction},
+    app::overlay_toolbar::{
+        WorkspaceAnnotationToolSpec, WorkspaceInlineAction, WorkspaceResultAction,
+    },
+    domain::annotation::AnnotationTool,
     domain::geometry::{PhysicalPoint, PhysicalRect},
     domain::selection::{ResizeHandle, SelectionDrag},
     history::ScreenshotHistory,
@@ -742,7 +745,7 @@ struct ToolGroupInteractionPlan {
     more: PhysicalPoint,
     text_trigger: PhysicalPoint,
     shape_trigger: PhysicalPoint,
-    direct_tool_centers: [PhysicalPoint; 11],
+    direct_tool_centers: [PhysicalPoint; WorkspaceAnnotationToolSpec::catalog().len()],
     shape_rectangle: PhysicalPoint,
     outside: PhysicalPoint,
 }
@@ -1047,7 +1050,7 @@ fn tool_group_interaction_plan_for_capture_selection(
     const TOOLBAR_PADDING: f32 = ThemeMetrics::WORKSPACE_ANNOTATION_PADDING;
     const TOOL_GAP: f32 = ThemeMetrics::WORKSPACE_TOOL_GAP;
     const TOOL_PALETTE_GAP: f32 = ThemeMetrics::SPACE_1;
-    const TOOL_PALETTE_ITEMS: usize = 11;
+    const TOOL_PALETTE_ITEMS: usize = WorkspaceAnnotationToolSpec::catalog().len();
     const TOOL_ICON_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
     const ACTION_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
     const ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
@@ -1255,8 +1258,10 @@ fn tool_group_interaction_plan_for_capture_selection(
             result_center(RESULT_ACTION_MORE_INDEX),
             action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
-        text_trigger: direct_tool_centers[6],
-        shape_trigger: direct_tool_centers[0],
+        text_trigger: direct_tool_centers
+            [WorkspaceAnnotationToolSpec::for_tool(AnnotationTool::Text).index()],
+        shape_trigger: direct_tool_centers
+            [WorkspaceAnnotationToolSpec::for_tool(AnnotationTool::Rectangle).index()],
         direct_tool_centers,
         shape_rectangle: screen_point((
             left + PALETTE_BORDER + POPUP_PADDING + popup_item_width / 2.0,
@@ -7373,53 +7378,19 @@ fn execute_tool_group_interactions(
         Some(&rectangle_selected),
     )?;
 
-    let direct_tool_steps = [
-        (
-            1,
-            UiText::OverlayEllipse,
-            "annotation_toolbar_ellipse_selected",
-        ),
-        (2, UiText::OverlayArrow, "annotation_toolbar_arrow_selected"),
-        (3, UiText::OverlayLine, "annotation_toolbar_line_selected"),
-        (
-            4,
-            UiText::OverlayFreehand,
-            "annotation_toolbar_freehand_selected",
-        ),
-        (
-            5,
-            UiText::OverlayHighlight,
-            "annotation_toolbar_highlight_selected",
-        ),
-        (6, UiText::OverlayText, "annotation_toolbar_text_selected"),
-        (
-            7,
-            UiText::OverlayNumber,
-            "annotation_toolbar_number_selected",
-        ),
-        (8, UiText::OverlayBlur, "annotation_toolbar_blur_selected"),
-        (
-            9,
-            UiText::OverlayMosaic,
-            "annotation_toolbar_mosaic_selected",
-        ),
-        (
-            10,
-            UiText::OverlayWatermark,
-            "annotation_toolbar_watermark_selected",
-        ),
-        (
-            0,
-            UiText::OverlayRectangle,
-            "annotation_toolbar_rectangle_selected",
-        ),
-    ];
-    for (index, tool_text, step) in direct_tool_steps {
+    let direct_tool_steps = WorkspaceAnnotationToolSpec::catalog()
+        .iter()
+        .copied()
+        .filter(|spec| spec.tool() != AnnotationTool::Rectangle)
+        .chain(std::iter::once(WorkspaceAnnotationToolSpec::for_tool(
+            AnnotationTool::Rectangle,
+        )));
+    for tool_spec in direct_tool_steps {
         let foreground = inject_mouse_click(
             overlay.handle,
-            expanded_group_plan.direct_tool_centers[index],
+            expanded_group_plan.direct_tool_centers[tool_spec.index()],
         )?;
-        let tool_label = context.locale.text(tool_text);
+        let tool_label = context.locale.text(tool_spec.label());
         let expected_status = context
             .locale
             .format_template(UiText::AnnotationToolSelected, &[("tool", tool_label)]);
@@ -7429,7 +7400,13 @@ fn execute_tool_group_interactions(
                 && !state.annotation_tool_group_visible
                 && state.status == expected_status
         })?;
-        record_step(report, &context.report_path, step, foreground, None)?;
+        record_step(
+            report,
+            &context.report_path,
+            tool_spec.acceptance_step(),
+            foreground,
+            None,
+        )?;
     }
     thread::sleep(context.settle_delay);
     let toolbar_foreground = guard_foreground(overlay.handle)?;

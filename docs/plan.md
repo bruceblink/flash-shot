@@ -82,7 +82,7 @@ Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-
 | --- | --- | --- | --- |
 | G0 | 整合并冻结本主线计划 | 本次完成 | 只有 `docs/plan.md` 维护路线；旧完成段落不再作为待办 |
 | G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | `gpui-kit 0.6.6` 的组件、图标、tooltip、焦点、popover 和 420x420 Release 探针可编译；生产应用仍保留当前 GPUI 0.2.2，待 W7 后再评估全量迁移 |
-| W7 | 截图 UI 与工具栏完整复刻验收 | 已完成（2026-10-03；单屏 100%，D1 暂缓） | 目标样式的单行工具栏、图标目录、动作映射和真实交互证据通过；高 DPI/多屏按 D1 暂缓 |
+| W7 | 截图 UI 与工具栏完整复刻验收 | 已完成（2026-10-03；W7.1-W7.8；单屏 100%，D1 暂缓） | 目标样式的单行工具栏、图标与动作目录、真实交互证据通过；高 DPI/多屏按 D1 暂缓 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 已完成（U5.4 综合设置页矩阵，2026-09-27；单屏 100%） | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠；高 DPI/多屏按 D1 暂缓 |
 | U1 | 动态文案国际化收尾 | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试 |
 | U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
@@ -93,7 +93,7 @@ Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-执行顺序固定为：**G0 → G1 → W7.1-W7.6 → U5 → U1-U4 收尾 → M1 → R1（可选）→ D1（有硬件时）**。
+执行顺序固定为：**G0 → G1 → W7.1-W7.8 → U5 → U1-U4 收尾 → M1 → R1（可选）→ D1（有硬件时）**。
 P3 不插入 `0.2.0`；任何切片都必须先通过其自身验收，再进入下一切片。
 
 ## 4. 未完成切片
@@ -147,6 +147,7 @@ G1 已通过隔离兼容性范围；W7 可以继续使用当前 GPUI 的 ThemeMe
 4. `W7.4`：以同一 Release 构建执行 Capture → Copy/Save/Pin/Cancel → More/工具组 → Escape 清理，并固化截图和 JSON 报告。
 5. `W7.5`：以同一源码 Release 构建完成双主题、双语和三种窗口尺寸的 84 例视觉矩阵，复核代表性截图并固化矩阵报告。
 6. `W7.6`：依据 Snow Shot 目标截图，将默认工作区收敛为单一连续的图标工具栏；绘图工具、撤销/重做、结果动作和低频动作使用同一 32/36px 命中区，样式编辑不再占用默认第二行，所有已有 handler 保持可达。
+7. `W7.7-W7.8`：将 More 动作和标注工具元数据分别收敛到共享目录，让 GPUI 渲染与 Release 验收 runner 复用同一动作顺序、稳定 ID、图标和工具组定义。
 
 **W7.1 当前结果（2026-09-27）**：现有 GPUI 工作区控件继续作为生产实现，`WorkspaceIcon` 已冻结 13 个图标的稳定语义 ID 和审查顺序，
 覆盖 Move、Text、Shape、Line、Highlight、Obscure、Undo、Redo、Pin、Copy、Save、More、Cancel；确定性测试确认目录完整且没有重复 ID。
@@ -193,6 +194,20 @@ Save 与 Pin 均 `exact_match=true`，Copy 的隔离观察器结果与源帧逐�
 **W7.7 当前结果（2026-10-03）**：将 More 面板的 14 个动作收敛为 `WorkspaceMoreAction` 目录，统一稳定 ID、焦点索引、
 可选识别动作顺序和本地化宽度预算。主工具栏、More 面板和布局测量共同读取动作目录；保存、识别、录屏、复制颜色和重试 handler
 保持原有状态机与清理语义不变。确定性动作目录、overlay 布局和验收规划测试通过；Release 工具组回归继续作为同一工作区验收证据。
+
+**W7.8 当前结果（2026-10-03）**：以 Snow Apps `origin/main` 提交
+`168a259beca1825c2bf4ec03114758fb565fc1a5` 为参考，复核 `screenshottoolbarmainpanel.cpp`、
+`screenshottoolbarlayoutmodel.h` 和选区工具栏组件。将 11 个直显标注动作的顺序、稳定 ID、图标、标签、工具组子项顺序和原生验收步骤名
+集中到 `WorkspaceAnnotationToolSpec`；GPUI 渲染、工具组焦点/尺寸计算和 Release runner 均读取同一目录。验收 runner 从目录生成全部测试动作，
+仅将 Rectangle 放到最后，避免重复激活 Shape 组触发器；业务 handler 和截图工作区布局未改变。
+
+当前源码 Release `overlay-interaction-acceptance --allow-input --capture-scenario tool-group` 在单屏 `2560x1440`、DPI 96、
+`scale_factor=1.0` 下通过 More、Text/Shape 工具组、键盘选择和 11 个直显标注工具点击。
+报告 `target/overlay-interaction-acceptance-w7-annotation-catalog-20261003-final/session-1791007312112-5392/report.json`
+为 schema 32、`status=passed`，最终 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、
+`visible_process_windows=0`、`capture_preflight_ready=true`。截图 `02-tool-group-toolbar.png`、
+`03-tool-group-text-open.png` 和 `09-direct-annotation-toolbar.png` 已复核。Computer Use 在启动和刷新后均未返回 Flash Shot 进程或窗口；
+本次交互证据来自 Release runner 原生输入，不标记为 Computer Use 证据。
 
 **不做**：不新增标注能力，不改变选区像素、标注文档坐标、导出合成、快捷键、报告 schema 或失败恢复；不移植 Snow Shot 设置页和 Qt/Tauri/Web 架构。
 
