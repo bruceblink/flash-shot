@@ -89,7 +89,88 @@ pub(crate) enum WorkspaceResultAction {
     Copy,
 }
 
+/// Identifies the low-frequency actions promoted into the wide Snow-style toolbar rail.
+///
+/// The catalog owns the visible order, stable element IDs, and icon mapping. Renderers and
+/// acceptance geometry can therefore consume one action vocabulary when the toolbar changes shape.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkspaceInlineAction {
+    Scroll,
+    Qr,
+    Ocr,
+    Translate,
+    RecordArea,
+    RecordWindow,
+}
+
+impl WorkspaceInlineAction {
+    /// Returns the stable element ID used by the production toolbar.
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::Scroll => "overlay-manual-scroll-inline",
+            Self::Qr => "overlay-qr-inline",
+            Self::Ocr => "overlay-ocr-inline",
+            Self::Translate => "overlay-translate-inline",
+            Self::RecordArea => "overlay-record-area-inline",
+            Self::RecordWindow => "overlay-record-window-inline",
+        }
+    }
+
+    /// Returns the line icon associated with this inline action.
+    pub(crate) const fn icon(self) -> WorkspaceIcon {
+        match self {
+            Self::Scroll => WorkspaceIcon::Scroll,
+            Self::Qr => WorkspaceIcon::Qr,
+            Self::Ocr => WorkspaceIcon::Ocr,
+            Self::Translate => WorkspaceIcon::Translate,
+            Self::RecordArea | Self::RecordWindow => WorkspaceIcon::Record,
+        }
+    }
+
+    /// Returns the key used by the overlay to resolve localized tooltip text.
+    pub(crate) const fn tooltip_key(self) -> &'static str {
+        match self {
+            Self::Scroll => "scroll",
+            Self::Qr => "qr",
+            Self::Ocr => "ocr",
+            Self::Translate => "translate",
+            Self::RecordArea => "record-area",
+            Self::RecordWindow => "record-window",
+        }
+    }
+
+    /// Lists the visible order used by the wide screenshot workspace toolbar.
+    pub(crate) const fn catalog() -> &'static [Self; 6] {
+        &[
+            Self::Scroll,
+            Self::Qr,
+            Self::Ocr,
+            Self::Translate,
+            Self::RecordArea,
+            Self::RecordWindow,
+        ]
+    }
+
+    /// Measures the complete inline group, including the gaps between icon hit areas.
+    pub(crate) const fn total_width(gap: f32) -> f32 {
+        let count = Self::catalog().len() as f32;
+        count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + (count - 1.0) * gap
+    }
+}
+
 impl WorkspaceResultAction {
+    /// Returns the stable position used by the toolbar interaction plan.
+    #[cfg(feature = "dev-tools")]
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::Pin => 0,
+            Self::Save => 1,
+            Self::More => 2,
+            Self::Cancel => 3,
+            Self::Copy => 4,
+        }
+    }
+
     /// Returns the stable element ID used by the production toolbar.
     pub(crate) const fn id(self) -> &'static str {
         match self {
@@ -115,6 +196,12 @@ impl WorkspaceResultAction {
     /// Lists the compact toolbar order used by the screenshot workspace.
     pub(crate) const fn catalog() -> &'static [Self; 5] {
         &[Self::Pin, Self::Save, Self::More, Self::Cancel, Self::Copy]
+    }
+
+    /// Measures the complete result group, including the gaps between icon hit areas.
+    pub(crate) const fn total_width(gap: f32) -> f32 {
+        let count = Self::catalog().len() as f32;
+        count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + (count - 1.0) * gap
     }
 }
 
@@ -246,11 +333,6 @@ pub(crate) mod icon {
     pub(crate) const OBSCURE: WorkspaceIcon = WorkspaceIcon::Obscure;
     pub(crate) const UNDO: WorkspaceIcon = WorkspaceIcon::Undo;
     pub(crate) const REDO: WorkspaceIcon = WorkspaceIcon::Redo;
-    pub(crate) const SCROLL: WorkspaceIcon = WorkspaceIcon::Scroll;
-    pub(crate) const QR: WorkspaceIcon = WorkspaceIcon::Qr;
-    pub(crate) const OCR: WorkspaceIcon = WorkspaceIcon::Ocr;
-    pub(crate) const TRANSLATE: WorkspaceIcon = WorkspaceIcon::Translate;
-    pub(crate) const RECORD: WorkspaceIcon = WorkspaceIcon::Record;
 }
 
 const ICON_STROKE_WIDTH: f32 = 1.6;
@@ -1223,8 +1305,11 @@ fn button_active_colors(colors: ThemeColors, tone: WorkspaceButtonTone) -> (Hsla
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkspaceButtonTone, WorkspaceIcon, WorkspaceResultAction, button_colors};
-    use crate::theme::{ThemeColors, ThemeMode};
+    use super::{
+        WorkspaceButtonTone, WorkspaceIcon, WorkspaceInlineAction, WorkspaceResultAction,
+        button_colors,
+    };
+    use crate::theme::{ThemeColors, ThemeMetrics, ThemeMode};
 
     #[test]
     fn resting_neutral_buttons_blend_into_the_toolbar_surface() {
@@ -1315,6 +1400,50 @@ mod tests {
                 WorkspaceIcon::Cancel,
                 WorkspaceIcon::Copy,
             ]
+        );
+    }
+
+    #[test]
+    fn inline_action_catalog_matches_the_wide_toolbar_contract() {
+        let actions = WorkspaceInlineAction::catalog();
+
+        assert_eq!(
+            actions.map(WorkspaceInlineAction::id),
+            [
+                "overlay-manual-scroll-inline",
+                "overlay-qr-inline",
+                "overlay-ocr-inline",
+                "overlay-translate-inline",
+                "overlay-record-area-inline",
+                "overlay-record-window-inline",
+            ]
+        );
+        assert_eq!(
+            actions.map(WorkspaceInlineAction::icon),
+            [
+                WorkspaceIcon::Scroll,
+                WorkspaceIcon::Qr,
+                WorkspaceIcon::Ocr,
+                WorkspaceIcon::Translate,
+                WorkspaceIcon::Record,
+                WorkspaceIcon::Record,
+            ]
+        );
+        assert_eq!(
+            actions.map(WorkspaceInlineAction::tooltip_key),
+            [
+                "scroll",
+                "qr",
+                "ocr",
+                "translate",
+                "record-area",
+                "record-window",
+            ]
+        );
+        assert_eq!(
+            WorkspaceInlineAction::total_width(ThemeMetrics::WORKSPACE_TOOLBAR_GAP),
+            6.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
+                + 5.0 * ThemeMetrics::WORKSPACE_TOOLBAR_GAP
         );
     }
 }

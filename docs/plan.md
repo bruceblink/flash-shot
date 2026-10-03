@@ -52,9 +52,11 @@ gpui-kit 只在兼容性切片通过后进入组件和图标实现。设置面�
 
 ## 1. 研究基线与范围
 
-Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-apps)的[发布版本 `v1.0.0-beta`](https://github.com/mg-chao/snow-apps/releases/tag/v1.0.0-beta)
-（提交 [`395fdab`](https://github.com/mg-chao/snow-apps/commit/395fdab690d5681a46d3324ce944ffb1b84240b6)）及其工作区截图工具栏、样式行、工具组浮层、
-tooltip、键盘可达性和选区边缘呈现。只借鉴可观察的视觉层级、几何关系和交互规则，不复制其设置项数量、具体颜色、图标素材或 Qt/Tauri/Web 类层次。
+Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-apps)的 `origin/main`
+（截至 2026-10-03 提交 [`168a259beca1825c2bf4ec03114758fb565fc1a5`](https://github.com/mg-chao/snow-apps/commit/168a259beca1825c2bf4ec03114758fb565fc1a5)）
+及其工作区截图工具栏、样式行、工具组浮层、tooltip、键盘可达性和选区边缘呈现。每个开发切片开始前先记录实际参考提交，
+避免把旧 release 或本地落后 checkout 当成“最新”基准。只借鉴可观察的视觉层级、几何关系和交互规则，不复制其设置项数量、具体颜色、
+图标素材或 Qt/Tauri/Web 类层次。
 
 `0.2.0` 继续以 Windows 截图体验为主：全局快捷键、选区、标注、撤销/重做、复制、保存、Pin、历史、滚动截图、可选 OCR、录屏和失败恢复。
 当前工作只改变 UI surface、布局、控件交互和设置面板呈现，不改变截图像素、导出协议、快捷键、报告字段和资源清理边界。

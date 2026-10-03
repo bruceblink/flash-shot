@@ -13,6 +13,7 @@ use flash_shot::{
     OverlayInteractionAcceptanceCommand, OverlayInteractionAcceptanceOptions,
     OverlayInteractionAnnotationState, OverlayInteractionCaptureContent,
     OverlayInteractionCaptureState, OverlayInteractionRecordingState,
+    app::overlay_toolbar::{WorkspaceInlineAction, WorkspaceResultAction},
     domain::geometry::{PhysicalPoint, PhysicalRect},
     domain::selection::{ResizeHandle, SelectionDrag},
     history::ScreenshotHistory,
@@ -150,17 +151,13 @@ const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 1200.0;
 // The wide marking dock is one 42px tool row, an 8px separation, and a 50px action row.
 const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 100.0;
 const ACTION_TOOLBAR_LEADING_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH;
-const INLINE_SECONDARY_ACTION_COUNT: usize = 6;
-const INLINE_SECONDARY_ACTION_WIDTH: f32 = INLINE_SECONDARY_ACTION_COUNT as f32
-    * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-    + (INLINE_SECONDARY_ACTION_COUNT - 1) as f32 * ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
-const ACTION_TOOLBAR_MARK_INDEX: usize = 0;
-const ACTION_TOOLBAR_PIN_INDEX: usize = 1;
-const ACTION_TOOLBAR_SAVE_INDEX: usize = 2;
-const ACTION_TOOLBAR_MORE_INDEX: usize = 3;
-const ACTION_TOOLBAR_CANCEL_INDEX: usize = 4;
-const ACTION_TOOLBAR_COPY_INDEX: usize = 5;
-const RESULT_ACTION_MORE_INDEX: usize = 2;
+const INLINE_SECONDARY_ACTION_WIDTH: f32 =
+    WorkspaceInlineAction::total_width(ThemeMetrics::WORKSPACE_TOOLBAR_GAP);
+const RESULT_ACTION_PIN_INDEX: usize = WorkspaceResultAction::Pin.index();
+const RESULT_ACTION_SAVE_INDEX: usize = WorkspaceResultAction::Save.index();
+const RESULT_ACTION_MORE_INDEX: usize = WorkspaceResultAction::More.index();
+const RESULT_ACTION_CANCEL_INDEX: usize = WorkspaceResultAction::Cancel.index();
+const RESULT_ACTION_COPY_INDEX: usize = WorkspaceResultAction::Copy.index();
 const PIN_COEXIST_COUNT: usize = 3;
 const PIN_COEXIST_SELECTION_WIDTH: f32 = 360.0;
 const PIN_COEXIST_SELECTION_HEIGHT: f32 = 240.0;
@@ -918,12 +915,12 @@ fn interaction_plan_for_logical_selection(
     const ACTION_ITEM_GAP: f32 = 6.0;
     const ACTION_PADDING: f32 = 6.0;
     const ACTION_BORDER: f32 = 1.0;
-    const RESULT_WIDTH: f32 = 5.0 * ACTION_ITEM_WIDTH + 4.0 * ACTION_ITEM_GAP;
+    const RESULT_WIDTH: f32 = WorkspaceResultAction::total_width(ACTION_ITEM_GAP);
     const ACTION_TOOLBAR_WIDTH: f32 = ACTION_TOOLBAR_LEADING_WIDTH
         + ACTION_ITEM_WIDTH
-        + RESULT_WIDTH
-        + ACTION_BORDER
         + INLINE_SECONDARY_ACTION_WIDTH
+        + 2.0 * ACTION_BORDER
+        + RESULT_WIDTH
         + 4.0 * ACTION_ITEM_GAP
         + 2.0 * ACTION_PADDING
         + 2.0 * ACTION_BORDER;
@@ -959,28 +956,43 @@ fn interaction_plan_for_logical_selection(
         x: bounds.left + (point.0 * scale).round() as i32,
         y: bounds.top + (point.1 * scale).round() as i32,
     };
-    let action_center = |index: usize| {
-        toolbar_left
-            + ACTION_BORDER
-            + ACTION_PADDING
-            + ACTION_TOOLBAR_LEADING_WIDTH
-            + ACTION_ITEM_GAP
-            + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP)
-            + ACTION_ITEM_WIDTH / 2.0
+    let mark_center = toolbar_left
+        + ACTION_BORDER
+        + ACTION_PADDING
+        + ACTION_TOOLBAR_LEADING_WIDTH
+        + ACTION_ITEM_GAP
+        + ACTION_ITEM_WIDTH / 2.0;
+    let inline_left = toolbar_left
+        + ACTION_BORDER
+        + ACTION_PADDING
+        + ACTION_TOOLBAR_LEADING_WIDTH
+        + ACTION_ITEM_GAP
+        + ACTION_ITEM_WIDTH
+        + ACTION_ITEM_GAP
+        + ACTION_BORDER
+        + ACTION_ITEM_GAP;
+    let result_left = inline_left
+        + INLINE_SECONDARY_ACTION_WIDTH
+        + ACTION_ITEM_GAP
+        + ACTION_BORDER
+        + ACTION_ITEM_GAP;
+    let result_center = |index: usize| {
+        result_left + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP) + ACTION_ITEM_WIDTH / 2.0
     };
     Ok(InteractionPlan {
         drag_start: screen_point(start),
         drag_end: screen_point(end),
-        // The production row order is Mark, Pin, Save, More, Cancel, then Copy.
-        mark: screen_point((action_center(ACTION_TOOLBAR_MARK_INDEX), toolbar_top + 25.0)),
-        pin: screen_point((action_center(ACTION_TOOLBAR_PIN_INDEX), toolbar_top + 25.0)),
-        save: screen_point((action_center(ACTION_TOOLBAR_SAVE_INDEX), toolbar_top + 25.0)),
-        more: screen_point((action_center(ACTION_TOOLBAR_MORE_INDEX), toolbar_top + 25.0)),
+        // The production row order is Mark, inline secondary actions, then Pin, Save, More,
+        // Cancel, and Copy, matching Snow Apps' main toolbar construction order.
+        mark: screen_point((mark_center, toolbar_top + 25.0)),
+        pin: screen_point((result_center(RESULT_ACTION_PIN_INDEX), toolbar_top + 25.0)),
+        save: screen_point((result_center(RESULT_ACTION_SAVE_INDEX), toolbar_top + 25.0)),
+        more: screen_point((result_center(RESULT_ACTION_MORE_INDEX), toolbar_top + 25.0)),
         cancel: screen_point((
-            action_center(ACTION_TOOLBAR_CANCEL_INDEX),
+            result_center(RESULT_ACTION_CANCEL_INDEX),
             toolbar_top + 25.0,
         )),
-        copy: screen_point((action_center(ACTION_TOOLBAR_COPY_INDEX), toolbar_top + 25.0)),
+        copy: screen_point((result_center(RESULT_ACTION_COPY_INDEX), toolbar_top + 25.0)),
         // The expanded 334 px menu wraps into five right-aligned rows. Recording occupies the
         // final item of row four and the sole item of row five above this toolbar.
         record_area: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 75.0)),
@@ -1051,12 +1063,12 @@ fn tool_group_interaction_plan_for_capture_selection(
     let client = client_bounds_for_window(handle)?;
     let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
     let (width, height) = overlay_logical_size(client, scale)?;
-    let result_width = 5.0 * ACTION_ITEM_WIDTH + 4.0 * ACTION_ITEM_GAP;
+    let result_width = WorkspaceResultAction::total_width(ACTION_ITEM_GAP);
     let mark_action_width = ACTION_TOOLBAR_LEADING_WIDTH
         + ACTION_ITEM_WIDTH
-        + result_width
         + INLINE_SECONDARY_ACTION_WIDTH
-        + ACTION_BORDER
+        + 2.0 * ACTION_BORDER
+        + result_width
         + 4.0 * ACTION_ITEM_GAP
         + ACTION_PADDING * 2.0
         + ACTION_BORDER * 2.0;
@@ -1205,6 +1217,10 @@ fn tool_group_interaction_plan_for_capture_selection(
         + ACTION_BORDER
         + ACTION_ITEM_GAP
         + context_width
+        + ACTION_ITEM_GAP
+        + ACTION_BORDER
+        + ACTION_ITEM_GAP
+        + INLINE_SECONDARY_ACTION_WIDTH
         + ACTION_ITEM_GAP
         + ACTION_BORDER
         + ACTION_ITEM_GAP;
@@ -7224,6 +7240,9 @@ fn execute_tool_group_interactions(
             && !state.annotation_tool_group_visible
             && state.status == "Text tool selected"
     })?;
+    // The first activation schedules a GPUI state/render transition. Give the new active button
+    // one settle interval before reusing its coordinate for the group toggle.
+    thread::sleep(context.settle_delay);
     let foreground = inject_mouse_click(overlay.handle, controls_group_plan.text_trigger)?;
     wait_for_capture_state(context, "Text tool group open", |state| {
         state.selection == Some(selection)
@@ -7299,6 +7318,9 @@ fn execute_tool_group_interactions(
             && !state.annotation_tool_group_visible
             && state.status == "Rectangle tool selected"
     })?;
+    // Match the Text trigger path: the active Rectangle state must be painted before its
+    // second activation is interpreted as opening the Shape group.
+    thread::sleep(context.settle_delay);
     let foreground = inject_mouse_click(overlay.handle, expanded_group_plan.shape_trigger)?;
     wait_for_capture_state(context, "Shape tool group open", |state| {
         state.selection == Some(selection)
@@ -17079,9 +17101,9 @@ mod tests {
 
         assert_eq!(plan.base.drag_start, PhysicalPoint { x: 2382, y: 1328 });
         assert_eq!(plan.base.drag_end, PhysicalPoint { x: 2542, y: 1424 });
-        assert_eq!(plan.base.mark, PhysicalPoint { x: 2048, y: 1291 });
-        assert_eq!(plan.base.more, PhysicalPoint { x: 2174, y: 1291 });
-        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2216, y: 1291 });
+        assert_eq!(plan.base.mark, PhysicalPoint { x: 2047, y: 1291 });
+        assert_eq!(plan.base.more, PhysicalPoint { x: 2439, y: 1291 });
+        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2481, y: 1291 });
         assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2299, y: 1241 });
         assert_eq!(plan.evidence_rest, PhysicalPoint { x: 24, y: 20 });
         assert_eq!(

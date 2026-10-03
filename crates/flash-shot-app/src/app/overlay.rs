@@ -18,8 +18,8 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use super::{
     AnnotationToolGroup, FlashShotApp,
     overlay_toolbar::{
-        WorkspaceButtonConfig, WorkspaceButtonTone, WorkspaceResultAction, icon,
-        workspace_drag_handle, workspace_icon_button, workspace_separator, workspace_surface,
+        WorkspaceButtonConfig, WorkspaceButtonTone, WorkspaceInlineAction, WorkspaceResultAction,
+        icon, workspace_drag_handle, workspace_icon_button, workspace_separator, workspace_surface,
         workspace_swatch, workspace_text_button, workspace_text_button_with_aria,
     },
     workflow::{inspection_kind_label, selection_dimension_label},
@@ -98,10 +98,6 @@ const ANNOTATION_TOOL_GROUP_POPUP_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR
 const ANNOTATION_TOOL_GROUP_POPUP_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
 const ANNOTATION_STYLE_PANEL_GAP: f32 = ThemeMetrics::WORKSPACE_POPOVER_GAP;
 const ANNOTATION_STYLE_CONTROL_HEIGHT: f32 = ThemeMetrics::WORKSPACE_STYLE_ROW_HEIGHT;
-const INLINE_SECONDARY_ACTION_COUNT: usize = 6;
-const INLINE_SECONDARY_ACTION_WIDTH: f32 = INLINE_SECONDARY_ACTION_COUNT as f32
-    * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-    + (INLINE_SECONDARY_ACTION_COUNT - 1) as f32 * OVERLAY_ACTION_ITEM_GAP;
 const INLINE_SECONDARY_ACTIONS_MIN_VIEWPORT_WIDTH: f32 = 640.0;
 const ANNOTATION_STYLE_CONTROL_GAP: f32 = ThemeMetrics::SPACE_1;
 const ANNOTATION_STYLE_ROW_PADDING: f32 = ThemeMetrics::SPACE_1;
@@ -868,6 +864,96 @@ impl CaptureOverlay {
             annotation_arrange_actions_for: None,
             _app_observation: observation,
         }
+    }
+
+    /// Builds one inline action from the shared catalog while keeping existing workflow handlers.
+    fn inline_secondary_action_button(
+        &self,
+        action: WorkspaceInlineAction,
+        locale: Locale,
+        colors: ThemeColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let label = locale.text(match action {
+            WorkspaceInlineAction::Scroll => UiText::OverlayScrollShot,
+            WorkspaceInlineAction::Qr => UiText::OverlayQr,
+            WorkspaceInlineAction::Ocr => UiText::OverlayOcr,
+            WorkspaceInlineAction::Translate => UiText::OverlayTranslate,
+            WorkspaceInlineAction::RecordArea => UiText::OverlayRecordArea,
+            WorkspaceInlineAction::RecordWindow => UiText::OverlayRecordWindow,
+        });
+        let config = WorkspaceButtonConfig::icon(
+            colors,
+            WorkspaceButtonTone::Neutral,
+            false,
+            true,
+            secondary_action_tooltip(locale, action.tooltip_key()),
+        );
+        let button = match action {
+            WorkspaceInlineAction::Scroll => workspace_icon_button(
+                action.id(),
+                action.icon(),
+                label,
+                config,
+                cx.listener(|this, _, _, cx| {
+                    let app = this.app.clone();
+                    cx.defer(move |cx| app.update(cx, |app, cx| app.start_manual_scroll(cx)));
+                }),
+            ),
+            WorkspaceInlineAction::Qr => workspace_icon_button(
+                action.id(),
+                action.icon(),
+                label,
+                config,
+                cx.listener(|this, _, _, cx| {
+                    let app = this.app.clone();
+                    cx.defer(move |cx| app.update(cx, |app, cx| app.recognize_qr_selection(cx)));
+                }),
+            ),
+            WorkspaceInlineAction::Ocr => workspace_icon_button(
+                action.id(),
+                action.icon(),
+                label,
+                config,
+                cx.listener(|this, _, _, cx| {
+                    let app = this.app.clone();
+                    cx.defer(move |cx| app.update(cx, |app, cx| app.recognize_text_selection(cx)));
+                }),
+            ),
+            WorkspaceInlineAction::Translate => workspace_icon_button(
+                action.id(),
+                action.icon(),
+                label,
+                config,
+                cx.listener(|this, _, _, cx| {
+                    let app = this.app.clone();
+                    cx.defer(move |cx| app.update(cx, |app, cx| app.translate_selection(cx)));
+                }),
+            ),
+            WorkspaceInlineAction::RecordArea => workspace_icon_button(
+                action.id(),
+                action.icon(),
+                label,
+                config,
+                cx.listener(|this, _, _, cx| {
+                    let app = this.app.clone();
+                    cx.defer(move |cx| app.update(cx, |app, cx| app.start_region_recording(cx)));
+                }),
+            ),
+            WorkspaceInlineAction::RecordWindow => workspace_icon_button(
+                action.id(),
+                action.icon(),
+                label,
+                config,
+                cx.listener(|this, _, _, cx| {
+                    let app = this.app.clone();
+                    cx.defer(move |cx| {
+                        app.update(cx, |app, cx| app.start_selected_window_recording(cx))
+                    });
+                }),
+            ),
+        };
+        button.on_key_down(stop_overlay_action_key_propagation)
     }
 
     fn transform(&self, viewport: Bounds<Pixels>) -> Option<PreviewTransform> {
@@ -1842,6 +1928,11 @@ impl Render for CaptureOverlay {
         );
         let text_input_focus = self.focus_handle.clone();
         let text_input_app = self.app.clone();
+        let inline_secondary_action_buttons = WorkspaceInlineAction::catalog()
+            .iter()
+            .copied()
+            .map(|action| self.inline_secondary_action_button(action, locale, workspace_colors, cx))
+            .collect::<Vec<_>>();
 
         div()
             .size_full()
@@ -2929,9 +3020,30 @@ impl Render for CaptureOverlay {
                                         .on_key_down(stop_overlay_action_key_propagation),
                                     )
                             ))
-                            .when(show_annotation_controls, |actions| {
+                            .when(show_annotation_controls && !show_inline_secondary_actions, |actions| {
                                 actions.child(workspace_separator(
                                     "overlay-action-result-separator",
+                                    workspace_colors,
+                                ))
+                            })
+                            .when(show_inline_secondary_actions, |actions| {
+                                actions
+                                    .child(workspace_separator(
+                                        "overlay-inline-secondary-separator",
+                                        workspace_colors,
+                                    ))
+                                    .child(
+                                        div()
+                                            .id("overlay-inline-secondary-actions")
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(OVERLAY_ACTION_ITEM_GAP))
+                                            .children(inline_secondary_action_buttons),
+                                    )
+                            })
+                            .when(show_inline_secondary_actions, |actions| {
+                                actions.child(workspace_separator(
+                                    "overlay-inline-result-separator",
                                     workspace_colors,
                                 ))
                             })
@@ -3070,156 +3182,6 @@ impl Render for CaptureOverlay {
                                         .on_key_down(stop_overlay_action_key_propagation),
                                     ),
                             )
-                            .when(show_inline_secondary_actions, |actions| {
-                                actions
-                                    .child(workspace_separator(
-                                        "overlay-inline-secondary-separator",
-                                        workspace_colors,
-                                    ))
-                                    .child(
-                                        div()
-                                            .id("overlay-inline-secondary-actions")
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(OVERLAY_ACTION_ITEM_GAP))
-                                    .child(
-                                        workspace_icon_button(
-                                            "overlay-manual-scroll-inline",
-                                            icon::SCROLL,
-                                            locale.text(UiText::OverlayScrollShot),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Neutral,
-                                                false,
-                                                true,
-                                                secondary_action_tooltip(locale, "scroll"),
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| app.start_manual_scroll(cx))
-                                                });
-                                            }),
-                                        )
-                                        .on_key_down(stop_overlay_action_key_propagation),
-                                    )
-                                    .child(
-                                        workspace_icon_button(
-                                            "overlay-qr-inline",
-                                            icon::QR,
-                                            locale.text(UiText::OverlayQr),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Neutral,
-                                                false,
-                                                true,
-                                                secondary_action_tooltip(locale, "qr"),
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.recognize_qr_selection(cx)
-                                                    })
-                                                });
-                                            }),
-                                        )
-                                        .on_key_down(stop_overlay_action_key_propagation),
-                                    )
-                                    .child(
-                                        workspace_icon_button(
-                                            "overlay-ocr-inline",
-                                            icon::OCR,
-                                            locale.text(UiText::OverlayOcr),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Neutral,
-                                                false,
-                                                true,
-                                                secondary_action_tooltip(locale, "ocr"),
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.recognize_text_selection(cx)
-                                                    })
-                                                });
-                                            }),
-                                        )
-                                        .on_key_down(stop_overlay_action_key_propagation),
-                                    )
-                                    .child(
-                                        workspace_icon_button(
-                                            "overlay-translate-inline",
-                                            icon::TRANSLATE,
-                                            locale.text(UiText::OverlayTranslate),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Neutral,
-                                                false,
-                                                true,
-                                                secondary_action_tooltip(locale, "translate"),
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.translate_selection(cx)
-                                                    })
-                                                });
-                                            }),
-                                        )
-                                        .on_key_down(stop_overlay_action_key_propagation),
-                                    )
-                                    .child(
-                                        workspace_icon_button(
-                                            "overlay-record-area-inline",
-                                            icon::RECORD,
-                                            locale.text(UiText::OverlayRecordArea),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Neutral,
-                                                false,
-                                                true,
-                                                secondary_action_tooltip(locale, "record-area"),
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.start_region_recording(cx)
-                                                    })
-                                                });
-                                            }),
-                                        )
-                                        .on_key_down(stop_overlay_action_key_propagation),
-                                    )
-                                    .child(
-                                        workspace_icon_button(
-                                            "overlay-record-window-inline",
-                                            icon::RECORD,
-                                            locale.text(UiText::OverlayRecordWindow),
-                                            WorkspaceButtonConfig::icon(
-                                                workspace_colors,
-                                                WorkspaceButtonTone::Neutral,
-                                                false,
-                                                true,
-                                                secondary_action_tooltip(locale, "record-window"),
-                                            ),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.start_selected_window_recording(cx)
-                                                    })
-                                                });
-                                            }),
-                                        )
-                                        .on_key_down(stop_overlay_action_key_propagation),
-                                    )
-                                    )
-                            })
                             .when(show_more_actions, |actions| {
                                 actions.child(
                                     workspace_surface(workspace_colors, false)
@@ -5690,12 +5652,11 @@ fn recognition_result_preview(text: &str) -> String {
 
 /// Lists the visible main-row group widths, including the inline annotation palette in marking mode.
 fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
+    let inline_secondary_width = WorkspaceInlineAction::total_width(OVERLAY_ACTION_ITEM_GAP);
     if show_annotation_controls {
         let context_width =
             2.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + OVERLAY_ACTION_ITEM_GAP;
-        let result_action_count = WorkspaceResultAction::catalog().len() as f32;
-        let result_width = result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-            + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP;
+        let result_width = WorkspaceResultAction::total_width(OVERLAY_ACTION_ITEM_GAP);
         let mut widths = vec![
             OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
             ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
@@ -5706,22 +5667,19 @@ fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
             context_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
-            result_width,
+            inline_secondary_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
-            INLINE_SECONDARY_ACTION_WIDTH,
+            result_width,
         ]);
         widths
     } else {
         vec![
             OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
             ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            {
-                let result_action_count = WorkspaceResultAction::catalog().len() as f32;
-                result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-                    + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP
-            },
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
-            INLINE_SECONDARY_ACTION_WIDTH,
+            inline_secondary_width,
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+            WorkspaceResultAction::total_width(OVERLAY_ACTION_ITEM_GAP),
         ]
     }
 }
@@ -5731,9 +5689,7 @@ fn compact_action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32
     if show_annotation_controls {
         let context_width =
             2.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + OVERLAY_ACTION_ITEM_GAP;
-        let result_action_count = WorkspaceResultAction::catalog().len() as f32;
-        let result_width = result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-            + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP;
+        let result_width = WorkspaceResultAction::total_width(OVERLAY_ACTION_ITEM_GAP);
         let mut widths = vec![
             OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
             ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
@@ -5748,12 +5704,10 @@ fn compact_action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32
         ]);
         widths
     } else {
-        let result_action_count = WorkspaceResultAction::catalog().len() as f32;
         vec![
             OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
             ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
-            result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-                + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP,
+            WorkspaceResultAction::total_width(OVERLAY_ACTION_ITEM_GAP),
         ]
     }
 }
@@ -7109,9 +7063,9 @@ mod tests {
         assert_eq!(
             action_toolbar_layout(workspace_anchor(selection, transform), viewport, false),
             Some(ActionToolbarLayout {
-                left: 657.0,
+                left: 650.0,
                 top: 518.0,
-                width: 543.0,
+                width: 550.0,
                 height: 50.0,
             })
         );
@@ -7692,9 +7646,9 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false), 92.0);
-        assert_eq!(action_toolbar_height(288.0, false), 92.0);
-        assert_eq!(action_toolbar_natural_width(false), 543.0);
+        assert_eq!(action_toolbar_height(324.0, false), 134.0);
+        assert_eq!(action_toolbar_height(288.0, false), 134.0);
+        assert_eq!(action_toolbar_natural_width(false), 550.0);
         assert_eq!(action_toolbar_natural_width(true), 1110.0);
         assert_eq!(action_toolbar_height(358.0, true), 176.0);
         assert_eq!(action_toolbar_height(559.0, true), 134.0);

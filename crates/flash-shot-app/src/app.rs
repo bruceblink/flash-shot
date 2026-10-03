@@ -2,7 +2,7 @@
 
 mod history_search;
 mod overlay;
-mod overlay_toolbar;
+pub(crate) mod overlay_toolbar;
 mod pin_acceptance;
 mod pinned;
 mod render_image;
