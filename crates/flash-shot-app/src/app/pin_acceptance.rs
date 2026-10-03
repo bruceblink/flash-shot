@@ -260,6 +260,39 @@ mod windows {
     }
 
     impl FlashShotApp {
+        /// Opens production Pin windows while a settings acceptance window remains visible.
+        pub(crate) fn open_pinned_appearance_acceptance(&mut self, cx: &mut gpui::Context<Self>) {
+            for frame in acceptance_frames() {
+                self.open_pinned_frame(
+                    frame,
+                    crate::i18n::UiText::PinAcceptanceOpened,
+                    None,
+                    false,
+                    cx,
+                );
+            }
+        }
+
+        /// Reads the language and theme stored by each live Pin for a settings input report.
+        pub(crate) fn pin_appearance_states_for_acceptance(
+            &mut self,
+            cx: &mut gpui::Context<Self>,
+        ) -> Vec<crate::PinAppearanceState> {
+            let handles = self.pinned_windows.clone();
+            handles
+                .iter()
+                .filter_map(|handle| {
+                    handle
+                        .read_with(cx, |pin, _| pin.appearance_labels_for_acceptance())
+                        .ok()
+                })
+                .map(|(locale, theme)| crate::PinAppearanceState {
+                    locale: locale.to_owned(),
+                    theme: theme.to_owned(),
+                })
+                .collect()
+        }
+
         /// Opens three production Pin windows, then runs the no-input checks on the GPUI task loop.
         fn start_pin_lifecycle_acceptance(
             &mut self,

@@ -110,6 +110,7 @@ pub fn run_settings_ui_acceptance(
             interaction_copy_race: None,
             history_resource_commands: None,
             settings_interaction_commands: None,
+            open_acceptance_pins: false,
         },
     )
 }
@@ -137,6 +138,7 @@ pub fn run_settings_interaction_acceptance(
             recording_state: acceptance.recording_state,
             update_check_state: acceptance.update_check_state,
             recording_support_check_state: acceptance.recording_support_check_state,
+            open_acceptance_pins: acceptance.exercise_pin_appearance,
             settings_interaction_commands: Some(acceptance.commands),
             ..SettingsWindowOptions::default()
         },
@@ -219,6 +221,8 @@ pub struct SettingsInteractionState {
     pub section: String,
     pub locale: String,
     pub theme: String,
+    pub pinned_window_count: usize,
+    pub pinned_appearances: Vec<PinAppearanceState>,
     pub update_check_in_flight: bool,
     pub recording_start_in_flight: bool,
     pub recording_support_check_in_flight: bool,
@@ -229,6 +233,13 @@ pub struct SettingsInteractionState {
     pub recording_progress_frames: u64,
     pub export_format: String,
     pub status: String,
+}
+
+/// Reports the language and theme that one already-open Pin is rendering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PinAppearanceState {
+    pub locale: String,
+    pub theme: String,
 }
 
 /// Minimal production recording state returned to the isolated input probe.
@@ -725,6 +736,8 @@ pub struct SettingsInteractionAcceptanceOptions {
     pub update_check_state: UpdateUiAcceptanceState,
     /// Seeds the Record support action for the optional real-input recovery probe.
     pub recording_support_check_state: RecordingSupportUiAcceptanceState,
+    /// Opens production Pin windows so the input probe can verify live appearance updates.
+    pub exercise_pin_appearance: bool,
 }
 
 /// Describes a synthetic but fully rendered capture overlay used for native screenshot QA.
@@ -834,6 +847,8 @@ struct SettingsWindowOptions {
     /// Receives real-input navigation snapshots from the settings acceptance runner.
     settings_interaction_commands:
         Option<async_channel::Receiver<SettingsInteractionAcceptanceCommand>>,
+    /// Opens disposable production Pins alongside the settings window for live appearance input.
+    open_acceptance_pins: bool,
 }
 
 impl Default for SettingsWindowOptions {
@@ -857,6 +872,7 @@ impl Default for SettingsWindowOptions {
             interaction_copy_race: None,
             history_resource_commands: None,
             settings_interaction_commands: None,
+            open_acceptance_pins: false,
         }
     }
 }
@@ -923,6 +939,7 @@ fn run_with_settings_window(
         let interaction_copy_race = window_options.interaction_copy_race;
         let history_resource_commands = window_options.history_resource_commands;
         let settings_interaction_commands = window_options.settings_interaction_commands;
+        let open_acceptance_pins = window_options.open_acceptance_pins;
         if let Err(error) = cx.open_window(options, move |window, cx| {
             let performance = performance.clone();
             let startup_performance = performance.clone();
@@ -991,6 +1008,13 @@ fn run_with_settings_window(
                 app.set_ocr_support_check_for_acceptance(ocr_support_check_state);
                 app.set_update_check_for_acceptance(update_check_state);
             });
+            #[cfg(windows)]
+            if open_acceptance_pins {
+                let acceptance_app = app.clone();
+                cx.defer(move |cx| {
+                    acceptance_app.update(cx, |app, cx| app.open_pinned_appearance_acceptance(cx));
+                });
+            }
             if pinned_saved_feedback_preview {
                 let preview_app = app.clone();
                 cx.defer(move |cx| {

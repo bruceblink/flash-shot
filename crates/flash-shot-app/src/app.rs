@@ -1206,10 +1206,16 @@ impl FlashShotApp {
                                 }
                                 .to_owned()
                             });
+                            #[cfg(windows)]
+                            let pinned_appearances = this.pin_appearance_states_for_acceptance(cx);
+                            #[cfg(not(windows))]
+                            let pinned_appearances = Vec::new();
                             let _ = reply.send(crate::SettingsInteractionState {
                                 section: section.to_owned(),
                                 locale: this.settings.locale.label().to_owned(),
                                 theme: this.settings.theme_mode.label().to_owned(),
+                                pinned_window_count: this.pinned_windows.len(),
+                                pinned_appearances,
                                 update_check_in_flight: this.update_check_in_flight,
                                 recording_start_in_flight: this.recording_start_in_flight,
                                 recording_support_check_in_flight: this

@@ -34,6 +34,7 @@ struct Options {
     exercise_record_start: bool,
     exercise_record_success: bool,
     exercise_library_format: bool,
+    exercise_pin_appearance: bool,
     output_dir: PathBuf,
     width: i32,
     height: i32,
@@ -60,6 +61,7 @@ struct Report {
     keyboard_steps: Vec<StepReport>,
     action_steps: Vec<ActionStepReport>,
     recording_success: Option<RecordingSuccessReport>,
+    pin_appearance: Option<PinAppearanceReport>,
     cleanup: CleanupReport,
 }
 
@@ -113,6 +115,20 @@ struct RecordingSuccessReport {
 
 #[cfg(windows)]
 #[derive(Serialize)]
+struct PinAppearanceReport {
+    initial_locale: String,
+    initial_theme: String,
+    after_theme_locale: String,
+    after_theme: String,
+    after_locale: String,
+    final_theme: String,
+    pin_count: usize,
+    all_pins_updated: bool,
+    screenshots: Vec<String>,
+}
+
+#[cfg(windows)]
+#[derive(Serialize)]
 struct CleanupReport {
     cursor_restored: bool,
     input_released: bool,
@@ -135,6 +151,7 @@ impl Options {
             exercise_record_start: false,
             exercise_record_success: false,
             exercise_library_format: false,
+            exercise_pin_appearance: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
             height: 640,
@@ -154,6 +171,7 @@ impl Options {
                 "--exercise-record-start" => options.exercise_record_start = true,
                 "--exercise-record-success" => options.exercise_record_success = true,
                 "--exercise-library-format" => options.exercise_library_format = true,
+                "--exercise-pin-appearance" => options.exercise_pin_appearance = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
                 }
@@ -186,7 +204,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -302,6 +320,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         exercise_record_start: options.exercise_record_start,
         exercise_record_success: options.exercise_record_success,
         exercise_library_format: options.exercise_library_format,
+        exercise_pin_appearance: options.exercise_pin_appearance,
         commands: command_tx,
     };
     thread::spawn(move || {
@@ -334,6 +353,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 flash_shot::RecordingUiAcceptanceState::Idle
             },
+            exercise_pin_appearance: options.exercise_pin_appearance,
             commands: command_rx,
         },
     )?;
@@ -392,6 +412,7 @@ mod tests {
         assert!(!options.exercise_record_start);
         assert!(!options.exercise_record_success);
         assert!(!options.exercise_library_format);
+        assert!(!options.exercise_pin_appearance);
         let options = Options::parse_args(
             [
                 OsString::from("--allow-input"),
@@ -437,5 +458,14 @@ mod tests {
         )
         .unwrap();
         assert!(options.exercise_library_format);
+        let options = Options::parse_args(
+            [
+                OsString::from("--allow-input"),
+                OsString::from("--exercise-pin-appearance"),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        assert!(options.exercise_pin_appearance);
     }
 }

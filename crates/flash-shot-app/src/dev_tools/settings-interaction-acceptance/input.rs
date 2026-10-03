@@ -10,12 +10,13 @@ use std::{
 
 use super::native::{
     CursorRestore, WindowZOrderRestore, capture_step, click_library_format, click_navigation_item,
-    click_record_idle_toggle, click_record_support, click_record_toggle, click_update_action,
-    ensure_input_idle, focus_window, send_key, snapshot, visible_window,
+    click_record_idle_toggle, click_record_support, click_record_toggle, click_system_language,
+    click_system_theme, click_update_action, ensure_input_idle, focus_window, send_key, snapshot,
+    visible_window,
 };
 use super::{
-    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, RecordingSuccessReport, Report,
-    StepReport, WindowBounds,
+    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, PinAppearanceReport,
+    RecordingSuccessReport, Report, StepReport, WindowBounds,
 };
 use flash_shot::{
     SettingsInteractionAcceptanceCommand, SettingsInteractionState,
@@ -37,6 +38,7 @@ pub(super) struct WorkerOptions {
     pub(super) exercise_record_start: bool,
     pub(super) exercise_record_success: bool,
     pub(super) exercise_library_format: bool,
+    pub(super) exercise_pin_appearance: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
 
@@ -129,6 +131,86 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             observed_theme: observed.theme,
             passed,
             screenshot,
+        });
+    }
+    let mut pin_appearance = None;
+    if options.exercise_pin_appearance {
+        // Keep three production Pins open while real App-page clicks change appearance. Each
+        // snapshot crosses the GPUI command channel so the report proves the existing windows
+        // updated, rather than only proving that the settings buttons changed their labels.
+        focus_window(window)?;
+        click_navigation_item(window, compact, 3)?;
+        thread::sleep(INPUT_SETTLE_DELAY);
+        let expected_initial = options.locale.label();
+        let expected_theme = options.theme.label();
+        let initial = wait_for_settings_state(&options.commands, options.timeout, |state| {
+            state.section == "app"
+                && state.pinned_window_count == 3
+                && state.pinned_appearances.len() == 3
+                && state
+                    .pinned_appearances
+                    .iter()
+                    .all(|pin| pin.locale == expected_initial && pin.theme == expected_theme)
+        })
+        .map_err(|error| {
+            io::Error::other(format!(
+                "{error}; expected three Pins with initial {expected_initial}/{expected_theme}"
+            ))
+        })?;
+        thread::sleep(options.settle);
+        let before_screenshot = capture_step(&window, &options.output_dir, "appearance-before")?;
+
+        focus_window(window)?;
+        click_system_theme(window, compact)?;
+        let after_theme = wait_for_settings_state(&options.commands, options.timeout, |state| {
+            state.section == "app"
+                && state.locale == expected_initial
+                && state.theme != expected_theme
+                && !state.pinned_appearances.is_empty()
+                && state
+                    .pinned_appearances
+                    .iter()
+                    .all(|pin| pin.locale == state.locale && pin.theme == state.theme)
+        })?;
+        thread::sleep(options.settle);
+        let after_theme_screenshot =
+            capture_step(&window, &options.output_dir, "appearance-after-theme")?;
+
+        focus_window(window)?;
+        click_system_language(window, compact)?;
+        let after_locale = wait_for_settings_state(&options.commands, options.timeout, |state| {
+            state.section == "app"
+                && state.locale != expected_initial
+                && state.theme == after_theme.theme
+                && !state.pinned_appearances.is_empty()
+                && state
+                    .pinned_appearances
+                    .iter()
+                    .all(|pin| pin.locale == state.locale && pin.theme == state.theme)
+        })?;
+        thread::sleep(options.settle);
+        let after_locale_screenshot =
+            capture_step(&window, &options.output_dir, "appearance-after-locale")?;
+        let final_locale = after_locale.locale.clone();
+        let final_theme = after_locale.theme.clone();
+        let all_pins_updated = after_locale
+            .pinned_appearances
+            .iter()
+            .all(|pin| pin.locale == final_locale && pin.theme == final_theme);
+        pin_appearance = Some(PinAppearanceReport {
+            initial_locale: initial.locale,
+            initial_theme: initial.theme,
+            after_theme_locale: after_theme.locale,
+            after_theme: after_theme.theme,
+            after_locale: final_locale,
+            final_theme,
+            pin_count: after_locale.pinned_appearances.len(),
+            all_pins_updated,
+            screenshots: vec![
+                before_screenshot,
+                after_theme_screenshot,
+                after_locale_screenshot,
+            ],
         });
     }
     let mut action_steps = Vec::new();
@@ -447,7 +529,9 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     .all(|key| unsafe { GetAsyncKeyState(key as i32) >= 0 });
     let window_demoted = window_z_order.restore();
     let report = Report {
-        schema: if options.exercise_app_update
+        schema: if options.exercise_pin_appearance {
+            4
+        } else if options.exercise_app_update
             || options.exercise_record_support
             || options.exercise_record_start
             || options.exercise_record_success
@@ -466,6 +550,9 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             .chain(keyboard_steps.iter())
             .all(|step| step.passed)
             && action_steps.iter().all(|step| step.passed)
+            && pin_appearance
+                .as_ref()
+                .is_none_or(|report| report.pin_count == 3 && report.all_pins_updated)
             && cursor_restored
             && input_released
             && window_demoted
@@ -491,6 +578,7 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
         keyboard_steps,
         action_steps,
         recording_success,
+        pin_appearance,
         cleanup: CleanupReport {
             cursor_restored,
             input_released,
@@ -529,8 +617,11 @@ fn wait_for_settings_state(
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "recording state did not reach the expected lifecycle: {}",
-                    state.status
+                    "recording state did not reach the expected lifecycle: {} (section={}, pinned_window_count={}, pinned_appearances={})",
+                    state.status,
+                    state.section,
+                    state.pinned_window_count,
+                    state.pinned_appearances.len()
                 ),
             ));
         }
