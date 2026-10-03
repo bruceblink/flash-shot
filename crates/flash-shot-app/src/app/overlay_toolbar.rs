@@ -158,6 +158,128 @@ impl WorkspaceInlineAction {
     }
 }
 
+/// Identifies actions shown by the expanded More panel.
+///
+/// This is the low-frequency counterpart of the main toolbar catalogs. It owns the stable focus
+/// order, element IDs, visibility groups, and localized-label width budget while the overlay keeps
+/// the business handlers and recognition state transitions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkspaceMoreAction {
+    SaveAnnotations,
+    SaveEditable,
+    OpenAnnotations,
+    QuickSave,
+    ScrollShot,
+    Qr,
+    Ocr,
+    CopyColor,
+    Translate,
+    RecordArea,
+    RecordWindow,
+    RetryRecognition,
+    CopyRecognition,
+    ClearRecognition,
+}
+
+impl WorkspaceMoreAction {
+    /// Returns the stable menu-local focus index.
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::SaveAnnotations => 0,
+            Self::SaveEditable => 1,
+            Self::OpenAnnotations => 2,
+            Self::QuickSave => 3,
+            Self::ScrollShot => 4,
+            Self::Qr => 5,
+            Self::Ocr => 6,
+            Self::CopyColor => 7,
+            Self::Translate => 8,
+            Self::RecordArea => 9,
+            Self::RecordWindow => 10,
+            Self::RetryRecognition => 11,
+            Self::CopyRecognition => 12,
+            Self::ClearRecognition => 13,
+        }
+    }
+
+    /// Returns the stable element ID used by the More panel.
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::SaveAnnotations => "overlay-save-annotations",
+            Self::SaveEditable => "overlay-save-editable-project",
+            Self::OpenAnnotations => "overlay-open-annotations",
+            Self::QuickSave => "overlay-quick-save",
+            Self::ScrollShot => "overlay-manual-scroll",
+            Self::Qr => "overlay-qr",
+            Self::Ocr => "overlay-ocr",
+            Self::CopyColor => "overlay-copy-color",
+            Self::Translate => "overlay-translate",
+            Self::RecordArea => "overlay-record-area",
+            Self::RecordWindow => "overlay-record-window",
+            Self::RetryRecognition => "overlay-retry-recognition",
+            Self::CopyRecognition => "overlay-copy-recognition",
+            Self::ClearRecognition => "overlay-clear-recognition",
+        }
+    }
+
+    /// Returns the width budget used to keep localized More actions readable.
+    pub(crate) const fn width(self) -> f32 {
+        match self {
+            Self::SaveAnnotations => 138.0,
+            Self::SaveEditable => 128.0,
+            Self::OpenAnnotations => 143.0,
+            Self::QuickSave => 92.0,
+            Self::ScrollShot => 91.0,
+            Self::Qr => 72.0,
+            Self::Ocr => 84.0,
+            Self::CopyColor => 92.0,
+            Self::Translate => 81.0,
+            Self::RecordArea => 101.0,
+            Self::RecordWindow => 126.0,
+            Self::RetryRecognition => 126.0,
+            Self::CopyRecognition => 76.0,
+            Self::ClearRecognition => 92.0,
+        }
+    }
+
+    /// Lists every possible action in stable focus order.
+    pub(crate) const fn catalog() -> &'static [Self; 14] {
+        &[
+            Self::SaveAnnotations,
+            Self::SaveEditable,
+            Self::OpenAnnotations,
+            Self::QuickSave,
+            Self::ScrollShot,
+            Self::Qr,
+            Self::Ocr,
+            Self::CopyColor,
+            Self::Translate,
+            Self::RecordArea,
+            Self::RecordWindow,
+            Self::RetryRecognition,
+            Self::CopyRecognition,
+            Self::ClearRecognition,
+        ]
+    }
+
+    /// Lists the actions visible whenever More is expanded.
+    pub(crate) const fn always_visible_catalog() -> &'static [Self; 11] {
+        &[
+            Self::SaveAnnotations,
+            Self::SaveEditable,
+            Self::OpenAnnotations,
+            Self::QuickSave,
+            Self::ScrollShot,
+            Self::Qr,
+            Self::Ocr,
+            Self::CopyColor,
+            Self::Translate,
+            Self::RecordArea,
+            Self::RecordWindow,
+        ]
+    }
+}
+
 impl WorkspaceResultAction {
     /// Returns the stable position used by the toolbar interaction plan.
     #[cfg(feature = "dev-tools")]
@@ -1306,8 +1428,8 @@ fn button_active_colors(colors: ThemeColors, tone: WorkspaceButtonTone) -> (Hsla
 #[cfg(test)]
 mod tests {
     use super::{
-        WorkspaceButtonTone, WorkspaceIcon, WorkspaceInlineAction, WorkspaceResultAction,
-        button_colors,
+        WorkspaceButtonTone, WorkspaceIcon, WorkspaceInlineAction, WorkspaceMoreAction,
+        WorkspaceResultAction, button_colors,
     };
     use crate::theme::{ThemeColors, ThemeMetrics, ThemeMode};
 
@@ -1444,6 +1566,43 @@ mod tests {
             WorkspaceInlineAction::total_width(ThemeMetrics::WORKSPACE_TOOLBAR_GAP),
             6.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
                 + 5.0 * ThemeMetrics::WORKSPACE_TOOLBAR_GAP
+        );
+    }
+
+    #[test]
+    fn more_action_catalog_matches_the_expanded_panel_contract() {
+        let actions = WorkspaceMoreAction::catalog();
+
+        assert_eq!(
+            actions.map(WorkspaceMoreAction::id),
+            [
+                "overlay-save-annotations",
+                "overlay-save-editable-project",
+                "overlay-open-annotations",
+                "overlay-quick-save",
+                "overlay-manual-scroll",
+                "overlay-qr",
+                "overlay-ocr",
+                "overlay-copy-color",
+                "overlay-translate",
+                "overlay-record-area",
+                "overlay-record-window",
+                "overlay-retry-recognition",
+                "overlay-copy-recognition",
+                "overlay-clear-recognition",
+            ]
+        );
+        assert_eq!(WorkspaceMoreAction::always_visible_catalog().len(), 11);
+        assert_eq!(
+            actions.map(WorkspaceMoreAction::index),
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        );
+        assert_eq!(
+            actions.map(WorkspaceMoreAction::width),
+            [
+                138.0, 128.0, 143.0, 92.0, 91.0, 72.0, 84.0, 92.0, 81.0, 101.0, 126.0, 126.0, 76.0,
+                92.0,
+            ]
         );
     }
 }

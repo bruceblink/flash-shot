@@ -18,9 +18,10 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use super::{
     AnnotationToolGroup, FlashShotApp,
     overlay_toolbar::{
-        WorkspaceButtonConfig, WorkspaceButtonTone, WorkspaceInlineAction, WorkspaceResultAction,
-        icon, workspace_drag_handle, workspace_icon_button, workspace_separator, workspace_surface,
-        workspace_swatch, workspace_text_button, workspace_text_button_with_aria,
+        WorkspaceButtonConfig, WorkspaceButtonTone, WorkspaceInlineAction, WorkspaceMoreAction,
+        WorkspaceResultAction, icon, workspace_drag_handle, workspace_icon_button,
+        workspace_separator, workspace_surface, workspace_swatch, workspace_text_button,
+        workspace_text_button_with_aria,
     },
     workflow::{inspection_kind_label, selection_dimension_label},
 };
@@ -107,13 +108,6 @@ const ANNOTATION_STYLE_FILL_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_FILL_WIDT
 const ANNOTATION_LAYERS_WIDTH: f32 = 180.0;
 const ANNOTATION_LAYERS_PREFERRED_HEIGHT: f32 = 200.0;
 const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 1200.0;
-const SECONDARY_ACTION_COUNT: usize = 14;
-// Chinese Save Editable, QR, and OCR labels need more room than their English counterparts.
-const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
-    138.0, 128.0, 143.0, 92.0, 91.0, 72.0, 84.0, 92.0, 81.0, 101.0, 126.0,
-];
-const OVERLAY_RECOGNITION_ACTION_WIDTHS: [f32; 2] = [76.0, 92.0];
-const OVERLAY_RETRY_ACTION_WIDTHS: [f32; 1] = [126.0];
 const ANNOTATION_COLORS: [u32; 5] = [0xFF3B30FF, 0xFFCC00FF, 0x34C759FF, 0x007AFFFF, 0xAF52DEFF];
 const ANNOTATION_WIDTHS: [u32; 5] = [1, 3, 4, 6, 10];
 const ANNOTATION_FONT_SIZES: [u32; 4] = [16, 24, 32, 48];
@@ -186,72 +180,18 @@ fn secondary_action_tooltip(locale: Locale, action_id: &str) -> &'static str {
     }
 }
 
-/// Describes the stable focus order for commands revealed by the More panel.
-///
-/// The menu wraps by available width and conditionally renders recognition actions, so a semantic
-/// order keeps arrow-key navigation predictable without depending on the current row layout. Tab
-/// and Shift+Tab remain the overlay's annotation-navigation shortcuts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SecondaryAction {
-    SaveAnnotations,
-    SaveEditable,
-    OpenAnnotations,
-    QuickSave,
-    ScrollShot,
-    Qr,
-    Ocr,
-    CopyColor,
-    Translate,
-    RecordArea,
-    RecordWindow,
-    RetryRecognition,
-    CopyRecognition,
-    ClearRecognition,
-}
-
-impl SecondaryAction {
-    /// Returns this action's menu-local focus position, leaving optional actions in a stable place.
-    const fn index(self) -> usize {
-        match self {
-            Self::SaveAnnotations => 0,
-            Self::SaveEditable => 1,
-            Self::OpenAnnotations => 2,
-            Self::QuickSave => 3,
-            Self::ScrollShot => 4,
-            Self::Qr => 5,
-            Self::Ocr => 6,
-            Self::CopyColor => 7,
-            Self::Translate => 8,
-            Self::RecordArea => 9,
-            Self::RecordWindow => 10,
-            Self::RetryRecognition => 11,
-            Self::CopyRecognition => 12,
-            Self::ClearRecognition => 13,
-        }
-    }
-}
+type SecondaryAction = WorkspaceMoreAction;
 
 /// Lists the commands that are always rendered in the expanded More panel.
-const ALWAYS_VISIBLE_SECONDARY_ACTIONS: [SecondaryAction; 11] = [
-    SecondaryAction::SaveAnnotations,
-    SecondaryAction::SaveEditable,
-    SecondaryAction::OpenAnnotations,
-    SecondaryAction::QuickSave,
-    SecondaryAction::ScrollShot,
-    SecondaryAction::Qr,
-    SecondaryAction::Ocr,
-    SecondaryAction::CopyColor,
-    SecondaryAction::Translate,
-    SecondaryAction::RecordArea,
-    SecondaryAction::RecordWindow,
-];
+const ALWAYS_VISIBLE_SECONDARY_ACTIONS: &[SecondaryAction; 11] =
+    WorkspaceMoreAction::always_visible_catalog();
 
 /// Owns one rendered More menu's focus order, including optional recognition commands.
 #[derive(Clone)]
 struct SecondaryActionNavigation {
     current: SecondaryAction,
     visible_actions: Vec<SecondaryAction>,
-    focus_handles: [FocusHandle; SECONDARY_ACTION_COUNT],
+    focus_handles: [FocusHandle; WorkspaceMoreAction::catalog().len()],
 }
 
 impl SecondaryActionNavigation {
@@ -761,7 +701,7 @@ pub(super) struct CaptureOverlay {
     selection_updates: FrameInputBatch<PendingSelectionUpdate>,
     focus_handle: FocusHandle,
     more_actions_focus_handle: FocusHandle,
-    secondary_action_focus_handles: [FocusHandle; SECONDARY_ACTION_COUNT],
+    secondary_action_focus_handles: [FocusHandle; WorkspaceMoreAction::catalog().len()],
     annotation_tool_group_trigger_focus_handles: [FocusHandle; ANNOTATION_TOOL_GROUP_COUNT],
     annotation_tool_group_item_focus_handles:
         [[FocusHandle; ANNOTATION_TOOL_GROUP_MAX_ITEMS]; ANNOTATION_TOOL_GROUP_COUNT],
@@ -3205,11 +3145,11 @@ impl Render for CaptureOverlay {
                                         .justify_end()
                                         .gap(px(OVERLAY_ACTION_ITEM_GAP))
                                         .child(secondary_action_button(
-                                            "overlay-save-annotations",
+                                            SecondaryAction::SaveAnnotations.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::SaveAnnotations),
                                             locale.text(UiText::OverlaySaveAnnotations),
-                                            OVERLAY_MORE_ACTION_WIDTHS[0],
+                                            SecondaryAction::SaveAnnotations.width(),
                                             workspace_colors,
                                             false,
                                             None,
@@ -3223,11 +3163,11 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-save-editable-project",
+                                            SecondaryAction::SaveEditable.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::SaveEditable),
                                             locale.text(UiText::OverlaySaveEditable),
-                                            OVERLAY_MORE_ACTION_WIDTHS[1],
+                                            SecondaryAction::SaveEditable.width(),
                                             workspace_colors,
                                             false,
                                             None,
@@ -3241,11 +3181,11 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-open-annotations",
+                                            SecondaryAction::OpenAnnotations.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::OpenAnnotations),
                                             locale.text(UiText::OverlayOpenAnnotations),
-                                            OVERLAY_MORE_ACTION_WIDTHS[2],
+                                            SecondaryAction::OpenAnnotations.width(),
                                             workspace_colors,
                                             false,
                                             None,
@@ -3259,11 +3199,11 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-quick-save",
+                                            SecondaryAction::QuickSave.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::QuickSave),
                                             locale.text(UiText::OverlayQuickSave),
-                                            OVERLAY_MORE_ACTION_WIDTHS[3],
+                                            SecondaryAction::QuickSave.width(),
                                             workspace_colors,
                                             true,
                                             Some(locale.text(UiText::OverlayQuickSaveTooltip)),
@@ -3277,11 +3217,11 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-manual-scroll",
+                                            SecondaryAction::ScrollShot.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::ScrollShot),
                                             locale.text(UiText::OverlayScrollShot),
-                                            OVERLAY_MORE_ACTION_WIDTHS[4],
+                                            SecondaryAction::ScrollShot.width(),
                                             workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "scroll")),
@@ -3295,10 +3235,10 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-qr",
+                                            SecondaryAction::Qr.id(),
                                             secondary_navigation.for_action(SecondaryAction::Qr),
                                             locale.text(UiText::OverlayQr),
-                                            OVERLAY_MORE_ACTION_WIDTHS[5],
+                                            SecondaryAction::Qr.width(),
                                             workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "qr")),
@@ -3312,10 +3252,10 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-ocr",
+                                            SecondaryAction::Ocr.id(),
                                             secondary_navigation.for_action(SecondaryAction::Ocr),
                                             locale.text(UiText::OverlayOcr),
-                                            OVERLAY_MORE_ACTION_WIDTHS[6],
+                                            SecondaryAction::Ocr.width(),
                                             workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "ocr")),
@@ -3329,11 +3269,11 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-copy-color",
+                                            SecondaryAction::CopyColor.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::CopyColor),
                                             locale.text(UiText::OverlayCopyColor),
-                                            OVERLAY_MORE_ACTION_WIDTHS[7],
+                                            SecondaryAction::CopyColor.width(),
                                             workspace_colors,
                                             false,
                                             Some(locale.text(UiText::OverlayCopyColorTooltip)),
@@ -3347,11 +3287,11 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-translate",
+                                            SecondaryAction::Translate.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::Translate),
                                             locale.text(UiText::OverlayTranslate),
-                                            OVERLAY_MORE_ACTION_WIDTHS[8],
+                                            SecondaryAction::Translate.width(),
                                             workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "translate")),
@@ -3365,11 +3305,11 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-record-area",
+                                            SecondaryAction::RecordArea.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::RecordArea),
                                             locale.text(UiText::OverlayRecordArea),
-                                            OVERLAY_MORE_ACTION_WIDTHS[9],
+                                            SecondaryAction::RecordArea.width(),
                                             workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "record-area")),
@@ -3383,11 +3323,11 @@ impl Render for CaptureOverlay {
                                             }),
                                         ))
                                         .child(secondary_action_button(
-                                            "overlay-record-window",
+                                            SecondaryAction::RecordWindow.id(),
                                             secondary_navigation
                                                 .for_action(SecondaryAction::RecordWindow),
                                             locale.text(UiText::OverlayRecordWindow),
-                                            OVERLAY_MORE_ACTION_WIDTHS[10],
+                                            SecondaryAction::RecordWindow.width(),
                                             workspace_colors,
                                             false,
                                             Some(secondary_action_tooltip(locale, "record-window")),
@@ -3424,11 +3364,11 @@ impl Render for CaptureOverlay {
                                             let retry_label =
                                                 recognition_retry_label(locale, retry);
                                             actions.child(secondary_action_button(
-                                                "overlay-retry-recognition",
+                                                SecondaryAction::RetryRecognition.id(),
                                                 secondary_navigation
                                                     .for_action(SecondaryAction::RetryRecognition),
                                                 retry_label,
-                                                OVERLAY_RETRY_ACTION_WIDTHS[0],
+                                                SecondaryAction::RetryRecognition.width(),
                                                 workspace_colors,
                                                 true,
                                                 Some(
@@ -3486,12 +3426,12 @@ impl Render for CaptureOverlay {
                                                         ),
                                                 )
                                                 .child(secondary_action_button(
-                                                    "overlay-copy-recognition",
+                                                    SecondaryAction::CopyRecognition.id(),
                                                     secondary_navigation.for_action(
                                                         SecondaryAction::CopyRecognition,
                                                     ),
                                                     locale.text(UiText::OverlayCopyText),
-                                                    OVERLAY_RECOGNITION_ACTION_WIDTHS[0],
+                                                    SecondaryAction::CopyRecognition.width(),
                                                     workspace_colors,
                                                     false,
                                                     Some(
@@ -3507,12 +3447,12 @@ impl Render for CaptureOverlay {
                                                     }),
                                                 ))
                                                 .child(secondary_action_button(
-                                                    "overlay-clear-recognition",
+                                                    SecondaryAction::ClearRecognition.id(),
                                                     secondary_navigation.for_action(
                                                         SecondaryAction::ClearRecognition,
                                                     ),
                                                     locale.text(UiText::OverlayClearResult),
-                                                    OVERLAY_RECOGNITION_ACTION_WIDTHS[1],
+                                                    SecondaryAction::ClearRecognition.width(),
                                                     workspace_colors,
                                                     false,
                                                     Some(
@@ -5570,12 +5510,18 @@ fn secondary_action_menu_height(
 
 /// Returns the visible More actions in their stable layout order for height and width estimates.
 fn secondary_action_widths(has_recognition_result: bool, has_recognition_retry: bool) -> Vec<f32> {
-    let mut widths = OVERLAY_MORE_ACTION_WIDTHS.to_vec();
-    if has_recognition_result {
-        widths.extend(OVERLAY_RECOGNITION_ACTION_WIDTHS);
-    }
+    let mut widths = WorkspaceMoreAction::always_visible_catalog()
+        .iter()
+        .map(|action| action.width())
+        .collect::<Vec<_>>();
     if has_recognition_retry {
-        widths.extend(OVERLAY_RETRY_ACTION_WIDTHS);
+        widths.push(WorkspaceMoreAction::RetryRecognition.width());
+    }
+    if has_recognition_result {
+        widths.extend([
+            WorkspaceMoreAction::CopyRecognition.width(),
+            WorkspaceMoreAction::ClearRecognition.width(),
+        ]);
     }
     widths
 }
@@ -5811,14 +5757,14 @@ mod tests {
         ActionToolbarLayout, AnnotationStyleCapabilities, AnnotationToolGroup,
         AnnotationToolbarLayout, FrameInputBatch, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
         OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT,
-        OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET, OVERLAY_MORE_ACTION_WIDTHS,
-        OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
-        OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
-        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, WorkspaceLayoutInput,
-        WorkspaceResultAction, WorkspaceSelectionAnchor, accepts_overlay_input,
-        action_toolbar_height, action_toolbar_layout, action_toolbar_natural_width,
-        action_toolbar_row_count, annotation_controls_visible, annotation_layer_entry_label,
-        annotation_layer_label, annotation_number_value_label, annotation_opacity_value_label,
+        OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
+        OVERLAY_SECONDARY_MENU_GAP, OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction,
+        SecondaryActionFocusDirection, SelectionCursor, SelectionDimensionLayout,
+        SmartTargetHudLayout, WorkspaceLayoutInput, WorkspaceResultAction,
+        WorkspaceSelectionAnchor, accepts_overlay_input, action_toolbar_height,
+        action_toolbar_layout, action_toolbar_natural_width, action_toolbar_row_count,
+        annotation_controls_visible, annotation_layer_entry_label, annotation_layer_label,
+        annotation_number_value_label, annotation_opacity_value_label,
         annotation_style_capabilities_for_tool, annotation_style_row_height,
         annotation_style_row_preferred_width, annotation_style_row_width,
         annotation_text_size_value_label, annotation_tool_group_focus_direction,
@@ -5833,12 +5779,12 @@ mod tests {
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
         recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
         secondary_action_focus_target, secondary_action_menu_height, secondary_action_menu_left,
-        secondary_action_menu_width, secondary_action_tooltip, secondary_menu_opens_above,
-        selection_cursor, selection_dimension_label_layout, selection_point_from_view_or_screen,
-        should_stop_overlay_action_key_propagation, smart_target_hud_label,
-        smart_target_hud_layout, snap_selection_pointer_to_frame_edge, status_bottom_inset,
-        status_bottom_inset_for_stacked_annotation, view_rect, visible_selection,
-        workspace_layout_snapshot,
+        secondary_action_menu_width, secondary_action_tooltip, secondary_action_widths,
+        secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
+        selection_point_from_view_or_screen, should_stop_overlay_action_key_propagation,
+        smart_target_hud_label, smart_target_hud_layout, snap_selection_pointer_to_frame_edge,
+        status_bottom_inset, status_bottom_inset_for_stacked_annotation, view_rect,
+        visible_selection, workspace_layout_snapshot,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle, AnnotationTool},
@@ -7656,7 +7602,7 @@ mod tests {
         assert_eq!(action_toolbar_height(846.0, true), 92.0);
         assert_eq!(secondary_action_menu_width(420.0, false, false), 352.0);
         assert_eq!(
-            action_toolbar_row_count(352.0, OVERLAY_MORE_ACTION_WIDTHS),
+            action_toolbar_row_count(352.0, secondary_action_widths(false, false)),
             4
         );
         assert_eq!(secondary_action_menu_width(360.0, false, false), 324.0);
@@ -7686,6 +7632,25 @@ mod tests {
         assert_eq!(
             secondary_action_menu_height(324.0, false, false, true),
             254.0
+        );
+        assert_eq!(
+            secondary_action_widths(true, true),
+            vec![
+                SecondaryAction::SaveAnnotations.width(),
+                SecondaryAction::SaveEditable.width(),
+                SecondaryAction::OpenAnnotations.width(),
+                SecondaryAction::QuickSave.width(),
+                SecondaryAction::ScrollShot.width(),
+                SecondaryAction::Qr.width(),
+                SecondaryAction::Ocr.width(),
+                SecondaryAction::CopyColor.width(),
+                SecondaryAction::Translate.width(),
+                SecondaryAction::RecordArea.width(),
+                SecondaryAction::RecordWindow.width(),
+                SecondaryAction::RetryRecognition.width(),
+                SecondaryAction::CopyRecognition.width(),
+                SecondaryAction::ClearRecognition.width(),
+            ]
         );
         assert!(secondary_menu_opens_above(
             layout,

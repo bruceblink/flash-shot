@@ -190,6 +190,10 @@ Save 与 Pin 均 `exact_match=true`，Copy 的隔离观察器结果与源帧逐�
 `capture_preflight_ready=true`。代表性截图 `screenshots/09-direct-annotation-toolbar.png` 已目视复核；Computer Use 未取得可操作的 Flash Shot 原生窗口，
 该证据标记为 Release runner 原生输入，不宣称为 Computer Use。workspace 全量测试、严格 Clippy、格式和 all-target 检查通过。
 
+**W7.7 当前结果（2026-10-03）**：将 More 面板的 14 个动作收敛为 `WorkspaceMoreAction` 目录，统一稳定 ID、焦点索引、
+可选识别动作顺序和本地化宽度预算。主工具栏、More 面板和布局测量共同读取动作目录；保存、识别、录屏、复制颜色和重试 handler
+保持原有状态机与清理语义不变。确定性动作目录、overlay 布局和验收规划测试通过；Release 工具组回归继续作为同一工作区验收证据。
+
 **不做**：不新增标注能力，不改变选区像素、标注文档坐标、导出合成、快捷键、报告 schema 或失败恢复；不移植 Snow Shot 设置页和 Qt/Tauri/Web 架构。
 
 **验收条件**：
