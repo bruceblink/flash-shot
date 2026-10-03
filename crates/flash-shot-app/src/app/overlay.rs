@@ -77,9 +77,21 @@ const ANNOTATION_TOOLBAR_PADDING: f32 = ThemeMetrics::WORKSPACE_ANNOTATION_PADDI
 const ANNOTATION_TOOL_PALETTE_HEIGHT: f32 = ANNOTATION_TOOL_ICON_WIDTH
     + ANNOTATION_TOOLBAR_PADDING * 2.0
     + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0;
-// Keep the measured palette count aligned with the buttons rendered below so compact locales do
-// not reserve an unused wrapped row.
-const ANNOTATION_TOOL_PALETTE_ITEMS: usize = 6;
+// Keep the measured palette count aligned with the directly visible annotation actions.
+const ANNOTATION_TOOL_PALETTE_ITEMS: usize = 11;
+const ANNOTATION_TOOLBAR_TOOLS: [AnnotationTool; ANNOTATION_TOOL_PALETTE_ITEMS] = [
+    AnnotationTool::Rectangle,
+    AnnotationTool::Ellipse,
+    AnnotationTool::Arrow,
+    AnnotationTool::Line,
+    AnnotationTool::Freehand,
+    AnnotationTool::Highlight,
+    AnnotationTool::Text,
+    AnnotationTool::Number,
+    AnnotationTool::Blur,
+    AnnotationTool::Mosaic,
+    AnnotationTool::Watermark,
+];
 const ANNOTATION_TOOL_GROUP_COUNT: usize = 4;
 const ANNOTATION_TOOL_GROUP_MAX_ITEMS: usize = 3;
 const ANNOTATION_TOOL_GROUP_POPUP_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
@@ -98,7 +110,7 @@ const ANNOTATION_STYLE_OPACITY_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_OPACIT
 const ANNOTATION_STYLE_FILL_WIDTH: f32 = ThemeMetrics::WORKSPACE_STYLE_FILL_WIDTH;
 const ANNOTATION_LAYERS_WIDTH: f32 = 180.0;
 const ANNOTATION_LAYERS_PREFERRED_HEIGHT: f32 = 200.0;
-const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 900.0;
+const ANNOTATION_TOOLBAR_MAX_WIDTH: f32 = 1200.0;
 const SECONDARY_ACTION_COUNT: usize = 14;
 // Chinese Save Editable, QR, and OCR labels need more room than their English counterparts.
 const OVERLAY_MORE_ACTION_WIDTHS: [f32; 11] = [
@@ -624,13 +636,13 @@ fn annotation_tool_button(
     )
 }
 
-/// Builds one compact annotation launcher; the full tool name stays available to screen readers
-/// and in the hover tooltip so the drawing row can use stable icon-sized hit targets.
-fn annotation_icon_button(
+/// Builds one direct annotation action with the same icon hitbox and semantic states as workspace
+/// result actions. Related tool choices remain available by activating the selected tool again.
+fn annotation_toolbar_icon_button(
     id: impl Into<gpui::ElementId>,
     icon: super::overlay_toolbar::WorkspaceIcon,
-    label: &'static str,
-    tooltip: &'static str,
+    label: impl Into<gpui::SharedString>,
+    tooltip: impl Into<gpui::SharedString>,
     colors: ThemeColors,
     active: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
@@ -655,15 +667,42 @@ fn annotation_icon_button(
     .on_key_down(stop_overlay_action_key_propagation)
 }
 
-/// Returns one stable vector icon for the four annotation tool groups shown in the compact palette.
-const fn annotation_tool_group_icon(
-    group: AnnotationToolGroup,
-) -> super::overlay_toolbar::WorkspaceIcon {
-    match group {
-        AnnotationToolGroup::Text => icon::TEXT,
-        AnnotationToolGroup::Shape => icon::SHAPE,
-        AnnotationToolGroup::Line => icon::LINE,
-        AnnotationToolGroup::Obscure => icon::OBSCURE,
+/// Returns the vector icon and stable accessible name for every supported annotation action.
+const fn annotation_tool_icon(tool: AnnotationTool) -> super::overlay_toolbar::WorkspaceIcon {
+    use super::overlay_toolbar::WorkspaceIcon;
+
+    match tool {
+        AnnotationTool::Watermark => WorkspaceIcon::Watermark,
+        AnnotationTool::Text => icon::TEXT,
+        AnnotationTool::Number => WorkspaceIcon::Number,
+        AnnotationTool::Blur => icon::OBSCURE,
+        AnnotationTool::Mosaic => WorkspaceIcon::Mosaic,
+        AnnotationTool::Highlight => icon::MARK,
+        AnnotationTool::Rectangle => icon::SHAPE,
+        AnnotationTool::Ellipse => WorkspaceIcon::Ellipse,
+        AnnotationTool::Line => icon::LINE,
+        AnnotationTool::Arrow => WorkspaceIcon::Arrow,
+        AnnotationTool::Freehand => WorkspaceIcon::Freehand,
+    }
+}
+
+/// Resolves a related-tool menu for actions that share an existing editing group.
+fn annotation_group_for_tool(tool: AnnotationTool) -> Option<AnnotationToolGroup> {
+    ANNOTATION_TOOL_GROUP_SPECS
+        .iter()
+        .find(|spec| spec.tools.contains(&tool))
+        .map(|spec| spec.group)
+}
+
+/// Keeps repeat-activation discoverable while each drawing action remains a direct toolbar button.
+fn annotation_tool_tooltip(locale: Locale, tool: AnnotationTool) -> String {
+    let label = locale.text(annotation_tool_ui_text(tool));
+    match annotation_group_for_tool(tool) {
+        Some(_) => format!(
+            "{label} · {}",
+            locale.text(UiText::OverlayAnnotationToolOptionsHint)
+        ),
+        None => label.to_owned(),
     }
 }
 
@@ -2708,13 +2747,7 @@ impl Render for CaptureOverlay {
                         actions
                             .child(workspace_drag_handle(workspace_colors))
                             .when(show_annotation_controls, |actions| {
-                                actions.child(
-                                    div()
-                                        .id("overlay-inline-annotation-tools")
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(ANNOTATION_TOOL_PALETTE_GAP))
-                                        .child(annotation_icon_button(
+                                actions.child(annotation_toolbar_icon_button(
                                             "overlay-tool-selection",
                                             icon::MOVE,
                                             locale.text(UiText::OverlaySelect),
@@ -2728,67 +2761,85 @@ impl Render for CaptureOverlay {
                                                         app.select_selection_tool(cx);
                                                     });
                                                 });
-                                             }),
-                                         ))
-                                         .child(workspace_separator(
-                                             "overlay-tool-selection-separator",
-                                             workspace_colors,
-                                         ))
-                                         .children(ANNOTATION_TOOL_GROUP_SPECS.iter().copied().map(
-                                            |spec| {
-                                                let group = spec.group;
-                                                let active = annotation_tool_group == Some(group)
-                                                    || selected_tool.is_some_and(|tool| {
-                                                        spec.tools.contains(&tool)
-                                                    });
-                                                let focus_handle = self
-                                                    .annotation_tool_group_trigger_focus_handle(group);
-                                                annotation_icon_button(
+                                            }),
+                                        ))
+                                    .child(workspace_separator(
+                                        "overlay-tool-selection-separator",
+                                        workspace_colors,
+                                    ))
+                                    .children(
+                                            ANNOTATION_TOOLBAR_TOOLS.iter().copied().map(|tool| {
+                                                let group = annotation_group_for_tool(tool);
+                                                let active = selected_tool == Some(tool);
+                                                let expanded = group.is_some_and(|group| {
+                                                    annotation_tool_group == Some(group)
+                                                });
+                                                let label =
+                                                    locale.text(annotation_tool_ui_text(tool));
+                                                let tooltip =
+                                                    annotation_tool_tooltip(locale, tool);
+                                                let button = annotation_toolbar_icon_button(
                                                     format!(
-                                                        "overlay-tool-group-{}",
-                                                        annotation_tool_group_key(group)
+                                                        "overlay-tool-{}",
+                                                        annotation_tool_key(tool)
                                                     ),
-                                                    annotation_tool_group_icon(group),
-                                                    locale.text(spec.label),
-                                                    locale.text(spec.tooltip),
+                                                    annotation_tool_icon(tool),
+                                                    label,
+                                                    tooltip,
                                                     workspace_colors,
                                                     active,
                                                     cx.listener(move |this, _, window, cx| {
-                                                        this.toggle_annotation_tool_group_from_trigger(
-                                                            group, window, cx,
-                                                        );
+                                                        if active && let Some(group) = group {
+                                                            this
+                                                                .toggle_annotation_tool_group_from_trigger(
+                                                                    group, window, cx,
+                                                                );
+                                                        } else {
+                                                            let app = this.app.clone();
+                                                            cx.defer(move |cx| {
+                                                                app.update(cx, |app, cx| {
+                                                                    app.select_annotation_tool(
+                                                                        tool, cx,
+                                                                    );
+                                                                });
+                                                            });
+                                                        }
                                                     }),
                                                 )
-                                                .track_focus(&focus_handle)
-                                                .on_key_down(cx.listener(
-                                                    move |this, event, window, cx| {
-                                                        this.handle_annotation_tool_group_trigger_key_down(
-                                                            group, event, window, cx,
-                                                        );
-                                                    },
-                                                ))
-                                            },
-                                        ))
-                                        .child(annotation_icon_button(
-                                            "overlay-tool-highlight",
-                                            icon::MARK,
-                                            locale.text(UiText::OverlayHighlight),
-                                            locale.text(UiText::OverlayHighlight),
-                                            workspace_colors,
-                                            selected_tool == Some(AnnotationTool::Highlight),
-                                            cx.listener(|this, _, _, cx| {
-                                                let app = this.app.clone();
-                                                cx.defer(move |cx| {
-                                                    app.update(cx, |app, cx| {
-                                                        app.select_annotation_tool(
-                                                            AnnotationTool::Highlight,
-                                                            cx,
-                                                        );
-                                                    });
-                                                });
+                                                .aria_expanded(expanded);
+                                                match group {
+                                                    Some(group)
+                                                        if group.spec().tools.first().copied()
+                                                            == Some(tool) =>
+                                                    {
+                                                        let focus_handle = self
+                                                            .annotation_tool_group_trigger_focus_handle(
+                                                                group,
+                                                            );
+                                                        button
+                                                            .track_focus(&focus_handle)
+                                                            .on_key_down(cx.listener(
+                                                                move |this, event, window, cx| {
+                                                                    this
+                                                                        .handle_annotation_tool_group_trigger_key_down(
+                                                                            group, event, window,
+                                                                            cx,
+                                                                        );
+                                                                },
+                                                            ))
+                                                    }
+                                                    Some(group) => button.on_key_down(cx.listener(
+                                                        move |this, event, window, cx| {
+                                                            this
+                                                                .handle_annotation_tool_group_trigger_key_down(
+                                                                    group, event, window, cx,
+                                                                );
+                                                        },
+                                                    )),
+                                                    None => button,
+                                                }
                                             }),
-                                        )),
-                                )
+                                        )
                             })
                             .when(show_annotation_controls, |actions| {
                                 actions.child(workspace_separator(
@@ -4890,8 +4941,11 @@ fn annotation_toolbar_preferred_width(
                 + ANNOTATION_TOOL_GROUP_POPUP_BORDER * 2.0
         }
     };
+    let palette_width = (items.selection_context > 0 || items.arrange_context > 0)
+        .then(annotation_tool_palette_width)
+        .unwrap_or_default();
     let natural_width = action_toolbar_width
-        .max(annotation_tool_palette_width())
+        .max(palette_width)
         .max(style_width)
         .max(context_width(items.selection_context))
         .max(context_width(items.arrange_context));
@@ -5639,22 +5693,24 @@ fn action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32> {
     if show_annotation_controls {
         let context_width =
             2.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + OVERLAY_ACTION_ITEM_GAP;
-        let annotation_width = ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_ICON_WIDTH
-            + ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_PALETTE_GAP
-            + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
         let result_action_count = WorkspaceResultAction::catalog().len() as f32;
         let result_width = result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
             + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP;
-        vec![
+        let mut widths = vec![
             OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
-            context_width,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
-            annotation_width,
+        ];
+        widths.extend([ANNOTATION_TOOL_ICON_WIDTH; ANNOTATION_TOOL_PALETTE_ITEMS]);
+        widths.extend([
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+            context_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
             result_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
             INLINE_SECONDARY_ACTION_WIDTH,
-        ]
+        ]);
+        widths
     } else {
         vec![
             OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
@@ -5675,20 +5731,22 @@ fn compact_action_toolbar_item_widths(show_annotation_controls: bool) -> Vec<f32
     if show_annotation_controls {
         let context_width =
             2.0 * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA + OVERLAY_ACTION_ITEM_GAP;
-        let annotation_width = ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_ICON_WIDTH
-            + ANNOTATION_TOOL_PALETTE_ITEMS as f32 * ANNOTATION_TOOL_PALETTE_GAP
-            + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
         let result_action_count = WorkspaceResultAction::catalog().len() as f32;
         let result_width = result_action_count * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
             + (result_action_count - 1.0) * OVERLAY_ACTION_ITEM_GAP;
-        vec![
+        let mut widths = vec![
             OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH,
+            ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA,
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
+        ];
+        widths.extend([ANNOTATION_TOOL_ICON_WIDTH; ANNOTATION_TOOL_PALETTE_ITEMS]);
+        widths.extend([
+            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
             context_width,
             ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
-            annotation_width,
-            ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH,
             result_width,
-        ]
+        ]);
+        widths
     } else {
         let result_action_count = WorkspaceResultAction::catalog().len() as f32;
         vec![
@@ -5791,14 +5849,16 @@ fn selection_cursor(
 
 #[cfg(test)]
 mod tests {
+    use super::super::overlay_toolbar::WorkspaceIcon;
     use super::{
         ANNOTATION_TOOL_ESTIMATED_WIDTH, ANNOTATION_TOOL_GAP, ANNOTATION_TOOL_GROUP_POPUP_BORDER,
         ANNOTATION_TOOL_GROUP_POPUP_PADDING, ANNOTATION_TOOL_GROUP_SPECS,
-        ANNOTATION_TOOL_ROW_HEIGHT, ANNOTATION_WIDTHS, ActionToolbarLayout,
-        AnnotationStyleCapabilities, AnnotationToolGroup, AnnotationToolbarLayout, FrameInputBatch,
-        MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS, OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING,
-        OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET,
-        OVERLAY_MORE_ACTION_WIDTHS, OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
+        ANNOTATION_TOOL_ROW_HEIGHT, ANNOTATION_TOOLBAR_TOOLS, ANNOTATION_WIDTHS,
+        ActionToolbarLayout, AnnotationStyleCapabilities, AnnotationToolGroup,
+        AnnotationToolbarLayout, FrameInputBatch, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
+        OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT,
+        OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET, OVERLAY_MORE_ACTION_WIDTHS,
+        OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
         OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
         SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, WorkspaceLayoutInput,
         WorkspaceResultAction, WorkspaceSelectionAnchor, accepts_overlay_input,
@@ -5809,12 +5869,12 @@ mod tests {
         annotation_style_row_preferred_width, annotation_style_row_width,
         annotation_text_size_value_label, annotation_tool_group_focus_direction,
         annotation_tool_group_focus_target, annotation_tool_group_popover_height,
-        annotation_tool_group_popover_width, annotation_tool_palette_width,
-        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
-        annotation_toolbar_preferred_width, annotation_width_value_label,
-        arrange_context_for_selection, arrow_head_points, capture_double_click,
-        close_more_actions_shortcut, intersect, is_text_annotation, magnifier_origin,
-        more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
+        annotation_tool_group_popover_width, annotation_tool_icon, annotation_tool_key,
+        annotation_tool_palette_width, annotation_tool_tooltip, annotation_toolbar_height,
+        annotation_toolbar_items, annotation_toolbar_layout, annotation_toolbar_preferred_width,
+        annotation_width_value_label, arrange_context_for_selection, arrow_head_points,
+        capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
+        magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
         owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
         recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
@@ -6181,6 +6241,68 @@ mod tests {
                 "{key} must not be captured by More navigation"
             );
         }
+    }
+
+    #[test]
+    fn annotation_toolbar_exposes_every_supported_tool_with_a_stable_icon_order() {
+        assert_eq!(
+            ANNOTATION_TOOLBAR_TOOLS,
+            [
+                AnnotationTool::Rectangle,
+                AnnotationTool::Ellipse,
+                AnnotationTool::Arrow,
+                AnnotationTool::Line,
+                AnnotationTool::Freehand,
+                AnnotationTool::Highlight,
+                AnnotationTool::Text,
+                AnnotationTool::Number,
+                AnnotationTool::Blur,
+                AnnotationTool::Mosaic,
+                AnnotationTool::Watermark,
+            ]
+        );
+        assert_eq!(
+            ANNOTATION_TOOLBAR_TOOLS.map(annotation_tool_key),
+            [
+                "rectangle",
+                "ellipse",
+                "arrow",
+                "line",
+                "freehand",
+                "highlight",
+                "text",
+                "number",
+                "blur",
+                "mosaic",
+                "watermark",
+            ]
+        );
+        assert_eq!(
+            ANNOTATION_TOOLBAR_TOOLS
+                .map(annotation_tool_icon)
+                .map(WorkspaceIcon::stable_id),
+            [
+                "shape",
+                "ellipse",
+                "arrow",
+                "line",
+                "freehand",
+                "highlight",
+                "text",
+                "number",
+                "obscure",
+                "mosaic",
+                "watermark",
+            ]
+        );
+        assert!(
+            annotation_tool_tooltip(Locale::English, AnnotationTool::Rectangle)
+                .contains("Activate the selected tool again")
+        );
+        assert!(
+            annotation_tool_tooltip(Locale::SimplifiedChinese, AnnotationTool::Rectangle)
+                .contains("再次点击当前工具")
+        );
     }
 
     #[test]
@@ -7226,9 +7348,9 @@ mod tests {
         assert_eq!(
             primary,
             ActionToolbarLayout {
-                left: 1696.0,
+                left: 1432.0,
                 top: 1270.0,
-                width: 846.0,
+                width: 1110.0,
                 height: 50.0,
             }
         );
@@ -7242,11 +7364,11 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(marking.left, 1696.0);
+        assert_eq!(marking.left, 1432.0);
         assert_eq!(marking.top, 1270.0);
-        assert_eq!(marking.width, 846.0);
+        assert_eq!(marking.width, 1110.0);
         assert_eq!(marking.height, 50.0);
-        assert_eq!(marking.tools_width, 846.0);
+        assert_eq!(marking.tools_width, 1110.0);
         assert_eq!(marking.tools_top, 1270.0);
         assert_eq!(marking.style_left, marking.left);
         assert_eq!(marking.style_top, 1320.0);
@@ -7573,11 +7695,11 @@ mod tests {
         assert_eq!(action_toolbar_height(324.0, false), 92.0);
         assert_eq!(action_toolbar_height(288.0, false), 92.0);
         assert_eq!(action_toolbar_natural_width(false), 543.0);
-        assert_eq!(action_toolbar_natural_width(true), 846.0);
+        assert_eq!(action_toolbar_natural_width(true), 1110.0);
         assert_eq!(action_toolbar_height(358.0, true), 176.0);
-        assert_eq!(action_toolbar_height(559.0, true), 92.0);
+        assert_eq!(action_toolbar_height(559.0, true), 134.0);
         assert_eq!(action_toolbar_height(587.0, true), 92.0);
-        assert_eq!(action_toolbar_height(846.0, true), 50.0);
+        assert_eq!(action_toolbar_height(846.0, true), 92.0);
         assert_eq!(secondary_action_menu_width(420.0, false, false), 352.0);
         assert_eq!(
             action_toolbar_row_count(352.0, OVERLAY_MORE_ACTION_WIDTHS),
@@ -7632,9 +7754,9 @@ mod tests {
         assert_eq!(selected_items.arrange_context, 0);
         assert_eq!(expanded_items.arrange_context, 6);
         assert_eq!(annotation_toolbar_height(wide, stable_items), 46.0);
-        assert_eq!(annotation_toolbar_height(narrow, stable_items), 46.0);
-        assert_eq!(annotation_toolbar_height(narrow, selected_items), 219.0);
-        assert!(annotation_toolbar_height(narrow, expanded_items) > 219.0);
+        assert_eq!(annotation_toolbar_height(narrow, stable_items), 86.0);
+        assert_eq!(annotation_toolbar_height(narrow, selected_items), 259.0);
+        assert!(annotation_toolbar_height(narrow, expanded_items) > 259.0);
     }
 
     #[test]
@@ -7643,7 +7765,7 @@ mod tests {
         let shape_style = annotation_style_capabilities_for_tool(AnnotationTool::Rectangle);
         let empty_items = annotation_toolbar_items(false, false, false, false, false);
 
-        assert_eq!(annotation_tool_palette_width(), 246.0);
+        assert_eq!(annotation_tool_palette_width(), 446.0);
         assert_eq!(annotation_style_row_width(empty_style), 0.0);
         assert_eq!(
             annotation_toolbar_preferred_width(

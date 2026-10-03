@@ -709,6 +709,7 @@ pub enum UiText {
     OverlayLine,
     OverlayArrow,
     OverlayFreehand,
+    OverlayAnnotationToolOptionsHint,
     OverlayTextGroup,
     OverlayTextGroupTooltip,
     OverlayShapeGroup,
@@ -1537,6 +1538,9 @@ impl UiText {
             Self::OverlayLine => "Line",
             Self::OverlayArrow => "Arrow",
             Self::OverlayFreehand => "Freehand",
+            Self::OverlayAnnotationToolOptionsHint => {
+                "Activate the selected tool again to choose a related tool"
+            }
             Self::OverlayTextGroup => "Text",
             Self::OverlayTextGroupTooltip => "Choose a text annotation",
             Self::OverlayShapeGroup => "Shape",
@@ -2273,6 +2277,7 @@ impl UiText {
             Self::OverlayLine => "直线",
             Self::OverlayArrow => "箭头",
             Self::OverlayFreehand => "画笔",
+            Self::OverlayAnnotationToolOptionsHint => "再次点击当前工具可选择同组工具",
             Self::OverlayTextGroup => "文字",
             Self::OverlayTextGroupTooltip => "选择文字标注类型",
             Self::OverlayShapeGroup => "形状",

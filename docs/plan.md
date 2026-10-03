@@ -1,6 +1,6 @@
 # 主线开发计划
 
-更新日期：2026-09-27
+更新日期：2026-10-03
 当前版本：`0.1.3`
 目标版本：`0.2.0` 质量阶段与截图工作区 UI 改造
 
@@ -80,7 +80,7 @@ tooltip、键盘可达性和选区边缘呈现。只借鉴可观察的视觉层�
 | --- | --- | --- | --- |
 | G0 | 整合并冻结本主线计划 | 本次完成 | 只有 `docs/plan.md` 维护路线；旧完成段落不再作为待办 |
 | G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | `gpui-kit 0.6.6` 的组件、图标、tooltip、焦点、popover 和 420x420 Release 探针可编译；生产应用仍保留当前 GPUI 0.2.2，待 W7 后再评估全量迁移 |
-| W7 | 截图 UI 与工具栏完整复刻验收 | 已完成（W7.5 视觉矩阵，2026-09-27；单屏 100%） | 视觉矩阵、真实交互、截图/JSON 报告和最终清理全部通过；高 DPI/多屏按 D1 暂缓 |
+| W7 | 截图 UI 与工具栏完整复刻验收 | 已完成（2026-10-03；单屏 100%，D1 暂缓） | 目标样式的单行工具栏、图标目录、动作映射和真实交互证据通过；高 DPI/多屏按 D1 暂缓 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 已完成（U5.4 综合设置页矩阵，2026-09-27；单屏 100%） | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠；高 DPI/多屏按 D1 暂缓 |
 | U1 | 动态文案国际化收尾 | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试 |
 | U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
@@ -91,7 +91,7 @@ tooltip、键盘可达性和选区边缘呈现。只借鉴可观察的视觉层�
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-执行顺序固定为：**G0 → G1 → W7.1-W7.5 → U5 → U1-U4 收尾 → M1 → R1（可选）→ D1（有硬件时）**。
+执行顺序固定为：**G0 → G1 → W7.1-W7.6 → U5 → U1-U4 收尾 → M1 → R1（可选）→ D1（有硬件时）**。
 P3 不插入 `0.2.0`；任何切片都必须先通过其自身验收，再进入下一切片。
 
 ## 4. 未完成切片
@@ -144,6 +144,7 @@ G1 已通过隔离兼容性范围；W7 可以继续使用当前 GPUI 的 ThemeMe
 3. `W7.3`：完成布局快照、边缘避让、键盘/鼠标交互、双语双主题和三尺寸验收；
 4. `W7.4`：以同一 Release 构建执行 Capture → Copy/Save/Pin/Cancel → More/工具组 → Escape 清理，并固化截图和 JSON 报告。
 5. `W7.5`：以同一源码 Release 构建完成双主题、双语和三种窗口尺寸的 84 例视觉矩阵，复核代表性截图并固化矩阵报告。
+6. `W7.6`：依据 Snow Shot 目标截图，将默认工作区收敛为单一连续的图标工具栏；绘图工具、撤销/重做、结果动作和低频动作使用同一 32/36px 命中区，样式编辑不再占用默认第二行，所有已有 handler 保持可达。
 
 **W7.1 当前结果（2026-09-27）**：现有 GPUI 工作区控件继续作为生产实现，`WorkspaceIcon` 已冻结 13 个图标的稳定语义 ID 和审查顺序，
 覆盖 Move、Text、Shape、Line、Highlight、Obscure、Undo、Redo、Pin、Copy、Save、More、Cancel；确定性测试确认目录完整且没有重复 ID。
@@ -174,6 +175,18 @@ Save 与 Pin 均 `exact_match=true`，Copy 的隔离观察器结果与源帧逐�
 `target/ui-acceptance/w7-workspace-matrix-20260927/matrix-report.json` 报告为 `84 passed, 0 failed`，84 份 PNG 与 84 份相邻 JSON 全部生成，
 每例均记录 `dpi=96`、`scale_factor=1.0` 和物理窗口尺寸；代表性 More、工具组、中文和浅色截图已目视复核。该矩阵覆盖视觉布局，不替代 W7.3/W7.4 的真实输入与动作报告，
 也不覆盖 D1 的高 DPI、负坐标双屏和混合 DPI；当前 Computer Use 会话没有可操作的 Flash Shot 原生窗口，证据来自 Release runner。
+
+**W7.6 当前结果（2026-10-03）**：依据用户提供的 Snow Shot 截图，将默认工作区收敛为单行连续图标工具栏；11 种标注工具均可直接点击选择，
+并保留 Text/Shape 同类工具浮层、撤销/重做、上下文操作、结果动作及 More 入口。新增图标遵循共享 16px 画布，普通/禁用按钮融入 toolbar surface，
+工具组触发器只在重复激活当前工具时打开，现有标注与结果动作 handler 保持不变。
+
+当前源码 Windows Release `overlay-interaction-acceptance --allow-input --capture-scenario tool-group` 在单屏 `2560x1440`、DPI 96、
+`scale_factor=1.0` 下通过真实鼠标依次选择 Ellipse、Arrow、Line、Freehand、Highlight、Text、Number、Blur、Mosaic、Watermark 和 Rectangle，
+并完成 More/工具组打开与关闭、键盘 Watermark 选择及 Escape 清理。报告
+`target/overlay-interaction-acceptance-w7-toolbar-20261003/session-1790994289343-21792/report.json` 为 schema 32、`status=passed`；
+最终 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、`capture_teardown_pending=false`、
+`capture_preflight_ready=true`。代表性截图 `screenshots/09-direct-annotation-toolbar.png` 已目视复核；Computer Use 未取得可操作的 Flash Shot 原生窗口，
+该证据标记为 Release runner 原生输入，不宣称为 Computer Use。workspace 全量测试、严格 Clippy、格式和 all-target 检查通过。
 
 **不做**：不新增标注能力，不改变选区像素、标注文档坐标、导出合成、快捷键、报告 schema 或失败恢复；不移植 Snow Shot 设置页和 Qt/Tauri/Web 架构。
 

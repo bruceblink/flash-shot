@@ -55,6 +55,12 @@ pub(crate) enum WorkspaceIcon {
     Ocr,
     Translate,
     Record,
+    Arrow,
+    Ellipse,
+    Freehand,
+    Mosaic,
+    Number,
+    Watermark,
 }
 
 /// Names the small line icons used by the settings navigation rail and compact section picker.
@@ -139,6 +145,12 @@ impl WorkspaceIcon {
             Self::Ocr => "ocr",
             Self::Translate => "translate",
             Self::Record => "record",
+            Self::Arrow => "arrow",
+            Self::Ellipse => "ellipse",
+            Self::Freehand => "freehand",
+            Self::Mosaic => "mosaic",
+            Self::Number => "number",
+            Self::Watermark => "watermark",
         }
     }
 
@@ -147,7 +159,7 @@ impl WorkspaceIcon {
     /// The order is the review order, not a promise about every responsive toolbar row. Callers
     /// still derive placement from the active workflow, while this list gives tests one complete
     /// source for icon and accessibility coverage.
-    pub(crate) const fn catalog() -> &'static [Self; 19] {
+    pub(crate) const fn catalog() -> &'static [Self; 25] {
         &[
             Self::DragHandle,
             Self::Move,
@@ -168,6 +180,12 @@ impl WorkspaceIcon {
             Self::Ocr,
             Self::Translate,
             Self::Record,
+            Self::Arrow,
+            Self::Ellipse,
+            Self::Freehand,
+            Self::Mosaic,
+            Self::Number,
+            Self::Watermark,
         ]
     }
 }
@@ -550,15 +568,6 @@ fn paint_workspace_icon(
                 color,
                 &[(left + 2.0, bottom - 2.0), (right - 2.0, top + 2.0)],
             );
-            draw_icon_stroke(
-                window,
-                color,
-                &[
-                    (right - 2.0, top + 2.0),
-                    (right - 6.0, top + 2.0),
-                    (right - 2.0, top + 6.0),
-                ],
-            );
         }
         WorkspaceIcon::Highlight => {
             draw_icon_stroke(
@@ -832,6 +841,95 @@ fn paint_workspace_icon(
         WorkspaceIcon::Record => {
             draw_icon_circle_stroke(window, color, center_x, center_y, 4.5);
             draw_icon_dot(window, color, center_x, center_y, 2.0);
+        }
+        WorkspaceIcon::Arrow => {
+            draw_icon_stroke(
+                window,
+                color,
+                &[(left + 2.0, bottom - 2.0), (right - 2.0, top + 2.0)],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (right - 2.0, top + 2.0),
+                    (right - 6.0, top + 2.0),
+                    (right - 2.0, top + 6.0),
+                ],
+            );
+        }
+        WorkspaceIcon::Ellipse => {
+            draw_icon_circle_stroke(window, color, center_x, center_y, 6.0);
+        }
+        WorkspaceIcon::Freehand => {
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (left + 1.5, center_y + 2.5),
+                    (left + 4.0, center_y - 2.5),
+                    (center_x - 1.0, center_y + 1.5),
+                    (center_x + 2.0, center_y - 3.0),
+                    (right - 1.5, center_y + 1.0),
+                ],
+            );
+        }
+        WorkspaceIcon::Mosaic => {
+            for (x, y) in [
+                (left + 1.0, top + 1.0),
+                (center_x + 1.0, top + 1.0),
+                (left + 1.0, center_y + 1.0),
+                (center_x + 1.0, center_y + 1.0),
+            ] {
+                draw_icon_closed_stroke(
+                    window,
+                    color,
+                    &[(x, y), (x + 5.0, y), (x + 5.0, y + 5.0), (x, y + 5.0)],
+                );
+            }
+        }
+        WorkspaceIcon::Number => {
+            draw_icon_circle_stroke(window, color, center_x, center_y, 6.0);
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (center_x - 1.0, center_y - 2.0),
+                    (center_x + 1.0, center_y - 3.5),
+                    (center_x + 1.0, center_y + 3.0),
+                ],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (center_x - 2.0, center_y + 3.5),
+                    (center_x + 3.0, center_y + 3.5),
+                ],
+            );
+        }
+        WorkspaceIcon::Watermark => {
+            draw_icon_closed_stroke(
+                window,
+                color,
+                &[
+                    (left + 2.0, top + 2.0),
+                    (right - 2.0, top + 2.0),
+                    (right - 2.0, bottom - 2.0),
+                    (left + 2.0, bottom - 2.0),
+                ],
+            );
+            draw_icon_stroke(
+                window,
+                color,
+                &[
+                    (left + 3.0, center_y - 2.0),
+                    (left + 5.0, center_y + 2.0),
+                    (center_x, center_y - 1.0),
+                    (right - 5.0, center_y + 2.0),
+                    (right - 3.0, center_y - 2.0),
+                ],
+            );
         }
     }
 }
@@ -1181,6 +1279,12 @@ mod tests {
                 "ocr",
                 "translate",
                 "record",
+                "arrow",
+                "ellipse",
+                "freehand",
+                "mosaic",
+                "number",
+                "watermark",
             ]
         );
         for (index, id) in ids.iter().enumerate() {

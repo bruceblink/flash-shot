@@ -146,7 +146,7 @@ const NARROW_EDGE_SELECTION_WIDTH: f32 = 160.0;
 const NARROW_EDGE_SELECTION_HEIGHT: f32 = 96.0;
 const NARROW_EDGE_RIGHT_INSET: f32 = 18.0;
 const NARROW_EDGE_BOTTOM_INSET: f32 = 12.0;
-const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 900.0;
+const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 1200.0;
 // The wide marking dock is one 42px tool row, an 8px separation, and a 50px action row.
 const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 100.0;
 const ACTION_TOOLBAR_LEADING_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH;
@@ -745,6 +745,7 @@ struct ToolGroupInteractionPlan {
     more: PhysicalPoint,
     text_trigger: PhysicalPoint,
     shape_trigger: PhysicalPoint,
+    direct_tool_centers: [PhysicalPoint; 11],
     shape_rectangle: PhysicalPoint,
     outside: PhysicalPoint,
 }
@@ -1017,8 +1018,8 @@ fn watermark_style_row_width() -> f32 {
 }
 
 #[cfg(windows)]
-/// Locates the compact annotation group triggers and one Shape child from the committed selection.
-/// The same shared dimensions used by the renderer keep input in the real icon and popover hitboxes.
+/// Locates every direct annotation action and the retained related-tool popover from the selection.
+/// Shared toolbar dimensions keep injected input inside each production hitbox.
 fn tool_group_interaction_plan_for_capture_selection(
     handle: *mut c_void,
     capture_bounds: PhysicalRect,
@@ -1030,11 +1031,11 @@ fn tool_group_interaction_plan_for_capture_selection(
     const EDGE_INSET: f32 = 18.0;
     const BOTTOM_SAFE_INSET: f32 = ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET;
     const SELECTION_GAP: f32 = ThemeMetrics::WORKSPACE_SELECTION_GAP;
-    const TOOLBAR_MAX_WIDTH: f32 = 900.0;
+    const TOOLBAR_MAX_WIDTH: f32 = 1200.0;
     const TOOLBAR_PADDING: f32 = ThemeMetrics::WORKSPACE_ANNOTATION_PADDING;
     const TOOL_GAP: f32 = ThemeMetrics::WORKSPACE_TOOL_GAP;
     const TOOL_PALETTE_GAP: f32 = ThemeMetrics::SPACE_1;
-    const TOOL_PALETTE_ITEMS: usize = 6;
+    const TOOL_PALETTE_ITEMS: usize = 11;
     const TOOL_ICON_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
     const ACTION_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
     const ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
@@ -1059,19 +1060,19 @@ fn tool_group_interaction_plan_for_capture_selection(
         + 4.0 * ACTION_ITEM_GAP
         + ACTION_PADDING * 2.0
         + ACTION_BORDER * 2.0;
-    let annotation_palette_width = TOOL_PALETTE_ITEMS as f32 * TOOL_ICON_WIDTH
-        + TOOL_PALETTE_ITEMS as f32 * TOOL_PALETTE_GAP
-        + PALETTE_BORDER;
+    let annotation_row_width = (TOOL_PALETTE_ITEMS as f32 + 1.0) * TOOL_ICON_WIDTH
+        + PALETTE_BORDER
+        + (TOOL_PALETTE_ITEMS as f32 + 1.0) * ACTION_ITEM_GAP;
     let context_width = 2.0 * ACTION_ITEM_WIDTH + ACTION_ITEM_GAP;
     let annotation_action_width = ACTION_TOOLBAR_LEADING_WIDTH
-        + ACTION_ITEM_GAP
+        + annotation_row_width
         + context_width
         + result_width
-        + annotation_palette_width
         + INLINE_SECONDARY_ACTION_WIDTH
         + 3.0 * ACTION_BORDER
         + 7.0 * ACTION_ITEM_GAP
-        + ACTION_PADDING * 2.0;
+        + ACTION_PADDING * 2.0
+        + ACTION_BORDER * 2.0;
     let palette_width = TOOL_PALETTE_ITEMS as f32 * TOOL_ICON_WIDTH
         + TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * TOOL_PALETTE_GAP
         + TOOLBAR_PADDING * 2.0
@@ -1199,7 +1200,7 @@ fn tool_group_interaction_plan_for_capture_selection(
         + ACTION_PADDING
         + ACTION_TOOLBAR_LEADING_WIDTH
         + ACTION_ITEM_GAP
-        + annotation_palette_width
+        + annotation_row_width
         + ACTION_ITEM_GAP
         + ACTION_BORDER
         + ACTION_ITEM_GAP
@@ -1210,18 +1211,25 @@ fn tool_group_interaction_plan_for_capture_selection(
     let result_center = |index: usize| {
         result_left + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP) + ACTION_ITEM_WIDTH / 2.0
     };
-    let (annotation_row_left, group_trigger_offset, annotation_inner_inset) = if annotation_controls
-    {
+    let (annotation_row_left, group_trigger_offset) = if annotation_controls {
         (
             left + ACTION_BORDER + ACTION_PADDING + ACTION_TOOLBAR_LEADING_WIDTH + ACTION_ITEM_GAP,
-            TOOL_ICON_WIDTH + TOOL_PALETTE_GAP + PALETTE_BORDER + TOOL_PALETTE_GAP,
-            0.0,
+            TOOL_ICON_WIDTH + ACTION_ITEM_GAP + PALETTE_BORDER + ACTION_ITEM_GAP,
         )
     } else {
-        (left, 0.0, PALETTE_BORDER + TOOLBAR_PADDING)
+        (left, PALETTE_BORDER + TOOLBAR_PADDING)
     };
-    // The inline palette starts with selection, a divider, then the grouped annotation tools.
-    // The detached palette uses the same icon hit area but has its own bordered padding.
+    // The direct tool row starts after the selection button and its separator. Re-activating a
+    // selected grouped tool opens the related-tool popover for the existing keyboard workflow.
+    let direct_tool_centers = std::array::from_fn(|index| {
+        screen_point((
+            annotation_row_left
+                + group_trigger_offset
+                + index as f32 * (TOOL_ICON_WIDTH + ACTION_ITEM_GAP)
+                + TOOL_ICON_WIDTH / 2.0,
+            group_row_center_y,
+        ))
+    });
     Ok(ToolGroupInteractionPlan {
         mark: screen_point((
             action_center(0),
@@ -1231,22 +1239,9 @@ fn tool_group_interaction_plan_for_capture_selection(
             result_center(RESULT_ACTION_MORE_INDEX),
             action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
-        text_trigger: screen_point((
-            annotation_row_left
-                + group_trigger_offset
-                + annotation_inner_inset
-                + TOOL_ICON_WIDTH / 2.0,
-            group_row_center_y,
-        )),
-        shape_trigger: screen_point((
-            annotation_row_left
-                + group_trigger_offset
-                + annotation_inner_inset
-                + TOOL_ICON_WIDTH
-                + TOOL_PALETTE_GAP
-                + TOOL_ICON_WIDTH / 2.0,
-            group_row_center_y,
-        )),
+        text_trigger: direct_tool_centers[6],
+        shape_trigger: direct_tool_centers[0],
+        direct_tool_centers,
         shape_rectangle: screen_point((
             left + PALETTE_BORDER + POPUP_PADDING + popup_item_width / 2.0,
             popup_top + PALETTE_BORDER + POPUP_PADDING + POPUP_ITEM_HEIGHT / 2.0,
@@ -7222,6 +7217,13 @@ fn execute_tool_group_interactions(
         0.0,
         context.locale,
     )?;
+    inject_mouse_click(overlay.handle, controls_group_plan.text_trigger)?;
+    wait_for_capture_state(context, "Text direct tool selected", |state| {
+        state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+            && state.status == "Text tool selected"
+    })?;
     let foreground = inject_mouse_click(overlay.handle, controls_group_plan.text_trigger)?;
     wait_for_capture_state(context, "Text tool group open", |state| {
         state.selection == Some(selection)
@@ -7290,6 +7292,13 @@ fn execute_tool_group_interactions(
         watermark_style_row_width(),
         context.locale,
     )?;
+    inject_mouse_click(overlay.handle, expanded_group_plan.shape_trigger)?;
+    wait_for_capture_state(context, "Rectangle direct tool selected", |state| {
+        state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+            && state.status == "Rectangle tool selected"
+    })?;
     let foreground = inject_mouse_click(overlay.handle, expanded_group_plan.shape_trigger)?;
     wait_for_capture_state(context, "Shape tool group open", |state| {
         state.selection == Some(selection)
@@ -7340,6 +7349,75 @@ fn execute_tool_group_interactions(
         "tool_group_child_clicked",
         foreground,
         Some(&rectangle_selected),
+    )?;
+
+    let direct_tool_steps = [
+        (
+            1,
+            UiText::OverlayEllipse,
+            "annotation_toolbar_ellipse_selected",
+        ),
+        (2, UiText::OverlayArrow, "annotation_toolbar_arrow_selected"),
+        (3, UiText::OverlayLine, "annotation_toolbar_line_selected"),
+        (
+            4,
+            UiText::OverlayFreehand,
+            "annotation_toolbar_freehand_selected",
+        ),
+        (
+            5,
+            UiText::OverlayHighlight,
+            "annotation_toolbar_highlight_selected",
+        ),
+        (6, UiText::OverlayText, "annotation_toolbar_text_selected"),
+        (
+            7,
+            UiText::OverlayNumber,
+            "annotation_toolbar_number_selected",
+        ),
+        (8, UiText::OverlayBlur, "annotation_toolbar_blur_selected"),
+        (
+            9,
+            UiText::OverlayMosaic,
+            "annotation_toolbar_mosaic_selected",
+        ),
+        (
+            10,
+            UiText::OverlayWatermark,
+            "annotation_toolbar_watermark_selected",
+        ),
+        (
+            0,
+            UiText::OverlayRectangle,
+            "annotation_toolbar_rectangle_selected",
+        ),
+    ];
+    for (index, tool_text, step) in direct_tool_steps {
+        let foreground = inject_mouse_click(
+            overlay.handle,
+            expanded_group_plan.direct_tool_centers[index],
+        )?;
+        let tool_label = context.locale.text(tool_text);
+        let expected_status = context
+            .locale
+            .format_template(UiText::AnnotationToolSelected, &[("tool", tool_label)]);
+        wait_for_capture_state(context, "direct annotation tool selection", |state| {
+            state.selection == Some(selection)
+                && state.annotation_controls_visible
+                && !state.annotation_tool_group_visible
+                && state.status == expected_status
+        })?;
+        record_step(report, &context.report_path, step, foreground, None)?;
+    }
+    thread::sleep(context.settle_delay);
+    let toolbar_foreground = guard_foreground(overlay.handle)?;
+    let direct_toolbar = capture_evidence(context, "09-direct-annotation-toolbar.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "direct_annotation_toolbar_complete",
+        toolbar_foreground,
+        Some(&direct_toolbar),
     )?;
 
     focus_owned_window(overlay, context.timeout)?;
