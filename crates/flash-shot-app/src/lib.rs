@@ -28,8 +28,9 @@ pub mod theme;
 pub mod translation;
 pub mod update;
 
+use ::gpui;
+use ::gpui::*;
 use app::FlashShotApp;
-use gpui::*;
 use history::ScreenshotHistory;
 use performance::PerformanceRecorder;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};

@@ -55,7 +55,9 @@ const OVERLAY_ACTION_BAR_GAP: f32 = ThemeMetrics::WORKSPACE_SELECTION_GAP;
 const OVERLAY_ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
 const OVERLAY_TOOLBAR_DRAG_HANDLE_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH;
 const OVERLAY_ACTION_ITEM_HEIGHT: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_HEIGHT;
-const OVERLAY_ACTION_BAR_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+const OVERLAY_ACTION_BAR_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_VERTICAL_PADDING;
+const OVERLAY_ACTION_BAR_HORIZONTAL_PADDING: f32 =
+    ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING;
 const OVERLAY_ACTION_BAR_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
 const OVERLAY_SECONDARY_MENU_GAP: f32 = ThemeMetrics::WORKSPACE_POPOVER_GAP;
 const OVERLAY_RECOGNITION_PREVIEW_HEIGHT: f32 = 64.0;
@@ -2790,7 +2792,8 @@ impl Render for CaptureOverlay {
                     .items_center()
                     .justify_between()
                     .gap(px(OVERLAY_ACTION_ITEM_GAP))
-                    .p(px(OVERLAY_ACTION_BAR_PADDING))
+                    .px(px(OVERLAY_ACTION_BAR_HORIZONTAL_PADDING))
+                    .py(px(OVERLAY_ACTION_BAR_PADDING))
                     .rounded(px(ThemeMetrics::default().radius_md))
                     .border_1()
                     .border_color(workspace_colors.toolbar_border)
@@ -5648,11 +5651,11 @@ fn secondary_action_menu_preferred_width(
 ) -> f32 {
     let widths = secondary_action_widths(has_recognition_result, has_recognition_retry);
     let minimum_width = widths.iter().copied().fold(0.0, f32::max)
-        + OVERLAY_ACTION_BAR_PADDING * 2.0
+        + OVERLAY_ACTION_BAR_HORIZONTAL_PADDING * 2.0
         + OVERLAY_ACTION_BAR_BORDER * 2.0;
     let maximum_width = widths.iter().sum::<f32>()
         + widths.len().saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
-        + OVERLAY_ACTION_BAR_PADDING * 2.0
+        + OVERLAY_ACTION_BAR_HORIZONTAL_PADDING * 2.0
         + OVERLAY_ACTION_BAR_BORDER * 2.0;
     let mut width = minimum_width.ceil();
     while width <= maximum_width {
@@ -5782,7 +5785,7 @@ fn action_toolbar_width_for(show_annotation_controls: bool, include_inline_secon
     };
     widths.iter().sum::<f32>()
         + widths.len().saturating_sub(1) as f32 * OVERLAY_ACTION_ITEM_GAP
-        + OVERLAY_ACTION_BAR_PADDING * 2.0
+        + OVERLAY_ACTION_BAR_HORIZONTAL_PADDING * 2.0
         + OVERLAY_ACTION_BAR_BORDER * 2.0
 }
 
@@ -5810,7 +5813,8 @@ fn action_toolbar_row_count(width: f32, widths: impl IntoIterator<Item = f32>) -
     let mut rows = 1_u32;
     let mut row_width = 0.0;
     let content_width =
-        (width - OVERLAY_ACTION_BAR_PADDING * 2.0 - OVERLAY_ACTION_BAR_BORDER * 2.0).max(1.0);
+        (width - OVERLAY_ACTION_BAR_HORIZONTAL_PADDING * 2.0 - OVERLAY_ACTION_BAR_BORDER * 2.0)
+            .max(1.0);
     for item_width in widths {
         let next_width = if row_width == 0.0 {
             item_width
@@ -7035,21 +7039,21 @@ mod tests {
             snapshot.action_toolbar,
             Some(ActionToolbarLayout {
                 left: 118.0,
-                top: 250.0,
+                top: 258.0,
                 width: 284.0,
-                height: 50.0,
+                height: 42.0,
             })
         );
         let menu = snapshot.secondary_menu.expect("selection should own More");
-        assert_eq!(menu.width, 352.0);
-        assert_eq!(menu.height, 176.0);
+        assert_eq!(menu.width, 368.0);
+        assert_eq!(menu.height, 162.0);
         assert!(menu.opens_above);
-        assert_eq!(menu.left, -68.0);
+        assert_eq!(menu.left, -84.0);
         assert_eq!(
             snapshot.dimension,
             Some(SelectionDimensionLayout {
                 left: 242.0,
-                top: 216.0,
+                top: 224.0,
             })
         );
     }
@@ -7255,10 +7259,10 @@ mod tests {
         assert_eq!(
             action_toolbar_layout(workspace_anchor(selection, transform), viewport, false),
             Some(ActionToolbarLayout {
-                left: 650.0,
-                top: 518.0,
-                width: 550.0,
-                height: 50.0,
+                left: 658.0,
+                top: 526.0,
+                width: 542.0,
+                height: 42.0,
             })
         );
     }
@@ -7432,18 +7436,18 @@ mod tests {
             toolbar,
             ActionToolbarLayout {
                 left: 118.0,
-                top: 250.0,
+                top: 258.0,
                 width: 284.0,
-                height: 50.0,
+                height: 42.0,
             }
         );
         assert!(toolbar.top + toolbar.height + OVERLAY_ACTION_BAR_GAP <= selection.top as f32);
 
         let menu_width =
             secondary_action_menu_width(super::view_rect(viewport).width, false, false);
-        assert_eq!(menu_width, 352.0);
+        assert_eq!(menu_width, 368.0);
         let menu_height = secondary_action_menu_height(menu_width, false, false, false);
-        assert_eq!(menu_height, 176.0);
+        assert_eq!(menu_height, 162.0);
         assert!(secondary_menu_opens_above(toolbar, viewport, menu_height));
         let menu_top = toolbar.top
             - (OVERLAY_ACTION_ITEM_HEIGHT
@@ -7460,7 +7464,7 @@ mod tests {
             ),
             Some(SelectionDimensionLayout {
                 left: 242.0,
-                top: 216.0,
+                top: 224.0,
             })
         );
     }
@@ -7494,10 +7498,10 @@ mod tests {
         assert_eq!(
             primary,
             ActionToolbarLayout {
-                left: 1432.0,
-                top: 1270.0,
-                width: 1110.0,
-                height: 50.0,
+                left: 1462.0,
+                top: 1278.0,
+                width: 1080.0,
+                height: 42.0,
             }
         );
         let marking = annotation_toolbar_layout(
@@ -7510,16 +7514,16 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(marking.left, 1432.0);
-        assert_eq!(marking.top, 1270.0);
-        assert_eq!(marking.width, 1110.0);
-        assert_eq!(marking.height, 50.0);
-        assert_eq!(marking.tools_width, 1110.0);
-        assert_eq!(marking.tools_top, 1270.0);
+        assert_eq!(marking.left, 1462.0);
+        assert_eq!(marking.top, 1278.0);
+        assert_eq!(marking.width, 1080.0);
+        assert_eq!(marking.height, 42.0);
+        assert_eq!(marking.tools_width, 1080.0);
+        assert_eq!(marking.tools_top, 1278.0);
         assert_eq!(marking.style_left, marking.left);
         assert_eq!(marking.style_top, 1320.0);
         assert_eq!(marking.action_toolbar.left, primary.left);
-        assert_eq!(marking.action_toolbar.top, 1270.0);
+        assert_eq!(marking.action_toolbar.top, 1278.0);
         assert!(marking.actions_above_tools);
         assert!(marking.top >= OVERLAY_EDGE_INSET);
         assert!(marking.top + marking.height + OVERLAY_ACTION_BAR_GAP <= selection.top as f32);
@@ -7838,17 +7842,17 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false), 134.0);
-        assert_eq!(action_toolbar_height(288.0, false), 134.0);
-        assert_eq!(action_toolbar_natural_width(false), 550.0);
-        assert_eq!(action_toolbar_natural_width(true), 1110.0);
-        assert_eq!(action_toolbar_height(358.0, true), 176.0);
-        assert_eq!(action_toolbar_height(559.0, true), 134.0);
-        assert_eq!(action_toolbar_height(587.0, true), 92.0);
-        assert_eq!(action_toolbar_height(846.0, true), 92.0);
-        assert_eq!(secondary_action_menu_width(420.0, false, false), 352.0);
+        assert_eq!(action_toolbar_height(324.0, false), 122.0);
+        assert_eq!(action_toolbar_height(288.0, false), 122.0);
+        assert_eq!(action_toolbar_natural_width(false), 542.0);
+        assert_eq!(action_toolbar_natural_width(true), 1080.0);
+        assert_eq!(action_toolbar_height(358.0, true), 162.0);
+        assert_eq!(action_toolbar_height(559.0, true), 82.0);
+        assert_eq!(action_toolbar_height(587.0, true), 82.0);
+        assert_eq!(action_toolbar_height(846.0, true), 82.0);
+        assert_eq!(secondary_action_menu_width(420.0, false, false), 368.0);
         assert_eq!(
-            action_toolbar_row_count(352.0, secondary_action_widths(false, false)),
+            action_toolbar_row_count(368.0, secondary_action_widths(false, false)),
             4
         );
         assert_eq!(secondary_action_menu_width(360.0, false, false), 324.0);
@@ -7863,21 +7867,21 @@ mod tests {
             -38.0
         );
         assert_eq!(layout.left, 56.0);
-        assert!((layout.top - 338.0).abs() < 0.01);
+        assert!((layout.top - 346.0).abs() < 0.01);
         assert_eq!(layout.width, 284.0);
-        assert_eq!(layout.height, 50.0);
+        assert_eq!(layout.height, 42.0);
         assert_eq!(
             secondary_action_menu_height(324.0, false, false, false),
-            218.0
+            202.0
         );
         assert_eq!(
             secondary_action_menu_height(324.0, true, false, false),
-            288.0
+            314.0
         );
         assert!(secondary_action_menu_height(324.0, false, true, false) >= 196.0);
         assert_eq!(
             secondary_action_menu_height(324.0, false, false, true),
-            254.0
+            240.0
         );
         assert_eq!(
             secondary_action_widths(true, true),
@@ -7918,10 +7922,10 @@ mod tests {
         assert_eq!(selected_items.selection_context, 8);
         assert_eq!(selected_items.arrange_context, 0);
         assert_eq!(expanded_items.arrange_context, 6);
-        assert_eq!(annotation_toolbar_height(wide, stable_items), 46.0);
-        assert_eq!(annotation_toolbar_height(narrow, stable_items), 86.0);
-        assert_eq!(annotation_toolbar_height(narrow, selected_items), 259.0);
-        assert!(annotation_toolbar_height(narrow, expanded_items) > 259.0);
+        assert_eq!(annotation_toolbar_height(wide, stable_items), 42.0);
+        assert_eq!(annotation_toolbar_height(narrow, stable_items), 78.0);
+        assert_eq!(annotation_toolbar_height(narrow, selected_items), 251.0);
+        assert!(annotation_toolbar_height(narrow, expanded_items) > 251.0);
     }
 
     #[test]
@@ -7930,7 +7934,7 @@ mod tests {
         let shape_style = annotation_style_capabilities_for_tool(AnnotationTool::Rectangle);
         let empty_items = annotation_toolbar_items(false, false, false, false, false);
 
-        assert_eq!(annotation_tool_palette_width(), 446.0);
+        assert_eq!(annotation_tool_palette_width(), 402.0);
         assert_eq!(annotation_style_row_width(empty_style), 0.0);
         assert_eq!(
             annotation_toolbar_preferred_width(
@@ -7986,7 +7990,7 @@ mod tests {
                 360.0,
                 annotation_style_capabilities_for_tool(AnnotationTool::Rectangle)
             ),
-            114.0
+            102.0
         );
         assert_eq!(
             annotation_style_row_height(360.0, AnnotationStyleCapabilities::EMPTY),

@@ -1,6 +1,6 @@
 # 主线开发计划
 
-更新日期：2026-10-03
+更新日期：2026-10-04
 当前版本：`0.1.3`
 目标版本：`0.2.0` Snow Apps 工作区重写与产品 UI 对齐
 
@@ -46,7 +46,8 @@
 用 Rust + GPUI 重建和收敛界面，保留已验证的 Capture/Save/Pin/Copy/Cancel 业务行为、数据和报告协议。
 Snow Shot 是体验基准，不是逐项照搬清单：每项差异都明确选择“采用、适配、舍弃”并写明理由；
 优先采用紧凑工具栏、清晰图标层级、上下文操作和稳定交互，合并重复设置，不移植 Qt/Tauri/Web 架构或无价值的重复控件。
-`gpui-kit` 生产接入仍是独立待验事项，隔离探针不算生产迁移完成。
+本次切片已将生产 GPUI/平台依赖切换到发布版 `gpui-kit 0.6.6`/`gpui-pre-platform 0.3.6`；
+完整组件覆盖和最终矩阵仍按 G2/W7.11 验收，不能由依赖切换单独宣称完成。
 
 | 必须保留 | 允许调整 | 当前暂缓 |
 | --- | --- | --- |
@@ -84,9 +85,9 @@ Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-
 | 编号 | 主线切片 | 状态 | 退出条件 |
 | --- | --- | --- | --- |
 | G0 | 整合并冻结本主线计划 | 本次完成 | 只有 `docs/plan.md` 维护路线；旧完成段落不再作为待办 |
-| G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | 隔离探针编译和组件测试通过；生产应用仍使用 Zed GPUI，不能据此宣称已完成 gpui-kit 接入 |
-| W7 | 截图 UI 与工具栏完整复刻验收 | 进行中（W7.1-W7.9 已交付，W7.10-W7.11 待完成） | 在最新 Snow 基准下完成图标/布局差异复核和最终原生验收；高 DPI/多屏按 D1 暂缓 |
-| G2 | gpui-kit 生产接入评估与迁移 | 待执行（W7.10 后、W7.11 前） | 生产截图工作区实际使用 gpui-kit 并通过 Release 验收；版本冲突或回滚条件未解决时保持未完成 |
+| G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | 隔离探针编译和组件测试通过；当时生产应用仍使用 Zed GPUI，生产迁移由 G2 单独验收 |
+| W7 | 截图 UI 与工具栏完整复刻验收 | 进行中（W7.1-W7.10 已交付，W7.11 待完成） | 在最新 Snow 基准下完成图标/布局差异复核和最终原生验收；高 DPI/多屏按 D1 暂缓 |
+| G2 | gpui-kit 生产接入评估与迁移 | 进行中（生产依赖迁移与工具栏切片已交付，完整组件/矩阵待 W7.11） | 生产截图工作区实际使用 gpui-kit 并通过最终 Release 验收；版本冲突或回滚条件未解决时保持未完成 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 已完成（U5.4 综合设置页矩阵，2026-09-27；单屏 100%） | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠；高 DPI/多屏按 D1 暂缓 |
 | U1 | 动态文案国际化收尾 | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试 |
 | U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
@@ -97,8 +98,8 @@ Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-执行顺序调整为：**W7.10 截图工作区视觉复核 → G2 gpui-kit 生产接入 → W7.11 截图工作区最终验收 → U1-U4 其余页面收尾 → 全产品复核与发布**。
-G0、G1、U5 和 W7.1-W7.8 均为已完成基线，不重复开发；M1、R1、P3 不阻塞 `0.2.0`，D1 在具备对应硬件后单独执行。
+执行顺序调整为：**W7.10 截图工具栏密度收敛与 G2 gpui-kit 生产依赖迁移 → W7.11 截图工作区最终验收 → U1-U4 其余页面收尾 → 全产品复核与发布**。
+G0、G1、U5 和 W7.1-W7.10 均为已交付基线，不重复开发；M1、R1、P3 不阻塞 `0.2.0`，D1 在具备对应硬件后单独执行。
 
 ## 4. 未完成切片
 
@@ -118,10 +119,10 @@ G0、G1、U5 和 W7.1-W7.8 均为已完成基线，不重复开发；M1、R1、P
 
 **剩余交付**：
 
-1. `W7.10`：基于当前 Snow 基准和用户截图复核图标、密度、主次层级、样式栏和窄窗布局；只实现可观察且有验收价值的差异。
+1. `W7.10`：基于当前 Snow 基准和用户截图复核图标、密度、主次层级、样式栏和窄窗布局；只实现可观察且有验收价值的差异，并让生产依赖和验收 runner 读取同一组界面 token。
 2. `W7.11`：在最终生产栈上完成最终截图矩阵和 Capture → 标注 → Copy/Save/Pin/Cancel → 清理原生闭环；按最终报告更新状态。
 
-`W7.1-W7.9` 已完成图标/动作目录、单行工具栏、工具组、主动作 Release 输入和工具栏真实拖动闭环。它们是已交付基线，不代表最新参考版本下的最终视觉验收。
+`W7.1-W7.10` 已完成图标/动作目录、单行工具栏、工具组、主动作 Release 输入、工具栏真实拖动闭环和本次紧凑密度切片。它们是已交付基线，不代表最终完整矩阵已经完成。
 每个剩余切片只增加直接证明视觉或交互差异所需的测试；布局、主题或本地化共用代码变更时才重跑完整矩阵，最终 `W7.11` 必须运行完整矩阵。
 
 **W7.1 当前结果（2026-09-27）**：现有 GPUI 工作区控件继续作为生产实现，`WorkspaceIcon` 已冻结 13 个图标的稳定语义 ID 和审查顺序，
@@ -193,6 +194,23 @@ Save 与 Pin 均 `exact_match=true`，Copy 的隔离观察器结果与源帧逐�
 为 schema 32、`status=passed`，生成 `01-toolbar-drag-selected.png`、`02-toolbar-drag-moved.png`、`03-toolbar-drag-tool-selected.png` 和
 `05-toolbar-drag-new-selection.png`。Computer Use 当前没有可操作的 Flash Shot 原生窗口，因此证据标记为 Release runner 原生输入，不宣称为 Computer Use 证据。
 
+**W7.10 / G2 当前结果（2026-10-04）**：生产 workspace 的 `gpui` 与 `gpui_platform` 已分别解析到发布版
+`gpui-kit 0.6.6` 与 `gpui-pre-platform 0.3.6`，不再从 Zed git revision 获取 GPUI 实现；截图工具栏和验收 runner
+统一读取 `ThemeMetrics` 的 Snow 紧凑 token：32px 控件、28px 样式行、12px 水平内边距、4px 垂直内边距、8px 动作间距、
+24px 图标画布和 16px 分隔线。工具栏布局、次级菜单宽高和原生输入坐标已同步更新，未改变 Capture/Copy/Save/Pin/Cancel
+处理器、快捷键、报告字段或清理语义。
+
+本次切片验证通过 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、
+`cargo test -p flash-shot-app --lib --offline`（406 passed）和
+`cargo build --release -p flash-shot --features dev-tools --offline`。当前源码 Release runner
+`overlay-interaction-acceptance --allow-input --capture-scenario toolbar-drag` 在单屏
+`2560x1440`、DPI 96、`scale_factor=1.0` 下通过选区创建、工具栏拖动、Rectangle 工具切换后位置保持、新选区重新锚定和
+Escape 清理；报告 `target/overlay-interaction-acceptance-w7-toolbar-drag-20261004-gpui-kit/session-1791089624740-35200/report.json`
+为 schema 32、`status=passed`，截图为 `01-toolbar-drag-selected.png`、`02-toolbar-drag-moved.png`、
+`03-toolbar-drag-tool-selected.png` 和 `05-toolbar-drag-new-selection.png`。Computer Use 当前没有可操作的 Flash Shot
+原生窗口，因此证据来自 Release runner，不宣称为 Computer Use；双主题/双语/三尺寸完整矩阵和 Capture → Copy/Save/Pin/Cancel
+最终闭环仍由 W7.11 完成。
+
 **不做**：不新增标注能力，不改变选区像素、标注文档坐标、导出合成、快捷键、报告 schema 或失败恢复；不移植 Snow Shot 设置页和 Qt/Tauri/Web 架构。
 
 **验收条件**：
@@ -205,8 +223,9 @@ Save 与 Pin 均 `exact_match=true`，Copy 的隔离观察器结果与源帧逐�
 
 ### G2：gpui-kit 生产接入评估与迁移
 
-G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，生产应用仍依赖 Zed GPUI；两套类型不能直接混用。
-G2 先验证一条能运行真实截图工作区的生产路径，再决定并实施一致的 GPUI 依赖方案；不同时进行全产品视觉重做和运行时升级。
+G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，不能把探针结果当作生产接入。
+本次 W7.10/G2 已把生产 `gpui` 与 `gpui_platform` 切到发布版包，并在真实截图工作区拖动路径中验证；
+完整组件覆盖、最终矩阵和回滚复核仍由 G2/W7.11 收口，不同时进行全产品视觉重做和运行时升级。
 
 **退出条件**：
 

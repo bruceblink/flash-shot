@@ -918,10 +918,11 @@ fn interaction_plan_for_logical_selection(
     start: (f32, f32),
     end: (f32, f32),
 ) -> io::Result<InteractionPlan> {
-    const ACTION_ITEM_WIDTH: f32 = 36.0;
-    const ACTION_ITEM_GAP: f32 = 6.0;
-    const ACTION_PADDING: f32 = 6.0;
-    const ACTION_BORDER: f32 = 1.0;
+    const ACTION_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
+    const ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+    const ACTION_HORIZONTAL_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING;
+    const ACTION_VERTICAL_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_VERTICAL_PADDING;
+    const ACTION_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
     const RESULT_WIDTH: f32 = WorkspaceResultAction::total_width(ACTION_ITEM_GAP);
     const ACTION_TOOLBAR_WIDTH: f32 = ACTION_TOOLBAR_LEADING_WIDTH
         + ACTION_ITEM_WIDTH
@@ -929,7 +930,7 @@ fn interaction_plan_for_logical_selection(
         + 2.0 * ACTION_BORDER
         + RESULT_WIDTH
         + 4.0 * ACTION_ITEM_GAP
-        + 2.0 * ACTION_PADDING
+        + 2.0 * ACTION_HORIZONTAL_PADDING
         + 2.0 * ACTION_BORDER;
 
     if start.0 < 0.0
@@ -946,7 +947,7 @@ fn interaction_plan_for_logical_selection(
     }
 
     let toolbar_width = ACTION_TOOLBAR_WIDTH.min(width - 36.0);
-    let toolbar_height = 50.0;
+    let toolbar_height = ACTION_ITEM_WIDTH + ACTION_VERTICAL_PADDING * 2.0 + ACTION_BORDER * 2.0;
     let left_min = 18.0;
     let left_limit = (width - 18.0 - toolbar_width).max(left_min);
     let toolbar_left = (end.0 - toolbar_width).clamp(left_min, left_limit);
@@ -965,13 +966,13 @@ fn interaction_plan_for_logical_selection(
     };
     let mark_center = toolbar_left
         + ACTION_BORDER
-        + ACTION_PADDING
+        + ACTION_HORIZONTAL_PADDING
         + ACTION_TOOLBAR_LEADING_WIDTH
         + ACTION_ITEM_GAP
         + ACTION_ITEM_WIDTH / 2.0;
     let inline_left = toolbar_left
         + ACTION_BORDER
-        + ACTION_PADDING
+        + ACTION_HORIZONTAL_PADDING
         + ACTION_TOOLBAR_LEADING_WIDTH
         + ACTION_ITEM_GAP
         + ACTION_ITEM_WIDTH
@@ -991,15 +992,30 @@ fn interaction_plan_for_logical_selection(
         drag_end: screen_point(end),
         // The production row order is Mark, inline secondary actions, then Pin, Save, More,
         // Cancel, and Copy, matching Snow Apps' main toolbar construction order.
-        mark: screen_point((mark_center, toolbar_top + 25.0)),
-        pin: screen_point((result_center(RESULT_ACTION_PIN_INDEX), toolbar_top + 25.0)),
-        save: screen_point((result_center(RESULT_ACTION_SAVE_INDEX), toolbar_top + 25.0)),
-        more: screen_point((result_center(RESULT_ACTION_MORE_INDEX), toolbar_top + 25.0)),
+        mark: screen_point((
+            mark_center,
+            toolbar_top + ACTION_VERTICAL_PADDING + ACTION_BORDER + ACTION_ITEM_WIDTH / 2.0,
+        )),
+        pin: screen_point((
+            result_center(RESULT_ACTION_PIN_INDEX),
+            toolbar_top + ACTION_VERTICAL_PADDING + ACTION_BORDER + ACTION_ITEM_WIDTH / 2.0,
+        )),
+        save: screen_point((
+            result_center(RESULT_ACTION_SAVE_INDEX),
+            toolbar_top + ACTION_VERTICAL_PADDING + ACTION_BORDER + ACTION_ITEM_WIDTH / 2.0,
+        )),
+        more: screen_point((
+            result_center(RESULT_ACTION_MORE_INDEX),
+            toolbar_top + ACTION_VERTICAL_PADDING + ACTION_BORDER + ACTION_ITEM_WIDTH / 2.0,
+        )),
         cancel: screen_point((
             result_center(RESULT_ACTION_CANCEL_INDEX),
-            toolbar_top + 25.0,
+            toolbar_top + ACTION_VERTICAL_PADDING + ACTION_BORDER + ACTION_ITEM_WIDTH / 2.0,
         )),
-        copy: screen_point((result_center(RESULT_ACTION_COPY_INDEX), toolbar_top + 25.0)),
+        copy: screen_point((
+            result_center(RESULT_ACTION_COPY_INDEX),
+            toolbar_top + ACTION_VERTICAL_PADDING + ACTION_BORDER + ACTION_ITEM_WIDTH / 2.0,
+        )),
         // The expanded 334 px menu wraps into five right-aligned rows. Recording occupies the
         // final item of row four and the sole item of row five above this toolbar.
         record_area: screen_point((toolbar_left + toolbar_width - 31.0, toolbar_top - 75.0)),
@@ -1058,10 +1074,11 @@ fn tool_group_interaction_plan_for_capture_selection(
     const TOOL_ICON_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
     const ACTION_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
     const ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
-    const ACTION_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+    const ACTION_HORIZONTAL_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING;
+    const ACTION_VERTICAL_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_VERTICAL_PADDING;
     const ACTION_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
     const ACTION_TOOLBAR_HEIGHT: f32 =
-        ACTION_ITEM_WIDTH + ACTION_PADDING * 2.0 + ACTION_BORDER * 2.0;
+        ACTION_ITEM_WIDTH + ACTION_VERTICAL_PADDING * 2.0 + ACTION_BORDER * 2.0;
     const POPUP_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
     const POPUP_ITEM_HEIGHT: f32 = ThemeMetrics::WORKSPACE_TOOL_ROW_HEIGHT;
     const PALETTE_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
@@ -1077,7 +1094,7 @@ fn tool_group_interaction_plan_for_capture_selection(
         + 2.0 * ACTION_BORDER
         + result_width
         + 4.0 * ACTION_ITEM_GAP
-        + ACTION_PADDING * 2.0
+        + ACTION_HORIZONTAL_PADDING * 2.0
         + ACTION_BORDER * 2.0;
     let annotation_row_width = (TOOL_PALETTE_ITEMS as f32 + 1.0) * TOOL_ICON_WIDTH
         + PALETTE_BORDER
@@ -1090,7 +1107,7 @@ fn tool_group_interaction_plan_for_capture_selection(
         + INLINE_SECONDARY_ACTION_WIDTH
         + 3.0 * ACTION_BORDER
         + 7.0 * ACTION_ITEM_GAP
-        + ACTION_PADDING * 2.0
+        + ACTION_HORIZONTAL_PADDING * 2.0
         + ACTION_BORDER * 2.0;
     let palette_width = TOOL_PALETTE_ITEMS as f32 * TOOL_ICON_WIDTH
         + TOOL_PALETTE_ITEMS.saturating_sub(1) as f32 * TOOL_PALETTE_GAP
@@ -1205,7 +1222,7 @@ fn tool_group_interaction_plan_for_capture_selection(
     let action_center = |index: usize| {
         action_left
             + ACTION_BORDER
-            + ACTION_PADDING
+            + ACTION_HORIZONTAL_PADDING
             + ACTION_TOOLBAR_LEADING_WIDTH
             + ACTION_ITEM_GAP
             + index as f32 * (ACTION_ITEM_WIDTH + ACTION_ITEM_GAP)
@@ -1216,7 +1233,7 @@ fn tool_group_interaction_plan_for_capture_selection(
     // anchor clicks Cancel/Copy instead of More and makes the native tool-group probe abort.
     let result_left = left
         + ACTION_BORDER
-        + ACTION_PADDING
+        + ACTION_HORIZONTAL_PADDING
         + ACTION_TOOLBAR_LEADING_WIDTH
         + ACTION_ITEM_GAP
         + annotation_row_width
@@ -1236,7 +1253,10 @@ fn tool_group_interaction_plan_for_capture_selection(
     };
     let (annotation_row_left, group_trigger_offset) = if annotation_controls {
         (
-            left + ACTION_BORDER + ACTION_PADDING + ACTION_TOOLBAR_LEADING_WIDTH + ACTION_ITEM_GAP,
+            left + ACTION_BORDER
+                + ACTION_HORIZONTAL_PADDING
+                + ACTION_TOOLBAR_LEADING_WIDTH
+                + ACTION_ITEM_GAP,
             TOOL_ICON_WIDTH + ACTION_ITEM_GAP + PALETTE_BORDER + ACTION_ITEM_GAP,
         )
     } else {
@@ -1256,11 +1276,11 @@ fn tool_group_interaction_plan_for_capture_selection(
     Ok(ToolGroupInteractionPlan {
         mark: screen_point((
             action_center(0),
-            action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
+            action_top + ACTION_BORDER + ACTION_VERTICAL_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
         more: screen_point((
             result_center(RESULT_ACTION_MORE_INDEX),
-            action_top + ACTION_BORDER + ACTION_PADDING + ACTION_ITEM_WIDTH / 2.0,
+            action_top + ACTION_BORDER + ACTION_VERTICAL_PADDING + ACTION_ITEM_WIDTH / 2.0,
         )),
         text_trigger: direct_tool_centers
             [WorkspaceAnnotationToolSpec::for_tool(AnnotationTool::Text).index()],
@@ -1656,19 +1676,19 @@ fn narrow_edge_interaction_plan(
         x: bounds.left + (point.0 * scale).round() as i32,
         y: bounds.top + (point.1 * scale).round() as i32,
     };
-    const ACTION_ITEM_WIDTH: f32 = 36.0;
-    const ACTION_ITEM_GAP: f32 = 6.0;
-    const ACTION_PADDING: f32 = 6.0;
-    const ACTION_BORDER: f32 = 1.0;
+    const ACTION_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
+    const ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
+    const ACTION_HORIZONTAL_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING;
+    const ACTION_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
     let marking_action_width = 8.0 * ACTION_ITEM_WIDTH
         + 2.0 * ACTION_BORDER
         + 9.0 * ACTION_ITEM_GAP
-        + 2.0 * ACTION_PADDING
+        + 2.0 * ACTION_HORIZONTAL_PADDING
         + 2.0 * ACTION_BORDER;
     let expanded_action_left =
         annotation_left + NARROW_EDGE_ANNOTATION_WIDTH - marking_action_width;
     // Skip Undo, Redo, and the context separator to land in the Mark button's hit area.
-    let marking_mark_offset = ACTION_PADDING
+    let marking_mark_offset = ACTION_HORIZONTAL_PADDING
         + 2.0 * ACTION_ITEM_WIDTH
         + 3.0 * ACTION_ITEM_GAP
         + ACTION_BORDER

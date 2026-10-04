@@ -1,6 +1,6 @@
 //! Small semantic palette for the application shell.
 
-use gpui::*;
+use ::gpui::*;
 
 /// Persisted appearance choices shared by every native Flash Shot surface.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -137,19 +137,24 @@ impl ThemeMetrics {
     pub const TOGGLE_HEIGHT: f32 = 20.0;
     pub const CONTROL_HEIGHT: f32 = 36.0;
     pub const TOOLBAR_HEIGHT: f32 = 44.0;
-    pub const WORKSPACE_TOOLBAR_HEIGHT: f32 = 36.0;
-    pub const WORKSPACE_STYLE_ROW_HEIGHT: f32 = 32.0;
-    pub const WORKSPACE_TOOLBAR_PADDING: f32 = 6.0;
-    pub const WORKSPACE_TOOLBAR_GAP: f32 = 6.0;
+    // Snow Shot's compact toolbar uses 32px controls, 4px panel insets, and
+    // 8px action spacing. Keeping these values in one token set prevents the
+    // screenshot workspace from drifting back toward the older 36px layout.
+    pub const WORKSPACE_TOOLBAR_HEIGHT: f32 = 32.0;
+    pub const WORKSPACE_STYLE_ROW_HEIGHT: f32 = 28.0;
+    pub const WORKSPACE_TOOLBAR_PADDING: f32 = 4.0;
+    pub const WORKSPACE_TOOLBAR_HORIZONTAL_PADDING: f32 = 12.0;
+    pub const WORKSPACE_TOOLBAR_VERTICAL_PADDING: f32 = 4.0;
+    pub const WORKSPACE_TOOLBAR_GAP: f32 = 8.0;
     pub const WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH: f32 = 18.0;
     pub const WORKSPACE_TOOL_GAP: f32 = 8.0;
     pub const WORKSPACE_ICON_BUTTON_HIT_AREA: f32 = Self::WORKSPACE_TOOLBAR_HEIGHT;
-    pub const WORKSPACE_ICON_SIZE: f32 = 16.0;
+    pub const WORKSPACE_ICON_SIZE: f32 = 24.0;
     pub const WORKSPACE_POPOVER_GAP: f32 = 8.0;
     pub const WORKSPACE_SELECTION_GAP: f32 = 12.0;
     pub const WORKSPACE_SHADOW_MARGIN: f32 = 4.0;
     pub const WORKSPACE_SEPARATOR_WIDTH: f32 = 1.0;
-    pub const WORKSPACE_SEPARATOR_HEIGHT: f32 = 24.0;
+    pub const WORKSPACE_SEPARATOR_HEIGHT: f32 = 16.0;
     pub const WORKSPACE_TOOL_CELL_WIDTH: f32 = 104.0;
     pub const WORKSPACE_TOOL_CELL_WIDTH_COMPACT: f32 = 64.0;
     pub const WORKSPACE_TOOL_ROW_HEIGHT: f32 = 34.0;
@@ -441,6 +446,14 @@ mod tests {
         assert_eq!(metrics.workspace_style_opacity_width, 44.0);
         assert_eq!(metrics.workspace_style_fill_width, 48.0);
         assert_eq!(metrics.workspace_tool_cell_width_compact, 64.0);
+        assert_eq!(metrics.workspace_toolbar_height, 32.0);
+        assert_eq!(metrics.workspace_style_row_height, 28.0);
+        assert_eq!(metrics.workspace_toolbar_padding, 4.0);
+        assert_eq!(ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING, 12.0);
+        assert_eq!(ThemeMetrics::WORKSPACE_TOOLBAR_VERTICAL_PADDING, 4.0);
+        assert_eq!(metrics.workspace_toolbar_gap, 8.0);
+        assert_eq!(metrics.workspace_icon_size, 24.0);
+        assert_eq!(metrics.workspace_separator_height, 16.0);
         assert!(metrics.radius_md <= 8.0);
     }
 
@@ -474,7 +487,7 @@ mod tests {
     #[test]
     fn overlay_and_pin_controls_share_stable_geometry_tokens() {
         let metrics = ThemeMetrics::default();
-        assert_eq!(metrics.workspace_toolbar_height, metrics.control_height);
+        assert_eq!(metrics.workspace_toolbar_height, 32.0);
         assert_eq!(ThemeMetrics::PIN_CLOSE_SIZE, 32.0);
         assert_eq!(ThemeMetrics::PIN_CONTROL_GAP, metrics.space_1);
         assert_eq!(ThemeMetrics::PIN_TOOLBAR_GAP, metrics.space_2);
