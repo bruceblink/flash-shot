@@ -283,6 +283,11 @@ pub struct OverlayInteractionCaptureState {
     /// Selection used as the fixed viewport for the active manual-scroll session.
     pub manual_scroll_selection: Option<domain::geometry::PhysicalRect>,
     pub overlay_count: usize,
+    /// Physical bounds of the action toolbar reported by the owning capture overlay.
+    ///
+    /// This is an acceptance-only geometry probe. It lets native input tests prove that a
+    /// manual toolbar move changed the toolbar while the committed selection stayed fixed.
+    pub action_toolbar_bounds: Option<domain::geometry::PhysicalRect>,
     pub more_actions_visible: bool,
     pub annotation_controls_visible: bool,
     pub annotation_tool_group_visible: bool,

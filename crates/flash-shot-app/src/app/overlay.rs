@@ -574,6 +574,10 @@ pub(super) struct CaptureOverlay {
     annotation_tool_group_trigger_focus_handles: [FocusHandle; ANNOTATION_TOOL_GROUP_COUNT],
     annotation_tool_group_item_focus_handles:
         [[FocusHandle; ANNOTATION_TOOL_GROUP_MAX_ITEMS]; ANNOTATION_TOOL_GROUP_COUNT],
+    toolbar_drag: Option<ToolbarDragGesture>,
+    manual_toolbar_position: Option<ManualToolbarPosition>,
+    last_workspace_snapshot: Option<WorkspaceLayoutSnapshot>,
+    last_workspace_scale_factor: f32,
     topmost_requested: bool,
     annotation_arrange_actions_for: Option<AnnotationId>,
     _app_observation: Subscription,
@@ -642,6 +646,22 @@ struct PendingSelectionUpdate {
     resize_from_center: bool,
 }
 
+/// Retains the pointer and toolbar geometry captured at the start of a manual toolbar move.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ToolbarDragGesture {
+    pointer_start: ViewPoint,
+    toolbar_start: ActionToolbarLayout,
+    selection: PhysicalRect,
+}
+
+/// Stores a manually chosen toolbar origin until the selection changes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ManualToolbarPosition {
+    selection: PhysicalRect,
+    left: f32,
+    top: f32,
+}
+
 impl CaptureOverlay {
     pub(super) fn new(
         app: Entity<FlashShotApp>,
@@ -669,10 +689,109 @@ impl CaptureOverlay {
             annotation_tool_group_item_focus_handles: std::array::from_fn(|_| {
                 std::array::from_fn(|_| cx.focus_handle())
             }),
+            toolbar_drag: None,
+            manual_toolbar_position: None,
+            last_workspace_snapshot: None,
+            last_workspace_scale_factor: 1.0,
             topmost_requested: false,
             annotation_arrange_actions_for: None,
             _app_observation: observation,
         }
+    }
+
+    /// Clears the manual toolbar position before a fresh selection gesture begins.
+    fn reset_toolbar_position(&mut self) {
+        self.toolbar_drag = None;
+        self.manual_toolbar_position = None;
+    }
+
+    /// Exposes the rendered toolbar bounds to the native acceptance bridge.
+    ///
+    /// Layout values are local to this borderless display-sized window, so translate them by the
+    /// display origin before returning physical desktop coordinates.
+    pub(super) fn action_toolbar_bounds_for_acceptance(&self) -> Option<PhysicalRect> {
+        let toolbar = self.last_workspace_snapshot?.action_toolbar?;
+        let origin = self.display.physical_bounds;
+        let scale = self.last_workspace_scale_factor.max(0.01);
+        Some(PhysicalRect {
+            left: origin.left + (toolbar.left * scale).round() as i32,
+            top: origin.top + (toolbar.top * scale).round() as i32,
+            right: origin.left + ((toolbar.left + toolbar.width) * scale).round() as i32,
+            bottom: origin.top + ((toolbar.top + toolbar.height) * scale).round() as i32,
+        })
+    }
+
+    /// Starts a toolbar move without allowing the full-screen selection surface to see the click.
+    fn begin_toolbar_drag(
+        &mut self,
+        event: &MouseDownEvent,
+        toolbar: Option<ActionToolbarLayout>,
+        selection: Option<PhysicalRect>,
+        cx: &mut Context<Self>,
+    ) {
+        if event.button != MouseButton::Left {
+            return;
+        }
+        let (Some(toolbar), Some(selection)) = (toolbar, selection) else {
+            return;
+        };
+        self.toolbar_drag = Some(ToolbarDragGesture {
+            pointer_start: view_point(event.position),
+            toolbar_start: toolbar,
+            selection,
+        });
+        self.manual_toolbar_position = Some(ManualToolbarPosition {
+            selection,
+            left: toolbar.left,
+            top: toolbar.top,
+        });
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Applies one movement sample while the toolbar owns the pointer gesture.
+    fn update_toolbar_drag(
+        &mut self,
+        event: &MouseMoveEvent,
+        viewport: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if !event.dragging() {
+            self.toolbar_drag = None;
+            return;
+        }
+        let Some(gesture) = self.toolbar_drag else {
+            return;
+        };
+        self.manual_toolbar_position = Some(toolbar_position_for_pointer(
+            gesture,
+            view_point(event.position),
+            viewport,
+        ));
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Commits the final pointer sample and releases the toolbar gesture.
+    fn finish_toolbar_drag(
+        &mut self,
+        event: &MouseUpEvent,
+        viewport: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if event.button != MouseButton::Left || self.toolbar_drag.is_none() {
+            return;
+        }
+        if let Some(gesture) = self.toolbar_drag {
+            self.manual_toolbar_position = Some(toolbar_position_for_pointer(
+                gesture,
+                view_point(event.position),
+                viewport,
+            ));
+        }
+        self.toolbar_drag = None;
+        cx.stop_propagation();
+        cx.notify();
     }
 
     /// Builds one inline action from the shared catalog while keeping existing workflow handlers.
@@ -779,6 +898,7 @@ impl CaptureOverlay {
         if !accepts_overlay_input(operation_generation, self.app.read(cx).operation_generation) {
             return;
         }
+        self.reset_toolbar_position();
         let frame_bounds = self
             .app
             .read(cx)
@@ -1647,6 +1767,7 @@ impl Render for CaptureOverlay {
         let hover_pixel = app.hover_pixel;
         let frame = app.frame.clone();
         let viewport = local_viewport(window);
+        self.last_workspace_scale_factor = window.scale_factor();
         let show_inline_secondary_actions =
             view_rect(viewport).width >= INLINE_SECONDARY_ACTIONS_MIN_VIEWPORT_WIDTH;
         self.annotation_arrange_actions_for =
@@ -1685,7 +1806,7 @@ impl Render for CaptureOverlay {
         } else {
             AnnotationStyleCapabilities::EMPTY
         };
-        let layout_snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
+        let mut layout_snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
             selection,
             display_bounds,
             transform,
@@ -1701,6 +1822,16 @@ impl Render for CaptureOverlay {
             has_recognition_retry: recognition_retry.is_some(),
             recognition_in_flight,
         });
+        if self
+            .manual_toolbar_position
+            .is_some_and(|position| Some(position.selection) != selection)
+        {
+            self.reset_toolbar_position();
+        }
+        if let Some(position) = self.manual_toolbar_position {
+            apply_manual_toolbar_position(&mut layout_snapshot, position, viewport);
+        }
+        self.last_workspace_snapshot = Some(layout_snapshot);
         let action_layout = layout_snapshot.action_toolbar;
         let annotation_layout = layout_snapshot.annotation_toolbar;
         let annotation_layer_layout = layout_snapshot.annotation_layer;
@@ -1750,6 +1881,19 @@ impl Render for CaptureOverlay {
             .relative()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
+            .on_mouse_move(cx.listener(|this, event, window, cx| {
+                if this.toolbar_drag.is_some() {
+                    this.update_toolbar_drag(event, local_viewport(window), cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_any_mouse_up(cx.listener(
+                |this, event: &MouseUpEvent, window, cx| {
+                    if this.toolbar_drag.is_some() {
+                        this.finish_toolbar_drag(event, local_viewport(window), cx);
+                    }
+                },
+            ))
             .bg(colors.background)
             .child(
                 img(self.preview.clone())
@@ -1781,11 +1925,19 @@ impl Render for CaptureOverlay {
                         }),
                     )
                     .on_mouse_move(cx.listener(move |this, event, window, cx| {
+                        if this.toolbar_drag.is_some() {
+                            this.update_toolbar_drag(event, local_viewport(window), cx);
+                            return;
+                        }
                         let viewport = local_viewport(window);
                         this.update_selection(event, viewport, window, cx)
                     }))
                     .capture_any_mouse_up(cx.listener(
                         move |this, event: &MouseUpEvent, window, cx| {
+                            if this.toolbar_drag.is_some() {
+                                this.finish_toolbar_drag(event, local_viewport(window), cx);
+                                return;
+                            }
                             if event.button == MouseButton::Left && this.selection_pointer_active {
                                 this.finish_selection(event, local_viewport(window), cx);
                             }
@@ -2647,8 +2799,22 @@ impl Render for CaptureOverlay {
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .when(can_export, |actions| {
+                        let toolbar_layout_for_drag = action_layout;
+                        let selection_for_drag = selection;
                         actions
-                            .child(workspace_drag_handle(workspace_colors))
+                            .child(
+                                workspace_drag_handle(workspace_colors).on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, event, _, cx| {
+                                        this.begin_toolbar_drag(
+                                            event,
+                                            toolbar_layout_for_drag,
+                                            selection_for_drag,
+                                            cx,
+                                        );
+                                    }),
+                                ),
+                            )
                             .when(show_annotation_controls, |actions| {
                                 actions.child(annotation_toolbar_icon_button(
                                             "overlay-tool-selection",
@@ -5147,6 +5313,79 @@ fn action_toolbar_layout(
     })
 }
 
+/// Clamps a manually dragged toolbar to the same safe area used by automatic placement.
+fn toolbar_position_for_pointer(
+    gesture: ToolbarDragGesture,
+    pointer: ViewPoint,
+    viewport: Bounds<Pixels>,
+) -> ManualToolbarPosition {
+    let viewport = view_rect(viewport);
+    let delta_x = pointer.x - gesture.pointer_start.x;
+    let delta_y = pointer.y - gesture.pointer_start.y;
+    let left_min = viewport.left + OVERLAY_EDGE_INSET;
+    let left_max =
+        (viewport.right() - OVERLAY_EDGE_INSET - gesture.toolbar_start.width).max(left_min);
+    let top_min = viewport.top + OVERLAY_EDGE_INSET;
+    let top_max =
+        (viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - gesture.toolbar_start.height).max(top_min);
+    ManualToolbarPosition {
+        selection: gesture.selection,
+        left: (gesture.toolbar_start.left + delta_x).clamp(left_min, left_max),
+        top: (gesture.toolbar_start.top + delta_y).clamp(top_min, top_max),
+    }
+}
+
+/// Moves the complete screenshot workspace rail and its short-lived attached surfaces together.
+fn apply_manual_toolbar_position(
+    snapshot: &mut WorkspaceLayoutSnapshot,
+    position: ManualToolbarPosition,
+    viewport: Bounds<Pixels>,
+) {
+    let Some(base_toolbar) = snapshot.action_toolbar else {
+        return;
+    };
+    let viewport = view_rect(viewport);
+    let left_min = viewport.left + OVERLAY_EDGE_INSET;
+    let left_max = (viewport.right() - OVERLAY_EDGE_INSET - base_toolbar.width).max(left_min);
+    let top_min = viewport.top + OVERLAY_EDGE_INSET;
+    let top_max =
+        (viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET - base_toolbar.height).max(top_min);
+    let left = position.left.clamp(left_min, left_max);
+    let top = position.top.clamp(top_min, top_max);
+    let delta_x = left - base_toolbar.left;
+    let delta_y = top - base_toolbar.top;
+    let moved_toolbar = ActionToolbarLayout {
+        left,
+        top,
+        ..base_toolbar
+    };
+    snapshot.action_toolbar = Some(moved_toolbar);
+
+    if let Some(mut annotation) = snapshot.annotation_toolbar {
+        annotation.left += delta_x;
+        annotation.top += delta_y;
+        annotation.tools_top += delta_y;
+        annotation.style_left += delta_x;
+        annotation.style_top += delta_y;
+        annotation.action_toolbar = moved_toolbar;
+        snapshot.annotation_toolbar = Some(annotation);
+    }
+    if let Some(mut layers) = snapshot.annotation_layer {
+        layers.left += delta_x;
+        layers.top += delta_y;
+        snapshot.annotation_layer = Some(layers);
+    }
+    if let Some(mut menu) = snapshot.secondary_menu {
+        menu.left += delta_x;
+        snapshot.secondary_menu = Some(menu);
+    }
+    if let Some(mut group) = snapshot.annotation_tool_group {
+        group.left += delta_x;
+        group.top += delta_y;
+        snapshot.annotation_tool_group = Some(group);
+    }
+}
+
 /// Computes every workspace surface from one selection/display snapshot.
 ///
 /// The renderer and interaction tests consume this result instead of independently deciding
@@ -5631,23 +5870,24 @@ mod tests {
         ANNOTATION_TOOL_GROUP_POPUP_PADDING, ANNOTATION_TOOL_ROW_HEIGHT, ANNOTATION_WIDTHS,
         ActionToolbarLayout, AnnotationStyleCapabilities, AnnotationToolGroup,
         AnnotationToolbarLayout, FrameInputBatch, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
-        OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING, OVERLAY_ACTION_ITEM_HEIGHT,
-        OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
-        OVERLAY_SECONDARY_MENU_GAP, OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction,
-        SecondaryActionFocusDirection, SelectionCursor, SelectionDimensionLayout,
-        SmartTargetHudLayout, WorkspaceLayoutInput, WorkspaceResultAction,
-        WorkspaceSelectionAnchor, accepts_overlay_input, action_toolbar_height,
-        action_toolbar_layout, action_toolbar_natural_width, action_toolbar_row_count,
-        annotation_controls_visible, annotation_layer_entry_label, annotation_layer_label,
-        annotation_number_value_label, annotation_opacity_value_label,
-        annotation_style_capabilities_for_tool, annotation_style_row_height,
-        annotation_style_row_preferred_width, annotation_style_row_width,
-        annotation_text_size_value_label, annotation_tool_group_focus_direction,
-        annotation_tool_group_focus_target, annotation_tool_group_popover_height,
-        annotation_tool_group_popover_width, annotation_tool_key, annotation_tool_palette_width,
-        annotation_tool_tooltip, annotation_toolbar_height, annotation_toolbar_items,
-        annotation_toolbar_layout, annotation_toolbar_preferred_width,
-        annotation_width_value_label, arrange_context_for_selection, arrow_head_points,
+        ManualToolbarPosition, OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING,
+        OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET,
+        OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
+        OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
+        SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, ToolbarDragGesture,
+        WorkspaceLayoutInput, WorkspaceResultAction, WorkspaceSelectionAnchor,
+        accepts_overlay_input, action_toolbar_height, action_toolbar_layout,
+        action_toolbar_natural_width, action_toolbar_row_count, annotation_controls_visible,
+        annotation_layer_entry_label, annotation_layer_label, annotation_number_value_label,
+        annotation_opacity_value_label, annotation_style_capabilities_for_tool,
+        annotation_style_row_height, annotation_style_row_preferred_width,
+        annotation_style_row_width, annotation_text_size_value_label,
+        annotation_tool_group_focus_direction, annotation_tool_group_focus_target,
+        annotation_tool_group_popover_height, annotation_tool_group_popover_width,
+        annotation_tool_key, annotation_tool_palette_width, annotation_tool_tooltip,
+        annotation_toolbar_height, annotation_toolbar_items, annotation_toolbar_layout,
+        annotation_toolbar_preferred_width, annotation_width_value_label,
+        apply_manual_toolbar_position, arrange_context_for_selection, arrow_head_points,
         capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
         magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
@@ -5658,8 +5898,8 @@ mod tests {
         secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
         selection_point_from_view_or_screen, should_stop_overlay_action_key_propagation,
         smart_target_hud_label, smart_target_hud_layout, snap_selection_pointer_to_frame_edge,
-        status_bottom_inset, status_bottom_inset_for_stacked_annotation, view_rect,
-        visible_selection, workspace_layout_snapshot,
+        status_bottom_inset, status_bottom_inset_for_stacked_annotation,
+        toolbar_position_for_pointer, view_rect, visible_selection, workspace_layout_snapshot,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle, AnnotationTool},
@@ -6873,6 +7113,124 @@ mod tests {
         );
         assert!(group.top >= toolbar.tools_top);
         assert!(group.top + group.height <= toolbar.tools_top + toolbar.tools_height);
+    }
+
+    #[test]
+    fn toolbar_drag_clamps_to_the_overlay_safe_area() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let selection = PhysicalRect {
+            left: 200,
+            top: 180,
+            right: 640,
+            bottom: 420,
+        };
+        let gesture = ToolbarDragGesture {
+            pointer_start: ViewPoint { x: 240.0, y: 220.0 },
+            toolbar_start: ActionToolbarLayout {
+                left: 200.0,
+                top: 220.0,
+                width: 320.0,
+                height: 50.0,
+            },
+            selection,
+        };
+
+        let top_left = toolbar_position_for_pointer(
+            gesture,
+            ViewPoint {
+                x: -800.0,
+                y: -800.0,
+            },
+            viewport,
+        );
+        assert_eq!(top_left.left, OVERLAY_EDGE_INSET);
+        assert_eq!(top_left.top, OVERLAY_EDGE_INSET);
+
+        let bottom_right = toolbar_position_for_pointer(
+            gesture,
+            ViewPoint {
+                x: 2_000.0,
+                y: 2_000.0,
+            },
+            viewport,
+        );
+        assert_eq!(
+            bottom_right.left,
+            1280.0 - OVERLAY_EDGE_INSET - gesture.toolbar_start.width
+        );
+        assert_eq!(
+            bottom_right.top,
+            720.0 - OVERLAY_BOTTOM_SAFE_INSET - gesture.toolbar_start.height
+        );
+        assert_eq!(bottom_right.selection, selection);
+    }
+
+    #[test]
+    fn manual_toolbar_position_moves_attached_workspace_surfaces_together() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(720.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 1280,
+            bottom: 720,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+        let selection = PhysicalRect {
+            left: 300,
+            top: 200,
+            right: 1_000,
+            bottom: 400,
+        };
+        let mut snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
+            selection: Some(selection),
+            display_bounds: bounds,
+            transform,
+            viewport,
+            hover_pixel: None,
+            inspection_target: None,
+            show_annotation_controls: true,
+            annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
+            annotation_style_capabilities: AnnotationStyleCapabilities::EMPTY,
+            annotation_tool_group: Some(AnnotationToolGroup::Text),
+            annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            has_recognition_result: false,
+            has_recognition_retry: false,
+            recognition_in_flight: false,
+        });
+        let base = snapshot.action_toolbar.unwrap();
+        let manual = ManualToolbarPosition {
+            selection,
+            left: base.left + 120.0,
+            top: base.top + 24.0,
+        };
+
+        apply_manual_toolbar_position(&mut snapshot, manual, viewport);
+
+        let moved = snapshot.action_toolbar.unwrap();
+        assert_eq!(moved.left - base.left, 120.0);
+        assert_eq!(moved.top - base.top, 24.0);
+        assert_eq!(snapshot.annotation_toolbar.unwrap().action_toolbar, moved);
+        let group = snapshot.annotation_tool_group.unwrap();
+        let base_group = workspace_layout_snapshot(WorkspaceLayoutInput {
+            selection: Some(selection),
+            display_bounds: bounds,
+            transform,
+            viewport,
+            hover_pixel: None,
+            inspection_target: None,
+            show_annotation_controls: true,
+            annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
+            annotation_style_capabilities: AnnotationStyleCapabilities::EMPTY,
+            annotation_tool_group: Some(AnnotationToolGroup::Text),
+            annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            has_recognition_result: false,
+            has_recognition_retry: false,
+            recognition_in_flight: false,
+        })
+        .annotation_tool_group
+        .unwrap();
+        assert_eq!(group.left - base_group.left, 120.0);
+        assert_eq!(group.top - base_group.top, 24.0);
     }
 
     #[test]

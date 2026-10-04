@@ -740,11 +740,10 @@ pub(crate) fn workspace_separator(
         .bg(colors.toolbar_border)
 }
 
-/// Builds the decorative grip at the start of the Snow-style toolbar rail.
+/// Builds the drag grip at the start of the Snow-style toolbar rail.
 ///
-/// The grip is intentionally not focusable or clickable: the capture overlay owns positioning and
-/// the existing selection gestures remain the only drag interaction. Keeping it decorative gives
-/// the long icon row the same visual starting edge as Snow Shot without changing input routing.
+/// Pointer handling is attached by the owning overlay because the overlay must keep receiving
+/// movement after the pointer leaves this small hit area.
 pub(crate) fn workspace_drag_handle(colors: ThemeColors) -> Stateful<Div> {
     let metrics = ThemeMetrics::default();
     div()
@@ -754,6 +753,7 @@ pub(crate) fn workspace_drag_handle(colors: ThemeColors) -> Stateful<Div> {
         .flex()
         .items_center()
         .justify_center()
+        .cursor_move()
         .child(workspace_icon_element(
             WorkspaceIcon::DragHandle,
             colors.overlay_muted,

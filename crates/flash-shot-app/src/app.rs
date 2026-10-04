@@ -989,6 +989,14 @@ impl FlashShotApp {
                                 pin.update(cx, |pin, _, _| pin.source_bounds_for_acceptance())
                                     .ok()
                             });
+                            let action_toolbar_bounds = this.overlay_windows.iter().find_map(|overlay| {
+                                overlay
+                                    .update(cx, |overlay, _, _| {
+                                        overlay.action_toolbar_bounds_for_acceptance()
+                                    })
+                                    .ok()
+                                    .flatten()
+                            });
                             let session_state = match this.session.state() {
                                 crate::domain::session::CaptureSessionState::Idle => "idle",
                                 crate::domain::session::CaptureSessionState::Capturing => {
@@ -1114,6 +1122,7 @@ impl FlashShotApp {
                                     .is_some(),
                                 manual_scroll_selection: this.manual_scroll_selection,
                                 overlay_count: this.overlay_windows.len(),
+                                action_toolbar_bounds,
                                 more_actions_visible: this.overlay_more_actions,
                                 annotation_controls_visible: this.overlay_annotation_controls,
                                 annotation_tool_group_visible: this.annotation_tool_group.is_some(),

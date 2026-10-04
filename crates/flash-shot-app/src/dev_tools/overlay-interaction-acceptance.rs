@@ -85,8 +85,8 @@ use windows_sys::Win32::{
             GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
             KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
             MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
-            VK_A, VK_C, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_RETURN, VK_RIGHT,
-            VK_S, VK_SHIFT, VK_SPACE,
+            VK_A, VK_C, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_R, VK_RETURN,
+            VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE,
         },
         WindowsAndMessaging::{
             BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
@@ -220,6 +220,7 @@ enum CaptureScenarioOption {
     ScrollRoundtrip,
     AnnotationRegression,
     ToolGroup,
+    ToolbarDrag,
     CopyCancellationRace,
     ClipboardContentionRetry,
     RecordingFailureRetry,
@@ -240,6 +241,7 @@ impl CaptureScenarioOption {
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
             Self::AnnotationRegression => "capture_annotation_regression",
             Self::ToolGroup => "capture_tool_group",
+            Self::ToolbarDrag => "capture_toolbar_drag",
             Self::CopyCancellationRace => "capture_copy_cancellation_race",
             Self::ClipboardContentionRetry => "capture_clipboard_contention_retry",
             Self::RecordingFailureRetry => "recording_failure_retry",
@@ -259,6 +261,7 @@ impl CaptureScenarioOption {
                 | Self::ScrollRoundtrip
                 | Self::AnnotationRegression
                 | Self::ToolGroup
+                | Self::ToolbarDrag
                 | Self::ClipboardContentionRetry
                 | Self::RecordingFailureRetry
                 | Self::SaveFailureRetry
@@ -516,6 +519,7 @@ impl Options {
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
                         "annotation-regression" => CaptureScenarioOption::AnnotationRegression,
                         "tool-group" => CaptureScenarioOption::ToolGroup,
+                        "toolbar-drag" => CaptureScenarioOption::ToolbarDrag,
                         "copy-cancellation-race" => CaptureScenarioOption::CopyCancellationRace,
                         "clipboard-contention-retry" => {
                             CaptureScenarioOption::ClipboardContentionRetry
@@ -528,7 +532,7 @@ impl Options {
                         }
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'tool-group', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
                     .to_owned(),
                             );
                         }
@@ -699,7 +703,7 @@ fn parse_theme(value: Option<OsString>) -> Result<ThemeMode, String> {
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -3145,7 +3149,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let (window_width, window_height) = match (options.record_target, options.capture_scenario) {
         (Some(_), _)
         | (None, CaptureScenarioOption::RecordingFailureRetry)
-        | (None, CaptureScenarioOption::ToolGroup) => (980.0, 760.0),
+        | (None, CaptureScenarioOption::ToolGroup)
+        | (None, CaptureScenarioOption::ToolbarDrag) => (980.0, 760.0),
         (None, CaptureScenarioOption::NarrowEdge) => (420.0, 420.0),
         (
             None,
@@ -5040,6 +5045,9 @@ fn run_interaction_sequence(
         }
         (None, CaptureScenarioOption::ToolGroup) => {
             execute_tool_group_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::ToolbarDrag) => {
+            execute_toolbar_drag_interactions(context, report)
         }
         (None, CaptureScenarioOption::SaveFailureRetry) => {
             execute_save_failure_retry_interactions(context, report)
@@ -7483,6 +7491,320 @@ fn execute_tool_group_interactions(
         },
     });
     write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Exercises the Snow-style toolbar drag handle with real pointer input and re-reads the
+/// production layout after each state transition.
+fn execute_toolbar_drag_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+    record_step(
+        report,
+        &context.report_path,
+        "toolbar_drag_controller_ready",
+        controller,
+        None,
+    )?;
+
+    let foreground = inject_capture_shortcut(controller.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "toolbar_drag_capture_shortcut",
+        foreground,
+        None,
+    )?;
+    let overlay = wait_for_overlay(
+        controller.handle,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "toolbar-drag capture overlay hides Settings",
+    )?;
+    focus_owned_window(overlay, context.timeout)?;
+    thread::sleep(context.settle_delay);
+
+    let plan = interaction_plan_for_window(overlay.handle)?;
+    let selection_drag = inject_mouse_drag_in_display_pixels(
+        overlay.handle,
+        plan.drag_start,
+        plan.drag_end,
+        context.display.physical_bounds,
+    )?;
+    thread::sleep(context.settle_delay);
+    let selected_evidence = capture_evidence(context, "01-toolbar-drag-selected.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "toolbar_drag_selection",
+        selection_drag.foreground,
+        Some(&selected_evidence),
+    )?;
+    let initial_state =
+        wait_for_capture_state(context, "toolbar-drag initial selection", |state| {
+            state.session_state == "selecting"
+                && state.selection.is_some()
+                && state.action_toolbar_bounds.is_some()
+                && state.overlay_count == 1
+                && !state.more_actions_visible
+                && !state.annotation_tool_group_visible
+        })?;
+    let selection = initial_state
+        .selection
+        .ok_or_else(|| io::Error::other("toolbar-drag selection disappeared"))?;
+    let toolbar_before = initial_state
+        .action_toolbar_bounds
+        .ok_or_else(|| io::Error::other("toolbar-drag toolbar was not reported"))?;
+    validate_selection_geometry(
+        selection_drag.selection,
+        selection,
+        "toolbar-drag initial selection",
+    )?;
+
+    let handle_start = toolbar_drag_handle_point(toolbar_before);
+    let horizontal_delta = if toolbar_before.right + 180
+        <= overlay.bounds.right - ThemeMetrics::OVERLAY_EDGE_INSET.round() as i32
+    {
+        180
+    } else {
+        -180
+    };
+    let vertical_delta = if toolbar_before.bottom + 96
+        <= overlay.bounds.bottom - ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET.round() as i32
+    {
+        96
+    } else {
+        -96
+    };
+    let handle_end = PhysicalPoint {
+        x: handle_start.x + horizontal_delta,
+        y: handle_start.y + vertical_delta,
+    };
+    let toolbar_drag = inject_mouse_drag_in_display_pixels(
+        overlay.handle,
+        handle_start,
+        handle_end,
+        context.display.physical_bounds,
+    )?;
+    let moved_state = wait_for_capture_state(context, "toolbar-drag moved", |state| {
+        state.session_state == "selecting"
+            && state.selection == Some(selection)
+            && state.action_toolbar_bounds.is_some_and(|toolbar| {
+                toolbar != toolbar_before
+                    && rect_contains_rect(toolbar_safe_area(overlay.bounds), toolbar)
+            })
+            && !state.more_actions_visible
+            && !state.annotation_tool_group_visible
+    })?;
+    let toolbar_after = moved_state
+        .action_toolbar_bounds
+        .ok_or_else(|| io::Error::other("toolbar-drag moved toolbar was not reported"))?;
+    let expected_left = toolbar_before.left + toolbar_drag.end.x - toolbar_drag.start.x;
+    let expected_top = toolbar_before.top + toolbar_drag.end.y - toolbar_drag.start.y;
+    // GPUI may coalesce the final native move before the release. Require a substantial movement
+    // while separately proving the pure geometry helper maps the requested pointer exactly.
+    if (toolbar_after.left - toolbar_before.left).abs() < 64
+        || (toolbar_after.top - toolbar_before.top).abs() < 32
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "toolbar-drag landed at {toolbar_after:?}, expected approximately left={expected_left}, top={expected_top}; pointer {:?}->{:?}, overlay_dpi={}, overlay_bounds={:?}",
+                toolbar_drag.start, toolbar_drag.end, overlay.dpi, overlay.bounds,
+            ),
+        ));
+    }
+    let moved_evidence = capture_evidence(context, "02-toolbar-drag-moved.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "toolbar_drag_moved",
+        toolbar_drag.foreground,
+        Some(&moved_evidence),
+    )?;
+
+    let foreground = inject_key(overlay.handle, VK_R)?;
+    let expected_tool_status = context.locale.format_template(
+        UiText::AnnotationToolSelected,
+        &[(
+            "tool",
+            context
+                .locale
+                .text(WorkspaceAnnotationToolSpec::for_tool(AnnotationTool::Rectangle).label()),
+        )],
+    );
+    let tool_state = wait_for_capture_state(context, "toolbar-drag tool selection", |state| {
+        state.session_state == "selecting"
+            && state.selection == Some(selection)
+            && state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+            && state.status == expected_tool_status
+            && state.action_toolbar_bounds == Some(toolbar_after)
+    })?;
+    let tool_evidence = capture_evidence(context, "03-toolbar-drag-tool-selected.png", overlay)?;
+    record_step(
+        report,
+        &context.report_path,
+        "toolbar_drag_tool_selected",
+        foreground,
+        Some(&tool_evidence),
+    )?;
+
+    let foreground = inject_capture_shortcut(overlay.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "toolbar_drag_new_capture_shortcut",
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(overlay.handle, context.timeout, "toolbar-drag new capture")?;
+    wait_for_capture_state(context, "toolbar-drag old overlay teardown", |state| {
+        !state.capture_teardown_pending
+            && state.capture_preflight_ready
+            && state.action_toolbar_bounds.is_none()
+    })?;
+    let replacement = wait_for_overlay(
+        controller.handle,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "toolbar-drag replacement hides Settings",
+    )?;
+    focus_owned_window(replacement, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let replacement_window = owned_window(replacement.handle)?;
+    let replacement_client = client_bounds_for_window(replacement.handle)?;
+    let replacement_scale = replacement_window.dpi as f32 / WINDOWS_BASE_DPI;
+    let (replacement_width, replacement_height) =
+        overlay_logical_size(replacement_client, replacement_scale)?;
+    let replacement_plan = interaction_plan_for_logical_selection(
+        replacement_client,
+        replacement_scale,
+        replacement_width,
+        replacement_height,
+        (replacement_width * 0.12, replacement_height * 0.58),
+        (replacement_width * 0.42, replacement_height * 0.86),
+    )?;
+    let replacement_drag = inject_mouse_drag_in_display_pixels(
+        replacement.handle,
+        replacement_plan.drag_start,
+        replacement_plan.drag_end,
+        context.display.physical_bounds,
+    )?;
+    let replacement_state =
+        wait_for_capture_state(context, "toolbar-drag replacement selection", |state| {
+            state.session_state == "selecting"
+                && state.selection.is_some()
+                && state.action_toolbar_bounds.is_some()
+                && state.overlay_count == 1
+                && state.annotation_controls_visible
+        })?;
+    let replacement_toolbar = replacement_state
+        .action_toolbar_bounds
+        .ok_or_else(|| io::Error::other("replacement toolbar was not reported"))?;
+    if replacement_state.selection == Some(selection) || replacement_toolbar == toolbar_after {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "new capture retained the previous selection or manual toolbar position",
+        ));
+    }
+    if !rect_contains_rect(toolbar_safe_area(replacement.bounds), replacement_toolbar) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("replacement toolbar escaped the safe area: {replacement_toolbar:?}"),
+        ));
+    }
+    let replacement_evidence =
+        capture_evidence(context, "05-toolbar-drag-new-selection.png", replacement)?;
+    record_step(
+        report,
+        &context.report_path,
+        "toolbar_drag_new_selection_reanchored",
+        replacement_drag.foreground,
+        Some(&replacement_evidence),
+    )?;
+
+    let cleanup_foreground = inject_key(replacement.handle, VK_ESCAPE)?;
+    wait_for_window_gone(
+        replacement.handle,
+        context.timeout,
+        "toolbar-drag Escape cleanup",
+    )?;
+    let final_state = wait_for_capture_state(context, "toolbar-drag cleanup", |state| {
+        state.session_state == "idle"
+            && state.selection.is_none()
+            && state.overlay_count == 0
+            && !state.more_actions_visible
+            && !state.annotation_controls_visible
+            && !state.annotation_tool_group_visible
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+    })?;
+    record_step(
+        report,
+        &context.report_path,
+        "toolbar_drag_cleanup",
+        cleanup_foreground,
+        None,
+    )?;
+    unsafe { ShowWindow(controller.handle, SW_HIDE) };
+    wait_for_window_gone(
+        controller.handle,
+        context.timeout,
+        "toolbar-drag controller hide",
+    )?;
+    ensure_capture_input_released()?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "toolbar-drag cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    if tool_state.action_toolbar_bounds != Some(toolbar_after) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "toolbar-drag tool selection changed the manual toolbar position",
+        ));
+    }
+    if final_state.action_toolbar_bounds.is_some() {
+        return Err(io::Error::other(
+            "toolbar-drag cleanup retained a toolbar geometry after the overlay closed",
+        ));
+    }
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+fn toolbar_safe_area(bounds: PhysicalRect) -> PhysicalRect {
+    let edge = ThemeMetrics::OVERLAY_EDGE_INSET.round() as i32;
+    let bottom = ThemeMetrics::OVERLAY_BOTTOM_SAFE_INSET.round() as i32;
+    PhysicalRect {
+        left: bounds.left + edge,
+        top: bounds.top + edge,
+        right: bounds.right - edge,
+        bottom: bounds.bottom - bottom,
+    }
+}
+
+#[cfg(windows)]
+fn toolbar_drag_handle_point(toolbar: PhysicalRect) -> PhysicalPoint {
+    PhysicalPoint {
+        x: toolbar.left + (ThemeMetrics::WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH / 2.0).round() as i32,
+        y: toolbar.top + toolbar.height() as i32 / 2,
+    }
 }
 
 #[cfg(windows)]
@@ -16002,6 +16324,22 @@ mod tests {
         assert_eq!(pins.capture_scenario, CaptureScenarioOption::PinsCoexist);
         assert_eq!(pins.capture_scenario.workflow(), "capture_pins_coexist");
 
+        let toolbar_drag = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "toolbar-drag",
+        ]))
+        .unwrap();
+        assert_eq!(
+            toolbar_drag.capture_scenario,
+            CaptureScenarioOption::ToolbarDrag
+        );
+        assert_eq!(
+            toolbar_drag.capture_scenario.workflow(),
+            "capture_toolbar_drag"
+        );
+        assert!(toolbar_drag.capture_scenario.requires_100_percent_display());
+
         assert!(
             Options::parse_from(arguments(&[
                 "--capture-scenario",
@@ -16568,6 +16906,7 @@ mod tests {
             manual_scroll_auto_capture_pending: false,
             manual_scroll_selection: None,
             overlay_count: 0,
+            action_toolbar_bounds: None,
             more_actions_visible: false,
             annotation_controls_visible: false,
             annotation_tool_group_visible: false,
