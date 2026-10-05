@@ -55,11 +55,11 @@ Snow Shot 是体验基准，不是逐项照搬清单：每项差异都明确选�
 
 ## 1. 研究基线与范围
 
-Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-apps)的 `origin/main`
-（截至 2026-10-04 可核验提交 [`05f31acc7573a9873c0c63a7324958aaaf493b09`](https://github.com/mg-chao/snow-apps/commit/05f31acc7573a9873c0c63a7324958aaaf493b09)）。本机 `F:/project/snow-apps` checkout 落后于远端且当前网络无法读取 GitHub refs，因此以公开提交页和本次用户截图作为本轮参考；后续切片开始前重新核验 `origin/main`。
-及其工作区截图工具栏、样式行、工具组浮层、tooltip、键盘可达性和选区边缘呈现。每个开发切片开始前先记录实际参考提交，
-避免把旧 release 或本地落后 checkout 当成“最新”基准。只借鉴可观察的视觉层级、几何关系和交互规则，不复制其设置项数量、具体颜色、
-图标素材或 Qt/Tauri/Web 类层次。
+Snow Shot 参考固定为用户提供的 `F:/project/snow-apps` 源码及其 `origin/main`。
+本轮在 2026-10-05 通过 `git fetch --no-tags origin main` 核验到参考提交
+[`0b28e9db8dfc2428d96781b9bab36ceec1c18318`](https://github.com/mg-chao/snow-apps/commit/0b28e9db8dfc2428d96781b9bab36ceec1c18318)。
+用户本机 `main` 工作区仍位于 `2052d439`，落后 217 个提交；本轮只读取更新后的远端对象，没有切换分支或改写其源码文件。
+每个开发切片开始前仍需记录实际参考提交，避免把旧 release 或落后 checkout 当成最新基准。参考范围包括工作区截图工具栏、样式行、工具组浮层、tooltip、键盘可达性和选区边缘呈现；只借鉴可观察的视觉层级、几何关系和交互规则，不复制设置项数量、具体颜色、图标素材或 Qt/Tauri/Web 类层次。
 
 `0.2.0` 继续以 Windows 截图体验为主：全局快捷键、选区、标注、撤销/重做、复制、保存、Pin、历史、滚动截图、可选 OCR、录屏和失败恢复。
 当前工作只改变 UI surface、布局、控件交互和设置面板呈现，不改变截图像素、导出协议、快捷键、报告字段和资源清理边界。
@@ -279,6 +279,8 @@ G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，不能�
 **U1.2 当前结果（2026-09-27）**：`Locale::language_changed`、`language_preference_save_failed`、`pinned_window_input_restored` 和 `ready_with_shortcut` 四个动态反馈入口统一调用 `Locale::format_template`，不再各自直接替换占位符；English/简体中文回归测试覆盖语言切换、错误详情、Pin 数量和快捷键值。`cargo test -p flash-shot-app --lib i18n::tests` 10 项通过；U1 仍需继续清点实际窗口中的动态文案并补齐真实双语交互矩阵。
 
 **U1.3 当前结果（2026-09-27）**：`HistorySource::localized_label(Locale)` 成为图库来源的统一可见标签入口；历史搜索同时保留当前语言标签和稳定英文来源名，保存反馈与历史列表复用同一映射，不改变持久化来源值。新增 English/简体中文 Pin 来源断言，历史筛选与标签测试通过；真实窗口双语交互矩阵仍待执行。
+
+**U1.4 当前结果（2026-10-05）**：`Locale::format_template` 改为单次从左到右扫描模板。路径、错误详情等动态参数即使包含 `{sidecar}` 形式的文本，也只作为参数写入结果，不会被后续模板替换再次处理；English/简体中文回归测试覆盖此行为。最终内容通过 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --all-features --locked --offline`（707 项通过）和 `git diff --check`。Computer Use 重置后仍未提供原生应用清单或应用启动接口，本切片没有真实窗口证据；完整 U1 双语交互矩阵仍待执行。
 
 
 ### M1：按职责拆分大型模块

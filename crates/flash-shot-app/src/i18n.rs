@@ -76,14 +76,37 @@ impl Locale {
         }
     }
 
-    /// Expands named placeholders in a catalog entry while keeping wording and parameter order
-    /// owned by the active language instead of by individual UI views.
+    /// Expands named placeholders in one pass so dynamic values remain literal data while wording
+    /// and parameter order stay owned by the active language.
     pub fn format_template(self, key: UiText, replacements: &[(&str, &str)]) -> String {
-        replacements
-            .iter()
-            .fold(self.text(key).to_owned(), |text, (name, value)| {
-                text.replace(&format!("{{{name}}}"), value)
-            })
+        let template = self.text(key);
+        let mut formatted = String::with_capacity(template.len());
+        let mut remaining = template;
+
+        while let Some(opening_brace) = remaining.find('{') {
+            formatted.push_str(&remaining[..opening_brace]);
+
+            let placeholder = &remaining[opening_brace..];
+            let Some(closing_brace) = placeholder.find('}') else {
+                formatted.push_str(placeholder);
+                return formatted;
+            };
+
+            let name = &placeholder[1..closing_brace];
+            if let Some((_, value)) = replacements
+                .iter()
+                .find(|(candidate, _)| *candidate == name)
+            {
+                formatted.push_str(value);
+            } else {
+                formatted.push_str(&placeholder[..=closing_brace]);
+            }
+
+            remaining = &placeholder[closing_brace + 1..];
+        }
+
+        formatted.push_str(remaining);
+        formatted
     }
 
     /// Formats the confirmation shown after the interface language changes.
@@ -2506,6 +2529,20 @@ mod tests {
         assert_eq!(
             Locale::English.text(UiText::PinCopyTooltip),
             "Copy image (Ctrl+C)"
+        );
+    }
+
+    #[test]
+    fn template_parameters_are_not_reinterpreted_as_placeholders() {
+        let replacements = [("image", "{sidecar}"), ("sidecar", "annotations.json")];
+
+        assert_eq!(
+            Locale::English.format_template(UiText::EditableProjectSaved, &replacements),
+            "Editable project saved to {sidecar} and annotations.json"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.format_template(UiText::EditableProjectSaved, &replacements),
+            "可编辑项目已保存到 {sidecar} 和 annotations.json"
         );
     }
 
