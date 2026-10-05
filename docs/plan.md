@@ -282,6 +282,8 @@ G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，不能�
 
 **U1.4 当前结果（2026-10-05）**：`Locale::format_template` 改为单次从左到右扫描模板。路径、错误详情等动态参数即使包含 `{sidecar}` 形式的文本，也只作为参数写入结果，不会被后续模板替换再次处理；English/简体中文回归测试覆盖此行为。最终内容通过 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --all-features --locked --offline`（707 项通过）和 `git diff --check`。Computer Use 重置后仍未提供原生应用清单或应用启动接口，本切片没有真实窗口证据；完整 U1 双语交互矩阵仍待执行。
 
+**U1.5 当前结果（2026-10-05）**：补齐更新检查、OCR 探测和翻译流程状态的英中精确断言，覆盖版本、字符数、错误详情和恢复提示。更新检查的四种终态、翻译的准备/OCR/服务失败、翻译服务空结果和探测失败均由生产状态辅助函数生成并逐字比对。`cargo test -p flash-shot-app --lib --offline app::workflow::tests::`（93 项通过）以及格式、全 workspace check、严格 Clippy、全 workspace 测试（707 项通过）和 diff 检查均通过；真实窗口双语交互矩阵仍待执行。
+
 
 ### M1：按职责拆分大型模块
 

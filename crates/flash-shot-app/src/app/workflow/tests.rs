@@ -1945,11 +1945,52 @@ fn update_statuses_use_the_active_catalog_and_preserve_release_details() {
     assert_eq!(
         update_check_status(
             Locale::SimplifiedChinese,
+            Ok(UpdateAvailability::Available {
+                version: "0.2.0".to_owned(),
+            }),
+        ),
+        "发现更新：0.2.0（请从已配置的发布渠道下载）"
+    );
+    assert_eq!(
+        update_check_status(
+            Locale::English,
+            Ok(UpdateAvailability::Current {
+                version: "0.1.2".to_owned(),
+            }),
+        ),
+        "Flash Shot 0.1.2 is up to date"
+    );
+    assert_eq!(
+        update_check_status(
+            Locale::SimplifiedChinese,
             Ok(UpdateAvailability::Current {
                 version: "0.1.2".to_owned(),
             }),
         ),
         "Flash Shot 0.1.2 已是最新版本"
+    );
+    assert_eq!(
+        update_check_status(
+            Locale::English,
+            Ok(UpdateAvailability::NewerLocal {
+                version: "0.3.0".to_owned(),
+            }),
+        ),
+        "Installed version is newer than release manifest 0.3.0"
+    );
+    assert_eq!(
+        update_check_status(
+            Locale::SimplifiedChinese,
+            Ok(UpdateAvailability::NewerLocal {
+                version: "0.3.0".to_owned(),
+            }),
+        ),
+        "当前安装版本高于发布清单中的 0.3.0"
+    );
+    let error = std::io::Error::new(std::io::ErrorKind::TimedOut, "manifest timeout");
+    assert_eq!(
+        update_check_status(Locale::English, Err(error)),
+        "Could not check for updates: manifest timeout"
     );
     let error = std::io::Error::new(std::io::ErrorKind::TimedOut, "manifest timeout");
     assert_eq!(
@@ -2662,23 +2703,18 @@ fn cancelling_scroll_advances_the_operation_generation() {
 
 #[test]
 fn translation_failure_messages_identify_the_recovery_step() {
-    assert!(
-        translation_failure_status(Locale::English, &TranslationOutcome::OcrUnavailable)
-            .contains("Install Tesseract")
+    let preparation_failure = TranslationOutcome::PreparationFailed("selection expired".to_owned());
+    assert_eq!(
+        translation_failure_status(Locale::English, &preparation_failure),
+        "Could not prepare the selection for translation: selection expired"
     );
-    assert!(
-        translation_failure_status(
-            Locale::English,
-            &TranslationOutcome::OcrFailed("bad image".to_owned()),
-        )
-        .contains("recognize text")
+    assert_eq!(
+        translation_failure_status(Locale::SimplifiedChinese, &preparation_failure),
+        "无法准备翻译选区：selection expired"
     );
-    assert!(
-        translation_failure_status(
-            Locale::English,
-            &TranslationOutcome::ServiceFailed("timeout".to_owned()),
-        )
-        .contains("Check the endpoint")
+    assert_eq!(
+        translation_failure_status(Locale::English, &TranslationOutcome::OcrUnavailable),
+        "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT."
     );
     assert_eq!(
         translation_failure_status(
@@ -2686,6 +2722,24 @@ fn translation_failure_messages_identify_the_recovery_step() {
             &TranslationOutcome::OcrUnavailable
         ),
         "本地 OCR 不可用。请安装 Tesseract，或设置 FLASH_SHOT_TESSERACT。"
+    );
+    let ocr_failure = TranslationOutcome::OcrFailed("bad image".to_owned());
+    assert_eq!(
+        translation_failure_status(Locale::English, &ocr_failure),
+        "Could not recognize text for translation: bad image"
+    );
+    assert_eq!(
+        translation_failure_status(Locale::SimplifiedChinese, &ocr_failure),
+        "无法为翻译识别文字：bad image"
+    );
+    let service_failure = TranslationOutcome::ServiceFailed("timeout".to_owned());
+    assert_eq!(
+        translation_failure_status(Locale::English, &service_failure),
+        "Translation service failed: timeout. Check the endpoint and try again."
+    );
+    assert_eq!(
+        translation_failure_status(Locale::SimplifiedChinese, &service_failure),
+        "翻译服务失败：timeout。请检查端点后重试。"
     );
 }
 
@@ -2720,7 +2774,18 @@ fn translation_support_status_keeps_disabled_configuration_local_and_actionable(
         std::io::ErrorKind::InvalidInput,
         "translation endpoint must use HTTPS",
     );
-    assert!(translation_support_status(Locale::English, Err(invalid)).contains("needs attention"));
+    assert_eq!(
+        translation_support_status(Locale::English, Err(invalid)),
+        "Translation configuration needs attention: translation endpoint must use HTTPS"
+    );
+    let invalid = std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "translation endpoint must use HTTPS",
+    );
+    assert_eq!(
+        translation_support_status(Locale::SimplifiedChinese, Err(invalid)),
+        "翻译配置需要检查：translation endpoint must use HTTPS"
+    );
 }
 
 #[test]
@@ -2732,14 +2797,26 @@ fn translation_service_test_status_reports_readiness_without_returning_text() {
     );
 
     let empty = Ok(String::new());
-    assert!(translation_service_test_status(Locale::English, &empty).contains("returned no text"));
+    assert_eq!(
+        translation_service_test_status(Locale::English, &empty),
+        "Translation service returned no text. Check the endpoint response."
+    );
+    assert_eq!(
+        translation_service_test_status(Locale::SimplifiedChinese, &empty),
+        "翻译服务未返回文字，请检查端点响应。"
+    );
 
     let failure = Err(std::io::Error::new(
         std::io::ErrorKind::TimedOut,
         "request timed out",
     ));
-    assert!(
-        translation_service_test_status(Locale::English, &failure).contains("Check the endpoint")
+    assert_eq!(
+        translation_service_test_status(Locale::English, &failure),
+        "Translation service failed: request timed out. Check the endpoint and try again."
+    );
+    assert_eq!(
+        translation_service_test_status(Locale::SimplifiedChinese, &failure),
+        "翻译服务失败：request timed out。请检查端点后重试。"
     );
     assert_eq!(
         translation_service_test_status(Locale::SimplifiedChinese, &success),
@@ -2774,9 +2851,22 @@ fn ocr_language_labels_make_each_saved_preset_readable() {
 fn ocr_support_probe_names_the_local_installation_recovery_step() {
     let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "tesseract.exe");
 
-    assert!(ocr_support_status(Locale::English, Err(&missing)).contains("FLASH_SHOT_TESSERACT"));
-    assert!(
-        ocr_support_status(Locale::SimplifiedChinese, Err(&missing))
-            .contains("FLASH_SHOT_TESSERACT")
+    assert_eq!(
+        ocr_support_status(Locale::English, Err(&missing)),
+        "Local OCR is unavailable. Install Tesseract or set FLASH_SHOT_TESSERACT: tesseract.exe"
+    );
+    assert_eq!(
+        ocr_support_status(Locale::SimplifiedChinese, Err(&missing)),
+        "本地 OCR 不可用。请安装 Tesseract，或设置 FLASH_SHOT_TESSERACT：tesseract.exe"
+    );
+
+    let failure = std::io::Error::new(std::io::ErrorKind::TimedOut, "tesseract probe timed out");
+    assert_eq!(
+        ocr_support_status(Locale::English, Err(&failure)),
+        "Could not check local OCR support: tesseract probe timed out"
+    );
+    assert_eq!(
+        ocr_support_status(Locale::SimplifiedChinese, Err(&failure)),
+        "无法检查本地 OCR 支持：tesseract probe timed out"
     );
 }
