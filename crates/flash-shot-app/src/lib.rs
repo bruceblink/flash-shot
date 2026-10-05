@@ -289,11 +289,16 @@ pub struct OverlayInteractionCaptureState {
     /// This is an acceptance-only geometry probe. It lets native input tests prove that a
     /// manual toolbar move changed the toolbar while the committed selection stayed fixed.
     pub action_toolbar_bounds: Option<domain::geometry::PhysicalRect>,
+    /// Physical bounds of the rendered More menu, including its production placement and size.
+    pub secondary_menu_bounds: Option<domain::geometry::PhysicalRect>,
     pub more_actions_visible: bool,
     pub annotation_controls_visible: bool,
     pub annotation_tool_group_visible: bool,
     pub pinned_count: usize,
     pub pinned_source_bounds: Option<domain::geometry::PhysicalRect>,
+    pub pinned_status: Option<String>,
+    pub print_in_flight: bool,
+    pub pinned_print_in_flight: bool,
     /// Whether a previously visible capture overlay is still waiting for deferred native teardown.
     pub capture_teardown_pending: bool,
     /// Monotonic token used to reject callbacks that belong to an older capture lifecycle.

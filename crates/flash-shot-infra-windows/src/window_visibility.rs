@@ -68,6 +68,16 @@ pub fn make_not_topmost(handle: isize) -> io::Result<()> {
     platform::make_not_topmost(handle)
 }
 
+/// Reports whether a live native window currently accepts input.
+pub fn is_enabled(handle: isize) -> io::Result<bool> {
+    platform::is_enabled(handle)
+}
+
+/// Enables or disables input for a live native window without changing its visibility.
+pub fn set_enabled(handle: isize, enabled: bool) -> io::Result<()> {
+    platform::set_enabled(handle, enabled)
+}
+
 /// Computes the bounded logical content size that GPUI should apply for one Pin zoom step.
 pub fn scaled_pin_size(width: f32, height: f32, scale: f32) -> (f32, f32) {
     (
@@ -113,6 +123,7 @@ mod platform {
     use windows_sys::Win32::{
         Foundation::RECT,
         Graphics::Dwm::DwmFlush,
+        UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled},
         UI::WindowsAndMessaging::{
             GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST, IsWindow,
             LWA_ALPHA, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
@@ -206,6 +217,25 @@ mod platform {
         } == 0
         {
             return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn is_enabled(handle: isize) -> io::Result<bool> {
+        let window = window(handle)?;
+        // SAFETY: window is a live HWND queried without changing native state.
+        Ok(unsafe { IsWindowEnabled(window) } != 0)
+    }
+
+    pub fn set_enabled(handle: isize, enabled: bool) -> io::Result<()> {
+        let window = window(handle)?;
+        // SAFETY: window is a live HWND and EnableWindow receives its desired enabled state.
+        unsafe { EnableWindow(window, i32::from(enabled)) };
+        if unsafe { IsWindow(window) } == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "native window closed while changing input state",
+            ));
         }
         Ok(())
     }
@@ -311,6 +341,14 @@ mod platform {
     }
 
     pub fn make_not_topmost(_handle: isize) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn is_enabled(_handle: isize) -> io::Result<bool> {
+        Ok(false)
+    }
+
+    pub fn set_enabled(_handle: isize, _enabled: bool) -> io::Result<()> {
         Ok(())
     }
 

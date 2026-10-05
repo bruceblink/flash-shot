@@ -23,6 +23,15 @@ impl FlashShotApp {
 
     /// Hides Flash Shot, captures the active external window, and opens it as an editable selection.
     pub(in crate::app) fn start_focused_window_capture(&mut self, cx: &mut Context<Self>) {
+        if self.print_in_flight {
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::PrintBusy)
+                .to_owned();
+            cx.notify();
+            return;
+        }
         if self.delayed_capture_generation.is_some() {
             return;
         }
@@ -238,6 +247,15 @@ impl FlashShotApp {
         preselect_full_screen: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.print_in_flight {
+            self.status = self
+                .settings
+                .locale
+                .text(crate::i18n::UiText::PrintBusy)
+                .to_owned();
+            cx.notify();
+            return;
+        }
         if !self.capture_restart_operations_idle() {
             return;
         }

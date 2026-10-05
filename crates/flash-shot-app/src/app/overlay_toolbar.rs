@@ -435,6 +435,7 @@ pub(crate) enum WorkspaceMoreAction {
     RetryRecognition,
     CopyRecognition,
     ClearRecognition,
+    Print,
 }
 
 impl WorkspaceMoreAction {
@@ -455,6 +456,7 @@ impl WorkspaceMoreAction {
             Self::RetryRecognition => 11,
             Self::CopyRecognition => 12,
             Self::ClearRecognition => 13,
+            Self::Print => 14,
         }
     }
 
@@ -475,6 +477,7 @@ impl WorkspaceMoreAction {
             Self::RetryRecognition => "overlay-retry-recognition",
             Self::CopyRecognition => "overlay-copy-recognition",
             Self::ClearRecognition => "overlay-clear-recognition",
+            Self::Print => "overlay-print",
         }
     }
 
@@ -495,11 +498,12 @@ impl WorkspaceMoreAction {
             Self::RetryRecognition => 126.0,
             Self::CopyRecognition => 76.0,
             Self::ClearRecognition => 92.0,
+            Self::Print => 72.0,
         }
     }
 
     /// Lists every possible action in stable focus order.
-    pub(crate) const fn catalog() -> &'static [Self; 14] {
+    pub(crate) const fn catalog() -> &'static [Self; 15] {
         &[
             Self::SaveAnnotations,
             Self::SaveEditable,
@@ -515,16 +519,18 @@ impl WorkspaceMoreAction {
             Self::RetryRecognition,
             Self::CopyRecognition,
             Self::ClearRecognition,
+            Self::Print,
         ]
     }
 
     /// Lists the actions visible whenever More is expanded.
-    pub(crate) const fn always_visible_catalog() -> &'static [Self; 11] {
+    pub(crate) const fn always_visible_catalog() -> &'static [Self; 12] {
         &[
             Self::SaveAnnotations,
             Self::SaveEditable,
             Self::OpenAnnotations,
             Self::QuickSave,
+            Self::Print,
             Self::ScrollShot,
             Self::Qr,
             Self::Ocr,
@@ -1993,18 +1999,19 @@ mod tests {
                 "overlay-retry-recognition",
                 "overlay-copy-recognition",
                 "overlay-clear-recognition",
+                "overlay-print",
             ]
         );
-        assert_eq!(WorkspaceMoreAction::always_visible_catalog().len(), 11);
+        assert_eq!(WorkspaceMoreAction::always_visible_catalog().len(), 12);
         assert_eq!(
             actions.map(WorkspaceMoreAction::index),
-            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
         );
         assert_eq!(
             actions.map(WorkspaceMoreAction::width),
             [
                 138.0, 128.0, 143.0, 92.0, 91.0, 72.0, 84.0, 92.0, 81.0, 101.0, 126.0, 126.0, 76.0,
-                92.0,
+                92.0, 72.0,
             ]
         );
     }

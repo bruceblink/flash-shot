@@ -14,7 +14,8 @@ use flash_shot::{
     OverlayInteractionAnnotationState, OverlayInteractionCaptureContent,
     OverlayInteractionCaptureState, OverlayInteractionRecordingState,
     app::overlay_toolbar::{
-        WorkspaceAnnotationToolSpec, WorkspaceInlineAction, WorkspaceResultAction,
+        WorkspaceAnnotationToolSpec, WorkspaceInlineAction, WorkspaceMoreAction,
+        WorkspaceResultAction,
     },
     domain::annotation::AnnotationTool,
     domain::geometry::{PhysicalPoint, PhysicalRect},
@@ -82,18 +83,18 @@ use windows_sys::Win32::{
             SetProcessDpiAwarenessContext,
         },
         Input::KeyboardAndMouse::{
-            GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
-            KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
-            MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
-            VK_A, VK_C, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_R, VK_RETURN,
-            VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE,
+            GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, IsWindowEnabled,
+            KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE,
+            MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK,
+            MOUSEINPUT, SendInput, VK_A, VK_C, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU,
+            VK_P, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE,
         },
         WindowsAndMessaging::{
             BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
             DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows, FindWindowW,
-            GUITHREADINFO, GW_OWNER, GWLP_USERDATA, GetClassNameW, GetClientRect, GetCursorPos,
-            GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindow,
-            GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+            GUITHREADINFO, GW_OWNER, GWL_EXSTYLE, GWLP_USERDATA, GetClassNameW, GetClientRect,
+            GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics,
+            GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
             GetWindowThreadProcessId, HTCAPTION, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IsChild,
             IsIconic, IsWindow, IsWindowVisible, MOUSEWHEEL_ROUTING_MOUSE_POS, MSG, PostMessageW,
             PostQuitMessage, RegisterClassW, SM_CMONITORS, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
@@ -102,7 +103,7 @@ use windows_sys::Win32::{
             SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
             ShowWindow, SystemParametersInfoW, TranslateMessage, WM_CLOSE, WM_DESTROY,
             WM_ERASEBKGND, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE,
-            WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE, WindowFromPoint,
+            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE, WindowFromPoint,
         },
     },
 };
@@ -169,10 +170,6 @@ const SELECTION_MOVE_DELTA: PhysicalPoint = PhysicalPoint { x: 120, y: 72 };
 const SELECTION_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 144, y: -80 };
 const SELECTION_SHIFT_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 120, y: -24 };
 const SELECTION_ALT_RESIZE_DELTA: PhysicalPoint = PhysicalPoint { x: 80, y: -56 };
-// Keep the scroll-menu hit-test model aligned with `OVERLAY_MORE_ACTION_WIDTHS` in overlay.rs.
-const SCROLL_SECONDARY_ACTION_WIDTHS: [f32; 11] = [
-    138.0, 128.0, 143.0, 92.0, 91.0, 72.0, 84.0, 92.0, 81.0, 101.0, 126.0,
-];
 const SCROLL_FIXTURE_SCROLL_STEP: i32 = 96;
 #[cfg(windows)]
 const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
@@ -215,6 +212,7 @@ enum CaptureScenarioOption {
     PinsCoexist,
     SelectionTransform,
     ScrollRoundtrip,
+    PrintRoundtrip,
     AnnotationRegression,
     ToolGroup,
     ToolbarDrag,
@@ -236,6 +234,7 @@ impl CaptureScenarioOption {
             Self::PinsCoexist => "capture_pins_coexist",
             Self::SelectionTransform => "capture_selection_transform",
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
+            Self::PrintRoundtrip => "capture_print_roundtrip",
             Self::AnnotationRegression => "capture_annotation_regression",
             Self::ToolGroup => "capture_tool_group",
             Self::ToolbarDrag => "capture_toolbar_drag",
@@ -256,6 +255,7 @@ impl CaptureScenarioOption {
                 | Self::PinsCoexist
                 | Self::SelectionTransform
                 | Self::ScrollRoundtrip
+                | Self::PrintRoundtrip
                 | Self::AnnotationRegression
                 | Self::ToolGroup
                 | Self::ToolbarDrag
@@ -514,6 +514,7 @@ impl Options {
                         "pins-coexist" => CaptureScenarioOption::PinsCoexist,
                         "selection-transform" => CaptureScenarioOption::SelectionTransform,
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
+                        "print-roundtrip" => CaptureScenarioOption::PrintRoundtrip,
                         "annotation-regression" => CaptureScenarioOption::AnnotationRegression,
                         "tool-group" => CaptureScenarioOption::ToolGroup,
                         "toolbar-drag" => CaptureScenarioOption::ToolbarDrag,
@@ -529,7 +530,7 @@ impl Options {
                         }
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'print-roundtrip', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
                     .to_owned(),
                             );
                         }
@@ -700,7 +701,7 @@ fn parse_theme(value: Option<OsString>) -> Result<ThemeMode, String> {
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|print-roundtrip|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1320,78 +1321,6 @@ fn tool_group_interaction_plan_for_capture_selection(
     })
 }
 
-/// Locates the production Scroll shot item in the expanded More menu using its fixed width rows.
-fn scroll_shot_point_for_logical_selection(
-    bounds: PhysicalRect,
-    scale: f32,
-    width: f32,
-    height: f32,
-    start: (f32, f32),
-    end: (f32, f32),
-    annotation_controls_visible: bool,
-) -> io::Result<PhysicalPoint> {
-    if start.0 < 0.0
-        || start.1 < 0.0
-        || end.0 <= start.0
-        || end.1 <= start.1
-        || end.0 > width
-        || end.1 > height
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "scroll-shot selection must be increasing and inside the overlay client",
-        ));
-    }
-    let (toolbar_width, toolbar_height, _) = scroll_toolbar_dimensions(annotation_controls_visible);
-    if width < toolbar_width + 36.0 {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "scroll roundtrip acceptance requires room for the complete action toolbar",
-        ));
-    }
-    let toolbar_left = (end.0 - toolbar_width).clamp(18.0, width - 18.0 - toolbar_width);
-    let top_limit = (height - 96.0 - toolbar_height).max(18.0);
-    let below = end.1 + ThemeMetrics::WORKSPACE_SELECTION_GAP;
-    let above = start.1 - ThemeMetrics::WORKSPACE_SELECTION_GAP - toolbar_height;
-    let toolbar_top = if below <= top_limit {
-        below
-    } else {
-        above.max(18.0).min(top_limit)
-    };
-
-    let menu_width = scroll_secondary_menu_width();
-    let menu_height = scroll_secondary_menu_height(menu_width);
-    let menu_offset = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-        + ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
-        + ThemeMetrics::WORKSPACE_POPOVER_GAP;
-    let above_menu_top = toolbar_top - menu_offset - menu_height;
-    let below_menu_bottom = toolbar_top + toolbar_height + menu_offset + menu_height;
-    let actions_above = below > top_limit;
-    let opens_above =
-        if annotation_controls_visible && !actions_above && below_menu_bottom <= height - 96.0 {
-            false
-        } else if annotation_controls_visible && actions_above && above_menu_top >= 18.0 {
-            true
-        } else {
-            above_menu_top >= 18.0 || below_menu_bottom > height - 96.0
-        };
-    let menu_top = if opens_above {
-        toolbar_top - menu_offset - menu_height
-    } else {
-        toolbar_top + menu_offset
-    };
-    let menu_left_offset = ((toolbar_width - menu_width) / 2.0).clamp(
-        18.0 - toolbar_left,
-        width - 18.0 - menu_width - toolbar_left,
-    );
-    let menu_left = toolbar_left + menu_left_offset;
-    let scroll_center = scroll_menu_item_center(menu_left, menu_top, menu_width, 4)?;
-    Ok(PhysicalPoint {
-        x: bounds.left + (scroll_center.0 * scale).round() as i32,
-        y: bounds.top + (scroll_center.1 * scale).round() as i32,
-    })
-}
-
 /// Measures the compact production action row from shared icon and spacing tokens.
 fn scroll_toolbar_dimensions(annotation_controls_visible: bool) -> (f32, f32, f32) {
     let button = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
@@ -1480,16 +1409,11 @@ fn scroll_toolbar_more_point_for_capture_selection(
 /// Finds the narrowest More-menu width whose fixed action labels fit in four production rows.
 fn scroll_secondary_menu_width() -> f32 {
     let gap = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
-    let chrome = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
+    let chrome = ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING * 2.0
         + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH * 2.0;
-    let minimum = SCROLL_SECONDARY_ACTION_WIDTHS
-        .iter()
-        .copied()
-        .fold(0.0, f32::max)
-        + chrome;
-    let maximum = SCROLL_SECONDARY_ACTION_WIDTHS.iter().sum::<f32>()
-        + (SCROLL_SECONDARY_ACTION_WIDTHS.len() - 1) as f32 * gap
-        + chrome;
+    let widths = scroll_secondary_action_widths();
+    let minimum = widths.iter().copied().fold(0.0, f32::max) + chrome;
+    let maximum = widths.iter().sum::<f32>() + widths.len().saturating_sub(1) as f32 * gap + chrome;
     let mut width = minimum.ceil();
     while width <= maximum {
         if scroll_secondary_menu_row_count(width) <= 4 {
@@ -1505,19 +1429,20 @@ fn scroll_secondary_menu_height(width: f32) -> f32 {
     let rows = scroll_secondary_menu_row_count(width) as f32;
     rows * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
         + (rows - 1.0).max(0.0) * ThemeMetrics::WORKSPACE_TOOLBAR_GAP
-        + ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
+        + ThemeMetrics::WORKSPACE_TOOLBAR_VERTICAL_PADDING * 2.0
         + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH * 2.0
 }
 
 /// Applies the same greedy flex wrapping as the More action renderer.
 fn scroll_secondary_menu_row_count(width: f32) -> usize {
+    let item_widths = scroll_secondary_action_widths();
     let content_width = (width
-        - ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
+        - ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING * 2.0
         - ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH * 2.0)
         .max(1.0);
     let mut rows = 1;
     let mut row_width = 0.0;
-    for item_width in SCROLL_SECONDARY_ACTION_WIDTHS {
+    for item_width in item_widths {
         let next_width = if row_width == 0.0 {
             item_width
         } else {
@@ -1533,22 +1458,37 @@ fn scroll_secondary_menu_row_count(width: f32) -> usize {
     rows
 }
 
+/// Reads the live More-action catalog so layout and hit testing share production widths/order.
+fn scroll_secondary_action_widths() -> Vec<f32> {
+    WorkspaceMoreAction::always_visible_catalog()
+        .iter()
+        .map(|action| action.width())
+        .collect()
+}
+
 /// Returns an item's centered hit point after the menu's right-aligned flex wrapping.
 fn scroll_menu_item_center(
     menu_left: f32,
     menu_top: f32,
     menu_width: f32,
-    item_index: usize,
+    action: WorkspaceMoreAction,
 ) -> io::Result<(f32, f32)> {
     let border = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
-    let padding = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+    let horizontal_padding = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
+    let vertical_padding = ThemeMetrics::WORKSPACE_TOOLBAR_VERTICAL_PADDING;
     let gap = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
     let button = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
-    let content_width = (menu_width - padding * 2.0 - border * 2.0).max(1.0);
+    let content_width = (menu_width - horizontal_padding * 2.0 - border * 2.0).max(1.0);
+    let actions = WorkspaceMoreAction::always_visible_catalog();
+    let item_widths = scroll_secondary_action_widths();
+    let item_index = actions
+        .iter()
+        .position(|candidate| *candidate == action)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "More action is absent"))?;
     let mut rows = Vec::<(usize, usize, f32)>::new();
     let mut row_start = 0;
     let mut row_width = 0.0;
-    for (index, item_width) in SCROLL_SECONDARY_ACTION_WIDTHS.iter().copied().enumerate() {
+    for (index, item_width) in item_widths.iter().copied().enumerate() {
         let next_width = if row_width == 0.0 {
             item_width
         } else {
@@ -1562,7 +1502,7 @@ fn scroll_menu_item_center(
             row_width = next_width;
         }
     }
-    rows.push((row_start, SCROLL_SECONDARY_ACTION_WIDTHS.len(), row_width));
+    rows.push((row_start, item_widths.len(), row_width));
     let (row_index, (first, _last, row_width)) = rows
         .iter()
         .copied()
@@ -1570,14 +1510,53 @@ fn scroll_menu_item_center(
         .find(|(_, (first, last, _))| (*first..*last).contains(&item_index))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "More item index is absent"))?;
     let row_offset = content_width - row_width;
-    let preceding_width = SCROLL_SECONDARY_ACTION_WIDTHS[first..item_index]
-        .iter()
-        .sum::<f32>()
+    let preceding_width = item_widths[first..item_index].iter().sum::<f32>()
         + item_index.saturating_sub(first) as f32 * gap;
-    let item_width = SCROLL_SECONDARY_ACTION_WIDTHS[item_index];
-    let x = menu_left + border + padding + row_offset + preceding_width + item_width / 2.0;
-    let y = menu_top + border + padding + row_index as f32 * (button + gap) + button / 2.0;
+    let item_width = item_widths[item_index];
+    let x =
+        menu_left + border + horizontal_padding + row_offset + preceding_width + item_width / 2.0;
+    let y = menu_top + border + vertical_padding + row_index as f32 * (button + gap) + button / 2.0;
     Ok((x, y))
+}
+
+/// Maps an action to the actual More-menu rectangle measured by the production renderer.
+fn more_action_point_for_rendered_menu(
+    menu_bounds: Option<PhysicalRect>,
+    scale: f32,
+    action: WorkspaceMoreAction,
+) -> io::Result<PhysicalPoint> {
+    let menu_bounds = menu_bounds.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "production More-menu bounds are unavailable",
+        )
+    })?;
+    if !scale.is_finite() || !(1.0..=4.0).contains(&scale) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "More-menu scale must be between 1.0 and 4.0",
+        ));
+    }
+    if menu_bounds.width() == 0 || menu_bounds.height() == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "production More-menu bounds are empty",
+        ));
+    }
+    let logical_width = menu_bounds.width() as f32 / scale;
+    let (offset_x, offset_y) = scroll_menu_item_center(0.0, 0.0, logical_width, action)?;
+    let point = PhysicalPoint {
+        x: menu_bounds.left + (offset_x * scale).round() as i32,
+        y: menu_bounds.top + (offset_y * scale).round() as i32,
+    };
+    if menu_bounds.contains(point) {
+        Ok(point)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("computed More-action point {point:?} escaped menu {menu_bounds:?}"),
+        ))
+    }
 }
 
 /// Chooses a tall viewport that stays inside the fixture and above the scrolling controller.
@@ -2124,8 +2103,55 @@ struct AcceptanceReport {
     save_failure_retry: Option<SaveFailureRetryReport>,
     save_permission_retry: Option<SavePermissionRetryReport>,
     save_dialog_permission_retry: Option<SaveDialogPermissionRetryReport>,
+    print_roundtrip: Option<PrintRoundtripReport>,
     recording_failure_retry: Option<RecordingFailureRetryReport>,
     error: Option<String>,
+}
+
+#[derive(Default, serde::Serialize)]
+struct PrintRoundtripReport {
+    capture: PrintSurfaceReport,
+    pin: PrintSurfaceReport,
+}
+
+#[derive(Default, serde::Serialize)]
+struct PrintSurfaceReport {
+    source_image: Option<String>,
+    cancel_dialog: Option<PrintDialogReport>,
+    cancelled_state: Option<CaptureStateEvidence>,
+    restored_after_cancel: Option<PrintWindowRestoreReport>,
+    output_print_dialog: Option<PrintDialogReport>,
+    output_save_dialog: Option<PrintDialogReport>,
+    output_pdf: Option<PrintedPdfReport>,
+    submitted_state: Option<CaptureStateEvidence>,
+    restored_after_submit: Option<PrintWindowRestoreReport>,
+    cleanup: Option<CleanupReport>,
+}
+
+#[derive(serde::Serialize)]
+struct PrintDialogReport {
+    title: String,
+    controls: String,
+    window: WindowReport,
+    owner_enabled: bool,
+    owner_topmost: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct PrintWindowRestoreReport {
+    owner_enabled: bool,
+    owner_topmost: bool,
+    foreground_owner: bool,
+}
+
+#[derive(serde::Serialize)]
+struct PrintedPdfReport {
+    path: String,
+    bytes: u64,
+    page_count: usize,
+    image_object_count: usize,
+    source_width: u32,
+    source_height: u32,
 }
 
 #[derive(serde::Serialize)]
@@ -2798,8 +2824,11 @@ struct CaptureStateEvidence {
     selection: Option<PhysicalRect>,
     selection_copy_active: bool,
     clipboard_write_active: bool,
+    print_in_flight: bool,
     overlay_count: usize,
     pinned_count: usize,
+    pinned_status: Option<String>,
+    pinned_print_in_flight: bool,
     capture_teardown_pending: bool,
     background_tasks_idle: bool,
     capture_preflight_ready: bool,
@@ -2814,8 +2843,11 @@ impl CaptureStateEvidence {
             selection: state.selection,
             selection_copy_active: state.selection_copy_active,
             clipboard_write_active: state.clipboard_write_active,
+            print_in_flight: state.print_in_flight,
             overlay_count: state.overlay_count,
             pinned_count: state.pinned_count,
+            pinned_status: state.pinned_status.clone(),
+            pinned_print_in_flight: state.pinned_print_in_flight,
             capture_teardown_pending: state.capture_teardown_pending,
             background_tasks_idle: state.background_tasks_idle,
             capture_preflight_ready: state.capture_preflight_ready,
@@ -3166,6 +3198,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::PinsCoexist
             | CaptureScenarioOption::SelectionTransform
             | CaptureScenarioOption::ScrollRoundtrip
+            | CaptureScenarioOption::PrintRoundtrip
             | CaptureScenarioOption::AnnotationRegression
             | CaptureScenarioOption::SaveFailureRetry
             | CaptureScenarioOption::SavePermissionRetry
@@ -3247,9 +3280,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 32 records the
-        // selected locale/theme alongside the deterministic Pins source fixture.
-        schema_version: 32,
+        // Increment when the machine-readable report shape changes. Schema 33 adds print
+        // dialog and PDF output evidence.
+        schema_version: 33,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -3286,6 +3319,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         save_failure_retry: None,
         save_permission_retry: None,
         save_dialog_permission_retry: None,
+        print_roundtrip: None,
         recording_failure_retry: None,
         error: None,
     }
@@ -5043,6 +5077,9 @@ fn run_interaction_sequence(
         }
         (None, CaptureScenarioOption::ScrollRoundtrip) => {
             execute_scroll_roundtrip_interactions(context, report)
+        }
+        (None, CaptureScenarioOption::PrintRoundtrip) => {
+            execute_print_roundtrip_interactions(context, report)
         }
         (None, CaptureScenarioOption::AnnotationRegression) => {
             execute_annotation_regression_interactions(context, report)
@@ -8004,7 +8041,7 @@ fn execute_scroll_roundtrip_interactions(
     }
 
     let foreground = inject_mouse_click(overlay.handle, plan.more)?;
-    let _more_state = wait_for_capture_state(context, "scroll roundtrip More", |state| {
+    let more_state = wait_for_capture_state(context, "scroll roundtrip More", |state| {
         state.session_state == "selecting" && state.more_actions_visible && state.overlay_count == 1
     })?;
     let more = capture_evidence(context, "02-scroll-more.png", overlay)?;
@@ -8020,11 +8057,10 @@ fn execute_scroll_roundtrip_interactions(
         foreground,
         Some(&more),
     )?;
-    let scroll_point = scroll_shot_point_for_capture_selection(
-        overlay.handle,
-        display,
-        initial_selection,
-        initial_state.annotation_controls_visible,
+    let scroll_point = more_action_point_for_rendered_menu(
+        more_state.secondary_menu_bounds,
+        overlay.dpi as f32 / WINDOWS_BASE_DPI,
+        WorkspaceMoreAction::ScrollShot,
     )?;
     if !overlay.bounds.contains(scroll_point) {
         return Err(io::Error::new(
@@ -11038,6 +11074,760 @@ fn execute_pin_interaction(
     })?;
     record_step(report, &context.report_path, "pin_escape", foreground, None)?;
     Ok(pin_report)
+}
+
+#[cfg(windows)]
+/// Prints one selected Capture and one real Pin, proving both cancellation and PDF submission.
+fn execute_print_roundtrip_interactions(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+) -> io::Result<()> {
+    let controller = wait_for_controller(context.timeout)?;
+    focus_owned_window(controller, context.timeout)?;
+    report.controller_window = Some(controller.report());
+
+    let (capture_overlay, _, capture_selection, _, capture_source) =
+        begin_selected_overlay(context, controller)?;
+    let capture_surface = execute_capture_print_surface(
+        context,
+        report,
+        controller,
+        capture_overlay,
+        capture_selection,
+        &capture_source,
+    )?;
+
+    let (pin_overlay, plan, pin_selection, _, pin_source) =
+        begin_selected_overlay(context, controller)?;
+    let visible_before_pin = process_windows()?;
+    let foreground = inject_mouse_click(pin_overlay.handle, plan.pin)?;
+    record_step(
+        report,
+        &context.report_path,
+        "print_roundtrip_pin_click",
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(pin_overlay.handle, context.timeout, "Print roundtrip Pin")?;
+    let _pin_state = wait_for_capture_state(context, "Print roundtrip Pin", |state| {
+        state.session_state == "idle"
+            && state.overlay_count == 0
+            && state.pinned_count == 1
+            && state.pinned_source_bounds == Some(pin_selection)
+            && state.capture_preflight_ready
+    })?;
+    let actual_pin_source = query_capture_content(context, context.timeout)?
+        .pins
+        .into_iter()
+        .last()
+        .ok_or_else(|| io::Error::other("Print roundtrip Pin source pixels were not reported"))?;
+    validate_same_pixel_content(&pin_source, &actual_pin_source, "print roundtrip Pin")?;
+    let pin = wait_for_new_pin_after_click(
+        controller.handle,
+        pin_overlay.handle,
+        &visible_before_pin,
+        context.display.physical_bounds,
+        context.timeout,
+    )?;
+    focus_owned_window(pin, context.timeout)?;
+    thread::sleep(context.settle_delay);
+    let pin_evidence = capture_evidence(context, "print-roundtrip-pin.png", pin)?;
+    record_step(
+        report,
+        &context.report_path,
+        "print_roundtrip_pin_visible",
+        pin,
+        Some(&pin_evidence),
+    )?;
+
+    let pin_surface = execute_pin_print_surface(
+        context,
+        report,
+        controller,
+        pin,
+        pin_selection,
+        &actual_pin_source,
+    )?;
+    let final_state = query_capture_state(context, context.timeout)?;
+    if final_state.pinned_count != 0
+        || final_state.overlay_count != 0
+        || final_state.capture_teardown_pending
+        || !final_state.background_tasks_idle
+        || !final_state.capture_preflight_ready
+        || !matches!(
+            final_state.session_state.as_str(),
+            "idle" | "completed" | "cancelled"
+        )
+    {
+        return Err(io::Error::other(format!(
+            "Print roundtrip final state is not clean: {final_state:?}"
+        )));
+    }
+    report.print_roundtrip = Some(PrintRoundtripReport {
+        capture: capture_surface,
+        pin: pin_surface,
+    });
+    write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Exercises Capture print cancel/submit while preserving selection until the submitted job closes it.
+fn execute_capture_print_surface(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    controller: NativeWindow,
+    overlay: NativeWindow,
+    selection: PhysicalRect,
+    source: &CaptureFrame,
+) -> io::Result<PrintSurfaceReport> {
+    let source_image = save_print_source(context, "capture-source.png", source)?;
+    let mut surface = PrintSurfaceReport {
+        source_image: Some(source_image),
+        ..PrintSurfaceReport::default()
+    };
+
+    let (cancel_dialog, _) = open_capture_print_dialog(
+        context,
+        report,
+        controller,
+        overlay,
+        selection,
+        "capture-print-cancel",
+    )?;
+    let cancel_report = print_dialog_report(cancel_dialog, overlay.handle)?;
+    surface.cancel_dialog = Some(cancel_report);
+    let cancel_evidence =
+        capture_evidence(context, "capture-print-cancel-dialog.png", cancel_dialog)?;
+    record_step(
+        report,
+        &context.report_path,
+        "capture_print_cancel_dialog",
+        cancel_dialog,
+        Some(&cancel_evidence),
+    )?;
+    if window_is_topmost(overlay.handle) {
+        return Err(io::Error::other(
+            "Capture remained topmost above its modal Windows Print dialog",
+        ));
+    }
+    let foreground = inject_key(cancel_dialog.handle, VK_ESCAPE)?;
+    record_step(
+        report,
+        &context.report_path,
+        "capture_print_cancel",
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(
+        cancel_dialog.handle,
+        context.timeout,
+        "Capture print cancellation",
+    )?;
+    wait_for_no_visible_save_dialogs(context.timeout, "Capture print cancellation")?;
+    let restored = wait_for_owned_foreground_window(
+        overlay.handle,
+        context.timeout,
+        "Capture print cancellation",
+    )?;
+    let cancelled_status = context.locale.text(UiText::PrintCancelled).to_owned();
+    let cancelled_state = wait_for_capture_state(context, "Capture print cancellation", |state| {
+        state.session_state == "selecting"
+            && state.selection == Some(selection)
+            && state.overlay_count == 1
+            && !state.print_in_flight
+            && !state.capture_teardown_pending
+            && state.capture_preflight_ready
+            && state.status == cancelled_status
+    })?;
+    let restored_report = print_window_restore_report(restored.handle);
+    if !restored_report.owner_enabled
+        || !restored_report.owner_topmost
+        || !restored_report.foreground_owner
+    {
+        return Err(io::Error::other(format!(
+            "Capture owner did not regain input and topmost state after cancellation: {restored_report:?}"
+        )));
+    }
+    surface.cancelled_state = Some(CaptureStateEvidence::from_state(&cancelled_state));
+    surface.restored_after_cancel = Some(restored_report);
+
+    let (print_dialog, known_dialogs) = open_capture_print_dialog(
+        context,
+        report,
+        controller,
+        restored,
+        selection,
+        "capture-print-output",
+    )?;
+    let output_path = context.session_root.join("prints").join("capture.pdf");
+    let (print_report, save_report, pdf_report) = submit_print_dialog_to_pdf(
+        context,
+        report,
+        print_dialog,
+        restored.handle,
+        controller.handle,
+        &known_dialogs,
+        &output_path,
+        source,
+        "capture-print-output",
+    )?;
+    surface.output_print_dialog = Some(print_report);
+    surface.output_save_dialog = Some(save_report);
+    surface.output_pdf = Some(pdf_report);
+
+    let submitted_status = context.locale.text(UiText::PrintSubmitted).to_owned();
+    let submitted_state = wait_for_capture_state(context, "Capture print submission", |state| {
+        state.session_state == "completed"
+            && state.selection == Some(selection)
+            && state.overlay_count == 0
+            && !state.print_in_flight
+            && !state.capture_teardown_pending
+            && state.capture_preflight_ready
+            && state.status == submitted_status
+    })?;
+    wait_for_window_gone(restored.handle, context.timeout, "Capture print submission")?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "Capture print submission left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    surface.submitted_state = Some(CaptureStateEvidence::from_state(&submitted_state));
+    surface.cleanup = Some(CleanupReport {
+        session_state: submitted_state.session_state,
+        overlay_count: submitted_state.overlay_count,
+        pinned_count: submitted_state.pinned_count,
+        capture_teardown_pending: submitted_state.capture_teardown_pending,
+        visible_process_windows,
+        capture_preflight_ready: submitted_state.capture_preflight_ready,
+    });
+    Ok(surface)
+}
+
+#[cfg(windows)]
+/// Exercises Pin print cancel/submit and proves that the same immutable Pin remains available.
+fn execute_pin_print_surface(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    controller: NativeWindow,
+    pin: NativeWindow,
+    source_bounds: PhysicalRect,
+    source: &CaptureFrame,
+) -> io::Result<PrintSurfaceReport> {
+    let source_image = save_print_source(context, "pin-source.png", source)?;
+    let mut surface = PrintSurfaceReport {
+        source_image: Some(source_image),
+        ..PrintSurfaceReport::default()
+    };
+
+    let (cancel_dialog, _) = open_pin_print_dialog(
+        context,
+        report,
+        controller,
+        pin,
+        source_bounds,
+        "pin-print-cancel",
+    )?;
+    let cancel_report = print_dialog_report(cancel_dialog, pin.handle)?;
+    surface.cancel_dialog = Some(cancel_report);
+    let cancel_evidence = capture_evidence(context, "pin-print-cancel-dialog.png", cancel_dialog)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_print_cancel_dialog",
+        cancel_dialog,
+        Some(&cancel_evidence),
+    )?;
+    if window_is_topmost(pin.handle) {
+        return Err(io::Error::other(
+            "Pin remained topmost above its modal Windows Print dialog",
+        ));
+    }
+    let foreground = inject_key(cancel_dialog.handle, VK_ESCAPE)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_print_cancel",
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(
+        cancel_dialog.handle,
+        context.timeout,
+        "Pin print cancellation",
+    )?;
+    wait_for_no_visible_save_dialogs(context.timeout, "Pin print cancellation")?;
+    let restored =
+        wait_for_owned_foreground_window(pin.handle, context.timeout, "Pin print cancellation")?;
+    let cancelled_status = context.locale.text(UiText::PinPrintCancelled).to_owned();
+    let cancelled_state = wait_for_capture_state(context, "Pin print cancellation", |state| {
+        state.pinned_count == 1
+            && state.pinned_source_bounds == Some(source_bounds)
+            && !state.pinned_print_in_flight
+            && !state.print_in_flight
+            && state.capture_preflight_ready
+            && state.pinned_status.as_deref() == Some(cancelled_status.as_str())
+    })?;
+    let restored_report = print_window_restore_report(restored.handle);
+    if !restored_report.owner_enabled
+        || !restored_report.owner_topmost
+        || !restored_report.foreground_owner
+    {
+        return Err(io::Error::other(format!(
+            "Pin owner did not regain input and topmost state after cancellation: {restored_report:?}"
+        )));
+    }
+    surface.cancelled_state = Some(CaptureStateEvidence::from_state(&cancelled_state));
+    surface.restored_after_cancel = Some(restored_report);
+
+    let (print_dialog, known_dialogs) = open_pin_print_dialog(
+        context,
+        report,
+        controller,
+        restored,
+        source_bounds,
+        "pin-print-output",
+    )?;
+    let output_path = context.session_root.join("prints").join("pin.pdf");
+    let (print_report, save_report, pdf_report) = submit_print_dialog_to_pdf(
+        context,
+        report,
+        print_dialog,
+        restored.handle,
+        controller.handle,
+        &known_dialogs,
+        &output_path,
+        source,
+        "pin-print-output",
+    )?;
+    surface.output_print_dialog = Some(print_report);
+    surface.output_save_dialog = Some(save_report);
+    surface.output_pdf = Some(pdf_report);
+
+    let submitted_status = context.locale.text(UiText::PinPrinted).to_owned();
+    let submitted_state = wait_for_capture_state(context, "Pin print submission", |state| {
+        state.pinned_count == 1
+            && state.pinned_source_bounds == Some(source_bounds)
+            && !state.pinned_print_in_flight
+            && !state.print_in_flight
+            && state.capture_preflight_ready
+            && state.pinned_status.as_deref() == Some(submitted_status.as_str())
+    })?;
+    let restored_after_submit =
+        wait_for_owned_foreground_window(restored.handle, context.timeout, "Pin print submission")?;
+    let restored_after_submit_report = print_window_restore_report(restored_after_submit.handle);
+    if !restored_after_submit_report.owner_enabled
+        || !restored_after_submit_report.owner_topmost
+        || !restored_after_submit_report.foreground_owner
+    {
+        return Err(io::Error::other(format!(
+            "Pin owner did not regain input and topmost state after submission: {restored_after_submit_report:?}"
+        )));
+    }
+    surface.submitted_state = Some(CaptureStateEvidence::from_state(&submitted_state));
+    surface.restored_after_submit = Some(restored_after_submit_report);
+
+    let foreground = inject_key(restored_after_submit.handle, VK_ESCAPE)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_print_roundtrip_cleanup",
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(
+        restored_after_submit.handle,
+        context.timeout,
+        "Pin print cleanup",
+    )?;
+    let cleanup_state = wait_for_capture_state(context, "Pin print cleanup", |state| {
+        state.pinned_count == 0
+            && state.overlay_count == 0
+            && !state.print_in_flight
+            && !state.pinned_print_in_flight
+            && !state.capture_teardown_pending
+            && state.background_tasks_idle
+            && state.capture_preflight_ready
+    })?;
+    let visible_process_windows = process_windows()?.len();
+    if visible_process_windows != 0 {
+        return Err(io::Error::other(format!(
+            "Pin print cleanup left {visible_process_windows} visible process window(s)"
+        )));
+    }
+    surface.cleanup = Some(CleanupReport {
+        session_state: cleanup_state.session_state,
+        overlay_count: cleanup_state.overlay_count,
+        pinned_count: cleanup_state.pinned_count,
+        capture_teardown_pending: cleanup_state.capture_teardown_pending,
+        visible_process_windows,
+        capture_preflight_ready: cleanup_state.capture_preflight_ready,
+    });
+    Ok(surface)
+}
+
+#[cfg(windows)]
+/// Opens the selected Capture's real More -> Print action and returns its owned system dialog.
+fn open_capture_print_dialog(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    controller: NativeWindow,
+    overlay: NativeWindow,
+    selection: PhysicalRect,
+    stage: &str,
+) -> io::Result<(NativeWindow, Vec<*mut c_void>)> {
+    wait_for_no_visible_save_dialogs(context.timeout, stage)?;
+    let mut state = wait_for_capture_state(context, stage, |state| {
+        state.session_state == "selecting"
+            && state.selection == Some(selection)
+            && state.overlay_count == 1
+            && !state.print_in_flight
+    })?;
+    if !state.more_actions_visible {
+        let before_menu = SystemCaptureBackend.capture(context.display.physical_bounds)?;
+        let more = scroll_toolbar_more_point_for_capture_selection(
+            overlay.handle,
+            context.display.physical_bounds,
+            selection,
+            state.annotation_controls_visible,
+        )?;
+        let foreground = inject_mouse_click(overlay.handle, more)?;
+        record_step(
+            report,
+            &context.report_path,
+            "capture_print_more",
+            foreground,
+            None,
+        )?;
+        state = wait_for_capture_state(context, "Capture print More menu", |state| {
+            state.session_state == "selecting"
+                && state.selection == Some(selection)
+                && state.more_actions_visible
+                && state.overlay_count == 1
+        })?;
+        let menu_bounds = state.secondary_menu_bounds.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "More became active without reporting its rendered bounds",
+            )
+        })?;
+        wait_for_rendered_more_menu(context, &before_menu, menu_bounds)?;
+        let more_evidence = capture_evidence(context, "capture-print-more.png", overlay)?;
+        record_step(
+            report,
+            &context.report_path,
+            "capture_print_more_visible",
+            overlay,
+            Some(&more_evidence),
+        )?;
+    }
+    let print_point = more_action_point_for_rendered_menu(
+        state.secondary_menu_bounds,
+        overlay.dpi as f32 / WINDOWS_BASE_DPI,
+        WorkspaceMoreAction::Print,
+    )?;
+    let point_hit = unsafe {
+        WindowFromPoint(POINT {
+            x: print_point.x,
+            y: print_point.y,
+        })
+    };
+    if !overlay.bounds.contains(print_point) || point_hit != overlay.handle {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Capture Print point {print_point:?} resolves to {point_hit:?}, expected overlay {:?} within {:?}",
+                overlay.handle, overlay.bounds
+            ),
+        ));
+    }
+    eprintln!(
+        "capture_print_hit_test: menu={:?}, point={print_point:?}, overlay={:?}, hit={point_hit:?}",
+        state.secondary_menu_bounds, overlay.bounds
+    );
+    let known_dialogs = visible_common_dialogs()?;
+    let foreground = inject_mouse_click(overlay.handle, print_point)?;
+    record_step(
+        report,
+        &context.report_path,
+        "capture_print_action",
+        foreground,
+        None,
+    )?;
+    let busy_status = context
+        .locale
+        .text(UiText::PrintSelectionInProgress)
+        .to_owned();
+    let preparation = wait_for_capture_state(context, "Capture print preparation", |state| {
+        state.session_state == "exporting"
+            && state.selection == Some(selection)
+            && state.print_in_flight
+            && state.overlay_count == 1
+            && state.status == busy_status
+    });
+    if let Err(error) = preparation {
+        let after_click = owned_window(overlay.handle)?;
+        let evidence = capture_evidence(context, "capture-print-after-click.png", after_click)?;
+        record_step(
+            report,
+            &context.report_path,
+            "capture_print_after_click_timeout",
+            after_click,
+            Some(&evidence),
+        )?;
+        return Err(io::Error::other(format!(
+            "{error}; Print point={print_point:?}; More state before click={state:?}"
+        )));
+    }
+    let dialog = wait_for_print_dialog(
+        overlay.handle,
+        controller.handle,
+        &known_dialogs,
+        context.timeout,
+    )?;
+    Ok((dialog, known_dialogs))
+}
+
+#[cfg(windows)]
+/// Waits for pixels inside the native More panel to change and settle after its app state opens.
+fn wait_for_rendered_more_menu(
+    context: &WorkerContext,
+    before_menu: &CaptureFrame,
+    menu_bounds: PhysicalRect,
+) -> io::Result<()> {
+    if !rect_contains_rect(before_menu.bounds, menu_bounds) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "More menu {menu_bounds:?} lies outside the captured display {:?}",
+                before_menu.bounds
+            ),
+        ));
+    }
+    let initial = before_menu.crop(menu_bounds)?;
+    let initial_fingerprint = pixel_fingerprint(&initial.pixels);
+    let deadline = Instant::now() + context.timeout;
+    let mut previous_fingerprint = None;
+    let mut stable_observations = 0;
+    loop {
+        let current = SystemCaptureBackend.capture(menu_bounds)?;
+        let fingerprint = pixel_fingerprint(&current.pixels);
+        if fingerprint != initial_fingerprint {
+            if previous_fingerprint == Some(fingerprint) {
+                stable_observations += 1;
+            } else {
+                previous_fingerprint = Some(fingerprint);
+                stable_observations = 1;
+            }
+            if stable_observations >= 2 {
+                return Ok(());
+            }
+        } else {
+            previous_fingerprint = None;
+            stable_observations = 0;
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("More app state opened but no rendered pixels settled in {menu_bounds:?}"),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
+/// Opens the Pin's Ctrl+P chooser and waits for the app-wide and Pin-local print leases.
+fn open_pin_print_dialog(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    controller: NativeWindow,
+    pin: NativeWindow,
+    source_bounds: PhysicalRect,
+    stage: &str,
+) -> io::Result<(NativeWindow, Vec<*mut c_void>)> {
+    wait_for_no_visible_save_dialogs(context.timeout, stage)?;
+    focus_owned_window(pin, context.timeout)?;
+    let known_dialogs = visible_common_dialogs()?;
+    let foreground = inject_ctrl_p(pin.handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_print_shortcut",
+        foreground,
+        None,
+    )?;
+    let busy_status = context.locale.text(UiText::PinPrinting).to_owned();
+    wait_for_capture_state(context, "Pin print preparation", |state| {
+        state.pinned_count == 1
+            && state.pinned_source_bounds == Some(source_bounds)
+            && state.print_in_flight
+            && state.pinned_print_in_flight
+            && state.pinned_status.as_deref() == Some(busy_status.as_str())
+    })?;
+    let dialog = wait_for_print_dialog(
+        pin.handle,
+        controller.handle,
+        &known_dialogs,
+        context.timeout,
+    )?;
+    Ok((dialog, known_dialogs))
+}
+
+#[cfg(windows)]
+/// Saves the native output path only after confirming that no physical printer can receive it.
+fn submit_print_dialog_to_pdf(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    print_dialog: NativeWindow,
+    owner: *mut c_void,
+    controller: *mut c_void,
+    known_dialogs: &[*mut c_void],
+    output_path: &Path,
+    source: &CaptureFrame,
+    evidence_prefix: &str,
+) -> io::Result<(PrintDialogReport, PrintDialogReport, PrintedPdfReport)> {
+    let print_report = print_dialog_report(print_dialog, owner)?;
+    if !print_report
+        .controls
+        .to_ascii_lowercase()
+        .contains("microsoft print to pdf")
+    {
+        let _ = inject_key(print_dialog.handle, VK_ESCAPE);
+        let _ = wait_for_window_gone(
+            print_dialog.handle,
+            context.timeout,
+            "unsafe printer selection cancellation",
+        );
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing Print submission because the selected printer is not Microsoft Print to PDF: {}",
+                print_report.controls
+            ),
+        ));
+    }
+    let print_evidence = capture_evidence(
+        context,
+        &format!("{evidence_prefix}-print-dialog.png"),
+        print_dialog,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        if evidence_prefix.starts_with("capture") {
+            "capture_print_output_dialog"
+        } else {
+            "pin_print_output_dialog"
+        },
+        print_dialog,
+        Some(&print_evidence),
+    )?;
+    let foreground = inject_key(print_dialog.handle, VK_RETURN)?;
+    record_step(
+        report,
+        &context.report_path,
+        if evidence_prefix.starts_with("capture") {
+            "capture_print_choose_pdf"
+        } else {
+            "pin_print_choose_pdf"
+        },
+        foreground,
+        None,
+    )?;
+    let mut known_output_dialogs = known_dialogs.to_vec();
+    known_output_dialogs.push(print_dialog.handle);
+    let save_dialog =
+        wait_for_save_dialog(owner, controller, &known_output_dialogs, context.timeout)?;
+    let save_report = print_dialog_report(save_dialog, owner)?;
+    let save_evidence = capture_evidence(
+        context,
+        &format!("{evidence_prefix}-pdf-save-dialog.png"),
+        save_dialog,
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        if evidence_prefix.starts_with("capture") {
+            "capture_print_pdf_save_dialog"
+        } else {
+            "pin_print_pdf_save_dialog"
+        },
+        save_dialog,
+        Some(&save_evidence),
+    )?;
+    if output_path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "isolated print output already exists: {}",
+                output_path.display()
+            ),
+        ));
+    }
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    set_print_output_path(&save_dialog, output_path, context.timeout)?;
+    let foreground = inject_key(save_dialog.handle, VK_RETURN)?;
+    record_step(
+        report,
+        &context.report_path,
+        if evidence_prefix.starts_with("capture") {
+            "capture_print_pdf_submit"
+        } else {
+            "pin_print_pdf_submit"
+        },
+        foreground,
+        None,
+    )?;
+    wait_for_window_gone(save_dialog.handle, context.timeout, "PDF print output save")?;
+    wait_for_window_gone(
+        print_dialog.handle,
+        context.timeout,
+        "Windows Print dialog close",
+    )?;
+    wait_for_no_visible_save_dialogs(context.timeout, "PDF print output save")?;
+    wait_for_stable_print_file(output_path, context.timeout)?;
+    let pdf = validate_pdf_file(output_path, &context.session_root, source)?;
+    Ok((print_report, save_report, pdf))
+}
+
+#[cfg(windows)]
+fn save_print_source(
+    context: &WorkerContext,
+    file_name: &str,
+    source: &CaptureFrame,
+) -> io::Result<String> {
+    let print_dir = context.session_root.join("prints");
+    fs::create_dir_all(&print_dir)?;
+    let path = print_dir.join(file_name);
+    source.save_png(&path)?;
+    Ok(path
+        .strip_prefix(&context.session_root)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .into_owned())
+}
+
+#[cfg(windows)]
+/// Sends Ctrl+P from a neutral key state to the focused Pin window.
+fn inject_ctrl_p(expected: *mut c_void) -> io::Result<NativeWindow> {
+    let foreground = guard_foreground(expected)?;
+    ensure_input_keys_released(&[(VK_P, "P"), (VK_CONTROL, "Control")])?;
+    let inputs = [
+        keyboard_input(VK_CONTROL, false),
+        keyboard_input(VK_P, false),
+        keyboard_input(VK_P, true),
+        keyboard_input(VK_CONTROL, true),
+    ];
+    let cleanup = [keyboard_input(VK_P, true), keyboard_input(VK_CONTROL, true)];
+    send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    wait_for_input_keys_released(
+        &[(VK_P, "P"), (VK_CONTROL, "Control")],
+        Duration::from_millis(250),
+    )?;
+    Ok(foreground)
 }
 
 #[cfg(windows)]
@@ -14115,6 +14905,43 @@ fn wait_for_save_dialog(
 }
 
 #[cfg(windows)]
+/// Waits for the one new process-owned Print dialog belonging to the selected surface.
+fn wait_for_print_dialog(
+    owner: *mut c_void,
+    controller: *mut c_void,
+    known_dialogs: &[*mut c_void],
+    timeout: Duration,
+) -> io::Result<NativeWindow> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let candidates = process_windows()?
+            .into_iter()
+            .filter(|window| window.handle != owner && window.handle != controller)
+            .filter(|window| !known_dialogs.contains(&window.handle))
+            .filter(|window| window_class_name(window.handle).is_ok_and(|class| class == "#32770"))
+            .filter(|window| owner_chain_contains(window.handle, owner))
+            .collect::<Vec<_>>();
+        if candidates.len() > 1 {
+            return Err(io::Error::other(
+                "multiple owned Print dialogs appeared; input injection was aborted",
+            ));
+        }
+        if let Some(dialog) = candidates.into_iter().next()
+            && unsafe { GetForegroundWindow() } == dialog.handle
+        {
+            return Ok(dialog);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the owned Windows Print dialog did not become the foreground window",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
 /// Waits for the native permission message box that belongs to the open Save dialog.
 fn wait_for_save_permission_dialog(
     overlay: *mut c_void,
@@ -14285,6 +15112,47 @@ fn save_file_name_edit(
 }
 
 #[cfg(windows)]
+/// Selects the lowest visible Edit in a native Save dialog, which is its file-name field.
+fn print_output_file_name_edit(dialog: *mut c_void) -> io::Result<NativeWindow> {
+    struct Search {
+        handles: Vec<*mut c_void>,
+    }
+
+    unsafe extern "system" fn callback(window: *mut c_void, parameter: LPARAM) -> BOOL {
+        // SAFETY: EnumChildWindows returns the pointer supplied for this synchronous traversal.
+        let search = unsafe { &mut *(parameter as *mut Search) };
+        search.handles.push(window);
+        1
+    }
+
+    let mut search = Search {
+        handles: Vec::new(),
+    };
+    // SAFETY: callback only borrows search for this recursive child enumeration.
+    unsafe { EnumChildWindows(dialog, Some(callback), &mut search as *mut Search as LPARAM) };
+    let mut edits = search
+        .handles
+        .into_iter()
+        .filter(|handle| unsafe { IsWindowVisible(*handle) } != 0)
+        .filter(|handle| window_class_name(*handle).is_ok_and(|class| class == "Edit"))
+        .map(owned_window)
+        .collect::<io::Result<Vec<_>>>()?;
+    let lowest_bottom = edits
+        .iter()
+        .map(|edit| edit.bounds.bottom)
+        .max()
+        .ok_or_else(|| io::Error::other("Print output dialog has no visible filename field"))?;
+    edits.retain(|edit| edit.bounds.bottom == lowest_bottom);
+    if edits.len() != 1 {
+        return Err(io::Error::other(format!(
+            "Print output dialog has {} equally low filename edit controls",
+            edits.len()
+        )));
+    }
+    Ok(edits.remove(0))
+}
+
+#[cfg(windows)]
 fn is_default_image_filename(name: &str) -> bool {
     let Some(stem) = [".png", ".jpg", ".jpeg", ".webp"]
         .iter()
@@ -14317,6 +15185,147 @@ fn set_save_dialog_path(dialog: &NativeWindow, target: &Path, timeout: Duration)
     let target_text = target.to_string_lossy().into_owned();
     inject_unicode_text(dialog.handle, &target_text)?;
     wait_for_window_text(edit.handle, &target_text, timeout)
+}
+
+#[cfg(windows)]
+/// Enters an isolated PDF path into the native Microsoft Print to PDF Save dialog.
+fn set_print_output_path(
+    dialog: &NativeWindow,
+    target: &Path,
+    timeout: Duration,
+) -> io::Result<()> {
+    let edit = print_output_file_name_edit(dialog.handle)?;
+    let edit_center = PhysicalPoint {
+        x: edit.bounds.left + edit.bounds.width() as i32 / 2,
+        y: edit.bounds.top + edit.bounds.height() as i32 / 2,
+    };
+    inject_mouse_click(dialog.handle, edit_center)?;
+    wait_for_window_focus(dialog.handle, edit.handle, timeout)?;
+    inject_select_all(dialog.handle)?;
+    let target_text = target.to_string_lossy().into_owned();
+    inject_unicode_text(dialog.handle, &target_text)?;
+    wait_for_window_text(edit.handle, &target_text, timeout)
+}
+
+#[cfg(windows)]
+fn print_dialog_report(dialog: NativeWindow, owner: *mut c_void) -> io::Result<PrintDialogReport> {
+    let (title, controls) = dialog_text(dialog.handle)?;
+    Ok(PrintDialogReport {
+        title,
+        controls,
+        window: dialog.report(),
+        owner_enabled: unsafe { IsWindowEnabled(owner) } != 0,
+        owner_topmost: window_is_topmost(owner),
+    })
+}
+
+#[cfg(windows)]
+fn print_window_restore_report(owner: *mut c_void) -> PrintWindowRestoreReport {
+    PrintWindowRestoreReport {
+        owner_enabled: unsafe { IsWindowEnabled(owner) } != 0,
+        owner_topmost: window_is_topmost(owner),
+        foreground_owner: unsafe { GetForegroundWindow() } == owner,
+    }
+}
+
+#[cfg(windows)]
+fn window_is_topmost(handle: *mut c_void) -> bool {
+    let extended_style = unsafe { GetWindowLongPtrW(handle, GWL_EXSTYLE) } as u32;
+    extended_style & WS_EX_TOPMOST != 0
+}
+
+#[cfg(windows)]
+fn validate_pdf_file(
+    path: &Path,
+    session_root: &Path,
+    source: &CaptureFrame,
+) -> io::Result<PrintedPdfReport> {
+    ensure_path_within(path, session_root)?;
+    let metadata = fs::metadata(path)?;
+    let bytes = fs::read(path)?;
+    if metadata.len() < 512 || !bytes.starts_with(b"%PDF-") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Print output is not a complete PDF file: {}",
+                path.display()
+            ),
+        ));
+    }
+    let page_count = count_pdf_dictionary_values(&bytes, b"/Type", b"/Page");
+    let image_object_count = count_pdf_dictionary_values(&bytes, b"/Subtype", b"/Image");
+    if page_count != 1 || image_object_count == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "PDF output has {page_count} page objects and {image_object_count} image objects; expected one page containing the printed image"
+            ),
+        ));
+    }
+    Ok(PrintedPdfReport {
+        path: path
+            .strip_prefix(session_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned(),
+        bytes: metadata.len(),
+        page_count,
+        image_object_count,
+        source_width: source.width,
+        source_height: source.height,
+    })
+}
+
+fn count_pdf_dictionary_values(bytes: &[u8], key: &[u8], expected_value: &[u8]) -> usize {
+    let mut count = 0;
+    let mut cursor = 0;
+    while let Some(relative) = bytes[cursor..]
+        .windows(key.len())
+        .position(|window| window == key)
+    {
+        let key_end = cursor + relative + key.len();
+        let mut value_start = key_end;
+        while bytes.get(value_start).is_some_and(u8::is_ascii_whitespace) {
+            value_start += 1;
+        }
+        let value_end = value_start.saturating_add(expected_value.len());
+        let boundary = bytes.get(value_end).copied();
+        if bytes.get(value_start..value_end) == Some(expected_value)
+            && boundary.is_none_or(|byte| !byte.is_ascii_alphanumeric())
+        {
+            count += 1;
+        }
+        cursor = key_end;
+    }
+    count
+}
+
+#[cfg(windows)]
+fn wait_for_stable_print_file(path: &Path, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    let mut previous_length = None;
+    let mut stable_observations = 0;
+    loop {
+        if let Ok(metadata) = fs::metadata(path) {
+            let length = metadata.len();
+            if length > 0 && previous_length == Some(length) {
+                stable_observations += 1;
+                if stable_observations >= 3 {
+                    return Ok(());
+                }
+            } else {
+                previous_length = Some(length);
+                stable_observations = 0;
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("PDF output did not stabilize: {}", path.display()),
+            ));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[cfg(windows)]
@@ -14662,50 +15671,6 @@ fn interaction_plan_for_capture_selection(
         height,
         logical(top_left),
         logical(bottom_right),
-    )
-}
-
-#[cfg(windows)]
-fn scroll_shot_point_for_capture_selection(
-    handle: *mut c_void,
-    capture_bounds: PhysicalRect,
-    selection: PhysicalRect,
-    annotation_controls_visible: bool,
-) -> io::Result<PhysicalPoint> {
-    let window = owned_window(handle)?;
-    let client = client_bounds_for_window(handle)?;
-    let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
-    let (width, height) = overlay_logical_size(client, scale)?;
-    let top_left = map_capture_point_to_screen(
-        PhysicalPoint {
-            x: selection.left,
-            y: selection.top,
-        },
-        client,
-        capture_bounds,
-    )?;
-    let bottom_right = map_capture_point_to_screen(
-        PhysicalPoint {
-            x: selection.right,
-            y: selection.bottom,
-        },
-        client,
-        capture_bounds,
-    )?;
-    let logical = |point: PhysicalPoint| {
-        (
-            (point.x - client.left) as f32 / scale,
-            (point.y - client.top) as f32 / scale,
-        )
-    };
-    scroll_shot_point_for_logical_selection(
-        client,
-        scale,
-        width,
-        height,
-        logical(top_left),
-        logical(bottom_right),
-        annotation_controls_visible,
     )
 }
 
@@ -16210,12 +17175,12 @@ mod tests {
         capture_state_reports_tool_selected, copy_trigger_acknowledged, ensure_input_authorized,
         expected_selection_transform, first_stable_recording_match, interaction_command_channel,
         interaction_plan, map_capture_point_to_screen, map_screen_point_to_capture,
-        map_screen_selection_to_capture, narrow_edge_interaction_plan, normalize_axis,
-        pin_close_button_point, pin_coexist_interaction_plan, recording_control_plan,
-        recording_failed, recording_saved, rect_contains_rect, scroll_roundtrip_cleanup_complete,
-        scroll_roundtrip_interaction_plan, scroll_secondary_menu_height,
-        scroll_secondary_menu_width, scroll_shot_point_for_logical_selection,
-        scroll_toolbar_dimensions, selection_aspect_ratio_preserved, selection_center_preserved,
+        map_screen_selection_to_capture, more_action_point_for_rendered_menu,
+        narrow_edge_interaction_plan, normalize_axis, pin_close_button_point,
+        pin_coexist_interaction_plan, recording_control_plan, recording_failed, recording_saved,
+        rect_contains_rect, scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
+        scroll_secondary_menu_height, scroll_secondary_menu_width, scroll_toolbar_dimensions,
+        selection_aspect_ratio_preserved, selection_center_preserved,
         selection_copy_completed_in_editor, selection_transform_gesture, translated_rect,
         validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
@@ -16964,6 +17929,41 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_print_roundtrip_scenario() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "print-roundtrip",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::PrintRoundtrip
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_print_roundtrip"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(!options.allow_system_clipboard);
+    }
+
+    #[test]
+    fn pdf_dictionary_value_count_distinguishes_pages_from_page() {
+        let pdf_objects = b"<< /Type /Pages /Count 1 >>\n<< /Type /Page /Parent 2 0 R >>\n<< /Subtype /Image /Width 640 >>\n<< /Type /PageTree >>";
+
+        assert_eq!(
+            super::count_pdf_dictionary_values(pdf_objects, b"/Type", b"/Page"),
+            1
+        );
+        assert_eq!(
+            super::count_pdf_dictionary_values(pdf_objects, b"/Subtype", b"/Image"),
+            1
+        );
+    }
+
+    #[test]
     fn parser_gates_copy_capable_system_clipboard_and_copy_trigger() {
         let options =
             Options::parse_from(arguments(&["--allow-input", "--allow-system-clipboard"])).unwrap();
@@ -17132,11 +18132,15 @@ mod tests {
             manual_scroll_selection: None,
             overlay_count: 0,
             action_toolbar_bounds: None,
+            secondary_menu_bounds: None,
             more_actions_visible: false,
             annotation_controls_visible: false,
             annotation_tool_group_visible: false,
             pinned_count: 0,
             pinned_source_bounds: None,
+            pinned_status: None,
+            print_in_flight: false,
+            pinned_print_in_flight: false,
             capture_teardown_pending: false,
             operation_generation: 0,
             background_tasks_idle: true,
@@ -17212,22 +18216,44 @@ mod tests {
     }
 
     #[test]
-    fn scroll_roundtrip_plan_keeps_scroll_shot_inside_the_expanded_menu() {
+    fn scroll_roundtrip_menu_hit_points_use_rendered_menu_geometry() {
         let bounds = PhysicalRect {
-            left: 0,
-            top: -4,
-            right: 2560,
-            bottom: 1436,
+            left: 1000,
+            top: 200,
+            right: 1374,
+            bottom: 347,
         };
-        let plan = scroll_roundtrip_interaction_plan(bounds, 1.0).unwrap();
-        let point = scroll_shot_point_for_logical_selection(
-            bounds,
+        let point = more_action_point_for_rendered_menu(
+            Some(bounds),
             1.0,
-            2560.0,
-            1440.0,
-            (2560.0 * 0.16, (1440.0_f32 * 0.12).max(120.0)),
-            (2560.0 * 0.74, (1440.0_f32 * 0.12).max(120.0) + 380.0),
-            false,
+            super::WorkspaceMoreAction::ScrollShot,
+        )
+        .unwrap();
+        let print_point = more_action_point_for_rendered_menu(
+            Some(bounds),
+            1.0,
+            super::WorkspaceMoreAction::Print,
+        )
+        .unwrap();
+        let scale_150_point = more_action_point_for_rendered_menu(
+            Some(PhysicalRect {
+                left: 1000,
+                top: 200,
+                right: 1561,
+                bottom: 421,
+            }),
+            1.5,
+            super::WorkspaceMoreAction::ScrollShot,
+        )
+        .unwrap();
+        let plan = scroll_roundtrip_interaction_plan(
+            PhysicalRect {
+                left: 0,
+                top: -4,
+                right: 2560,
+                bottom: 1436,
+            },
+            1.0,
         )
         .unwrap();
         assert_eq!(
@@ -17239,25 +18265,15 @@ mod tests {
                 bottom: 549,
             }
         );
-        assert_eq!(point, PhysicalPoint { x: 1906, y: 422 });
+        assert_eq!(point, PhysicalPoint { x: 1067, y: 291 });
+        assert_eq!(print_point, PhysicalPoint { x: 1333, y: 256 });
+        assert_eq!(scale_150_point, PhysicalPoint { x: 1100, y: 337 });
         assert!(bounds.contains(point));
-
-        let annotation_point = scroll_shot_point_for_logical_selection(
-            bounds,
-            1.0,
-            2560.0,
-            1440.0,
-            (2560.0 * 0.16, (1440.0_f32 * 0.12).max(120.0)),
-            (2560.0 * 0.74, (1440.0_f32 * 0.12).max(120.0) + 380.0),
-            true,
-        )
-        .unwrap();
-        assert_eq!(annotation_point, PhysicalPoint { x: 1775, y: 665 });
-        assert!(bounds.contains(annotation_point));
+        assert!(bounds.contains(print_point));
         assert_eq!(scroll_toolbar_dimensions(false), (217.0, 42.0, 35.0));
         assert_eq!(scroll_toolbar_dimensions(true), (480.0, 42.0, 298.0));
-        assert_eq!(scroll_secondary_menu_width(), 342.0);
-        assert_eq!(scroll_secondary_menu_height(342.0), 147.0);
+        assert_eq!(scroll_secondary_menu_width(), 374.0);
+        assert_eq!(scroll_secondary_menu_height(374.0), 147.0);
     }
 
     #[test]

@@ -6,6 +6,7 @@ mod exporting;
 mod file_io;
 mod images;
 mod pinning;
+mod printing;
 mod recognition;
 mod recording;
 mod scrolling;

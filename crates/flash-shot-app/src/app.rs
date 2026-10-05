@@ -167,6 +167,8 @@ pub struct FlashShotApp {
     // A folder picker owns the history root until its result has either been applied or discarded.
     history_root_change_in_flight: bool,
     pinned_save_in_flight: bool,
+    // One native printer dialog and spool submission may be active across Capture and Pin.
+    print_in_flight: bool,
     include_cursor: bool,
     recognition_result: Option<RecognitionResult>,
     recognition_retry: Option<RecognitionRetry>,
@@ -258,6 +260,13 @@ impl SelectionCopyLease {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ClipboardWriteLease {
     pub(super) id: u64,
+}
+
+/// Captures the temporary z-order and input changes made while a native print dialog is active.
+#[derive(Default)]
+pub(super) struct PrintWindowState {
+    pub(super) topmost_windows: Vec<isize>,
+    pub(super) previously_enabled_windows: Vec<isize>,
 }
 
 /// Coordinates the last cancellable point before a selection Copy changes the system clipboard.
@@ -876,6 +885,7 @@ impl FlashShotApp {
             history_write_sequence: 0,
             history_root_change_in_flight: false,
             pinned_save_in_flight: false,
+            print_in_flight: false,
             include_cursor: settings.include_cursor,
             recognition_result: None,
             recognition_retry: None,
@@ -988,10 +998,22 @@ impl FlashShotApp {
                             });
                         }
                         crate::OverlayInteractionAcceptanceCommand::CaptureSnapshot(reply) => {
-                            let pinned_source_bounds = this.pinned_windows.last().and_then(|pin| {
-                                pin.update(cx, |pin, _, _| pin.source_bounds_for_acceptance())
-                                    .ok()
-                            });
+                            let (pinned_source_bounds, pinned_status, pinned_print_in_flight) =
+                                this.pinned_windows
+                                    .last()
+                                    .and_then(|pin| {
+                                        pin.update(cx, |pin, _, _| {
+                                            (
+                                                pin.source_bounds_for_acceptance(),
+                                                pin.print_state_for_acceptance(),
+                                            )
+                                        })
+                                        .ok()
+                                    })
+                                    .map(|(bounds, (status, in_flight))| {
+                                        (Some(bounds), Some(status), in_flight)
+                                    })
+                                    .unwrap_or((None, None, false));
                             let action_toolbar_bounds = this.overlay_windows.iter().find_map(|overlay| {
                                 overlay
                                     .update(cx, |overlay, _, _| {
@@ -1000,6 +1022,18 @@ impl FlashShotApp {
                                     .ok()
                                     .flatten()
                             });
+                            let secondary_menu_bounds = if this.overlay_more_actions {
+                                this.overlay_windows.iter().find_map(|overlay| {
+                                    overlay
+                                        .update(cx, |overlay, _, _| {
+                                            overlay.secondary_menu_bounds_for_acceptance()
+                                        })
+                                        .ok()
+                                        .flatten()
+                                })
+                            } else {
+                                None
+                            };
                             let session_state = match this.session.state() {
                                 crate::domain::session::CaptureSessionState::Idle => "idle",
                                 crate::domain::session::CaptureSessionState::Capturing => {
@@ -1126,11 +1160,15 @@ impl FlashShotApp {
                                 manual_scroll_selection: this.manual_scroll_selection,
                                 overlay_count: this.overlay_windows.len(),
                                 action_toolbar_bounds,
+                                secondary_menu_bounds,
                                 more_actions_visible: this.overlay_more_actions,
                                 annotation_controls_visible: this.overlay_annotation_controls,
                                 annotation_tool_group_visible: this.annotation_tool_group.is_some(),
                                 pinned_count: this.pinned_windows.len(),
                                 pinned_source_bounds,
+                                pinned_status,
+                                print_in_flight: this.print_in_flight,
+                                pinned_print_in_flight,
                                 capture_teardown_pending: this.capture_teardown_pending,
                                 operation_generation: this.operation_generation,
                                 background_tasks_idle: this.capture_background_tasks_idle(),

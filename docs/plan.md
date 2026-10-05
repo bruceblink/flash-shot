@@ -60,16 +60,14 @@ Snow Shot 设置面板仅用于了解设置能力和必要操作，不复制其�
 
 ## 1. 研究基线与范围
 
-Snow Apps 参考固定为用户提供的 `F:/project/snow-apps` 源码提交
-[`850d27c113b2f81b43950b839b6180af50e82d13`](https://github.com/mg-chao/snow-apps/commit/850d27c113b2f81b43950b839b6180af50e82d13)，
-固定规则和功能范围见 [Snow Apps 参考基线](snow-apps-baseline.md)。该仓库于 2026-10-05 快进同步到此提交，工作树干净；
-后续切片继续对照这个提交，不读取会移动的 `main` 或 `origin/main` 来改变基准。只有用户明确选择新提交时才更新基准记录。
+Snow Apps 对照源码位于用户提供的 `F:/project/snow-apps`。固定完整提交、同步状态和更新规则统一记录在
+[Snow Apps 参考基线](snow-apps-baseline.md)；本计划不重复提交号，后续切片以该记录选择对照源码，不用会移动的 `main` 或 `origin/main` 改变基准。
 范围包含截图工作区和 Capture、Print、Library、Record、Pin、App 的用户可观察流程：入口和页面层级、忙/成功/失败状态、主要与恢复动作、真实产物和关闭清理。
 核对入口包括 `snow_shot/src/presentation/capture/`、`snow_shot/src/presentation/components/screenshothistorypagewidget.cpp`、
 `snow_shot/src/presentation/recording/screenrecordingcontroller.cpp`、`snow_shot/src/presentation/ocr/` 和 `snow_shot/src/presentation/pinned/`；
 设置面板只供了解必要能力，不复制其面板结构、分组和配置流程。只采用符合 `0.2.0` 范围的可观察行为，不复制设置项数量、素材或 Qt/Tauri/Web 类层次。
 
-相对前一参考提交 `0b28e9d`，当前 Snow Shot 基线新增提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6`（`feat(print): add native screenshot printing`），加入截图和 Pin 的系统打印动作、打印期间窗口层级/输入恢复以及 Windows 现代打印界面和旧系统回退。Flash Shot 将适配其核心结果和可取消生命周期；不移植 Qt 实现、双后端兼容矩阵或 Snow Shot 的设置面板。
+当前 Snow Apps 对照版本以 [固定参考基线](snow-apps-baseline.md) 中的完整提交为准；该提交包含 Capture/Pin 系统打印动作和 Pin 锁定行为。Flash Shot 将适配范围内的核心结果、可取消生命周期与锁定几何规则；不移植 Qt 实现、平台后端兼容矩阵或 Snow Apps 设置面板。
 
 `0.2.0` 以 Windows 截图产品的 UI 与核心功能对齐为主：全局快捷键、选区、标注、撤销/重做、复制、保存、原生打印、Pin、历史、滚动截图、可选 OCR/二维码识别、录屏、设置/更新和失败恢复。
 UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留已验证的截图像素、导出和持久化协议、快捷键语义、报告字段和资源清理边界。
@@ -96,10 +94,10 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | --- | --- | --- | --- |
 | G0 | 整合并冻结本主线计划 | 本次完成 | 只有 `docs/plan.md` 维护路线；旧完成段落不再作为待办 |
 | G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | 隔离探针编译和组件测试通过；当时生产应用仍使用 Zed GPUI，生产迁移由 G2 单独验收 |
-| W7 | 截图工作区 UI 与工具栏视觉/交互对齐验收 | 已完成（单屏 100%、DPI 96；2026-10-05） | 最新可核验 Snow 基准下的视觉矩阵、工具栏交互、主动作、选区边界与资源清理通过；高 DPI/多屏按 D1 暂缓 |
+| W7 | 截图工作区 UI 与工具栏视觉/交互对齐验收 | 已完成（单屏 100%、DPI 96；2026-10-05） | 固定 Snow Apps 基准下的视觉矩阵、工具栏交互、主动作、选区边界与资源清理通过；高 DPI/多屏按 D1 暂缓 |
 | G2 | gpui-kit 生产接入评估与迁移 | 已完成（生产 Release 与完整组件矩阵，2026-10-05） | 生产截图工作区使用 gpui-kit 并通过 Release 验收；本次无版本冲突或回滚阻碍 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 已完成（U5.4 综合设置页矩阵，2026-09-27；单屏 100%） | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠；高 DPI/多屏按 D1 暂缓 |
-| C1 | Capture/Pin 原生打印核心动作 | 待开始 | Windows 系统打印界面能打印当前 Capture 合成图和 Pin 图片；取消/失败保留原会话，验证输出、置顶层级、输入恢复与资源清理 |
+| C1 | Capture/Pin 原生打印核心动作 | 实现中；Windows 原生打印验收待完成 | Windows 系统打印界面能打印当前 Capture 合成图和 Pin 图片；取消/失败保留原会话，验证实际输出、置顶层级、输入恢复与资源清理 |
 | U1 | 动态文案国际化收尾（验收支撑项） | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试；随 UI/功能切片补齐相关文案 |
 | U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 部分完成 | ThemeMetrics 覆盖稳定，真实输入和可用 DPI 矩阵通过 |
@@ -253,7 +251,7 @@ G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，不能�
 
 ### C1：Windows Capture/Pin 原生打印核心动作
 
-Snow Shot 的参考提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6` 新增 Windows/macOS 原生打印体验。Flash Shot `0.2.0` 适配 Windows Capture 和 Pin 的核心打印流程：打印当前合成选区或置顶图片内容并打开系统打印界面；不重做现代 UI/旧版回退的双后端兼容，也不复制 Snow Shot 设置页。
+Snow Apps 固定参考版本包含 Windows/macOS 原生打印体验。Flash Shot `0.2.0` 适配 Windows Capture 和 Pin 的核心打印流程：打印当前合成选区或置顶图片内容并打开系统打印界面；不重做现代 UI/旧版回退的双后端兼容，也不复制 Snow Apps 设置页。
 
 - Capture 打印使用当前合成选区图像；Pin 打印只含图片内容，不含工具栏、控制点或调整大小手柄；打印准备不得修改源帧、标注文档或历史记录；
 - 用户取消或系统界面失败时，保留当前 Capture/Pin 会话及其状态，并恢复覆盖层、主工具栏的置顶关系、输入和快捷键；
@@ -261,11 +259,13 @@ Snow Shot 的参考提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6` 新增 Wind
 - 核验打印期间不能重复提交、owner 关闭时任务可安全结束、Capture/Pin 和其他窗口层级不被意外降低、输入/快捷键恢复、临时文件/句柄在取消、成功和失败后清理；
 - Print 加入 Capture/Pin 的次级结果动作与双语忙/成功/取消/错误状态；打印纸张等选项由系统界面提供，不增加仿照 Snow Shot 的复杂设置面板。
 
+**2026-10-05 验收记录**：Release `print-roundtrip` runner 未通过。Capture 的 More → Print 点击已进入打印准备状态，但没有观察到可见的 Windows 打印对话框，也未生成 PDF；窗口采样只看到 Flash Shot 的 GPUI 窗口。C1 保持实现中，需修复并通过真实 PDF/取消恢复验收后才可标记完成。
+
 ### U1-U4：UI 与核心功能对齐切片
 
 每个切片都要指定 Snow Shot 源码基线、用户可观察的 UI 差异、真实功能动作、预期产物或状态、失败恢复和清理证据。UI 验收不能代替 workflow 结果；单元测试也不能代替真实窗口输入。
 
-- `C1` 适配 Snow Shot 最新基线新增的 Capture/Pin 原生打印，只交付 Windows 核心动作和取消/恢复，不照搬平台后端实现；
+- `C1` 适配 Snow Apps 固定参考基线中的 Capture/Pin 原生打印，只交付 Windows 核心动作和取消/恢复，不照搬平台后端实现；
 - `U1` 是验收支撑项：用户可见的动态文案使用 `UiText` 参数模板并有 English/简体中文断言；改动某流程时同步补齐其消息覆盖，不单独排优先级高于用户可见功能的测试切片；
 - `U2` 完成 App/Library/Record 的主动作、恢复入口和真实键鼠矩阵。为有文件或进程副作用的动作验证真实结果，并验证状态回读、稳定语义 ID、现有 handler 和清理；
 - `U4` 完成 Pin 的真实输入、焦点保持、关闭、Copy/Save、多窗口外观同步和再次 Capture 返回流程；

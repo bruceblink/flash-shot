@@ -23,6 +23,7 @@ use super::{
         icon, workspace_drag_handle, workspace_icon_button, workspace_separator, workspace_surface,
         workspace_swatch, workspace_text_button, workspace_text_button_with_aria,
     },
+    pinned::native_window_handle,
     workflow::{inspection_kind_label, selection_dimension_label},
 };
 use crate::{
@@ -123,7 +124,7 @@ fn secondary_action_tooltip(locale: Locale, action_id: &str) -> &'static str {
 type SecondaryAction = WorkspaceMoreAction;
 
 /// Lists the commands that are always rendered in the expanded More panel.
-const ALWAYS_VISIBLE_SECONDARY_ACTIONS: &[SecondaryAction; 11] =
+const ALWAYS_VISIBLE_SECONDARY_ACTIONS: &[SecondaryAction; 12] =
     WorkspaceMoreAction::always_visible_catalog();
 
 /// Owns one rendered More menu's focus order, including optional recognition commands.
@@ -720,6 +721,23 @@ impl CaptureOverlay {
             top: origin.top + (toolbar.top * scale).round() as i32,
             right: origin.left + ((toolbar.left + toolbar.width) * scale).round() as i32,
             bottom: origin.top + ((toolbar.top + toolbar.height) * scale).round() as i32,
+        })
+    }
+
+    /// Exposes the rendered More-menu bounds to native acceptance input planning.
+    pub(super) fn secondary_menu_bounds_for_acceptance(&self) -> Option<PhysicalRect> {
+        let snapshot = self.last_workspace_snapshot?;
+        let toolbar = snapshot.action_toolbar?;
+        let menu = snapshot.secondary_menu?;
+        let origin = self.display.physical_bounds;
+        let scale = self.last_workspace_scale_factor.max(0.01);
+        let left = toolbar.left + menu.left;
+        let top = toolbar.top + menu.top_offset;
+        Some(PhysicalRect {
+            left: origin.left + (left * scale).round() as i32,
+            top: origin.top + (top * scale).round() as i32,
+            right: origin.left + ((left + menu.width) * scale).round() as i32,
+            bottom: origin.top + ((top + menu.height) * scale).round() as i32,
         })
     }
 
@@ -3253,6 +3271,25 @@ impl Render for CaptureOverlay {
                                                 cx.defer(move |cx| {
                                                     app.update(cx, |app, cx| {
                                                         app.quick_save_selection(cx)
+                                                    })
+                                                });
+                                            }),
+                                        ))
+                                        .child(secondary_action_button(
+                                            SecondaryAction::Print.id(),
+                                            secondary_navigation.for_action(SecondaryAction::Print),
+                                            locale.text(UiText::OverlayPrint),
+                                            SecondaryAction::Print.width(),
+                                            workspace_colors,
+                                            false,
+                                            Some(locale.text(UiText::OverlayPrintTooltip)),
+                                            cx.listener(|this, _, window, cx| {
+                                                let app = this.app.clone();
+                                                let owner_hwnd = native_window_handle(window)
+                                                    .unwrap_or_default();
+                                                cx.defer(move |cx| {
+                                                    app.update(cx, |app, cx| {
+                                                        app.print_selection(owner_hwnd, cx)
                                                     })
                                                 });
                                             }),
@@ -7107,9 +7144,9 @@ mod tests {
             }
         );
         let menu = snapshot.secondary_menu.expect("selection should own More");
-        assert_eq!(menu.width, 358.0);
+        assert_eq!(menu.width, 374.0);
         assert_eq!(menu.height, 147.0);
-        assert_eq!(menu.left, -104.0);
+        assert_eq!(menu.left, -120.0);
         let menu_top = toolbar.top + menu.top_offset;
         assert!(menu_top >= snapshot.safe_area.top);
         assert!(menu_top + menu.height <= snapshot.safe_area.bottom);
@@ -7622,7 +7659,7 @@ mod tests {
 
         let menu_width =
             secondary_action_menu_width(super::view_rect(viewport).width, false, false);
-        assert_eq!(menu_width, 358.0);
+        assert_eq!(menu_width, 374.0);
         let menu_height = secondary_action_menu_height(menu_width, false, false, false);
         assert_eq!(menu_height, 147.0);
         assert!(secondary_menu_opens_above(toolbar, viewport, menu_height));
@@ -8023,9 +8060,9 @@ mod tests {
         assert_eq!(action_toolbar_height(559.0, true), 77.0);
         assert_eq!(action_toolbar_height(587.0, true), 77.0);
         assert_eq!(action_toolbar_height(846.0, true), 77.0);
-        assert_eq!(secondary_action_menu_width(420.0, false, false), 358.0);
+        assert_eq!(secondary_action_menu_width(420.0, false, false), 374.0);
         assert_eq!(
-            action_toolbar_row_count(368.0, secondary_action_widths(false, false)),
+            action_toolbar_row_count(374.0, secondary_action_widths(false, false)),
             4
         );
         assert_eq!(secondary_action_menu_width(360.0, false, false), 324.0);
@@ -8053,7 +8090,7 @@ mod tests {
         );
         assert_eq!(
             secondary_action_menu_height(324.0, false, true, false),
-            182.0
+            217.0
         );
         assert_eq!(
             secondary_action_menu_height(324.0, false, false, true),
@@ -8066,6 +8103,7 @@ mod tests {
                 SecondaryAction::SaveEditable.width(),
                 SecondaryAction::OpenAnnotations.width(),
                 SecondaryAction::QuickSave.width(),
+                SecondaryAction::Print.width(),
                 SecondaryAction::ScrollShot.width(),
                 SecondaryAction::Qr.width(),
                 SecondaryAction::Ocr.width(),
