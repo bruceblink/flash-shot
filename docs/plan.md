@@ -17,6 +17,7 @@
 | 文档 | 固定职责 | 不承担什么 |
 | --- | --- | --- |
 | `docs/requirements.md` | 产品范围、用户场景和非功能需求 | 不替代切片状态或实现顺序 |
+| `docs/snow-apps-baseline.md` | Snow Apps 固定参考提交、对齐范围和更新规则 | 不跟随上游分支自动更新 |
 | `docs/windows-manual-acceptance.md` | 真实 Windows 环境、截图、报告和清理证据 | 不把历史记录自动升级为当前通过结论 |
 | `docs/windows-distribution.md` | Windows 打包、安装、manifest 和发布前复核步骤 | 不安排产品开发顺序 |
 | `docs/linux-platform-validation.md` | Linux 可行性前置条件和独立验收矩阵 | 不承诺当前 Windows 主链路之外的功能对等 |
@@ -59,11 +60,14 @@ Snow Shot 设置面板仅用于了解设置能力和必要操作，不复制其�
 
 ## 1. 研究基线与范围
 
-Snow Shot 参考固定为用户提供的 `F:/project/snow-apps` 源码及其 `origin/main`。
-本轮在 2026-10-05 同步到参考提交
-[`bf7dda9cfec56c13098ee9059a94ceb72e77e14c`](https://github.com/mg-chao/snow-apps/commit/bf7dda9cfec56c13098ee9059a94ceb72e77e14c)。
-`F:/project/snow-apps` 的本地 `main` 已从 `2052d439` 快进至该提交，和 `origin/main` 一致，工作树干净；只更新了此参考仓库，没有把 Snow Apps 实现复制进 Flash Shot。
-每个开发切片开始前仍需记录实际参考提交，避免把旧 release 或落后 checkout 当成最新基准。参考范围现在包含截图工作区及 Capture、Library、Record、Pin、App 核心流程：入口和页面层级、忙/成功/失败状态、主要与恢复动作、真实产物和关闭清理。源码核对入口包括 `snow_shot/src/presentation/capture/`、`snow_shot/src/presentation/components/screenshothistorypagewidget.cpp`、`snow_shot/src/presentation/recording/screenrecordingcontroller.cpp`、`snow_shot/src/presentation/components/settingspagewidget.cpp`、`snow_shot/src/presentation/ocr/` 和 `snow_shot/src/presentation/pinned/`；只采用可观察且符合 `0.2.0` 范围的行为，不复制设置项数量、素材或 Qt/Tauri/Web 类层次。
+Snow Apps 参考固定为用户提供的 `F:/project/snow-apps` 源码提交
+[`850d27c113b2f81b43950b839b6180af50e82d13`](https://github.com/mg-chao/snow-apps/commit/850d27c113b2f81b43950b839b6180af50e82d13)，
+固定规则和功能范围见 [Snow Apps 参考基线](snow-apps-baseline.md)。该仓库于 2026-10-05 快进同步到此提交，工作树干净；
+后续切片继续对照这个提交，不读取会移动的 `main` 或 `origin/main` 来改变基准。只有用户明确选择新提交时才更新基准记录。
+范围包含截图工作区和 Capture、Print、Library、Record、Pin、App 的用户可观察流程：入口和页面层级、忙/成功/失败状态、主要与恢复动作、真实产物和关闭清理。
+核对入口包括 `snow_shot/src/presentation/capture/`、`snow_shot/src/presentation/components/screenshothistorypagewidget.cpp`、
+`snow_shot/src/presentation/recording/screenrecordingcontroller.cpp`、`snow_shot/src/presentation/ocr/` 和 `snow_shot/src/presentation/pinned/`；
+设置面板只供了解必要能力，不复制其面板结构、分组和配置流程。只采用符合 `0.2.0` 范围的可观察行为，不复制设置项数量、素材或 Qt/Tauri/Web 类层次。
 
 相对前一参考提交 `0b28e9d`，当前 Snow Shot 基线新增提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6`（`feat(print): add native screenshot printing`），加入截图和 Pin 的系统打印动作、打印期间窗口层级/输入恢复以及 Windows 现代打印界面和旧系统回退。Flash Shot 将适配其核心结果和可取消生命周期；不移植 Qt 实现、双后端兼容矩阵或 Snow Shot 的设置面板。
 
@@ -99,7 +103,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U1 | 动态文案国际化收尾（验收支撑项） | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试；随 UI/功能切片补齐相关文案 |
 | U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 部分完成 | ThemeMetrics 覆盖稳定，真实输入和可用 DPI 矩阵通过 |
-| U4 | Pin 中英文实时输入与窗口生命周期 | 部分完成 | 真实点击、焦点、关闭、再次 Capture 和语言/主题矩阵通过 |
+| U4 | Pin 中英文实时输入与窗口生命周期 | 部分完成 | 锁定/解锁入口和状态清晰；锁定期间移动、缩放等几何变化被阻止；真实点击、焦点、关闭、再次 Capture 和语言/主题矩阵通过 |
 | M1 | 按职责拆分 runner 与 overlay | 待开始 | 行为证据稳定后完成至少一个职责拆分且报告、快捷键和用户行为无回归 |
 | R1 | 私有 capture-core 提取评估后的最小实现 | 待开始 | 仅在行为稳定、API/许可证/MSRV 明确后执行，不影响 `0.2.0` 主链 |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
