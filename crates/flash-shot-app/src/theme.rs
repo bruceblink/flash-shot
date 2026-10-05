@@ -137,15 +137,15 @@ impl ThemeMetrics {
     pub const TOGGLE_HEIGHT: f32 = 20.0;
     pub const CONTROL_HEIGHT: f32 = 36.0;
     pub const TOOLBAR_HEIGHT: f32 = 44.0;
-    // Snow Shot's compact toolbar uses 32px controls, 4px panel insets, and
-    // 8px action spacing. Keeping these values in one token set prevents the
-    // screenshot workspace from drifting back toward the older 36px layout.
+    // Compact toolbar keeps 32px hit areas and 4px panel insets. The tighter
+    // action gap fits Flash Shot's broader tool rail on one row at wide sizes.
+    // Keeping these values together prevents density drift across the workspace.
     pub const WORKSPACE_TOOLBAR_HEIGHT: f32 = 32.0;
     pub const WORKSPACE_STYLE_ROW_HEIGHT: f32 = 28.0;
     pub const WORKSPACE_TOOLBAR_PADDING: f32 = 4.0;
     pub const WORKSPACE_TOOLBAR_HORIZONTAL_PADDING: f32 = 12.0;
     pub const WORKSPACE_TOOLBAR_VERTICAL_PADDING: f32 = 4.0;
-    pub const WORKSPACE_TOOLBAR_GAP: f32 = 8.0;
+    pub const WORKSPACE_TOOLBAR_GAP: f32 = 3.0;
     pub const WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH: f32 = 18.0;
     pub const WORKSPACE_TOOL_GAP: f32 = 8.0;
     pub const WORKSPACE_ICON_BUTTON_HIT_AREA: f32 = Self::WORKSPACE_TOOLBAR_HEIGHT;
@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(metrics.workspace_toolbar_padding, 4.0);
         assert_eq!(ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING, 12.0);
         assert_eq!(ThemeMetrics::WORKSPACE_TOOLBAR_VERTICAL_PADDING, 4.0);
-        assert_eq!(metrics.workspace_toolbar_gap, 8.0);
+        assert_eq!(metrics.workspace_toolbar_gap, 3.0);
         assert_eq!(metrics.workspace_icon_size, 24.0);
         assert_eq!(metrics.workspace_separator_height, 16.0);
         assert!(metrics.radius_md <= 8.0);

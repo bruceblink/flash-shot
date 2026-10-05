@@ -534,6 +534,7 @@ impl FlashShotApp {
         self.hover_pixel = None;
         self.inspection_target = None;
         self.pending_click_target = None;
+        self.selection_acceptance_disable_smart_target_once = false;
         self.inspection_request = None;
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
@@ -787,6 +788,7 @@ impl FlashShotApp {
         self.hover_pixel = None;
         self.inspection_target = None;
         self.pending_click_target = None;
+        self.selection_acceptance_disable_smart_target_once = false;
         self.inspection_request = None;
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
@@ -857,6 +859,7 @@ impl FlashShotApp {
         self.hover_pixel = None;
         self.inspection_target = None;
         self.pending_click_target = None;
+        self.selection_acceptance_disable_smart_target_once = false;
         self.inspection_request = None;
         self.manual_scroll = Default::default();
         self.manual_scroll_selection = None;
@@ -926,9 +929,14 @@ impl FlashShotApp {
                 .to_owned();
             return;
         }
-        self.pending_click_target = self
-            .inspection_target
-            .filter(|target| target.bounds.contains(point));
+        let disable_smart_target =
+            std::mem::take(&mut self.selection_acceptance_disable_smart_target_once);
+        self.pending_click_target = (!disable_smart_target)
+            .then(|| {
+                self.inspection_target
+                    .filter(|target| target.bounds.contains(point))
+            })
+            .flatten();
         if let Some((selection, handle)) = self.selection_drag.selection().zip(resize_handle) {
             self.pending_click_target = None;
             self.selection_drag.begin_resize(selection, handle);

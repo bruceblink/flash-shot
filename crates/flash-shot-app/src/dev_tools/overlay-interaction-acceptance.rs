@@ -19,7 +19,7 @@ use flash_shot::{
     domain::annotation::AnnotationTool,
     domain::geometry::{PhysicalPoint, PhysicalRect},
     domain::selection::{ResizeHandle, SelectionDrag},
-    history::ScreenshotHistory,
+    history::{HistorySource, ScreenshotHistory},
     i18n::{Locale, UiText},
     performance::PerformanceRecorder,
     platform::display::{DisplayInfo, DisplayProvider, SystemDisplayProvider},
@@ -150,9 +150,6 @@ const NARROW_EDGE_SELECTION_WIDTH: f32 = 160.0;
 const NARROW_EDGE_SELECTION_HEIGHT: f32 = 96.0;
 const NARROW_EDGE_RIGHT_INSET: f32 = 18.0;
 const NARROW_EDGE_BOTTOM_INSET: f32 = 12.0;
-const NARROW_EDGE_ANNOTATION_WIDTH: f32 = 1200.0;
-// The wide marking dock is one 42px tool row, an 8px separation, and a 50px action row.
-const NARROW_EDGE_ANNOTATION_HEIGHT: f32 = 100.0;
 const ACTION_TOOLBAR_LEADING_WIDTH: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_DRAG_HANDLE_WIDTH;
 const INLINE_SECONDARY_ACTION_WIDTH: f32 =
     WorkspaceInlineAction::total_width(ThemeMetrics::WORKSPACE_TOOLBAR_GAP);
@@ -747,6 +744,7 @@ struct InteractionPlan {
 struct ToolGroupInteractionPlan {
     mark: PhysicalPoint,
     more: PhysicalPoint,
+    cancel: PhysicalPoint,
     text_trigger: PhysicalPoint,
     shape_trigger: PhysicalPoint,
     direct_tool_centers: [PhysicalPoint; WorkspaceAnnotationToolSpec::catalog().len()],
@@ -757,7 +755,6 @@ struct ToolGroupInteractionPlan {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NarrowEdgeInteractionPlan {
     base: InteractionPlan,
-    expanded_mark: PhysicalPoint,
     evidence_rest: PhysicalPoint,
 }
 
@@ -1053,6 +1050,30 @@ fn watermark_style_row_width() -> f32 {
 }
 
 #[cfg(windows)]
+/// Locates a result button from the actual rendered toolbar bounds at 100% DPI.
+fn toolbar_result_action_point_100_percent(
+    toolbar: PhysicalRect,
+    action: WorkspaceResultAction,
+) -> PhysicalPoint {
+    let button_size = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
+    let items_after = WorkspaceResultAction::catalog().len() - action.index() - 1;
+    let trailing_inset = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH
+        + ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING;
+    let x = toolbar.right as f32
+        - trailing_inset
+        - button_size / 2.0
+        - items_after as f32 * (button_size + ThemeMetrics::WORKSPACE_TOOLBAR_GAP);
+    let y = toolbar.top as f32
+        + ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH
+        + ThemeMetrics::WORKSPACE_TOOLBAR_VERTICAL_PADDING
+        + button_size / 2.0;
+    PhysicalPoint {
+        x: x.round() as i32,
+        y: y.round() as i32,
+    }
+}
+
+#[cfg(windows)]
 /// Locates every direct annotation action and the retained related-tool popover from the selection.
 /// Shared toolbar dimensions keep injected input inside each production hitbox.
 fn tool_group_interaction_plan_for_capture_selection(
@@ -1273,15 +1294,12 @@ fn tool_group_interaction_plan_for_capture_selection(
             group_row_center_y,
         ))
     });
+    let action_center_y =
+        action_top + ACTION_BORDER + ACTION_VERTICAL_PADDING + ACTION_ITEM_WIDTH / 2.0;
     Ok(ToolGroupInteractionPlan {
-        mark: screen_point((
-            action_center(0),
-            action_top + ACTION_BORDER + ACTION_VERTICAL_PADDING + ACTION_ITEM_WIDTH / 2.0,
-        )),
-        more: screen_point((
-            result_center(RESULT_ACTION_MORE_INDEX),
-            action_top + ACTION_BORDER + ACTION_VERTICAL_PADDING + ACTION_ITEM_WIDTH / 2.0,
-        )),
+        mark: screen_point((action_center(0), action_center_y)),
+        more: screen_point((result_center(RESULT_ACTION_MORE_INDEX), action_center_y)),
+        cancel: screen_point((result_center(RESULT_ACTION_CANCEL_INDEX), action_center_y)),
         text_trigger: direct_tool_centers
             [WorkspaceAnnotationToolSpec::for_tool(AnnotationTool::Text).index()],
         shape_trigger: direct_tool_centers
@@ -1620,6 +1638,7 @@ fn scroll_roundtrip_cleanup_complete(state: &OverlayInteractionCaptureState) -> 
 fn selection_copy_completed_in_editor(
     state: &OverlayInteractionCaptureState,
     selection: PhysicalRect,
+    locale: Locale,
 ) -> bool {
     state.session_state == "selecting"
         && state.selection == Some(selection)
@@ -1627,10 +1646,10 @@ fn selection_copy_completed_in_editor(
         && state.overlay_count == 1
         && !state.capture_teardown_pending
         && state.capture_preflight_ready
-        && state.status == "Selection copied to clipboard"
+        && capture_state_reports_selection_copied(&state.status, locale)
 }
 
-/// Places a 160x96 selection at the bottom-right edge and predicts the relocated Mark control.
+/// Places a 160x96 selection at the bottom-right edge for More and contextual-style hit testing.
 fn narrow_edge_interaction_plan(
     bounds: PhysicalRect,
     scale: f32,
@@ -1642,10 +1661,10 @@ fn narrow_edge_interaction_plan(
         ));
     }
     let (width, height) = overlay_logical_size(bounds, scale)?;
-    if width < NARROW_EDGE_ANNOTATION_WIDTH + NARROW_EDGE_RIGHT_INSET * 2.0 {
+    if width < 256.0 {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "narrow-edge acceptance requires the wide annotation dock layout",
+            "narrow-edge acceptance requires a usable toolbar viewport",
         ));
     }
     let end = (
@@ -1658,47 +1677,12 @@ fn narrow_edge_interaction_plan(
     );
     let base = interaction_plan_for_logical_selection(bounds, scale, width, height, start, end)?;
 
-    // Marking mode adds Undo/Redo and two separators, so its production action row is wider
-    // than the compact capture row used before Mark opens.
-    let annotation_left_min = NARROW_EDGE_RIGHT_INSET;
-    let annotation_left_limit =
-        (width - NARROW_EDGE_RIGHT_INSET - NARROW_EDGE_ANNOTATION_WIDTH).max(annotation_left_min);
-    let annotation_left =
-        (end.0 - NARROW_EDGE_ANNOTATION_WIDTH).clamp(annotation_left_min, annotation_left_limit);
-    let annotation_top = start.1 - 12.0 - NARROW_EDGE_ANNOTATION_HEIGHT;
-    if annotation_top < NARROW_EDGE_RIGHT_INSET {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "narrow-edge annotation dock does not fit above the selection",
-        ));
-    }
     let screen_point = |point: (f32, f32)| PhysicalPoint {
         x: bounds.left + (point.0 * scale).round() as i32,
         y: bounds.top + (point.1 * scale).round() as i32,
     };
-    const ACTION_ITEM_WIDTH: f32 = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
-    const ACTION_ITEM_GAP: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
-    const ACTION_HORIZONTAL_PADDING: f32 = ThemeMetrics::WORKSPACE_TOOLBAR_HORIZONTAL_PADDING;
-    const ACTION_BORDER: f32 = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
-    let marking_action_width = 8.0 * ACTION_ITEM_WIDTH
-        + 2.0 * ACTION_BORDER
-        + 9.0 * ACTION_ITEM_GAP
-        + 2.0 * ACTION_HORIZONTAL_PADDING
-        + 2.0 * ACTION_BORDER;
-    let expanded_action_left =
-        annotation_left + NARROW_EDGE_ANNOTATION_WIDTH - marking_action_width;
-    // Skip Undo, Redo, and the context separator to land in the Mark button's hit area.
-    let marking_mark_offset = ACTION_HORIZONTAL_PADDING
-        + 2.0 * ACTION_ITEM_WIDTH
-        + 3.0 * ACTION_ITEM_GAP
-        + ACTION_BORDER
-        + ACTION_ITEM_WIDTH / 2.0;
     Ok(NarrowEdgeInteractionPlan {
         base,
-        expanded_mark: screen_point((
-            expanded_action_left + marking_mark_offset,
-            annotation_top + 25.0,
-        )),
         // Keep the always-visible magnifier away from the edge toolbars being reviewed.
         evidence_rest: screen_point((24.0, 24.0)),
     })
@@ -5177,7 +5161,7 @@ fn execute_narrow_edge_interactions(
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
     let plan = narrow_edge_interaction_plan_for_window(overlay.handle)?;
-    let drag = inject_mouse_drag(
+    let drag = inject_mouse_drag_in_display_pixels(
         overlay.handle,
         plan.base.drag_start,
         plan.base.drag_end,
@@ -5188,7 +5172,7 @@ fn execute_narrow_edge_interactions(
             && state.selection.is_some()
             && state.overlay_count == 1
             && !state.more_actions_visible
-            && !state.annotation_controls_visible
+            && state.annotation_controls_visible
     })?;
     let committed_selection = selected_state
         .selection
@@ -5244,17 +5228,60 @@ fn execute_narrow_edge_interactions(
         Some(&selected),
     )?;
 
-    inject_mouse_click(overlay.handle, plan.base.more)?;
+    let initial_tools = tool_group_interaction_plan_for_capture_selection(
+        overlay.handle,
+        context.display.physical_bounds,
+        committed_selection,
+        true,
+        0.0,
+        context.locale,
+    )?;
+    focus_owned_window(overlay, context.timeout)?;
+    inject_mouse_click(overlay.handle, initial_tools.shape_trigger)?;
+    let rectangle_state = wait_for_capture_state(context, "narrow edge Rectangle tool", |state| {
+        state.selection == Some(committed_selection)
+            && state.overlay_count == 1
+            && state.annotation_controls_visible
+            && !state.more_actions_visible
+            && capture_state_reports_tool_selected(
+                &state.status,
+                context.locale,
+                AnnotationTool::Rectangle,
+            )
+    })?;
+    thread::sleep(context.settle_delay);
+    let style = capture_evidence(context, "02-edge-rectangle-style.png", overlay)?;
+    ensure_evidence_changed(
+        &selected,
+        &style,
+        "narrow Rectangle style row did not appear",
+    )?;
+    record_step(
+        report,
+        &context.report_path,
+        "narrow_rectangle_style_row",
+        guard_foreground(overlay.handle)?,
+        Some(&style),
+    )?;
+
+    let rectangle_toolbar = rectangle_state
+        .action_toolbar_bounds
+        .ok_or_else(|| io::Error::other("narrow Rectangle toolbar bounds were unavailable"))?;
+    focus_owned_window(overlay, context.timeout)?;
+    inject_mouse_click(
+        overlay.handle,
+        toolbar_result_action_point_100_percent(rectangle_toolbar, WorkspaceResultAction::More),
+    )?;
     let more_open = wait_for_capture_state(context, "narrow More open", |state| {
         state.selection == Some(committed_selection)
             && state.overlay_count == 1
             && state.more_actions_visible
-            && !state.annotation_controls_visible
+            && state.annotation_controls_visible
     })?;
     let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
     thread::sleep(context.settle_delay);
-    let more = capture_evidence(context, "02-edge-more.png", overlay)?;
-    ensure_evidence_changed(&selected, &more, "narrow More did not change the overlay")?;
+    let more = capture_evidence(context, "03-edge-more.png", overlay)?;
+    ensure_evidence_changed(&style, &more, "narrow More did not change the overlay")?;
     record_step(
         report,
         &context.report_path,
@@ -5263,16 +5290,23 @@ fn execute_narrow_edge_interactions(
         Some(&more),
     )?;
 
-    inject_mouse_click(overlay.handle, plan.base.more)?;
+    let open_toolbar = more_open
+        .action_toolbar_bounds
+        .ok_or_else(|| io::Error::other("narrow More toolbar bounds were unavailable"))?;
+    focus_owned_window(overlay, context.timeout)?;
+    inject_mouse_click(
+        overlay.handle,
+        toolbar_result_action_point_100_percent(open_toolbar, WorkspaceResultAction::More),
+    )?;
     let more_closed = wait_for_capture_state(context, "narrow More close", |state| {
         state.selection == Some(committed_selection)
             && state.overlay_count == 1
             && !state.more_actions_visible
-            && !state.annotation_controls_visible
+            && state.annotation_controls_visible
     })?;
     let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
     thread::sleep(context.settle_delay);
-    let less = capture_evidence(context, "03-edge-less.png", overlay)?;
+    let less = capture_evidence(context, "04-edge-less.png", overlay)?;
     ensure_evidence_changed(&more, &less, "narrow Less did not close the menu")?;
     record_step(
         report,
@@ -5282,49 +5316,14 @@ fn execute_narrow_edge_interactions(
         Some(&less),
     )?;
 
-    inject_mouse_click(overlay.handle, plan.base.mark)?;
-    let annotation_open = wait_for_capture_state(context, "narrow Mark open", |state| {
-        state.selection == Some(committed_selection)
-            && state.overlay_count == 1
-            && !state.more_actions_visible
-            && state.annotation_controls_visible
-    })?;
-    let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
-    thread::sleep(context.settle_delay);
-    let marking = capture_evidence(context, "04-edge-mark.png", overlay)?;
-    ensure_evidence_changed(&less, &marking, "narrow Mark did not open its controls")?;
-    record_step(
-        report,
-        &context.report_path,
-        "narrow_mark_open",
-        foreground,
-        Some(&marking),
+    let closed_toolbar = more_closed
+        .action_toolbar_bounds
+        .ok_or_else(|| io::Error::other("narrow Cancel toolbar bounds were unavailable"))?;
+    focus_owned_window(overlay, context.timeout)?;
+    let foreground = inject_mouse_click(
+        overlay.handle,
+        toolbar_result_action_point_100_percent(closed_toolbar, WorkspaceResultAction::Cancel),
     )?;
-
-    inject_mouse_click(overlay.handle, plan.expanded_mark)?;
-    let annotation_closed = wait_for_capture_state(context, "narrow Mark close", |state| {
-        state.selection == Some(committed_selection)
-            && state.overlay_count == 1
-            && !state.more_actions_visible
-            && !state.annotation_controls_visible
-    })?;
-    let foreground = inject_mouse_move(overlay.handle, plan.evidence_rest)?;
-    thread::sleep(context.settle_delay);
-    let marking_closed = capture_evidence(context, "05-edge-mark-closed.png", overlay)?;
-    ensure_evidence_changed(
-        &marking,
-        &marking_closed,
-        "narrow Mark did not close its controls",
-    )?;
-    record_step(
-        report,
-        &context.report_path,
-        "narrow_mark_closed",
-        foreground,
-        Some(&marking_closed),
-    )?;
-
-    let foreground = inject_mouse_click(overlay.handle, plan.base.cancel)?;
     wait_for_window_gone(overlay.handle, context.timeout, "narrow Cancel")?;
     record_step(
         report,
@@ -5366,8 +5365,8 @@ fn execute_narrow_edge_interactions(
         },
         more_opened: more_open.more_actions_visible,
         more_closed: !more_closed.more_actions_visible,
-        annotation_opened: annotation_open.annotation_controls_visible,
-        annotation_closed: !annotation_closed.annotation_controls_visible,
+        annotation_opened: selected_state.annotation_controls_visible,
+        annotation_closed: !final_state.annotation_controls_visible,
         cleanup: CleanupReport {
             session_state: final_state.session_state,
             overlay_count: final_state.overlay_count,
@@ -5550,7 +5549,7 @@ fn execute_selection_boundary_matrix(
         ensure_copy_sink_ready(context)?;
         let plan_for_window =
             |handle| selection_boundary_plan_for_window(handle, display_bounds, case);
-        let (overlay, plan, drag) = match begin_capture_overlay_with_plan(
+        let (overlay, mut plan, drag) = match begin_capture_overlay_with_plan(
             context,
             controller,
             case == SelectionBoundaryCase::OnePixel,
@@ -5656,6 +5655,11 @@ fn execute_selection_boundary_matrix(
         let selection = state
             .selection
             .expect("selection_ready proves a committed selection exists");
+        let toolbar_bounds = state.action_toolbar_bounds.ok_or_else(|| {
+            io::Error::other("W5 selection did not expose its rendered result toolbar bounds")
+        })?;
+        plan.copy =
+            toolbar_result_action_point_100_percent(toolbar_bounds, WorkspaceResultAction::Copy);
         if let Err(error) =
             validate_selection_geometry(drag.selection, selection, "W5 boundary selection")
         {
@@ -6698,12 +6702,9 @@ fn execute_annotation_regression_interactions(
     )?;
     focus_owned_window(overlay, context.timeout)?;
     thread::sleep(context.settle_delay);
-    // Full-display overlays use global physical pixels so Win32's off-screen client inset cannot
-    // shift the committed selection away from the pointer path used by the rendered controls.
-    let plan = interaction_plan(
-        context.display.physical_bounds,
-        context.display.scale_factor,
-    )?;
+    // Match the standard overlay workflow: derive points from the live client, then submit their
+    // physical desktop coordinates because the fullscreen canvas maps the raw pointer directly.
+    let plan = interaction_plan_for_window(overlay.handle)?;
     let drag = inject_mouse_drag_in_display_pixels(
         overlay.handle,
         plan.drag_start,
@@ -6726,7 +6727,6 @@ fn execute_annotation_regression_interactions(
             && state.selection.is_some()
             && state.overlay_count == 1
             && !state.more_actions_visible
-            && !state.annotation_controls_visible
     })?;
     let selection = selected_state
         .selection
@@ -6737,14 +6737,10 @@ fn execute_annotation_regression_interactions(
         .ok_or_else(|| io::Error::other("annotation selection did not expose source pixels"))?;
     validate_frame_dimensions(&source, selection, "annotation source frame")?;
 
-    let client = client_bounds_for_window(overlay.handle)?;
-    let to_screen = |point: PhysicalPoint| {
-        map_capture_point_to_screen(point, client, context.display.physical_bounds)
-    };
-    let evidence_rest = to_screen(PhysicalPoint {
+    let evidence_rest = PhysicalPoint {
         x: context.display.physical_bounds.left + 24,
         y: context.display.physical_bounds.top + 24,
-    })?;
+    };
 
     let group_plan = tool_group_interaction_plan_for_capture_selection(
         overlay.handle,
@@ -6754,19 +6750,22 @@ fn execute_annotation_regression_interactions(
         0.0,
         context.locale,
     )?;
-    let foreground = inject_mouse_click(overlay.handle, group_plan.mark)?;
-    let _marking_state = wait_for_capture_state(context, "annotation controls", |state| {
-        state.selection == Some(selection)
-            && state.overlay_count == 1
-            && state.annotation_controls_visible
-            && !state.more_actions_visible
-    })?;
+    let mut toolbar_foreground = drag.foreground;
+    if !selected_state.annotation_controls_visible {
+        toolbar_foreground = inject_mouse_click(overlay.handle, group_plan.mark)?;
+        wait_for_capture_state(context, "annotation controls", |state| {
+            state.selection == Some(selection)
+                && state.overlay_count == 1
+                && state.annotation_controls_visible
+                && !state.more_actions_visible
+        })?;
+    }
     let mut previous = capture_evidence(context, "00-annotation-tools.png", overlay)?;
     record_step(
         report,
         &context.report_path,
         "annotation_controls_open",
-        foreground,
+        toolbar_foreground,
         Some(&previous),
     )?;
 
@@ -6780,18 +6779,23 @@ fn execute_annotation_regression_interactions(
     inject_key(overlay.handle, b'T' as u16)?;
     thread::sleep(context.settle_delay);
     wait_for_capture_state(context, "Text tool selection", |state| {
-        state.status == "Text tool selected"
+        capture_state_reports_tool_selected(&state.status, context.locale, AnnotationTool::Text)
     })?;
-    inject_mouse_click(overlay.handle, to_screen(text_origin)?)?;
+    inject_mouse_click(overlay.handle, text_origin)?;
     wait_for_capture_state(context, "Text editor", |state| {
-        state.annotation_controls_visible && state.status.starts_with("Type Text")
+        state.annotation_controls_visible
+            && capture_state_reports_annotation_text_prompt(
+                &state.status,
+                context.locale,
+                AnnotationTool::Text,
+            )
     })?;
     thread::sleep(context.settle_delay);
     inject_unicode_text(overlay.handle, text_content)?;
     wait_for_capture_state(context, "Text input", |state| {
         state.annotation_controls_visible
             && state.annotations.is_empty()
-            && state.status == "Editing text..."
+            && state.status == context.locale.text(UiText::AnnotationTextEditing)
     })?;
     inject_key(overlay.handle, VK_RETURN)?;
     let text_state = wait_for_capture_state(context, "Text annotation", |state| {
@@ -6843,18 +6847,27 @@ fn execute_annotation_regression_interactions(
     inject_key(overlay.handle, b'W' as u16)?;
     thread::sleep(context.settle_delay);
     wait_for_capture_state(context, "Watermark tool selection", |state| {
-        state.status == "Watermark tool selected"
+        capture_state_reports_tool_selected(
+            &state.status,
+            context.locale,
+            AnnotationTool::Watermark,
+        )
     })?;
-    inject_mouse_click(overlay.handle, to_screen(watermark_origin)?)?;
+    inject_mouse_click(overlay.handle, watermark_origin)?;
     wait_for_capture_state(context, "Watermark editor", |state| {
-        state.annotation_controls_visible && state.status.starts_with("Type Watermark")
+        state.annotation_controls_visible
+            && capture_state_reports_annotation_text_prompt(
+                &state.status,
+                context.locale,
+                AnnotationTool::Watermark,
+            )
     })?;
     thread::sleep(context.settle_delay);
     inject_unicode_text(overlay.handle, watermark_content)?;
     wait_for_capture_state(context, "Watermark input", |state| {
         state.annotation_controls_visible
             && state.annotations.len() == 1
-            && state.status == "Editing text..."
+            && state.status == context.locale.text(UiText::AnnotationTextEditing)
     })?;
     inject_key(overlay.handle, VK_RETURN)?;
     let watermark_state = wait_for_capture_state(context, "Watermark annotation", |state| {
@@ -6913,12 +6926,12 @@ fn execute_annotation_regression_interactions(
     inject_key(overlay.handle, b'L' as u16)?;
     thread::sleep(context.settle_delay);
     wait_for_capture_state(context, "Line tool selection", |state| {
-        state.status == "Line tool selected"
+        capture_state_reports_tool_selected(&state.status, context.locale, AnnotationTool::Line)
     })?;
-    let line_drag = inject_mouse_drag(
+    let line_drag = inject_mouse_drag_in_display_pixels(
         overlay.handle,
-        to_screen(line_start)?,
-        to_screen(line_end)?,
+        line_start,
+        line_end,
         context.display.physical_bounds,
     )?;
     let line_state = wait_for_capture_state(context, "Line annotation", |state| {
@@ -6984,13 +6997,17 @@ fn execute_annotation_regression_interactions(
             inject_key(overlay.handle, b'A' as u16)?;
             thread::sleep(context.settle_delay);
             wait_for_capture_state(context, "Arrow tool selection", |state| {
-                state.status == "Arrow tool selected"
+                capture_state_reports_tool_selected(
+                    &state.status,
+                    context.locale,
+                    AnnotationTool::Arrow,
+                )
             })?;
         }
-        let arrow_drag = inject_mouse_drag(
+        let arrow_drag = inject_mouse_drag_in_display_pixels(
             overlay.handle,
-            to_screen(start)?,
-            to_screen(end)?,
+            start,
+            end,
             context.display.physical_bounds,
         )?;
         let expected_count = 4 + index;
@@ -7046,7 +7063,7 @@ fn execute_annotation_regression_interactions(
             && !state.capture_teardown_pending
             && state.background_tasks_idle
             && state.capture_preflight_ready
-            && state.status.starts_with("Selection saved to ")
+            && capture_state_reports_selection_saved(&state.status, context.locale)
     })?;
     let (export_path, exported, exported_bytes) =
         wait_for_single_png(&context.session_root.join("history"), context.timeout)?;
@@ -8358,7 +8375,7 @@ fn execute_scroll_copy_export(
     let clipboard_png = fs::read(&consumer_result.png_path)?;
     let clipboard_dib = fs::read(&consumer_result.dib_path)?;
     let state = wait_for_capture_state(context, "scroll Copy completion", |state| {
-        selection_copy_completed_in_editor(state, selection)
+        selection_copy_completed_in_editor(state, selection, context.locale)
     })?;
     thread::sleep(context.settle_delay);
     let retained = capture_evidence(context, "05-scroll-copy-complete.png", overlay)?;
@@ -8466,7 +8483,11 @@ fn execute_scroll_copy_export(
             .unwrap_or(&consumer.result_path)
             .to_string_lossy()
             .into_owned(),
-        editor_retained_after_copy: selection_copy_completed_in_editor(&state, selection),
+        editor_retained_after_copy: selection_copy_completed_in_editor(
+            &state,
+            selection,
+            context.locale,
+        ),
         cleanup_after_escape: scroll_roundtrip_cleanup_complete(&cleanup_state),
     })
 }
@@ -9477,7 +9498,7 @@ fn execute_clipboard_contention_retry_interactions(
     }
     let retry_state =
         wait_for_capture_state(context, "clipboard contention retry completion", |state| {
-            selection_copy_completed_in_editor(state, selection)
+            selection_copy_completed_in_editor(state, selection, context.locale)
         })?;
     if retry_state.selection != Some(selection) {
         return Err(io::Error::other(
@@ -9515,7 +9536,8 @@ fn execute_clipboard_contention_retry_interactions(
             ),
         ));
     }
-    let editor_retained_after_retry = selection_copy_completed_in_editor(&retry_state, selection);
+    let editor_retained_after_retry =
+        selection_copy_completed_in_editor(&retry_state, selection, context.locale);
     let retry = capture_evidence(
         context,
         "14-clipboard-contention-retry-complete.png",
@@ -9969,7 +9991,7 @@ fn execute_save_interaction(
         state.session_state == "completed"
             && state.overlay_count == 0
             && state.capture_preflight_ready
-            && state.status.starts_with("Selection saved to ")
+            && capture_state_reports_selection_saved(&state.status, context.locale)
     })?;
     if state.selection != Some(selection) {
         return Err(io::Error::other(
@@ -10293,7 +10315,7 @@ fn execute_save_failure_retry_interactions(
                 && state.overlay_count == 1
                 && state.capture_preflight_ready
                 && state.background_tasks_idle
-                && state.status.starts_with("Save failed:")
+                && capture_state_reports_save_failure(&state.status, context.locale)
         })?;
     if failure_state.selection != Some(selection) {
         return Err(io::Error::other(
@@ -10353,7 +10375,7 @@ fn execute_save_failure_retry_interactions(
                 && !state.capture_teardown_pending
                 && state.background_tasks_idle
                 && state.capture_preflight_ready
-                && state.status.starts_with("Selection saved to ")
+                && capture_state_reports_selection_saved(&state.status, context.locale)
         })?;
     let clean = wait_for_desktop_quiescence(
         context,
@@ -10474,7 +10496,7 @@ fn execute_save_permission_retry_interactions(
                 && state.overlay_count == 1
                 && state.capture_preflight_ready
                 && state.background_tasks_idle
-                && state.status.starts_with("Save failed:")
+                && capture_state_reports_save_failure(&state.status, context.locale)
         })?;
     if failure_state.selection != Some(selection) {
         return Err(io::Error::other(
@@ -10540,7 +10562,7 @@ fn execute_save_permission_retry_interactions(
                 && !state.capture_teardown_pending
                 && state.background_tasks_idle
                 && state.capture_preflight_ready
-                && state.status.starts_with("Selection saved to ")
+                && capture_state_reports_selection_saved(&state.status, context.locale)
         })?;
     let clean = wait_for_desktop_quiescence(
         context,
@@ -10860,7 +10882,7 @@ fn execute_save_dialog_permission_retry_interactions(
             && !state.capture_teardown_pending
             && state.background_tasks_idle
             && state.capture_preflight_ready
-            && state.status.starts_with("Selection saved to ")
+            && capture_state_reports_selection_saved(&state.status, context.locale)
     })?;
     let clean = wait_for_desktop_quiescence(
         context,
@@ -11251,7 +11273,7 @@ fn execute_copy_from_selected_overlay(
         ));
     }
     let state = wait_for_capture_state(context, "selection Copy completion", |state| {
-        selection_copy_completed_in_editor(state, selection)
+        selection_copy_completed_in_editor(state, selection, context.locale)
     })?;
     if state.selection != Some(selection) {
         return Err(io::Error::other(
@@ -11390,7 +11412,8 @@ fn execute_copy_from_selected_overlay(
             ));
         }
     }
-    let editor_retained_after_copy = selection_copy_completed_in_editor(&state, selection);
+    let editor_retained_after_copy =
+        selection_copy_completed_in_editor(&state, selection, context.locale);
     let cleanup_after_escape = cleanup_state.session_state == "idle"
         && cleanup_state.selection.is_none()
         && cleanup_state.overlay_count == 0
@@ -12996,6 +13019,67 @@ fn wait_for_capture_state(
         last_state = Some(format!("{state:?}"));
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+/// Confirms a completed selection export from the localized catalog message and its path.
+fn capture_state_reports_selection_saved(status: &str, locale: Locale) -> bool {
+    let prefix = locale.format_template(
+        UiText::SaveCompleted,
+        &[
+            ("source", HistorySource::Selection.localized_label(locale)),
+            ("path", ""),
+        ],
+    );
+    status
+        .strip_prefix(&prefix)
+        .is_some_and(|path| !path.trim().is_empty())
+}
+
+/// Matches the user-visible Copy completion from the active locale's message catalog.
+fn capture_state_reports_selection_copied(status: &str, locale: Locale) -> bool {
+    status == locale.text(UiText::SelectionCopiedToClipboard)
+}
+
+/// Confirms a recoverable Save error using the selected locale's stable error template prefix.
+fn capture_state_reports_save_failure(status: &str, locale: Locale) -> bool {
+    let prefix = locale
+        .text(UiText::SaveFailedKeepSelection)
+        .split("{error}")
+        .next()
+        .unwrap_or_default();
+    !prefix.is_empty() && status.starts_with(prefix)
+}
+
+/// Matches a selected annotation tool without depending on English status text.
+fn capture_state_reports_tool_selected(status: &str, locale: Locale, tool: AnnotationTool) -> bool {
+    let label = locale.text(match tool {
+        AnnotationTool::Text => UiText::OverlayText,
+        AnnotationTool::Watermark => UiText::OverlayWatermark,
+        AnnotationTool::Line => UiText::OverlayLine,
+        AnnotationTool::Arrow => UiText::OverlayArrow,
+        AnnotationTool::Freehand => UiText::OverlayFreehand,
+        AnnotationTool::Rectangle => UiText::OverlayRectangle,
+        AnnotationTool::Ellipse => UiText::OverlayEllipse,
+        AnnotationTool::Highlight => UiText::OverlayHighlight,
+        AnnotationTool::Number => UiText::OverlayNumber,
+        AnnotationTool::Blur => UiText::OverlayBlur,
+        AnnotationTool::Mosaic => UiText::OverlayMosaic,
+    });
+    status == locale.format_template(UiText::AnnotationToolSelected, &[("tool", label)])
+}
+
+/// Matches the localized prompt shown before Text or Watermark content is committed.
+fn capture_state_reports_annotation_text_prompt(
+    status: &str,
+    locale: Locale,
+    tool: AnnotationTool,
+) -> bool {
+    let kind = match tool {
+        AnnotationTool::Text => locale.text(UiText::OverlayText),
+        AnnotationTool::Watermark => locale.text(UiText::OverlayWatermark),
+        _ => return false,
+    };
+    status == locale.format_template(UiText::AnnotationTextPrompt, &[("kind", kind)])
 }
 
 #[cfg(windows)]
@@ -15505,7 +15589,7 @@ fn wait_for_copy_trigger_ack(
                 if state.status.starts_with("Copy failed:") {
                     return Err(io::Error::other(state.status));
                 }
-                if copy_trigger_acknowledged(&state, selection) {
+                if copy_trigger_acknowledged(&state, selection, context.locale) {
                     return Ok(true);
                 }
             }
@@ -15519,12 +15603,14 @@ fn wait_for_copy_trigger_ack(
 fn copy_trigger_acknowledged(
     state: &OverlayInteractionCaptureState,
     selection: PhysicalRect,
+    locale: Locale,
 ) -> bool {
     state.session_state == "selecting"
         && state.selection == Some(selection)
         && state.overlay_count == 1
         && !state.capture_teardown_pending
-        && (state.selection_copy_active || state.status == "Selection copied to clipboard")
+        && (state.selection_copy_active
+            || capture_state_reports_selection_copied(&state.status, locale))
 }
 
 #[cfg(windows)]
@@ -16119,15 +16205,17 @@ mod tests {
     use super::{
         CaptureScenarioOption, CopyTriggerOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
         ScrollExportOption, SelectionBoundaryCase, SelectionTransformKind,
-        copy_trigger_acknowledged, ensure_input_authorized, expected_selection_transform,
-        first_stable_recording_match, interaction_command_channel, interaction_plan,
-        map_capture_point_to_screen, map_screen_point_to_capture, map_screen_selection_to_capture,
-        narrow_edge_interaction_plan, normalize_axis, pin_close_button_point,
-        pin_coexist_interaction_plan, recording_control_plan, recording_failed, recording_saved,
-        rect_contains_rect, scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
-        scroll_secondary_menu_height, scroll_secondary_menu_width,
-        scroll_shot_point_for_logical_selection, scroll_toolbar_dimensions,
-        selection_aspect_ratio_preserved, selection_center_preserved,
+        capture_state_reports_annotation_text_prompt, capture_state_reports_save_failure,
+        capture_state_reports_selection_copied, capture_state_reports_selection_saved,
+        capture_state_reports_tool_selected, copy_trigger_acknowledged, ensure_input_authorized,
+        expected_selection_transform, first_stable_recording_match, interaction_command_channel,
+        interaction_plan, map_capture_point_to_screen, map_screen_point_to_capture,
+        map_screen_selection_to_capture, narrow_edge_interaction_plan, normalize_axis,
+        pin_close_button_point, pin_coexist_interaction_plan, recording_control_plan,
+        recording_failed, recording_saved, rect_contains_rect, scroll_roundtrip_cleanup_complete,
+        scroll_roundtrip_interaction_plan, scroll_secondary_menu_height,
+        scroll_secondary_menu_width, scroll_shot_point_for_logical_selection,
+        scroll_toolbar_dimensions, selection_aspect_ratio_preserved, selection_center_preserved,
         selection_copy_completed_in_editor, selection_transform_gesture, translated_rect,
         validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
@@ -16135,20 +16223,137 @@ mod tests {
     };
     #[cfg(windows)]
     use super::{
-        FixturePhaseState, NativeWindow, decode_clipboard_dib, foreground_assist_ready,
-        has_safe_titlebar_band, horizontal_pin_layout, is_default_image_filename,
-        is_foreground_change_abort, panic_payload_message,
+        FixturePhaseState, NativeWindow, WorkspaceResultAction, decode_clipboard_dib,
+        foreground_assist_ready, has_safe_titlebar_band, horizontal_pin_layout,
+        is_default_image_filename, is_foreground_change_abort, panic_payload_message,
         parse_recording_window_fixture_arguments, pin_coexist_fixture_bounds,
         recording_fixture_dynamic_bounds, request_recording_state, titlebar_fallback_ready,
-        validate_fixture_phase_state, validate_recording_frame_content,
-        validate_same_pixel_content, validate_scroll_fixture_frame, watermark_style_row_width,
+        toolbar_result_action_point_100_percent, validate_fixture_phase_state,
+        validate_recording_frame_content, validate_same_pixel_content,
+        validate_scroll_fixture_frame, watermark_style_row_width,
     };
     use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
-    use flash_shot::domain::geometry::{PhysicalPoint, PhysicalRect};
+    use flash_shot::domain::{
+        annotation::AnnotationTool,
+        geometry::{PhysicalPoint, PhysicalRect},
+    };
     #[cfg(windows)]
     use flash_shot::platform::capture::{CaptureFrame, PixelFormat};
-    use flash_shot::{i18n::Locale, theme::ThemeMode};
+    use flash_shot::{
+        history::HistorySource,
+        i18n::{Locale, UiText},
+        theme::ThemeMode,
+    };
     use std::{ffi::OsString, path::PathBuf, time::Duration};
+
+    #[test]
+    fn selection_save_status_checks_accept_localized_success_and_failure_text() {
+        let english_path = r"F:\Screenshots\selection.png";
+        let english_saved = Locale::English.format_template(
+            UiText::SaveCompleted,
+            &[
+                (
+                    "source",
+                    HistorySource::Selection.localized_label(Locale::English),
+                ),
+                ("path", english_path),
+            ],
+        );
+        let chinese_path = r"F:\Screenshots\selection.png";
+        let chinese_saved = Locale::SimplifiedChinese.format_template(
+            UiText::SaveCompleted,
+            &[
+                (
+                    "source",
+                    HistorySource::Selection.localized_label(Locale::SimplifiedChinese),
+                ),
+                ("path", chinese_path),
+            ],
+        );
+        let english_failure = Locale::English.format_template(
+            UiText::SaveFailedKeepSelection,
+            &[("error", "Access denied")],
+        );
+        let chinese_failure = Locale::SimplifiedChinese
+            .format_template(UiText::SaveFailedKeepSelection, &[("error", "拒绝访问")]);
+
+        assert!(capture_state_reports_selection_saved(
+            &english_saved,
+            Locale::English
+        ));
+        assert!(capture_state_reports_selection_saved(
+            &chinese_saved,
+            Locale::SimplifiedChinese,
+        ));
+        assert!(!capture_state_reports_selection_saved(
+            &english_failure,
+            Locale::English,
+        ));
+        assert!(capture_state_reports_save_failure(
+            &english_failure,
+            Locale::English,
+        ));
+        assert!(capture_state_reports_save_failure(
+            &chinese_failure,
+            Locale::SimplifiedChinese,
+        ));
+        assert!(!capture_state_reports_save_failure(
+            &english_saved,
+            Locale::English,
+        ));
+    }
+
+    #[test]
+    fn selection_copy_status_checks_accept_localized_completion_text() {
+        for locale in [Locale::English, Locale::SimplifiedChinese] {
+            let copied = locale.text(UiText::SelectionCopiedToClipboard);
+            assert!(capture_state_reports_selection_copied(&copied, locale));
+            assert!(!capture_state_reports_selection_copied(
+                "Copy failed",
+                locale
+            ));
+        }
+    }
+
+    #[test]
+    fn annotation_tool_status_checks_accept_localized_catalog_labels() {
+        for locale in [Locale::English, Locale::SimplifiedChinese] {
+            for (tool, label) in [
+                (AnnotationTool::Text, UiText::OverlayText),
+                (AnnotationTool::Watermark, UiText::OverlayWatermark),
+                (AnnotationTool::Arrow, UiText::OverlayArrow),
+            ] {
+                let status = locale.format_template(
+                    UiText::AnnotationToolSelected,
+                    &[("tool", locale.text(label))],
+                );
+                assert!(capture_state_reports_tool_selected(&status, locale, tool));
+            }
+        }
+    }
+
+    #[test]
+    fn annotation_text_prompts_accept_localized_tool_labels() {
+        for locale in [Locale::English, Locale::SimplifiedChinese] {
+            for tool in [AnnotationTool::Text, AnnotationTool::Watermark] {
+                let kind = locale.text(match tool {
+                    AnnotationTool::Text => UiText::OverlayText,
+                    AnnotationTool::Watermark => UiText::OverlayWatermark,
+                    _ => unreachable!("only text-producing tools are listed"),
+                });
+                let prompt =
+                    locale.format_template(UiText::AnnotationTextPrompt, &[("kind", kind)]);
+                assert!(capture_state_reports_annotation_text_prompt(
+                    &prompt, locale, tool
+                ));
+            }
+        }
+        assert!(!capture_state_reports_annotation_text_prompt(
+            "Editing text...",
+            Locale::SimplifiedChinese,
+            AnnotationTool::Text,
+        ));
+    }
     #[cfg(windows)]
     use std::{sync::Arc, time::Instant};
 
@@ -16946,13 +17151,19 @@ mod tests {
         copy_complete.status = "Selection copied to clipboard".to_owned();
         assert!(selection_copy_completed_in_editor(
             &copy_complete,
-            selection
+            selection,
+            Locale::English,
         ));
         copy_complete.selection_copy_active = true;
-        assert!(copy_trigger_acknowledged(&copy_complete, selection));
+        assert!(copy_trigger_acknowledged(
+            &copy_complete,
+            selection,
+            Locale::English,
+        ));
         assert!(!selection_copy_completed_in_editor(
             &copy_complete,
-            selection
+            selection,
+            Locale::English,
         ));
 
         let mut clipboard_pending = clean.clone();
@@ -16960,10 +17171,15 @@ mod tests {
         assert!(!scroll_roundtrip_cleanup_complete(&clipboard_pending));
         copy_complete.selection_copy_active = false;
         copy_complete.overlay_count = 0;
-        assert!(!copy_trigger_acknowledged(&copy_complete, selection));
+        assert!(!copy_trigger_acknowledged(
+            &copy_complete,
+            selection,
+            Locale::English,
+        ));
         assert!(!selection_copy_completed_in_editor(
             &copy_complete,
-            selection
+            selection,
+            Locale::English,
         ));
 
         let mut stale = clean.clone();
@@ -17023,7 +17239,7 @@ mod tests {
                 bottom: 549,
             }
         );
-        assert_eq!(point, PhysicalPoint { x: 1888, y: 396 });
+        assert_eq!(point, PhysicalPoint { x: 1906, y: 422 });
         assert!(bounds.contains(point));
 
         let annotation_point = scroll_shot_point_for_logical_selection(
@@ -17036,12 +17252,12 @@ mod tests {
             true,
         )
         .unwrap();
-        assert_eq!(annotation_point, PhysicalPoint { x: 1736, y: 684 });
+        assert_eq!(annotation_point, PhysicalPoint { x: 1775, y: 665 });
         assert!(bounds.contains(annotation_point));
-        assert_eq!(scroll_toolbar_dimensions(false), (260.0, 50.0, 42.0));
-        assert_eq!(scroll_toolbar_dimensions(true), (563.0, 50.0, 345.0));
-        assert_eq!(scroll_secondary_menu_width(), 352.0);
-        assert_eq!(scroll_secondary_menu_height(352.0), 176.0);
+        assert_eq!(scroll_toolbar_dimensions(false), (217.0, 42.0, 35.0));
+        assert_eq!(scroll_toolbar_dimensions(true), (480.0, 42.0, 298.0));
+        assert_eq!(scroll_secondary_menu_width(), 342.0);
+        assert_eq!(scroll_secondary_menu_height(342.0), 147.0);
     }
 
     #[test]
@@ -17420,43 +17636,48 @@ mod tests {
     }
 
     #[test]
-    fn narrow_edge_plan_matches_real_borderless_client_and_relocated_mark() {
+    fn narrow_edge_plan_uses_display_coordinates_with_borderless_client() {
         let client = PhysicalRect {
             left: 0,
             top: -4,
             right: 2560,
             bottom: 1436,
         };
-        let display = PhysicalRect {
-            left: 0,
-            top: 0,
-            right: 2560,
-            bottom: 1440,
-        };
         let plan = narrow_edge_interaction_plan(client, 1.0).unwrap();
 
         assert_eq!(plan.base.drag_start, PhysicalPoint { x: 2382, y: 1328 });
         assert_eq!(plan.base.drag_end, PhysicalPoint { x: 2542, y: 1424 });
-        assert_eq!(plan.base.mark, PhysicalPoint { x: 2047, y: 1291 });
-        assert_eq!(plan.base.more, PhysicalPoint { x: 2439, y: 1291 });
-        assert_eq!(plan.base.cancel, PhysicalPoint { x: 2481, y: 1291 });
-        assert_eq!(plan.expanded_mark, PhysicalPoint { x: 2299, y: 1241 });
         assert_eq!(plan.evidence_rest, PhysicalPoint { x: 24, y: 20 });
         assert_eq!(
-            map_screen_selection_to_capture(
-                PhysicalRect::new(plan.base.drag_start, plan.base.drag_end),
-                client,
-                display,
-            )
-            .unwrap(),
+            PhysicalRect::new(plan.base.drag_start, plan.base.drag_end),
             PhysicalRect {
                 left: 2382,
-                top: 1332,
+                top: 1328,
                 right: 2542,
-                bottom: 1428,
+                bottom: 1424,
             }
         );
         assert!(narrow_edge_interaction_plan(client, 1.5).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn result_action_points_follow_the_measured_toolbar_bounds() {
+        let toolbar = PhysicalRect {
+            left: 1607,
+            top: 1228,
+            right: 2542,
+            bottom: 1270,
+        };
+
+        assert_eq!(
+            toolbar_result_action_point_100_percent(toolbar, WorkspaceResultAction::More),
+            PhysicalPoint { x: 2443, y: 1249 }
+        );
+        assert_eq!(
+            toolbar_result_action_point_100_percent(toolbar, WorkspaceResultAction::Cancel),
+            PhysicalPoint { x: 2478, y: 1249 }
+        );
     }
 
     #[test]

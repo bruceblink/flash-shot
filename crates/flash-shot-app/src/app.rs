@@ -116,6 +116,8 @@ pub struct FlashShotApp {
     hover_pixel: Option<PhysicalPoint>,
     inspection_target: Option<InspectionTarget>,
     pending_click_target: Option<InspectionTarget>,
+    // Acceptance-only override keeps a one-pixel geometry probe independent of smart-target discovery.
+    selection_acceptance_disable_smart_target_once: bool,
     inspection_request: Option<PhysicalPoint>,
     inspection_in_flight: bool,
     manual_scroll: crate::scroll::ManualScrollCapture,
@@ -834,6 +836,7 @@ impl FlashShotApp {
             hover_pixel: None,
             inspection_target: None,
             pending_click_target: None,
+            selection_acceptance_disable_smart_target_once: false,
             inspection_request: None,
             inspection_in_flight: false,
             manual_scroll: crate::scroll::ManualScrollCapture::default(),
@@ -1161,6 +1164,7 @@ impl FlashShotApp {
                             this.inspection_request = None;
                             this.inspection_target = None;
                             this.pending_click_target = None;
+                            this.selection_acceptance_disable_smart_target_once = true;
                         }
                         crate::OverlayInteractionAcceptanceCommand::ShowRecordingSettings => {
                             this.select_settings_section(SettingsSection::Recording, cx);

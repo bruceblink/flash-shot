@@ -1,6 +1,6 @@
 # 主线开发计划
 
-更新日期：2026-10-04
+更新日期：2026-10-05
 当前版本：`0.1.3`
 目标版本：`0.2.0` Snow Apps 工作区重写与产品 UI 对齐
 
@@ -47,7 +47,7 @@
 Snow Shot 是体验基准，不是逐项照搬清单：每项差异都明确选择“采用、适配、舍弃”并写明理由；
 优先采用紧凑工具栏、清晰图标层级、上下文操作和稳定交互，合并重复设置，不移植 Qt/Tauri/Web 架构或无价值的重复控件。
 本次切片已将生产 GPUI/平台依赖切换到发布版 `gpui-kit 0.6.6`/`gpui-pre-platform 0.3.6`；
-完整组件覆盖和最终矩阵仍按 G2/W7.11 验收，不能由依赖切换单独宣称完成。
+完整组件覆盖和最终矩阵已由 G2/W7.11 的生产 Release 构建、84 例视觉矩阵与原生交互报告共同验收；高 DPI/多屏仍按 D1 暂缓。
 
 | 必须保留 | 允许调整 | 当前暂缓 |
 | --- | --- | --- |
@@ -56,7 +56,7 @@ Snow Shot 是体验基准，不是逐项照搬清单：每项差异都明确选�
 ## 1. 研究基线与范围
 
 Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-apps)的 `origin/main`
-（截至 2026-10-03 14:02 +08:00 提交 [`5aff3a15efaa27d4a67de6fac4ea6de484c95efb`](https://github.com/mg-chao/snow-apps/commit/5aff3a15efaa27d4a67de6fac4ea6de484c95efb)）
+（截至 2026-10-04 可核验提交 [`05f31acc7573a9873c0c63a7324958aaaf493b09`](https://github.com/mg-chao/snow-apps/commit/05f31acc7573a9873c0c63a7324958aaaf493b09)）。本机 `F:/project/snow-apps` checkout 落后于远端且当前网络无法读取 GitHub refs，因此以公开提交页和本次用户截图作为本轮参考；后续切片开始前重新核验 `origin/main`。
 及其工作区截图工具栏、样式行、工具组浮层、tooltip、键盘可达性和选区边缘呈现。每个开发切片开始前先记录实际参考提交，
 避免把旧 release 或本地落后 checkout 当成“最新”基准。只借鉴可观察的视觉层级、几何关系和交互规则，不复制其设置项数量、具体颜色、
 图标素材或 Qt/Tauri/Web 类层次。
@@ -86,8 +86,8 @@ Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-
 | --- | --- | --- | --- |
 | G0 | 整合并冻结本主线计划 | 本次完成 | 只有 `docs/plan.md` 维护路线；旧完成段落不再作为待办 |
 | G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | 隔离探针编译和组件测试通过；当时生产应用仍使用 Zed GPUI，生产迁移由 G2 单独验收 |
-| W7 | 截图 UI 与工具栏完整复刻验收 | 进行中（W7.1-W7.10 已交付，W7.11 待完成） | 在最新 Snow 基准下完成图标/布局差异复核和最终原生验收；高 DPI/多屏按 D1 暂缓 |
-| G2 | gpui-kit 生产接入评估与迁移 | 进行中（生产依赖迁移与工具栏切片已交付，完整组件/矩阵待 W7.11） | 生产截图工作区实际使用 gpui-kit 并通过最终 Release 验收；版本冲突或回滚条件未解决时保持未完成 |
+| W7 | 截图 UI 与工具栏完整复刻验收 | 已完成（单屏 100%、DPI 96；2026-10-05） | 最新可核验 Snow 基准下的视觉矩阵、工具栏交互、主动作、选区边界与资源清理通过；高 DPI/多屏按 D1 暂缓 |
+| G2 | gpui-kit 生产接入评估与迁移 | 已完成（生产 Release 与完整组件矩阵，2026-10-05） | 生产截图工作区使用 gpui-kit 并通过 Release 验收；本次无版本冲突或回滚阻碍 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 已完成（U5.4 综合设置页矩阵，2026-09-27；单屏 100%） | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠；高 DPI/多屏按 D1 暂缓 |
 | U1 | 动态文案国际化收尾 | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试 |
 | U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
@@ -98,10 +98,9 @@ Snow Shot 参考固定为[公开 GitHub 仓库](https://github.com/mg-chao/snow-
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-执行顺序调整为：**W7.10 截图工具栏密度收敛与 G2 gpui-kit 生产依赖迁移 → W7.11 截图工作区最终验收 → U1-U4 其余页面收尾 → 全产品复核与发布**。
-G0、G1、U5 和 W7.1-W7.10 均为已交付基线，不重复开发；M1、R1、P3 不阻塞 `0.2.0`，D1 在具备对应硬件后单独执行。
+后续执行顺序为：**U1-U4 其余页面收尾 → 全产品复核与发布**。G0、G1、G2、U5 和 W7.1-W7.11 均已交付，不重复开发；M1、R1、P3 不阻塞 `0.2.0`，D1 在具备对应硬件后单独执行。
 
-## 4. 未完成切片
+## 4. 开发切片与交付记录
 
 ### W7：截图 UI 与工具栏完整复刻验收
 
@@ -117,13 +116,12 @@ G0、G1、U5 和 W7.1-W7.10 均为已交付基线，不重复开发；M1、R1、
 - English/简体中文、浅色/深色，以及 420x420、520x640、980x760；
 - 顶部、底部、左右边缘、极小选区和主工具栏/样式栏/浮层的锚定、翻转、限界与清理。
 
-**剩余交付**：
+**本次验收范围**：
 
-1. `W7.10`：基于当前 Snow 基准和用户截图复核图标、密度、主次层级、样式栏和窄窗布局；只实现可观察且有验收价值的差异，并让生产依赖和验收 runner 读取同一组界面 token。
-2. `W7.11`：在最终生产栈上完成最终截图矩阵和 Capture → 标注 → Copy/Save/Pin/Cancel → 清理原生闭环；按最终报告更新状态。
+1. `W7.10`：基于当前 Snow 基准和用户截图复核图标、密度、主次层级、样式栏和窄窗布局；让生产依赖和验收 runner 读取同一组界面 token。
+2. `W7.11`：在最终生产栈上完成截图矩阵和 Capture → 标注 → Copy/Save/Pin/Cancel → 清理原生闭环；以最终报告确认当前单屏范围。
 
-`W7.1-W7.10` 已完成图标/动作目录、单行工具栏、工具组、主动作 Release 输入、工具栏真实拖动闭环和本次紧凑密度切片。它们是已交付基线，不代表最终完整矩阵已经完成。
-每个剩余切片只增加直接证明视觉或交互差异所需的测试；布局、主题或本地化共用代码变更时才重跑完整矩阵，最终 `W7.11` 必须运行完整矩阵。
+`W7.1-W7.11` 已完成图标/动作目录、单行工具栏、上下文样式栏、工具组、主动作 Release 输入、边缘避让、紧凑密度和最终矩阵。除 D1 外不留待办；后续若改动布局、主题或本地化共用代码，需重跑对应矩阵。
 
 **W7.1 当前结果（2026-09-27）**：现有 GPUI 工作区控件继续作为生产实现，`WorkspaceIcon` 已冻结 13 个图标的稳定语义 ID 和审查顺序，
 覆盖 Move、Text、Shape、Line、Highlight、Obscure、Undo、Redo、Pin、Copy、Save、More、Cancel；确定性测试确认目录完整且没有重复 ID。
@@ -196,8 +194,8 @@ Save 与 Pin 均 `exact_match=true`，Copy 的隔离观察器结果与源帧逐�
 
 **W7.10 / G2 当前结果（2026-10-04）**：生产 workspace 的 `gpui` 与 `gpui_platform` 已分别解析到发布版
 `gpui-kit 0.6.6` 与 `gpui-pre-platform 0.3.6`，不再从 Zed git revision 获取 GPUI 实现；截图工具栏和验收 runner
-统一读取 `ThemeMetrics` 的 Snow 紧凑 token：32px 控件、28px 样式行、12px 水平内边距、4px 垂直内边距、8px 动作间距、
-24px 图标画布和 16px 分隔线。工具栏布局、次级菜单宽高和原生输入坐标已同步更新，未改变 Capture/Copy/Save/Pin/Cancel
+统一读取 `ThemeMetrics` 的 Snow 紧凑 token：32px 控件、28px 样式行、12px 水平内边距、4px 垂直内边距、3px 主动作间距、
+8px 标注工具间距、24px 图标画布和 16px 分隔线。工具栏布局、次级菜单宽高和原生输入坐标已同步更新，未改变 Capture/Copy/Save/Pin/Cancel
 处理器、快捷键、报告字段或清理语义。
 
 本次切片验证通过 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、
@@ -209,7 +207,15 @@ Escape 清理；报告 `target/overlay-interaction-acceptance-w7-toolbar-drag-20
 为 schema 32、`status=passed`，截图为 `01-toolbar-drag-selected.png`、`02-toolbar-drag-moved.png`、
 `03-toolbar-drag-tool-selected.png` 和 `05-toolbar-drag-new-selection.png`。Computer Use 当前没有可操作的 Flash Shot
 原生窗口，因此证据来自 Release runner，不宣称为 Computer Use；双主题/双语/三尺寸完整矩阵和 Capture → Copy/Save/Pin/Cancel
-最终闭环仍由 W7.11 完成。
+最终闭环由下方 W7.11 记录完成。
+
+**W7.11 当前结果（2026-10-05）**：以当前可核验 Snow commit 和用户给出的 Snow Shot 对照截图完成最终单屏验收。Release 视觉矩阵覆盖 English/简体中文、浅色/深色、420x420/520x640/980x760 与 7 类工作区 surface，`case_count=84`、`passed_count=84`、`failed_count=0`；代表性 More、简体中文样式栏、右下角避让与完整工具栏截图已目视复核，所有样本为 DPI 96、scale 1.0。报告位于 `target/ui-acceptance/w7-workspace-matrix-20261004-safe-menu-final/matrix-report.json`。
+
+最终代码门禁通过：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo test --workspace --all-features --locked --offline`、`cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --all-features --locked --offline`，以及 `cargo build --locked --target-dir target/dev-tools --release --features dev-tools -p flash-shot --offline`。
+
+当前源码 Windows Release 原生输入报告覆盖 English/深色与简体中文/浅色标准流程、11 种标注工具、Text/Watermark/Line/Arrow 注释回归、工具组键鼠选择、Save 失败后重试、工具栏拖动与重新锚定、窄边缘 More/Cancel 命中，以及选区边界矩阵。边界矩阵 8/8 通过：拒绝零宽/零高，1x1、全屏、顶部/底部/左侧/右侧选区的隔离 Copy 均与提交选区逐像素一致；左侧边缘 Copy 使用测量到的实际工具栏边界定位。每例结束后 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、可见进程窗口为 0、后台任务空闲、输入释放；隔离观察器保持系统剪贴板序号不变。报告与截图路径在 [Windows 手工验收记录](windows-manual-acceptance.md) 的 W7.11 行。
+
+Computer Use 本轮仍未提供原生窗口枚举或启动接口，因此未声称完成 Computer Use；视觉与键鼠证据均来自当前源码 Release runner。验收环境为单显示器 2560x1440、DPI 96、scale 1.0；150%/200% 与多显示器继续按 D1 暂缓。
 
 **不做**：不新增标注能力，不改变选区像素、标注文档坐标、导出合成、快捷键、报告 schema 或失败恢复；不移植 Snow Shot 设置页和 Qt/Tauri/Web 架构。
 
@@ -219,13 +225,13 @@ Escape 清理；报告 `target/overlay-interaction-acceptance-w7-toolbar-drag-20
 - Windows Release runner 生成同一 session 的截图、结构化 JSON、像素产物和清理结果；
 - Copy/Save/Pin 的结果与源帧、Cancel 的恢复、真实系统剪贴板（若使用）和最终窗口/任务/输入/临时文件清零分别可核验；
 - 优先使用 Computer Use 完整验证真实窗口；若当前环境无法获得可操作窗口，只能使用 Release runner 证据，并在报告中写明未覆盖的真实窗口行为；
-- 所有矩阵通过后才将 W7 标记完成；静态截图或单一成功路径不能替代完整交互验收。
+- 本次单屏矩阵、主动作、标注和边界闭环均已通过，W7 标记完成；静态截图或单一成功路径不能替代此验收范围。
 
 ### G2：gpui-kit 生产接入评估与迁移
 
 G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，不能把探针结果当作生产接入。
 本次 W7.10/G2 已把生产 `gpui` 与 `gpui_platform` 切到发布版包，并在真实截图工作区拖动路径中验证；
-完整组件覆盖、最终矩阵和回滚复核仍由 G2/W7.11 收口，不同时进行全产品视觉重做和运行时升级。
+完整组件覆盖、最终矩阵和回滚复核已由 W7.11 的 Release 构建、84 例视觉矩阵、工具栏输入与主动作报告收口；本次不扩展为全产品视觉重做或运行时升级。
 
 **退出条件**：
 
@@ -318,7 +324,7 @@ cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --al
 不可用时明确标记 Release runner 的证据范围。集成测试只使用本机 Docker；本机 Docker 不可用时标记未完成，不以 mock 或静态 fixture 代替。
 
 验证失败、证据不足或只完成子集时保持“部分完成/待执行”，不得提交为完成状态。每个独立可验收功能只使用一次独立 Conventional Commit，
-验证通过后立即推送当前 `main`；本次计划整理只修改本文件，不混入代码功能提交。
+验证通过后立即推送当前 `main`；本次 W7.11 代码、主计划状态与 Windows 验收证据作为同一完整切片提交。
 
 ## 6. `v0.2.0` 退出条件
 

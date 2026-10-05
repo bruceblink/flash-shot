@@ -1798,11 +1798,9 @@ impl Render for CaptureOverlay {
             app.annotation_tool_group_owner.as_deref() == Some(self.display.id.as_str())
         });
         let show_annotation_tool_group_dismiss = app.annotation_tool_group.is_some();
-        // Keep the resting workspace as one compact icon row like Snow Shot. Renderer-backed
-        // style values remain available from More, so the primary screenshot surface stays
-        // focused on capture actions instead of opening a second permanent control row.
-        let show_annotation_style =
-            show_more_actions && show_annotation_controls && style_capabilities.has_controls();
+        // Show only renderer-backed controls for the active tool. This keeps the style row
+        // contextual while matching Snow Shot's selected-tool workspace without opening More.
+        let show_annotation_style = show_annotation_controls && style_capabilities.has_controls();
         let visible_style_capabilities = if show_annotation_style {
             style_capabilities
         } else {
@@ -1832,6 +1830,9 @@ impl Render for CaptureOverlay {
         }
         if let Some(position) = self.manual_toolbar_position {
             apply_manual_toolbar_position(&mut layout_snapshot, position, viewport);
+        }
+        if show_more_actions && self.manual_toolbar_position.is_none() {
+            position_workspace_for_more_menu(&mut layout_snapshot, selection, viewport);
         }
         self.last_workspace_snapshot = Some(layout_snapshot);
         let action_layout = layout_snapshot.action_toolbar;
@@ -3175,14 +3176,9 @@ impl Render for CaptureOverlay {
                                         .occlude()
                                         .absolute()
                                         .when_some(secondary_menu, |menu, layout| {
-                                            menu.w(px(layout.width)).left(px(layout.left))
-                                        })
-                                        .when_some(secondary_menu, |menu, layout| {
-                                            if layout.opens_above {
-                                                menu.bottom(px(secondary_action_menu_offset()))
-                                            } else {
-                                                menu.top(px(secondary_action_menu_offset()))
-                                            }
+                                            menu.w(px(layout.width))
+                                                .left(px(layout.left))
+                                                .top(px(layout.top_offset))
                                         })
                                         .p(px(OVERLAY_ACTION_BAR_PADDING))
                                         .flex()
@@ -4557,6 +4553,7 @@ struct SecondaryMenuLayout {
     left: f32,
     width: f32,
     height: f32,
+    top_offset: f32,
     opens_above: bool,
 }
 
@@ -5389,6 +5386,57 @@ fn apply_manual_toolbar_position(
     }
 }
 
+/// Repositions the automatic workspace rail when neither side can fit the complete More panel.
+///
+/// A wrapped toolbar is taller than the one-row token spacing. Move the attached surfaces as one
+/// unit to the safe edge so More can use the roomier side without covering the main action row.
+fn position_workspace_for_more_menu(
+    snapshot: &mut WorkspaceLayoutSnapshot,
+    selection: Option<PhysicalRect>,
+    viewport: Bounds<Pixels>,
+) {
+    let (Some(toolbar), Some(menu), Some(selection)) =
+        (snapshot.action_toolbar, snapshot.secondary_menu, selection)
+    else {
+        return;
+    };
+    let safe_top = snapshot.safe_area.top;
+    let safe_bottom = snapshot.safe_area.bottom;
+    let menu_gap = secondary_action_menu_gap();
+    let available_above = (toolbar.top - menu_gap - safe_top).max(0.0);
+    let available_below = (safe_bottom - toolbar.top - toolbar.height - menu_gap).max(0.0);
+    if available_above >= menu.height || available_below >= menu.height {
+        return;
+    }
+
+    let stack_height = toolbar.height + menu_gap + menu.height;
+    if stack_height > safe_bottom - safe_top {
+        return;
+    }
+    let opens_above = available_above > available_below;
+    let toolbar_top = if opens_above {
+        safe_top + menu.height + menu_gap
+    } else {
+        safe_bottom - stack_height
+    };
+    apply_manual_toolbar_position(
+        snapshot,
+        ManualToolbarPosition {
+            selection,
+            left: toolbar.left,
+            top: toolbar_top,
+        },
+        viewport,
+    );
+    if let (Some(toolbar), Some(mut menu)) = (snapshot.action_toolbar, snapshot.secondary_menu) {
+        menu.left = secondary_action_menu_left(toolbar, menu.width, viewport);
+        menu.opens_above = opens_above;
+        menu.top_offset =
+            secondary_action_menu_top_offset(toolbar, viewport, menu.height, opens_above);
+        snapshot.secondary_menu = Some(menu);
+    }
+}
+
 /// Computes every workspace surface from one selection/display snapshot.
 ///
 /// The renderer and interaction tests consume this result instead of independently deciding
@@ -5475,24 +5523,13 @@ fn workspace_layout_snapshot(input: WorkspaceLayoutInput) -> WorkspaceLayoutSnap
             has_recognition_retry,
             recognition_in_flight,
         );
-        let opens_above = if let Some(marking) = annotation_layout {
-            let menu_offset = secondary_action_menu_offset();
-            let above = layout.top - menu_offset - height;
-            let below = layout.top + layout.height + menu_offset + height;
-            if marking.actions_above_tools && above >= safe_area.top {
-                true
-            } else if !marking.actions_above_tools && below <= safe_area.bottom {
-                false
-            } else {
-                secondary_menu_opens_above(layout, viewport, height)
-            }
-        } else {
-            secondary_menu_opens_above(layout, viewport, height)
-        };
+        let opens_above = secondary_menu_opens_above(layout, viewport, height);
+        let top_offset = secondary_action_menu_top_offset(layout, viewport, height, opens_above);
         SecondaryMenuLayout {
             left: secondary_action_menu_left(layout, width, viewport),
             width,
             height,
+            top_offset,
             opens_above,
         }
     });
@@ -5562,23 +5599,45 @@ fn annotation_controls_visible(
         && selection.is_some_and(|selection| owns_selection_toolbar(selection, display_bounds))
 }
 
-/// Chooses the side with room for the detached secondary menu without moving the main toolbar.
+/// Chooses the side with the most room for the detached More panel.
 fn secondary_menu_opens_above(
     toolbar: ActionToolbarLayout,
     viewport: Bounds<Pixels>,
     menu_height: f32,
 ) -> bool {
     let viewport = view_rect(viewport);
-    let menu_offset = secondary_action_menu_offset();
-    let top = toolbar.top - menu_offset - menu_height;
-    let bottom = toolbar.top + toolbar.height + menu_offset + menu_height;
-    top >= viewport.top + OVERLAY_EDGE_INSET
-        || bottom > viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET
+    let menu_gap = secondary_action_menu_gap();
+    let safe_top = viewport.top + OVERLAY_EDGE_INSET;
+    let safe_bottom = viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET;
+    let available_above = (toolbar.top - menu_gap - safe_top).max(0.0);
+    let available_below = (safe_bottom - toolbar.top - toolbar.height - menu_gap).max(0.0);
+    available_above >= menu_height
+        || (available_below < menu_height && available_above > available_below)
 }
 
-/// Keeps the detached More panel clear of the main toolbar's padded border.
-fn secondary_action_menu_offset() -> f32 {
-    OVERLAY_ACTION_ITEM_HEIGHT + OVERLAY_ACTION_BAR_PADDING * 2.0 + OVERLAY_SECONDARY_MENU_GAP
+/// Clamps More to the safe viewport when neither side has enough space for its full height.
+fn secondary_action_menu_top_offset(
+    toolbar: ActionToolbarLayout,
+    viewport: Bounds<Pixels>,
+    menu_height: f32,
+    opens_above: bool,
+) -> f32 {
+    let viewport = view_rect(viewport);
+    let menu_gap = secondary_action_menu_gap();
+    let safe_top = viewport.top + OVERLAY_EDGE_INSET;
+    let safe_bottom = viewport.bottom() - OVERLAY_BOTTOM_SAFE_INSET;
+    let preferred_top = if opens_above {
+        toolbar.top - menu_gap - menu_height
+    } else {
+        toolbar.top + toolbar.height + menu_gap
+    };
+    let max_top = (safe_bottom - menu_height).max(safe_top);
+    preferred_top.clamp(safe_top, max_top) - toolbar.top
+}
+
+/// Keeps the detached More panel clear of the main toolbar, including wrapped toolbar rows.
+fn secondary_action_menu_gap() -> f32 {
+    OVERLAY_SECONDARY_MENU_GAP
 }
 
 /// Lifts status feedback above the fallback action bar so narrow overlays stay readable.
@@ -5874,9 +5933,8 @@ mod tests {
         ANNOTATION_TOOL_GROUP_POPUP_PADDING, ANNOTATION_TOOL_ROW_HEIGHT, ANNOTATION_WIDTHS,
         ActionToolbarLayout, AnnotationStyleCapabilities, AnnotationToolGroup,
         AnnotationToolbarLayout, FrameInputBatch, MAGNIFIER_CELL_SIZE, MAGNIFIER_RADIUS,
-        ManualToolbarPosition, OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_BAR_PADDING,
-        OVERLAY_ACTION_ITEM_HEIGHT, OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET,
-        OVERLAY_RECOGNITION_PREVIEW_LIMIT, OVERLAY_SECONDARY_MENU_GAP,
+        ManualToolbarPosition, OVERLAY_ACTION_BAR_GAP, OVERLAY_ACTION_ITEM_HEIGHT,
+        OVERLAY_BOTTOM_SAFE_INSET, OVERLAY_EDGE_INSET, OVERLAY_RECOGNITION_PREVIEW_LIMIT,
         OVERLAY_STATUS_ESTIMATED_HEIGHT, SecondaryAction, SecondaryActionFocusDirection,
         SelectionCursor, SelectionDimensionLayout, SmartTargetHudLayout, ToolbarDragGesture,
         WorkspaceLayoutInput, WorkspaceResultAction, WorkspaceSelectionAnchor,
@@ -5895,9 +5953,10 @@ mod tests {
         capture_double_click, close_more_actions_shortcut, intersect, is_text_annotation,
         magnifier_origin, more_actions_button_label, more_actions_shortcut, outline_shape_bounds,
         overlay_ui_acceptance_frame, overlay_ui_acceptance_selection, overlay_ui_acceptance_target,
-        owns_selection_toolbar, primary_action_tooltip, recognition_result_preview,
-        recognition_retry_label, resize_handle_points, secondary_action_focus_direction,
-        secondary_action_focus_target, secondary_action_menu_height, secondary_action_menu_left,
+        owns_selection_toolbar, position_workspace_for_more_menu, primary_action_tooltip,
+        recognition_result_preview, recognition_retry_label, resize_handle_points,
+        secondary_action_focus_direction, secondary_action_focus_target, secondary_action_menu_gap,
+        secondary_action_menu_height, secondary_action_menu_left, secondary_action_menu_top_offset,
         secondary_action_menu_width, secondary_action_tooltip, secondary_action_widths,
         secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
         selection_point_from_view_or_screen, should_stop_overlay_action_key_propagation,
@@ -7035,20 +7094,25 @@ mod tests {
                 bottom_right: ViewPoint { x: 402.0, y: 408.0 },
             })
         );
+        let toolbar = snapshot
+            .action_toolbar
+            .expect("selection should own actions");
         assert_eq!(
-            snapshot.action_toolbar,
-            Some(ActionToolbarLayout {
-                left: 118.0,
+            toolbar,
+            ActionToolbarLayout {
+                left: 148.0,
                 top: 258.0,
-                width: 284.0,
+                width: 254.0,
                 height: 42.0,
-            })
+            }
         );
         let menu = snapshot.secondary_menu.expect("selection should own More");
-        assert_eq!(menu.width, 368.0);
-        assert_eq!(menu.height, 162.0);
-        assert!(menu.opens_above);
-        assert_eq!(menu.left, -84.0);
+        assert_eq!(menu.width, 358.0);
+        assert_eq!(menu.height, 147.0);
+        assert_eq!(menu.left, -104.0);
+        let menu_top = toolbar.top + menu.top_offset;
+        assert!(menu_top >= snapshot.safe_area.top);
+        assert!(menu_top + menu.height <= snapshot.safe_area.bottom);
         assert_eq!(
             snapshot.dimension,
             Some(SelectionDimensionLayout {
@@ -7056,6 +7120,119 @@ mod tests {
                 top: 224.0,
             })
         );
+    }
+
+    #[test]
+    fn workspace_snapshot_keeps_centered_more_panel_inside_a_minimum_viewport() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(420.0), px(420.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 420,
+            bottom: 420,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+        let selection = overlay_ui_acceptance_selection(
+            bounds,
+            crate::OverlayUiAcceptanceSelectionPlacement::Centered,
+        );
+        let snapshot = workspace_layout_snapshot(WorkspaceLayoutInput {
+            selection: Some(selection),
+            display_bounds: bounds,
+            transform,
+            viewport,
+            hover_pixel: None,
+            inspection_target: None,
+            show_annotation_controls: true,
+            annotation_toolbar_items: annotation_toolbar_items(false, false, false, false, false),
+            annotation_style_capabilities: AnnotationStyleCapabilities::EMPTY,
+            annotation_tool_group: None,
+            annotation_tool_width: ANNOTATION_TOOL_ESTIMATED_WIDTH,
+            has_recognition_result: false,
+            has_recognition_retry: false,
+            recognition_in_flight: false,
+        });
+        let toolbar = snapshot
+            .action_toolbar
+            .expect("selection should own actions");
+        let menu = snapshot.secondary_menu.expect("selection should own More");
+        let menu_top = toolbar.top + menu.top_offset;
+        let toolbar_bottom = toolbar.top + toolbar.height;
+        let menu_is_above = menu_top + menu.height <= toolbar.top - secondary_action_menu_gap();
+        let menu_is_below = menu_top >= toolbar_bottom + secondary_action_menu_gap();
+
+        assert!(menu_top >= snapshot.safe_area.top);
+        assert!(menu_top + menu.height <= snapshot.safe_area.bottom);
+        assert!(menu_is_above || menu_is_below);
+        assert!(toolbar.left + menu.left >= snapshot.safe_area.left);
+        assert!(toolbar.left + menu.left + menu.width <= snapshot.safe_area.right);
+    }
+
+    #[test]
+    fn secondary_menu_uses_the_roomier_side_when_neither_side_fits() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(420.0), px(420.0)));
+        let toolbar = ActionToolbarLayout {
+            left: 40.0,
+            top: 115.0,
+            width: 200.0,
+            height: 42.0,
+        };
+        let menu_height = 162.0;
+
+        assert!(!secondary_menu_opens_above(toolbar, viewport, menu_height));
+        let top_offset = secondary_action_menu_top_offset(toolbar, viewport, menu_height, false);
+        let menu_top = toolbar.top + top_offset;
+        let safe_bottom = 420.0 - OVERLAY_BOTTOM_SAFE_INSET;
+        assert!(menu_top >= OVERLAY_EDGE_INSET);
+        assert!(menu_top >= toolbar.top + toolbar.height);
+        assert!(menu_top + menu_height <= safe_bottom);
+    }
+
+    #[test]
+    fn expanded_more_repositions_wrapped_toolbar_without_covering_its_actions() {
+        let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(420.0), px(420.0)));
+        let bounds = PhysicalRect {
+            left: 0,
+            top: 0,
+            right: 420,
+            bottom: 420,
+        };
+        let transform = PreviewTransform::contain(bounds, super::view_rect(viewport));
+        let selection = overlay_ui_acceptance_selection(
+            bounds,
+            crate::OverlayUiAcceptanceSelectionPlacement::BottomRight,
+        );
+        let mut input = workspace_layout_input(selection, bounds, transform, viewport);
+        input.show_annotation_controls = true;
+        input.annotation_style_capabilities =
+            annotation_style_capabilities_for_tool(AnnotationTool::Rectangle);
+        let mut snapshot = workspace_layout_snapshot(input);
+        let initial_toolbar = snapshot
+            .action_toolbar
+            .expect("bottom-right selection should own actions");
+        assert!(snapshot.secondary_menu.is_some());
+        assert!(initial_toolbar.height > OVERLAY_ACTION_ITEM_HEIGHT);
+
+        position_workspace_for_more_menu(&mut snapshot, Some(selection), viewport);
+
+        let toolbar = snapshot
+            .action_toolbar
+            .expect("repositioned workspace should retain its actions");
+        let menu = snapshot
+            .secondary_menu
+            .expect("repositioned workspace should retain More");
+        let menu_top = toolbar.top + menu.top_offset;
+        let toolbar_bottom = toolbar.top + toolbar.height;
+        assert_ne!(toolbar.top, initial_toolbar.top);
+        assert!(toolbar.top >= snapshot.safe_area.top);
+        assert!(toolbar_bottom <= snapshot.safe_area.bottom);
+        assert!(menu_top >= snapshot.safe_area.top);
+        assert!(menu_top + menu.height <= snapshot.safe_area.bottom);
+        if menu.opens_above {
+            assert!(menu_top + menu.height <= toolbar.top - secondary_action_menu_gap());
+        } else {
+            assert!(menu_top >= toolbar_bottom + secondary_action_menu_gap());
+        }
     }
 
     #[test]
@@ -7259,9 +7436,9 @@ mod tests {
         assert_eq!(
             action_toolbar_layout(workspace_anchor(selection, transform), viewport, false),
             Some(ActionToolbarLayout {
-                left: 658.0,
+                left: 728.0,
                 top: 526.0,
-                width: 542.0,
+                width: 472.0,
                 height: 42.0,
             })
         );
@@ -7435,9 +7612,9 @@ mod tests {
         assert_eq!(
             toolbar,
             ActionToolbarLayout {
-                left: 118.0,
+                left: 148.0,
                 top: 258.0,
-                width: 284.0,
+                width: 254.0,
                 height: 42.0,
             }
         );
@@ -7445,15 +7622,11 @@ mod tests {
 
         let menu_width =
             secondary_action_menu_width(super::view_rect(viewport).width, false, false);
-        assert_eq!(menu_width, 368.0);
+        assert_eq!(menu_width, 358.0);
         let menu_height = secondary_action_menu_height(menu_width, false, false, false);
-        assert_eq!(menu_height, 162.0);
+        assert_eq!(menu_height, 147.0);
         assert!(secondary_menu_opens_above(toolbar, viewport, menu_height));
-        let menu_top = toolbar.top
-            - (OVERLAY_ACTION_ITEM_HEIGHT
-                + OVERLAY_ACTION_BAR_PADDING * 2.0
-                + OVERLAY_SECONDARY_MENU_GAP)
-            - menu_height;
+        let menu_top = toolbar.top - secondary_action_menu_gap() - menu_height;
         assert!(menu_top >= OVERLAY_EDGE_INSET);
 
         assert_eq!(
@@ -7498,9 +7671,9 @@ mod tests {
         assert_eq!(
             primary,
             ActionToolbarLayout {
-                left: 1462.0,
+                left: 1607.0,
                 top: 1278.0,
-                width: 1080.0,
+                width: 935.0,
                 height: 42.0,
             }
         );
@@ -7514,11 +7687,11 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(marking.left, 1462.0);
+        assert_eq!(marking.left, 1607.0);
         assert_eq!(marking.top, 1278.0);
-        assert_eq!(marking.width, 1080.0);
+        assert_eq!(marking.width, 935.0);
         assert_eq!(marking.height, 42.0);
-        assert_eq!(marking.tools_width, 1080.0);
+        assert_eq!(marking.tools_width, 935.0);
         assert_eq!(marking.tools_top, 1278.0);
         assert_eq!(marking.style_left, marking.left);
         assert_eq!(marking.style_top, 1320.0);
@@ -7842,15 +8015,15 @@ mod tests {
             bottom: 600,
         };
 
-        assert_eq!(action_toolbar_height(324.0, false), 122.0);
-        assert_eq!(action_toolbar_height(288.0, false), 122.0);
-        assert_eq!(action_toolbar_natural_width(false), 542.0);
-        assert_eq!(action_toolbar_natural_width(true), 1080.0);
-        assert_eq!(action_toolbar_height(358.0, true), 162.0);
-        assert_eq!(action_toolbar_height(559.0, true), 82.0);
-        assert_eq!(action_toolbar_height(587.0, true), 82.0);
-        assert_eq!(action_toolbar_height(846.0, true), 82.0);
-        assert_eq!(secondary_action_menu_width(420.0, false, false), 368.0);
+        assert_eq!(action_toolbar_height(324.0, false), 77.0);
+        assert_eq!(action_toolbar_height(288.0, false), 112.0);
+        assert_eq!(action_toolbar_natural_width(false), 472.0);
+        assert_eq!(action_toolbar_natural_width(true), 935.0);
+        assert_eq!(action_toolbar_height(358.0, true), 147.0);
+        assert_eq!(action_toolbar_height(559.0, true), 77.0);
+        assert_eq!(action_toolbar_height(587.0, true), 77.0);
+        assert_eq!(action_toolbar_height(846.0, true), 77.0);
+        assert_eq!(secondary_action_menu_width(420.0, false, false), 358.0);
         assert_eq!(
             action_toolbar_row_count(368.0, secondary_action_widths(false, false)),
             4
@@ -7864,24 +8037,27 @@ mod tests {
                 secondary_action_menu_width(360.0, false, false),
                 viewport,
             ),
-            -38.0
+            -68.0
         );
-        assert_eq!(layout.left, 56.0);
+        assert_eq!(layout.left, 86.0);
         assert!((layout.top - 346.0).abs() < 0.01);
-        assert_eq!(layout.width, 284.0);
+        assert_eq!(layout.width, 254.0);
         assert_eq!(layout.height, 42.0);
         assert_eq!(
             secondary_action_menu_height(324.0, false, false, false),
-            202.0
+            182.0
         );
         assert_eq!(
             secondary_action_menu_height(324.0, true, false, false),
-            314.0
+            284.0
         );
-        assert!(secondary_action_menu_height(324.0, false, true, false) >= 196.0);
+        assert_eq!(
+            secondary_action_menu_height(324.0, false, true, false),
+            182.0
+        );
         assert_eq!(
             secondary_action_menu_height(324.0, false, false, true),
-            240.0
+            215.0
         );
         assert_eq!(
             secondary_action_widths(true, true),
