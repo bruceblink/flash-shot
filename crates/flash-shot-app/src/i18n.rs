@@ -3195,6 +3195,189 @@ mod tests {
     }
 
     #[test]
+    fn library_templates_localize_dynamic_counts_filters_and_time() {
+        type TemplateCase<'a> = (
+            UiText,
+            &'a [(&'a str, &'a str)],
+            &'a [(&'a str, &'a str)],
+            &'a str,
+            &'a str,
+        );
+
+        let cases: &[TemplateCase<'_>] = &[
+            (
+                UiText::LibraryFileNamePattern,
+                &[("prefix", "Capture")],
+                &[("prefix", "截图")],
+                "Capture+time+UUIDv7",
+                "截图+time+UUIDv7",
+            ),
+            (
+                UiText::LibrarySaveAs,
+                &[("format", "JPEG")],
+                &[("format", "JPEG")],
+                "Save as JPEG",
+                "另存为 JPEG",
+            ),
+            (
+                UiText::LibraryKeepCaptures,
+                &[("count", "30")],
+                &[("count", "30")],
+                "Keep 30 captures",
+                "保留 30 张截图",
+            ),
+            (
+                UiText::LibraryUpdatingCaptures,
+                &[("count", "30")],
+                &[("count", "30")],
+                "Updating to 30 captures...",
+                "正在更新为保留 30 张截图...",
+            ),
+            (
+                UiText::LibrarySelectedCount,
+                &[("count", "4")],
+                &[("count", "4")],
+                "4 selected",
+                "已选择 4 项",
+            ),
+            (
+                UiText::LibraryShowMore,
+                &[("count", "8")],
+                &[("count", "8")],
+                "Show 8 more",
+                "再显示 8 项",
+            ),
+            (
+                UiText::LibraryDeleteFiltered,
+                &[("count", "5")],
+                &[("count", "5")],
+                "Delete 5 filtered",
+                "删除 5 项筛选结果",
+            ),
+            (
+                UiText::LibraryNoMatches,
+                &[("query", "diagram")],
+                &[("query", "流程图")],
+                "No captures match \"diagram\".",
+                "没有与“流程图”匹配的截图。",
+            ),
+            (
+                UiText::LibraryNoFiltered,
+                &[("filter", "selections")],
+                &[("filter", "选区截图")],
+                "No selections captures yet.",
+                "暂时没有选区截图。",
+            ),
+            (
+                UiText::LibraryClearAllConfirmation,
+                &[("count", "10")],
+                &[("count", "10")],
+                "Delete all 10 saved captures?",
+                "删除全部 10 张已保存截图？",
+            ),
+            (
+                UiText::LibraryClearFilteredConfirmation,
+                &[("count", "3")],
+                &[("count", "3")],
+                "Delete 3 filtered saved captures?",
+                "删除 3 张筛选出的已保存截图？",
+            ),
+            (
+                UiText::LibraryClearSelectedConfirmation,
+                &[("count", "2")],
+                &[("count", "2")],
+                "Delete 2 selected saved captures?",
+                "删除 2 张已选择的已保存截图？",
+            ),
+            (
+                UiText::LibraryShowingAll,
+                &[("count", "24")],
+                &[("count", "24")],
+                "Showing all 24 captures",
+                "正在显示全部 24 张截图",
+            ),
+            (
+                UiText::LibraryShowingPreview,
+                &[("shown", "5"), ("count", "24")],
+                &[("shown", "5"), ("count", "24")],
+                "Showing 5 of 24 captures",
+                "正在显示 24 张截图中的 5 张",
+            ),
+            (
+                UiText::LibraryMatches,
+                &[("count", "2"), ("query", "diagram")],
+                &[("count", "2"), ("query", "流程图")],
+                "2 match(es) for \"diagram\"",
+                "“流程图”匹配到 2 项",
+            ),
+            (
+                UiText::LibraryCaptureCount,
+                &[("count", "2")],
+                &[("count", "2")],
+                "2 capture(s)",
+                "2 张截图",
+            ),
+            (
+                UiText::LibraryFilteredCaptureCount,
+                &[("count", "2"), ("filter", "selection")],
+                &[("count", "2"), ("filter", "选区")],
+                "2 selection capture(s)",
+                "选区 2 张",
+            ),
+            (
+                UiText::LibraryEntryLabel,
+                &[
+                    ("name", "capture.png"),
+                    ("source", "Selection"),
+                    ("time", "2m ago"),
+                ],
+                &[
+                    ("name", "capture.png"),
+                    ("source", "选区截图"),
+                    ("time", "2 分钟前"),
+                ],
+                "capture.png - Selection - 2m ago",
+                "capture.png - 选区截图 - 2 分钟前",
+            ),
+            (
+                UiText::LibraryMinutesAgo,
+                &[("count", "2")],
+                &[("count", "2")],
+                "2m ago",
+                "2 分钟前",
+            ),
+            (
+                UiText::LibraryHoursAgo,
+                &[("count", "3")],
+                &[("count", "3")],
+                "3h ago",
+                "3 小时前",
+            ),
+            (
+                UiText::LibraryDaysAgo,
+                &[("count", "4")],
+                &[("count", "4")],
+                "4d ago",
+                "4 天前",
+            ),
+        ];
+
+        for (key, english_replacements, chinese_replacements, english, simplified_chinese) in cases
+        {
+            assert_eq!(
+                Locale::English.format_template(*key, english_replacements),
+                *english,
+                "English template {key:?}"
+            );
+            assert_eq!(
+                Locale::SimplifiedChinese.format_template(*key, chinese_replacements),
+                *simplified_chinese,
+                "Simplified Chinese template {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn recording_status_templates_keep_targets_progress_paths_and_failures_localized() {
         type TemplateCase<'a> = (
             UiText,
