@@ -2948,31 +2948,252 @@ mod tests {
 
     #[test]
     fn recording_status_templates_keep_targets_progress_paths_and_failures_localized() {
-        assert_eq!(
-            Locale::English.format_template(
-                UiText::RecordingProgress,
-                &[("target", "display"), ("seconds", "12"), ("frames", "240")],
-            ),
-            "Recording display: 12s, 240 frames"
+        type TemplateCase<'a> = (
+            UiText,
+            &'a [(&'a str, &'a str)],
+            &'a [(&'a str, &'a str)],
+            &'a str,
+            &'a str,
         );
-        assert_eq!(
-            Locale::SimplifiedChinese.format_template(
-                UiText::RecordingProgress,
-                &[("target", "显示器"), ("seconds", "12"), ("frames", "240")],
+
+        let cases: &[TemplateCase<'_>] = &[
+            (
+                UiText::RecordingStopFailed,
+                &[("error", "device unavailable")],
+                &[("error", "device unavailable")],
+                "Could not stop screen recording: device unavailable",
+                "无法停止屏幕录制：device unavailable",
             ),
-            "正在录制显示器：12 秒，240 帧"
-        );
-        assert_eq!(
-            Locale::English.format_template(
+            (
+                UiText::RecordingDirectoryControlled,
+                &[
+                    ("env", "FLASH_SHOT_RECORDINGS_DIR"),
+                    ("path", "D:\\Recordings"),
+                ],
+                &[
+                    ("env", "FLASH_SHOT_RECORDINGS_DIR"),
+                    ("path", "D:\\Recordings"),
+                ],
+                "Recording folder is controlled by FLASH_SHOT_RECORDINGS_DIR: D:\\Recordings",
+                "录屏目录由 FLASH_SHOT_RECORDINGS_DIR 控制：D:\\Recordings",
+            ),
+            (
                 UiText::RecordingDirectorySaved,
                 &[("path", "D:\\Recordings")],
+                &[("path", "D:\\Recordings")],
+                "MP4 recordings now use D:\\Recordings",
+                "MP4 录屏将使用 D:\\Recordings",
             ),
-            "MP4 recordings now use D:\\Recordings"
-        );
-        assert_eq!(
-            Locale::SimplifiedChinese
-                .format_template(UiText::RecordingFailed, &[("error", "FFmpeg exited")],),
-            "屏幕录制失败：FFmpeg exited。请检查 FFmpeg 和输出目录，然后重试。"
-        );
+            (
+                UiText::RecordingDirectorySaveFailed,
+                &[("error", "access denied")],
+                &[("error", "access denied")],
+                "Could not save recording folder preference: access denied",
+                "无法保存录屏目录偏好：access denied",
+            ),
+            (
+                UiText::RecordingDirectoryUseFailed,
+                &[("error", "path is a file")],
+                &[("error", "path is a file")],
+                "Could not use recording folder: path is a file",
+                "无法使用录屏目录：path is a file",
+            ),
+            (
+                UiText::RecordingDirectoryResetPath,
+                &[("path", "C:\\Users\\Test\\Videos")],
+                &[("path", "C:\\Users\\Test\\Videos")],
+                "Recording folder returned to C:\\Users\\Test\\Videos",
+                "录屏目录已恢复为 C:\\Users\\Test\\Videos",
+            ),
+            (
+                UiText::RecordingDirectoryResetFailed,
+                &[("error", "configuration is read-only")],
+                &[("error", "configuration is read-only")],
+                "Could not reset recording folder preference: configuration is read-only",
+                "无法重置录屏目录偏好：configuration is read-only",
+            ),
+            (
+                UiText::RecordingDirectoryReady,
+                &[("path", "D:\\Recordings")],
+                &[("path", "D:\\Recordings")],
+                "Recording folder is ready: D:\\Recordings",
+                "录屏目录已就绪：D:\\Recordings",
+            ),
+            (
+                UiText::RecordingDirectoryCheckFailed,
+                &[("error", "disk is full")],
+                &[("error", "disk is full")],
+                "Recording folder check failed: disk is full",
+                "录屏目录检查失败：disk is full",
+            ),
+            (
+                UiText::RecordingDirectoryOpened,
+                &[("path", "D:\\Recordings")],
+                &[("path", "D:\\Recordings")],
+                "Opened recording folder D:\\Recordings",
+                "已打开录屏目录 D:\\Recordings",
+            ),
+            (
+                UiText::RecordingDirectoryOpenFailed,
+                &[("error", "shell unavailable")],
+                &[("error", "shell unavailable")],
+                "Could not open recording folder: shell unavailable",
+                "无法打开录屏目录：shell unavailable",
+            ),
+            (
+                UiText::RecordingDisplayChanged,
+                &[("display", "display 2 (2560x1440)")],
+                &[("display", "显示器 2 (2560x1440)")],
+                "Recording display: display 2 (2560x1440)",
+                "录屏显示器：显示器 2 (2560x1440)",
+            ),
+            (
+                UiText::RecordingDisplayDiscoveryFailed,
+                &[("error", "display list unavailable")],
+                &[("error", "display list unavailable")],
+                "Could not discover displays: display list unavailable",
+                "无法发现显示器：display list unavailable",
+            ),
+            (
+                UiText::RecordingAudioChanged,
+                &[("audio", "mic: default input")],
+                &[("audio", "麦克风：默认输入")],
+                "Recording audio: mic: default input",
+                "录屏音频：麦克风：默认输入",
+            ),
+            (
+                UiText::RecordingAudioDiscoveryFailed,
+                &[("error", "audio devices unavailable")],
+                &[("error", "audio devices unavailable")],
+                "Could not discover recording audio: audio devices unavailable",
+                "无法发现录屏音频：audio devices unavailable",
+            ),
+            (
+                UiText::RecordingPauseFailed,
+                &[("error", "pause command rejected")],
+                &[("error", "pause command rejected")],
+                "Could not change recording pause state: pause command rejected",
+                "无法更改录屏暂停状态：pause command rejected",
+            ),
+            (
+                UiText::RecordingStarting,
+                &[("target", "display")],
+                &[("target", "显示器")],
+                "Starting display recording...",
+                "正在启动显示器录屏...",
+            ),
+            (
+                UiText::RecordingActive,
+                &[("target", "window")],
+                &[("target", "窗口")],
+                "Recording window...",
+                "正在录制窗口...",
+            ),
+            (
+                UiText::RecordingPaused,
+                &[("target", "selected area")],
+                &[("target", "所选区域")],
+                "selected area recording paused",
+                "所选区域录屏已暂停",
+            ),
+            (
+                UiText::RecordingProgress,
+                &[("target", "display"), ("seconds", "12"), ("frames", "240")],
+                &[("target", "显示器"), ("seconds", "12"), ("frames", "240")],
+                "Recording display: 12s, 240 frames",
+                "正在录制显示器：12 秒，240 帧",
+            ),
+            (
+                UiText::RecordingStopping,
+                &[("target", "screen")],
+                &[("target", "屏幕")],
+                "Stopping screen recording...",
+                "正在停止屏幕录屏...",
+            ),
+            (
+                UiText::RecordingSaved,
+                &[("path", "D:\\Recordings\\capture.mp4")],
+                &[("path", "D:\\Recordings\\capture.mp4")],
+                "Screen recording saved to D:\\Recordings\\capture.mp4",
+                "屏幕录制已保存到 D:\\Recordings\\capture.mp4",
+            ),
+            (
+                UiText::RecordingFailed,
+                &[("error", "FFmpeg exited")],
+                &[("error", "FFmpeg exited")],
+                "Screen recording failed: FFmpeg exited. Check FFmpeg and the output folder, then try again.",
+                "屏幕录制失败：FFmpeg exited。请检查 FFmpeg 和输出目录，然后重试。",
+            ),
+            (
+                UiText::RecordingAudioMicrophone,
+                &[("device", "USB microphone")],
+                &[("device", "USB 麦克风")],
+                "mic: USB microphone",
+                "麦克风：USB 麦克风",
+            ),
+            (
+                UiText::RecordingDisplayLabel,
+                &[("index", "2"), ("width", "2560"), ("height", "1440")],
+                &[("index", "2"), ("width", "2560"), ("height", "1440")],
+                "display 2 (2560x1440)",
+                "显示器 2 (2560x1440)",
+            ),
+            (
+                UiText::RecordingStartFailureMissingFfmpeg,
+                &[("error", "executable was not found")],
+                &[("error", "executable was not found")],
+                "Recording is unavailable because FFmpeg was not found. Install FFmpeg or set FLASH_SHOT_FFMPEG: executable was not found",
+                "录屏不可用，因为未找到 FFmpeg。请安装 FFmpeg，或设置 FLASH_SHOT_FFMPEG：executable was not found",
+            ),
+            (
+                UiText::RecordingStartFailureUnsupported,
+                &[("error", "no supported capture backend")],
+                &[("error", "no supported capture backend")],
+                "This FFmpeg build cannot record the selected source. Use a build with ddagrab or gdigrab: no supported capture backend",
+                "当前 FFmpeg 版本无法录制所选来源。请使用支持 ddagrab 或 gdigrab 的版本：no supported capture backend",
+            ),
+            (
+                UiText::RecordingStartFailureGeneric,
+                &[("error", "worker failed")],
+                &[("error", "worker failed")],
+                "Could not start screen recording: worker failed",
+                "无法启动屏幕录制：worker failed",
+            ),
+            (
+                UiText::RecordingSupportReady,
+                &[("version", "7.1"), ("backend", "ddagrab")],
+                &[("version", "7.1"), ("backend", "ddagrab")],
+                "FFmpeg 7.1 ready (ddagrab)",
+                "FFmpeg 7.1 已就绪（ddagrab）",
+            ),
+            (
+                UiText::RecordingSupportDesktopUnavailable,
+                &[("version", "7.1")],
+                &[("version", "7.1")],
+                "FFmpeg 7.1: desktop capture unavailable",
+                "FFmpeg 7.1：桌面捕获不可用",
+            ),
+            (
+                UiText::RecordingProgressSummary,
+                &[("state", "Recording"), ("seconds", "12"), ("frames", "240")],
+                &[("state", "录制中"), ("seconds", "12"), ("frames", "240")],
+                "Recording - 12s, 240 frames",
+                "录制中 - 12 秒，240 帧",
+            ),
+        ];
+
+        for (key, english_replacements, chinese_replacements, english, simplified_chinese) in cases
+        {
+            assert_eq!(
+                Locale::English.format_template(*key, english_replacements),
+                *english,
+                "English template {key:?}"
+            );
+            assert_eq!(
+                Locale::SimplifiedChinese.format_template(*key, chinese_replacements),
+                *simplified_chinese,
+                "Simplified Chinese template {key:?}"
+            );
+        }
     }
 }
