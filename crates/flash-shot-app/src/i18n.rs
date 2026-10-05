@@ -3567,6 +3567,158 @@ mod tests {
     }
 
     #[test]
+    fn quick_save_and_open_templates_localize_paths_and_recovery_details() {
+        type TemplateCase<'a> = (
+            UiText,
+            &'a [(&'a str, &'a str)],
+            &'a [(&'a str, &'a str)],
+            &'a str,
+            &'a str,
+        );
+
+        let cases: &[TemplateCase<'_>] = &[
+            (
+                UiText::QuickSaveFolderPreferenceSaveFailed,
+                &[("error", "configuration is read-only")],
+                &[("error", "configuration is read-only")],
+                "Could not save quick-save folder preference: configuration is read-only",
+                "无法保存快速保存目录设置：configuration is read-only",
+            ),
+            (
+                UiText::QuickSaveFolderUseFailed,
+                &[("error", "folder is unavailable")],
+                &[("error", "folder is unavailable")],
+                "Could not use quick-save folder: folder is unavailable",
+                "无法使用快速保存目录：folder is unavailable",
+            ),
+            (
+                UiText::QuickSaveFolderChecking,
+                &[("path", "D:\\Quick Saves")],
+                &[("path", "D:\\Quick Saves")],
+                "Checking quick-save folder D:\\Quick Saves...",
+                "正在检查快速保存目录 D:\\Quick Saves...",
+            ),
+            (
+                UiText::QuickSaveFolderReady,
+                &[("path", "D:\\Quick Saves")],
+                &[("path", "D:\\Quick Saves")],
+                "Quick-save folder is ready: D:\\Quick Saves",
+                "快速保存目录已就绪：D:\\Quick Saves",
+            ),
+            (
+                UiText::QuickSavePrefixChanged,
+                &[("prefix", "Capture")],
+                &[("prefix", "截图")],
+                "Quick-save names use Capture-<yyyyMMddHHmmss>-<UUIDv7>.png",
+                "快速保存文件名使用 截图-<yyyyMMddHHmmss>-<UUIDv7>.png",
+            ),
+            (
+                UiText::QuickSavePrefixSaveFailed,
+                &[("error", "disk is full")],
+                &[("error", "disk is full")],
+                "Could not save quick-save naming preference: disk is full",
+                "无法保存快速保存命名设置：disk is full",
+            ),
+            (
+                UiText::OpenHistoryInProgress,
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                "Opening D:\\Quick Saves\\capture.png...",
+                "正在打开 D:\\Quick Saves\\capture.png...",
+            ),
+            (
+                UiText::PinHistoryInProgress,
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                "Pinning D:\\Quick Saves\\capture.png...",
+                "正在固定 D:\\Quick Saves\\capture.png...",
+            ),
+            (
+                UiText::OpenImageOpened,
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                "Opened D:\\Quick Saves\\capture.png for annotation",
+                "已打开 D:\\Quick Saves\\capture.png，可以开始标注",
+            ),
+            (
+                UiText::OpenImageAnnotationsLoadWarning,
+                &[
+                    ("path", "D:\\Quick Saves\\capture.flash-shot.json"),
+                    ("error", "invalid project format"),
+                ],
+                &[
+                    ("path", "D:\\Quick Saves\\capture.flash-shot.json"),
+                    ("error", "invalid project format"),
+                ],
+                "Could not load annotation sidecar D:\\Quick Saves\\capture.flash-shot.json: invalid project format",
+                "无法加载标注附属文件 D:\\Quick Saves\\capture.flash-shot.json：invalid project format",
+            ),
+            (
+                UiText::OpenImageOpenedWithoutAnnotations,
+                &[
+                    ("path", "D:\\Quick Saves\\capture.png"),
+                    ("warning", "project could not be read"),
+                ],
+                &[
+                    ("path", "D:\\Quick Saves\\capture.png"),
+                    ("warning", "project could not be read"),
+                ],
+                "Opened D:\\Quick Saves\\capture.png without annotations: project could not be read",
+                "已打开 D:\\Quick Saves\\capture.png，未加载标注：project could not be read",
+            ),
+            (
+                UiText::OpenImageFailed,
+                &[("error", "unsupported image encoding")],
+                &[("error", "unsupported image encoding")],
+                "Could not open image: unsupported image encoding",
+                "无法打开图片：unsupported image encoding",
+            ),
+            (
+                UiText::SettingsHideBeforeEditorFailed,
+                &[("error", "window handle is stale")],
+                &[("error", "window handle is stale")],
+                "Could not hide settings before opening the editor: window handle is stale",
+                "打开编辑器前无法隐藏设置窗口：window handle is stale",
+            ),
+            (
+                UiText::ImageEditorOpenFailed,
+                &[("error", "initialization failed")],
+                &[("error", "initialization failed")],
+                "Image editor window failed: initialization failed",
+                "无法打开图片编辑器窗口：initialization failed",
+            ),
+            (
+                UiText::CaptureOverlayOpenFailed,
+                &[("error", "no displays are available")],
+                &[("error", "no displays are available")],
+                "Capture overlay failed: no displays are available",
+                "无法打开截图覆盖层：no displays are available",
+            ),
+            (
+                UiText::ScrollingControlOpenFailed,
+                &[("error", "window creation failed")],
+                &[("error", "window creation failed")],
+                "Could not open scrolling screenshot controls: window creation failed",
+                "无法打开长截图控制器：window creation failed",
+            ),
+        ];
+
+        for (key, english_replacements, chinese_replacements, english, simplified_chinese) in cases
+        {
+            assert_eq!(
+                Locale::English.format_template(*key, english_replacements),
+                *english,
+                "English template {key:?}"
+            );
+            assert_eq!(
+                Locale::SimplifiedChinese.format_template(*key, chinese_replacements),
+                *simplified_chinese,
+                "Simplified Chinese template {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn recording_status_templates_keep_targets_progress_paths_and_failures_localized() {
         type TemplateCase<'a> = (
             UiText,
