@@ -3000,6 +3000,295 @@ mod tests {
     }
 
     #[test]
+    fn save_copy_and_annotation_templates_localize_paths_and_errors() {
+        type TemplateCase<'a> = (
+            UiText,
+            &'a [(&'a str, &'a str)],
+            &'a [(&'a str, &'a str)],
+            &'a str,
+            &'a str,
+        );
+
+        let cases: &[TemplateCase<'_>] = &[
+            (
+                UiText::SaveStartFailed,
+                &[("error", "file dialog unavailable")],
+                &[("error", "file dialog unavailable")],
+                "Could not start saving the selection: file dialog unavailable",
+                "无法开始保存选区：file dialog unavailable",
+            ),
+            (
+                UiText::SaveDialogAboveCaptureFailed,
+                &[("error", "owner window is unavailable")],
+                &[("error", "owner window is unavailable")],
+                "Could not show Save dialog above capture: owner window is unavailable",
+                "无法在截图上方显示保存对话框：owner window is unavailable",
+            ),
+            (
+                UiText::SaveCompleted,
+                &[
+                    ("source", "selection"),
+                    ("path", "D:\\Captures\\capture.png"),
+                ],
+                &[("source", "选区"), ("path", "D:\\Captures\\capture.png")],
+                "selection saved to D:\\Captures\\capture.png",
+                "已将选区保存到 D:\\Captures\\capture.png",
+            ),
+            (
+                UiText::SaveTransitionFailed,
+                &[("error", "history update failed")],
+                &[("error", "history update failed")],
+                "Could not finish saving the selection: history update failed",
+                "无法完成选区保存：history update failed",
+            ),
+            (
+                UiText::PinnedImageSavedTo,
+                &[("path", "D:\\Captures\\pin.png")],
+                &[("path", "D:\\Captures\\pin.png")],
+                "Pinned image saved to D:\\Captures\\pin.png",
+                "置顶图片已保存到 D:\\Captures\\pin.png",
+            ),
+            (
+                UiText::PinnedImageSaveFailed,
+                &[("error", "destination is read-only")],
+                &[("error", "destination is read-only")],
+                "Could not save pinned image: destination is read-only",
+                "无法保存置顶图片：destination is read-only",
+            ),
+            (
+                UiText::CopyFailed,
+                &[("error", "clipboard is unavailable")],
+                &[("error", "clipboard is unavailable")],
+                "Copy failed: clipboard is unavailable",
+                "复制失败：clipboard is unavailable",
+            ),
+            (
+                UiText::FullScreenCopyFailed,
+                &[("error", "display capture was denied")],
+                &[("error", "display capture was denied")],
+                "Could not copy full screen: display capture was denied",
+                "无法复制全屏截图：display capture was denied",
+            ),
+            (
+                UiText::FullScreenSavedTo,
+                &[("path", "D:\\Captures\\desktop.png")],
+                &[("path", "D:\\Captures\\desktop.png")],
+                "Full screen saved to D:\\Captures\\desktop.png",
+                "全屏截图已保存到 D:\\Captures\\desktop.png",
+            ),
+            (
+                UiText::HistoryCopyInProgress,
+                &[("path", "D:\\Captures\\old.png")],
+                &[("path", "D:\\Captures\\old.png")],
+                "Copying D:\\Captures\\old.png...",
+                "正在复制 D:\\Captures\\old.png...",
+            ),
+            (
+                UiText::HistoryCopyFailed,
+                &[("error", "image data is unavailable")],
+                &[("error", "image data is unavailable")],
+                "Could not copy history image: image data is unavailable",
+                "无法复制历史图片：image data is unavailable",
+            ),
+            (
+                UiText::ColorCopiedToClipboard,
+                &[("color", "#AABBCC")],
+                &[("color", "#AABBCC")],
+                "#AABBCC copied to clipboard",
+                "#AABBCC已复制到剪贴板",
+            ),
+            (
+                UiText::ColorCopyFailed,
+                &[("color", "#AABBCC"), ("error", "clipboard is busy")],
+                &[("color", "#AABBCC"), ("error", "clipboard is busy")],
+                "Could not copy #AABBCC: clipboard is busy",
+                "无法复制#AABBCC：clipboard is busy",
+            ),
+            (
+                UiText::AnnotationSaveDialogFailed,
+                &[("error", "window activation failed")],
+                &[("error", "window activation failed")],
+                "Could not show annotation Save dialog: window activation failed",
+                "无法显示标注保存对话框：window activation failed",
+            ),
+            (
+                UiText::AnnotationSaved,
+                &[("path", "D:\\Captures\\notes.json")],
+                &[("path", "D:\\Captures\\notes.json")],
+                "Annotations saved to D:\\Captures\\notes.json",
+                "标注已保存到 D:\\Captures\\notes.json",
+            ),
+            (
+                UiText::AnnotationSaveFailed,
+                &[("error", "write failed")],
+                &[("error", "write failed")],
+                "Could not save annotations: write failed",
+                "无法保存标注：write failed",
+            ),
+            (
+                UiText::EditableProjectSaveDialogFailed,
+                &[("error", "file picker could not open")],
+                &[("error", "file picker could not open")],
+                "Could not show editable-project Save dialog: file picker could not open",
+                "无法显示可编辑项目保存对话框：file picker could not open",
+            ),
+            (
+                UiText::EditableProjectSaved,
+                &[
+                    ("image", "D:\\Projects\\edit.png"),
+                    ("sidecar", "D:\\Projects\\edit.json"),
+                ],
+                &[
+                    ("image", "D:\\Projects\\edit.png"),
+                    ("sidecar", "D:\\Projects\\edit.json"),
+                ],
+                "Editable project saved to D:\\Projects\\edit.png and D:\\Projects\\edit.json",
+                "可编辑项目已保存到 D:\\Projects\\edit.png 和 D:\\Projects\\edit.json",
+            ),
+            (
+                UiText::EditableProjectSaveFailed,
+                &[("error", "sidecar could not be written")],
+                &[("error", "sidecar could not be written")],
+                "Could not save editable project: sidecar could not be written",
+                "无法保存可编辑项目：sidecar could not be written",
+            ),
+            (
+                UiText::AnnotationOpenDialogFailed,
+                &[("error", "open dialog could not be shown")],
+                &[("error", "open dialog could not be shown")],
+                "Could not show annotation Open dialog: open dialog could not be shown",
+                "无法显示标注打开对话框：open dialog could not be shown",
+            ),
+            (
+                UiText::AnnotationLoaded,
+                &[("path", "D:\\Captures\\notes.json")],
+                &[("path", "D:\\Captures\\notes.json")],
+                "Loaded annotations from D:\\Captures\\notes.json",
+                "已从 D:\\Captures\\notes.json 加载标注",
+            ),
+            (
+                UiText::AnnotationOpenFailed,
+                &[("error", "invalid annotation document")],
+                &[("error", "invalid annotation document")],
+                "Could not open annotations: invalid annotation document",
+                "无法打开标注：invalid annotation document",
+            ),
+            (
+                UiText::AnnotationNumberMarker,
+                &[("value", "12")],
+                &[("value", "12")],
+                "Number marker: 12",
+                "序号：12",
+            ),
+            (
+                UiText::AnnotationWidth,
+                &[("width", "4")],
+                &[("width", "4")],
+                "Annotation width: 4 px",
+                "标注线宽：4 像素",
+            ),
+            (
+                UiText::AnnotationTextSize,
+                &[("size", "18")],
+                &[("size", "18")],
+                "Text size: 18 px",
+                "文字大小：18 像素",
+            ),
+            (
+                UiText::AnnotationOpacity,
+                &[("percent", "50")],
+                &[("percent", "50")],
+                "Annotation opacity: 50%",
+                "标注不透明度：50%",
+            ),
+            (
+                UiText::AnnotationNumberValue,
+                &[("value", "12")],
+                &[("value", "12")],
+                "12",
+                "12",
+            ),
+            (
+                UiText::AnnotationOpacityValue,
+                &[("percent", "50")],
+                &[("percent", "50")],
+                "50%",
+                "50%",
+            ),
+            (
+                UiText::AnnotationWidthValue,
+                &[("width", "4")],
+                &[("width", "4")],
+                "4",
+                "4",
+            ),
+            (
+                UiText::AnnotationTextSizeValue,
+                &[("size", "18")],
+                &[("size", "18")],
+                "18",
+                "18",
+            ),
+            (
+                UiText::AnnotationToolSelected,
+                &[("tool", "Arrow")],
+                &[("tool", "箭头")],
+                "Arrow tool selected",
+                "已选择箭头工具",
+            ),
+            (
+                UiText::AnnotationToolAdded,
+                &[("tool", "Arrow")],
+                &[("tool", "箭头")],
+                "Arrow added",
+                "已添加箭头",
+            ),
+            (
+                UiText::AnnotationToolCancelled,
+                &[("tool", "Arrow")],
+                &[("tool", "箭头")],
+                "Arrow cancelled",
+                "已取消箭头",
+            ),
+            (
+                UiText::AnnotationTextPrompt,
+                &[("kind", "watermark")],
+                &[("kind", "水印")],
+                "Type watermark, then press Enter",
+                "请输入水印，然后按 Enter",
+            ),
+            (
+                UiText::AnnotationColorSamplerMoveFailed,
+                &[("error", "window is unavailable")],
+                &[("error", "window is unavailable")],
+                "Could not move color sampler: window is unavailable",
+                "无法移动颜色取样器：window is unavailable",
+            ),
+            (
+                UiText::AnnotationSelectedPosition,
+                &[("position", "2"), ("count", "5")],
+                &[("position", "2"), ("count", "5")],
+                "Selected annotation 2 of 5",
+                "已选择第 2 个标注，共 5 个",
+            ),
+        ];
+
+        for (key, english_replacements, chinese_replacements, english, simplified_chinese) in cases
+        {
+            assert_eq!(
+                Locale::English.format_template(*key, english_replacements),
+                *english,
+                "English template {key:?}"
+            );
+            assert_eq!(
+                Locale::SimplifiedChinese.format_template(*key, chinese_replacements),
+                *simplified_chinese,
+                "Simplified Chinese template {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn capture_preference_feedback_localizes_labels_and_dynamic_values() {
         assert_eq!(
             Locale::SimplifiedChinese.text(UiText::CapturePreferences),
