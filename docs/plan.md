@@ -2,7 +2,7 @@
 
 更新日期：2026-10-05
 当前版本：`0.1.3`
-目标版本：`0.2.0` Snow Apps 工作区重写与产品 UI 对齐
+目标版本：`0.2.0` Snow Apps UI 与核心功能对齐
 
 本文档是 Flash Shot 唯一的主线开发计划。它整合此前的 B、W、U、M、R、D、P 路线，
 只保留当前状态、未完成工作、执行顺序和退出条件。已经完成的切片只保留结果摘要，
@@ -30,6 +30,8 @@
 | 主线开发计划 | Mainline Development Plan | 唯一维护中的版本目标、切片顺序、状态和退出条件 | 不是逐次运行日志或单次验收报告 |
 | 开发切片 | Development Slice | 一个可独立实现、验证、提交和推送的用户可观察结果 | 不是把多个风险合并的版本大包 |
 | GPUI 组件层 | GPUI Component Layer | 当前 GPUI 应用中的主题、布局、按钮、图标和浮层实现层 | 不是新的业务状态机或截图后端 |
+| 界面对齐 | UI Alignment | 对照 Snow Shot 核验页面层级、状态呈现、输入和恢复入口 | 不是静态截图像素相似度 |
+| 核心功能对齐 | Core Feature Alignment | 对照 Snow Shot 核验 Capture、Print、Library、Record、Pin 和 App 的用户可观察流程、结果与失败恢复 | 不是移植 Qt 架构或逐项复制所有产品设置 |
 | gpui-kit 兼容性切片 | gpui-kit Compatibility Spike / G1 | 评估 gpui-kit 是否能安全承载现有 GPUI 组件和图标 | 不是未经验证的全量依赖升级 |
 | 原生验收 | Native Acceptance | 在真实 Windows Release 会话中执行输入、窗口、像素和清理核验 | 不是单元测试或静态截图探针 |
 | 截图工作区 | Screenshot Workspace | 截图覆盖层中承载选区画布、主工具栏、上下文样式栏、结果动作和工具组浮层的连续操作区域 | 不是设置面板、历史页或录屏设置 |
@@ -42,27 +44,31 @@
 
 ## 当前验收目标
 
-**先完成截图工作区和工具栏的视觉、交互验收，再完成其余产品页面的整体对齐。** 以当前 Flash Shot 为产品基础，
-用 Rust + GPUI 重建和收敛界面，保留已验证的 Capture/Save/Pin/Copy/Cancel 业务行为、数据和报告协议。
-Snow Shot 是体验基准，不是逐项照搬清单：每项差异都明确选择“采用、适配、舍弃”并写明理由；
-优先采用紧凑工具栏、清晰图标层级、上下文操作和稳定交互，合并重复设置，不移植 Qt/Tauri/Web 架构或无价值的重复控件。
+**当前主线是对照 Snow Shot 完成 UI 与核心功能对齐。** W7 已验收截图工作区和主工具栏，后续工作覆盖 App、Library、Record、Pin 及这些页面背后的实际用户流程。
+这不是 100% 复刻 Snow Apps 或重写其每个项目：以 Flash Shot 为产品基础，用 Rust + GPUI 只补齐 `0.2.0` 范围内需要的核心功能和用户界面对齐；每个切片都要说明页面与交互、真实功能结果、错误恢复和资源清理证据。
+Snow Shot 是固定源码体验基准，不是逐项照搬清单：每项差异都明确选择“采用、适配、暂缓”并写明理由；
+紧凑工具栏、清晰图标层级、上下文操作和稳定键鼠行为属于界面对齐，Capture/Print/Library/Record/Pin/App 的状态转换与可观察结果属于核心功能对齐。
+Snow Shot 设置面板仅用于了解设置能力和必要操作，不复制其面板结构或流程；Flash Shot 继续采用 U5 已验证的设置简化、分组和现有设置键兼容规则。
+不移植 Qt/Tauri/Web 架构，不为追求像素相似度改变已经验收的捕获像素、坐标、文件格式、快捷键、持久化、报告字段或清理边界。
 本次切片已将生产 GPUI/平台依赖切换到发布版 `gpui-kit 0.6.6`/`gpui-pre-platform 0.3.6`；
-完整组件覆盖和最终矩阵已由 G2/W7.11 的生产 Release 构建、84 例视觉矩阵与原生交互报告共同验收；高 DPI/多屏仍按 D1 暂缓。
+截图工作区完整组件覆盖和单屏矩阵已由 G2/W7.11 的生产 Release 构建、84 例视觉矩阵与原生交互报告验收；高 DPI/多屏仍按 D1 暂缓。
 
 | 必须保留 | 允许调整 | 当前暂缓 |
 | --- | --- | --- |
-| 选区物理像素、标注文档坐标、快捷键、Capture/Copy/Save/Pin/Cancel 语义、导出路径、失败恢复、报告字段和清理规则 | 覆盖层 surface、主工具栏和样式栏布局、图标、分组、浮层锚定、tooltip、焦点态、双语文案层级、设置面板分组 | 新标注工具、Snow Shot 设置项逐项移植、Qt/Tauri/Web 架构移植、未具备硬件的高 DPI/多屏矩阵、真实 HTTPS 翻译和插件平台 |
+| 选区物理像素、标注文档坐标、快捷键、Capture/Copy/Save/Pin/Cancel 语义、导出路径、历史数据、录屏输出、失败恢复、报告字段和清理规则 | 覆盖层 surface、主工具栏和样式栏布局、图标、分组、浮层锚定、tooltip、焦点态、双语文案层级、设置面板分组；为实现已记录的功能差异修改 workflow | 超出 `0.2.0` 范围的新工具、Snow Shot 设置项逐项移植、Qt/Tauri/Web 架构移植、未具备硬件的高 DPI/多屏矩阵、真实 HTTPS 翻译和插件平台 |
 
 ## 1. 研究基线与范围
 
 Snow Shot 参考固定为用户提供的 `F:/project/snow-apps` 源码及其 `origin/main`。
-本轮在 2026-10-05 通过 `git fetch --no-tags origin main` 核验到参考提交
-[`0b28e9db8dfc2428d96781b9bab36ceec1c18318`](https://github.com/mg-chao/snow-apps/commit/0b28e9db8dfc2428d96781b9bab36ceec1c18318)。
-用户本机 `main` 工作区仍位于 `2052d439`，落后 217 个提交；本轮只读取更新后的远端对象，没有切换分支或改写其源码文件。
-每个开发切片开始前仍需记录实际参考提交，避免把旧 release 或落后 checkout 当成最新基准。参考范围包括工作区截图工具栏、样式行、工具组浮层、tooltip、键盘可达性和选区边缘呈现；只借鉴可观察的视觉层级、几何关系和交互规则，不复制设置项数量、具体颜色、图标素材或 Qt/Tauri/Web 类层次。
+本轮在 2026-10-05 同步到参考提交
+[`bf7dda9cfec56c13098ee9059a94ceb72e77e14c`](https://github.com/mg-chao/snow-apps/commit/bf7dda9cfec56c13098ee9059a94ceb72e77e14c)。
+`F:/project/snow-apps` 的本地 `main` 已从 `2052d439` 快进至该提交，和 `origin/main` 一致，工作树干净；只更新了此参考仓库，没有把 Snow Apps 实现复制进 Flash Shot。
+每个开发切片开始前仍需记录实际参考提交，避免把旧 release 或落后 checkout 当成最新基准。参考范围现在包含截图工作区及 Capture、Library、Record、Pin、App 核心流程：入口和页面层级、忙/成功/失败状态、主要与恢复动作、真实产物和关闭清理。源码核对入口包括 `snow_shot/src/presentation/capture/`、`snow_shot/src/presentation/components/screenshothistorypagewidget.cpp`、`snow_shot/src/presentation/recording/screenrecordingcontroller.cpp`、`snow_shot/src/presentation/components/settingspagewidget.cpp`、`snow_shot/src/presentation/ocr/` 和 `snow_shot/src/presentation/pinned/`；只采用可观察且符合 `0.2.0` 范围的行为，不复制设置项数量、素材或 Qt/Tauri/Web 类层次。
 
-`0.2.0` 继续以 Windows 截图体验为主：全局快捷键、选区、标注、撤销/重做、复制、保存、Pin、历史、滚动截图、可选 OCR、录屏和失败恢复。
-当前工作只改变 UI surface、布局、控件交互和设置面板呈现，不改变截图像素、导出协议、快捷键、报告字段和资源清理边界。
+相对前一参考提交 `0b28e9d`，当前 Snow Shot 基线新增提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6`（`feat(print): add native screenshot printing`），加入截图和 Pin 的系统打印动作、打印期间窗口层级/输入恢复以及 Windows 现代打印界面和旧系统回退。Flash Shot 将适配其核心结果和可取消生命周期；不移植 Qt 实现、双后端兼容矩阵或 Snow Shot 的设置面板。
+
+`0.2.0` 以 Windows 截图产品的 UI 与核心功能对齐为主：全局快捷键、选区、标注、撤销/重做、复制、保存、原生打印、Pin、历史、滚动截图、可选 OCR/二维码识别、录屏、设置/更新和失败恢复。
+UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留已验证的截图像素、导出和持久化协议、快捷键语义、报告字段和资源清理边界。
 
 ## 2. 已完成基线（不再排入后续开发）
 
@@ -78,7 +84,7 @@ Snow Shot 参考固定为用户提供的 `F:/project/snow-apps` 源码及其 `or
 | U5 | 设置面板重复说明与导航层级已精简；48 例双语/双主题/三尺寸 Release 矩阵通过，设置键与行为兼容 | `docs/windows-manual-acceptance.md` |
 | R0 | 已确认 `flash-shot-domain`、`flash-shot-image` 的复用边界；候选 capture-core 仅保留架构评估，不创建公共 crate | `docs/architecture.md` |
 
-这些结果不等于“截图 UI 与工具栏完整复刻”已完成。W6 证明现有实现的行为和单屏基线，W7 负责把完整视觉/交互复刻目标、矩阵和证据收敛为最终验收。
+这些结果不等于 Snow Apps 核心功能整体对齐已完成。W6 证明现有截图工作区的行为和单屏基线，W7 只验收这一工作区的视觉层级、工具栏交互和证据矩阵。
 
 ## 3. 当前状态与执行顺序
 
@@ -86,10 +92,11 @@ Snow Shot 参考固定为用户提供的 `F:/project/snow-apps` 源码及其 `or
 | --- | --- | --- | --- |
 | G0 | 整合并冻结本主线计划 | 本次完成 | 只有 `docs/plan.md` 维护路线；旧完成段落不再作为待办 |
 | G1 | gpui-kit 兼容性与回滚评估 | 已完成（隔离探针，2026-09-27） | 隔离探针编译和组件测试通过；当时生产应用仍使用 Zed GPUI，生产迁移由 G2 单独验收 |
-| W7 | 截图 UI 与工具栏完整复刻验收 | 已完成（单屏 100%、DPI 96；2026-10-05） | 最新可核验 Snow 基准下的视觉矩阵、工具栏交互、主动作、选区边界与资源清理通过；高 DPI/多屏按 D1 暂缓 |
+| W7 | 截图工作区 UI 与工具栏视觉/交互对齐验收 | 已完成（单屏 100%、DPI 96；2026-10-05） | 最新可核验 Snow 基准下的视觉矩阵、工具栏交互、主动作、选区边界与资源清理通过；高 DPI/多屏按 D1 暂缓 |
 | G2 | gpui-kit 生产接入评估与迁移 | 已完成（生产 Release 与完整组件矩阵，2026-10-05） | 生产截图工作区使用 gpui-kit 并通过 Release 验收；本次无版本冲突或回滚阻碍 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 已完成（U5.4 综合设置页矩阵，2026-09-27；单屏 100%） | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠；高 DPI/多屏按 D1 暂缓 |
-| U1 | 动态文案国际化收尾 | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试 |
+| C1 | Capture/Pin 原生打印核心动作 | 待开始 | Windows 系统打印界面能打印当前 Capture 合成图和 Pin 图片；取消/失败保留原会话，验证输出、置顶层级、输入恢复与资源清理 |
+| U1 | 动态文案国际化收尾（验收支撑项） | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试；随 UI/功能切片补齐相关文案 |
 | U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 部分完成 | ThemeMetrics 覆盖稳定，真实输入和可用 DPI 矩阵通过 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 部分完成 | 真实点击、焦点、关闭、再次 Capture 和语言/主题矩阵通过 |
@@ -98,13 +105,13 @@ Snow Shot 参考固定为用户提供的 `F:/project/snow-apps` 源码及其 `or
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-后续执行顺序为：**U1-U4 其余页面收尾 → 全产品复核与发布**。G0、G1、G2、U5 和 W7.1-W7.11 均已交付，不重复开发；M1、R1、P3 不阻塞 `0.2.0`，D1 在具备对应硬件后单独执行。
+主线执行顺序调整为：**C1 Capture/Pin 原生打印 → U2 App/Library/Record 核心入口、动作和恢复 → U4 Pin 核心生命周期 → U3 跨页面视觉、滚动与布局收尾 → Capture/Library/Record/Pin/App/OCR 端到端对齐复核与发布**。U1 作为验收支撑项，在修改相关界面或状态时同步补齐；不再以孤立的文案测试替代 UI 或核心功能切片。G0、G1、G2、U5 和 W7.1-W7.11 均已交付，不重复开发；M1、R1、P3 不阻塞 `0.2.0`，D1 在具备对应硬件后单独执行。
 
 ## 4. 开发切片与交付记录
 
-### W7：截图 UI 与工具栏完整复刻验收
+### W7：截图工作区 UI 与工具栏视觉/交互对齐验收
 
-**目标**：完整复刻 Snow Shot 参考截图工作区的视觉层级和工具栏交互，同时保留 Flash Shot 已验证的业务行为。
+**目标**：对齐 Snow Shot 参考截图工作区的视觉层级和工具栏交互，同时保留 Flash Shot 已验证的业务行为。此切片的范围仅为截图工作区，不代表整个 Snow Apps 项目已复刻或核心功能已全部对齐。
 
 **必须覆盖**：
 
@@ -240,15 +247,27 @@ G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，不能�
 - gpui-kit 的按钮、图标、tooltip、popover、焦点和主题在三种窗口尺寸、双语/双主题下通过；
 - 具有可执行的回滚路径；版本冲突、运行时或性能问题未解决时，G2 保持未完成，不以隔离探针代替生产证据。
 
-### U1-U4：非截图页面收尾
+### C1：Windows Capture/Pin 原生打印核心动作
 
-这些切片保留原有目标，但删除已经完成的逐次日志，只处理剩余缺口：
+Snow Shot 的参考提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6` 新增 Windows/macOS 原生打印体验。Flash Shot `0.2.0` 适配 Windows Capture 和 Pin 的核心打印流程：打印当前合成选区或置顶图片内容并打开系统打印界面；不重做现代 UI/旧版回退的双后端兼容，也不复制 Snow Shot 设置页。
 
-- `U1`：清点 workflow、错误、忙状态、数量、路径、耗时和进度等动态文案，全部进入 `UiText` 参数模板，并补齐双语参数化测试；已完成录屏状态模板、语言反馈辅助方法和历史来源标签的统一，剩余文案按相同边界继续收敛；
-- `U2`：完成 App/Library/Record 主动作、恢复入口和真实键鼠矩阵，保持稳定语义 ID 和现有 handler；
-- `U3`：继续收敛 ThemeMetrics、滚动控制器、页面布局和可用 DPI，清除组件内重复几何常量；
-- `U4`：完成 Pin 的真实点击、焦点保持、关闭、Copy/Save、语言切换和再次 Capture 恢复；
-- 每个子切片都必须单独验证、单独提交和立即推送，不能把多个页面改造合并成一个无法回滚的提交。
+- Capture 打印使用当前合成选区图像；Pin 打印只含图片内容，不含工具栏、控制点或调整大小手柄；打印准备不得修改源帧、标注文档或历史记录；
+- 用户取消或系统界面失败时，保留当前 Capture/Pin 会话及其状态，并恢复覆盖层、主工具栏的置顶关系、输入和快捷键；
+- PDF 打印验证页面方向、等比例缩放、透明区域底色、标注边框及一页输出；真实打印机不是本机验收前置条件；
+- 核验打印期间不能重复提交、owner 关闭时任务可安全结束、Capture/Pin 和其他窗口层级不被意外降低、输入/快捷键恢复、临时文件/句柄在取消、成功和失败后清理；
+- Print 加入 Capture/Pin 的次级结果动作与双语忙/成功/取消/错误状态；打印纸张等选项由系统界面提供，不增加仿照 Snow Shot 的复杂设置面板。
+
+### U1-U4：UI 与核心功能对齐切片
+
+每个切片都要指定 Snow Shot 源码基线、用户可观察的 UI 差异、真实功能动作、预期产物或状态、失败恢复和清理证据。UI 验收不能代替 workflow 结果；单元测试也不能代替真实窗口输入。
+
+- `C1` 适配 Snow Shot 最新基线新增的 Capture/Pin 原生打印，只交付 Windows 核心动作和取消/恢复，不照搬平台后端实现；
+- `U1` 是验收支撑项：用户可见的动态文案使用 `UiText` 参数模板并有 English/简体中文断言；改动某流程时同步补齐其消息覆盖，不单独排优先级高于用户可见功能的测试切片；
+- `U2` 完成 App/Library/Record 的主动作、恢复入口和真实键鼠矩阵。为有文件或进程副作用的动作验证真实结果，并验证状态回读、稳定语义 ID、现有 handler 和清理；
+- `U4` 完成 Pin 的真实输入、焦点保持、关闭、Copy/Save、多窗口外观同步和再次 Capture 返回流程；
+- `U3` 在上述功能稳定后，统一收敛 ThemeMetrics、滚动控制器、页面布局和可用 DPI，复核页面主次层级及错误/忙状态的可见性；
+- 端到端复核覆盖 Capture → annotate/undo/redo → Copy/Save/Print/Pin/Cancel，Library → search/filter/select/open/remove/retention，Record → source/folder/support/start/pause/resume/stop/output，Pin → Print/Copy/Save 和关闭恢复，以及 App 设置、更新和快捷键；OCR/二维码识别核验实际结果、复制和失败路径；
+- 每个子切片都必须单独验证、单独提交和立即推送，不能把多个页面或主流程改造合并成一个无法回滚的提交。
 
 **U3.1 当前结果（2026-09-27）**：设置页、状态栏和历史操作控件中原本散落的状态指示器、页面标记、说明间距、快捷操作最小宽度、开关圆钮和历史选择按钮高度，现统一由 `ThemeMetrics` 提供；默认像素值保持不变，减少后续真实输入与 DPI 调整时的重复几何来源。验证包括 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` 和 `cargo test -p flash-shot-app --lib`（399 项通过）。U3 仍为部分完成，真实窗口键鼠与高 DPI/多屏证据尚未补齐。
 
@@ -349,10 +368,16 @@ cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --al
 - G2 已完成 gpui-kit 生产接入并通过最终工作区 Release 验收；
 - W7 的截图 UI 与工具栏在三种尺寸、双主题、双语、单屏 100%/DPI 96 的完整视觉和交互矩阵通过，截图/JSON/像素/清理证据齐全；
 - U5 设置面板完成精简，现有设置键、默认值、迁移、快捷键和托盘行为兼容；
-- U1-U4 的剩余动态文案、主动作、滚动/页面 token 和 Pin 真实窗口缺口完成；
+- U1-U4 的剩余动态文案、主动作、滚动/页面 token 和 Pin 真实窗口缺口完成，UI 与对应核心流程都有独立验收证据；
+- Capture→标注/撤销/重做→Copy/Save/Print/Pin/Cancel 的状态转换、文件/剪贴板/打印结果、历史登记和资源清理通过；
+- C1 Capture/Pin 原生打印通过 PDF 一页输出与取消/失败恢复矩阵，覆盖图像内容、顶置层级、焦点/输入恢复和临时资源清理；
+- Library 的搜索、筛选、选择、打开、复制、固定、移除和保留数量更新通过，失败后页面状态和历史文件保持可恢复；
+- Record 的来源/目录/support 检查、start/pause/resume/stop 通过，并核验有效 MP4 产物、进程退出和临时目录清理；
+- Pin 的多窗口输入、焦点、Copy/Save、主题/语言更新和再次 Capture 生命周期通过；
+- OCR/二维码识别的选择、识别结果、复制、取消和失败恢复通过；远程翻译只按表中暂缓范围处理；
 - B1-B4 的失败恢复、标注回归和资源清理持续通过；
 - 已具备的 DPI 环境全部执行，未具备的矩阵显式标记为 D1 暂缓；
 - CI、Release 构建、便携包/安装器、manifest、SHA-256 和下载复核通过；
 - README、需求、架构、计划、Windows 验收、分发和 Linux 可行性文档之间没有失效链接或相互矛盾的状态。
 
-在 W7 完成前，不扩展新截图工具、不推进 P3，也不把历史静态截图或单一 runner 成功路径写成完整复刻通过。
+在 U2/U4/U3 与核心流程矩阵退出前，不启动 M1、R1 或 P3；不把历史静态截图或单一 runner 成功路径写成整条产品 UI 与功能对齐通过。
