@@ -3378,6 +3378,195 @@ mod tests {
     }
 
     #[test]
+    fn history_mutation_templates_localize_counts_paths_and_errors() {
+        type TemplateCase<'a> = (
+            UiText,
+            &'a [(&'a str, &'a str)],
+            &'a [(&'a str, &'a str)],
+            &'a str,
+            &'a str,
+        );
+
+        let cases: &[TemplateCase<'_>] = &[
+            (
+                UiText::HistoryRecordFailed,
+                &[("error", "index is read-only")],
+                &[("error", "index is read-only")],
+                " (history unavailable: index is read-only; the image was saved and can be used normally)",
+                "（历史记录不可用：index is read-only；图片已保存，仍可正常使用）",
+            ),
+            (
+                UiText::HistoryFilesRemovedIndexFailed,
+                &[("error", "access denied")],
+                &[("error", "access denied")],
+                "Capture files were removed, but history could not be updated: access denied. Reopen Library to refresh.",
+                "截图文件已移除，但历史记录未能更新：access denied。请重新打开图库刷新。",
+            ),
+            (
+                UiText::HistoryRetentionUpdateFailed,
+                &[("error", "disk full")],
+                &[("error", "disk full")],
+                "Could not update history retention: disk full. The previous limit remains active; try again.",
+                "无法更新历史记录保留数量：disk full。当前仍使用原设置，请重试。",
+            ),
+            (
+                UiText::HistoryRetentionUpdating,
+                &[("count", "50")],
+                &[("count", "50")],
+                "Updating screenshot history retention to 50...",
+                "正在将截图历史保留数量更新为 50...",
+            ),
+            (
+                UiText::HistoryRetentionDeleteFailed,
+                &[("count", "4")],
+                &[("count", "4")],
+                "Could not remove 4 capture(s); history retention was unchanged",
+                "无法删除 4 张截图；截图历史保留设置未更改",
+            ),
+            (
+                UiText::HistoryRetentionUpdated,
+                &[("count", "50")],
+                &[("count", "50")],
+                "Screenshot history retains the latest 50 captures",
+                "截图历史记录保留最近 50 张截图",
+            ),
+            (
+                UiText::HistoryRetentionSaveFailed,
+                &[("count", "50"), ("error", "disk full")],
+                &[("count", "50"), ("error", "disk full")],
+                "History retention is 50 captures for this session but could not be saved: disk full",
+                "本次会话的历史保留数量为 50 张截图，但无法保存：disk full",
+            ),
+            (
+                UiText::HistoryFallbackUsed,
+                &[("path", "D:\\Quick Saves")],
+                &[("path", "D:\\Quick Saves")],
+                "; quick-save folder unavailable; using D:\\Quick Saves",
+                "；快速保存目录不可用，已改用 D:\\Quick Saves",
+            ),
+            (
+                UiText::HistoryFallbackPreferenceFailed,
+                &[("error", "access denied")],
+                &[("error", "access denied")],
+                " (could not persist the fallback folder: access denied)",
+                "（无法保存回退目录设置：access denied）",
+            ),
+            (
+                UiText::HistorySelectionCount,
+                &[("count", "3")],
+                &[("count", "3")],
+                "3 capture(s) selected",
+                "已选择 3 张截图",
+            ),
+            (
+                UiText::HistoryAlreadySelected,
+                &[("count", "2")],
+                &[("count", "2")],
+                "2 capture(s) already selected",
+                "已有 2 张截图被选择",
+            ),
+            (
+                UiText::HistorySelectionAdded,
+                &[("count", "4")],
+                &[("count", "4")],
+                "Selected 4 additional capture(s)",
+                "已额外选择 4 张截图",
+            ),
+            (
+                UiText::HistoryClearConfirmation,
+                &[("count", "8"), ("scope", "filtered")],
+                &[("count", "8"), ("scope", "筛选结果")],
+                "Confirm deletion of 8 filtered saved capture(s)",
+                "确认删除 筛选结果 的 8 张已保存截图",
+            ),
+            (
+                UiText::HistoryClearing,
+                &[("count", "8")],
+                &[("count", "8")],
+                "Clearing 8 saved capture(s)...",
+                "正在清除 8 张已保存截图...",
+            ),
+            (
+                UiText::HistoryDeletedSelected,
+                &[("count", "3")],
+                &[("count", "3")],
+                "Deleted 3 selected capture(s)",
+                "已删除 3 张已选择的截图",
+            ),
+            (
+                UiText::HistoryClearedFiltered,
+                &[("count", "5")],
+                &[("count", "5")],
+                "Cleared 5 filtered capture(s)",
+                "已清除 5 张筛选出的截图",
+            ),
+            (
+                UiText::HistoryClearedWithFailures,
+                &[("deleted", "4"), ("failed", "1")],
+                &[("deleted", "4"), ("failed", "1")],
+                "Cleared 4 capture(s); 1 could not be deleted",
+                "已清除 4 张截图；1 张无法删除",
+            ),
+            (
+                UiText::HistoryRemoving,
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                "Removing D:\\Quick Saves\\capture.png...",
+                "正在移除 D:\\Quick Saves\\capture.png...",
+            ),
+            (
+                UiText::HistoryRemoveFailed,
+                &[("error", "file is in use")],
+                &[("error", "file is in use")],
+                "Could not remove screenshot history item: file is in use",
+                "无法移除截图历史记录项：file is in use",
+            ),
+            (
+                UiText::HistoryRemoved,
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                &[("path", "D:\\Quick Saves\\capture.png")],
+                "Removed D:\\Quick Saves\\capture.png from screenshot history",
+                "已从截图历史记录移除 D:\\Quick Saves\\capture.png",
+            ),
+            (
+                UiText::HistoryFolderOpened,
+                &[("path", "D:\\Quick Saves")],
+                &[("path", "D:\\Quick Saves")],
+                "Opened screenshot folder D:\\Quick Saves",
+                "已打开截图目录 D:\\Quick Saves",
+            ),
+            (
+                UiText::HistoryFolderOpenFailed,
+                &[("error", "explorer is unavailable")],
+                &[("error", "explorer is unavailable")],
+                "Could not open screenshot folder: explorer is unavailable",
+                "无法打开截图目录：explorer is unavailable",
+            ),
+            (
+                UiText::HistoryUnavailable,
+                &[("error", "history index is busy")],
+                &[("error", "history index is busy")],
+                "; history unavailable: history index is busy",
+                "；历史记录不可用：history index is busy",
+            ),
+        ];
+
+        for (key, english_replacements, chinese_replacements, english, simplified_chinese) in cases
+        {
+            assert_eq!(
+                Locale::English.format_template(*key, english_replacements),
+                *english,
+                "English template {key:?}"
+            );
+            assert_eq!(
+                Locale::SimplifiedChinese.format_template(*key, chinese_replacements),
+                *simplified_chinese,
+                "Simplified Chinese template {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn recording_status_templates_keep_targets_progress_paths_and_failures_localized() {
         type TemplateCase<'a> = (
             UiText,

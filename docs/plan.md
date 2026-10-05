@@ -292,6 +292,8 @@ G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，不能�
 
 **U1.9 当前结果（2026-10-05）**：新增图库动态文案的 English/简体中文逐字断言，覆盖 21 个模板入口，包括文件名模式、保留数量、筛选/搜索、删除确认、列表摘要和相对时间；目标测试 `cargo test -p flash-shot-app --lib --offline i18n::tests::library_templates_localize_dynamic_counts_filters_and_time`（1 项通过）。最终内容通过 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --all-features --locked --offline`（710 项通过）和 `git diff --check`。
 
+**U1.10 当前结果（2026-10-05）**：新增历史记录变更状态的 English/简体中文逐字断言，覆盖 23 个模板入口，包括保留数量更新、清理结果、选择计数、文件路径、目录操作和索引错误；目标测试 `cargo test -p flash-shot-app --lib --offline i18n::tests::history_mutation_templates_localize_counts_paths_and_errors`（1 项通过）。最终内容通过 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --all-features --locked --offline`（711 项通过）和 `git diff --check`。
+
 
 ### M1：按职责拆分大型模块
 
