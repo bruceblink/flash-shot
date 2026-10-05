@@ -288,6 +288,8 @@ G1 只验证了隔离探针：`gpui-kit 0.6.6` 使用 `gpui-pre 0.3.6`，不能�
 
 **U1.7 当前结果（2026-10-05）**：扩展录屏动态状态的 English/简体中文精确断言，覆盖 31 个模板入口，包括目录路径、来源名称、录制生命周期、计时/帧数进度、FFmpeg 能力探测和启动/停止错误；目标测试 `cargo test -p flash-shot-app --lib --offline i18n::tests::recording_status_templates_keep_targets_progress_paths_and_failures_localized`（1 项通过）。最终内容通过 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --all-features --locked --offline`（708 项通过）和 `git diff --check`。
 
+**U1.8 当前结果（2026-10-05）**：新增截图与长截图动态文案的 English/简体中文逐字断言，覆盖 26 个模板入口，包括物理像素尺寸、坐标/颜色、捕获耗时与复制次数、长截图帧数/重叠量和错误详情；目标测试 `cargo test -p flash-shot-app --lib --offline i18n::tests::capture_and_scrolling_templates_localize_dynamic_details`（1 项通过）。最终内容通过 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --all-features --locked --offline`（709 项通过）和 `git diff --check`。
+
 
 ### M1：按职责拆分大型模块
 

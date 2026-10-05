@@ -2669,6 +2669,254 @@ mod tests {
     }
 
     #[test]
+    fn capture_and_scrolling_templates_localize_dynamic_details() {
+        type TemplateCase<'a> = (
+            UiText,
+            &'a [(&'a str, &'a str)],
+            &'a [(&'a str, &'a str)],
+            &'a str,
+            &'a str,
+        );
+
+        let cases: &[TemplateCase<'_>] = &[
+            (
+                UiText::DelayedCaptureScheduled,
+                &[("seconds", "5")],
+                &[("seconds", "5")],
+                "Capture scheduled in 5 seconds",
+                "将在 5 秒后截图",
+            ),
+            (
+                UiText::CaptureSummary,
+                &[
+                    ("width", "3840"),
+                    ("height", "2160"),
+                    ("display_count", "2"),
+                    ("duration_ms", "18.4"),
+                    ("cpu_copy_count", "2"),
+                ],
+                &[
+                    ("width", "3840"),
+                    ("height", "2160"),
+                    ("display_count", "2"),
+                    ("duration_ms", "18.4"),
+                    ("cpu_copy_count", "2"),
+                ],
+                "Captured 3840 x 2160 physical pixels across 2 display(s) in 18.4 ms (2 CPU copies)",
+                "已捕获 3840 x 2160 个物理像素，涵盖 2 个显示器，用时 18.4 ms（2 次 CPU 复制）",
+            ),
+            (
+                UiText::CaptureFocusedWindow,
+                &[("width", "1280"), ("height", "720")],
+                &[("width", "1280"), ("height", "720")],
+                "Focused window: 1280 x 720 physical pixels",
+                "焦点窗口：1280 x 720 个物理像素",
+            ),
+            (
+                UiText::CaptureFailed,
+                &[("error", "desktop access denied")],
+                &[("error", "desktop access denied")],
+                "Capture failed: desktop access denied",
+                "截图失败：desktop access denied",
+            ),
+            (
+                UiText::CaptureAnnotationDocumentCreateFailed,
+                &[("error", "temporary directory is full")],
+                &[("error", "temporary directory is full")],
+                "Could not create annotation document: temporary directory is full",
+                "无法创建标注文档：temporary directory is full",
+            ),
+            (
+                UiText::SelectionDimensions,
+                &[("width", "640"), ("height", "360")],
+                &[("width", "640"), ("height", "360")],
+                "Selection: 640 x 360 physical pixels",
+                "选区：640 x 360 个物理像素",
+            ),
+            (
+                UiText::SelectionDimensionLabel,
+                &[("width", "640"), ("height", "360")],
+                &[("width", "640"), ("height", "360")],
+                "640 x 360 px",
+                "640 x 360 像素",
+            ),
+            (
+                UiText::SelectionHoverDetails,
+                &[
+                    ("width", "640"),
+                    ("height", "360"),
+                    ("x", "112"),
+                    ("y", "48"),
+                    ("color", "#AABBCC"),
+                ],
+                &[
+                    ("width", "640"),
+                    ("height", "360"),
+                    ("x", "112"),
+                    ("y", "48"),
+                    ("color", "#AABBCC"),
+                ],
+                "640 x 360 px | (112, 48) #AABBCC",
+                "640 x 360 像素 | (112, 48) #AABBCC",
+            ),
+            (
+                UiText::HoverPixelDetails,
+                &[("x", "112"), ("y", "48"), ("color", "#AABBCC")],
+                &[("x", "112"), ("y", "48"), ("color", "#AABBCC")],
+                "(112, 48) #AABBCC",
+                "(112, 48) #AABBCC",
+            ),
+            (
+                UiText::FrameDimensions,
+                &[("width", "3840"), ("height", "2160")],
+                &[("width", "3840"), ("height", "2160")],
+                "3840 x 2160 physical pixels",
+                "3840 x 2160 个物理像素",
+            ),
+            (
+                UiText::SmartTargetDetails,
+                &[
+                    ("kind", "Button"),
+                    ("width", "96"),
+                    ("height", "32"),
+                    ("x", "512"),
+                    ("y", "240"),
+                    ("color", "#AABBCC"),
+                ],
+                &[
+                    ("kind", "按钮"),
+                    ("width", "96"),
+                    ("height", "32"),
+                    ("x", "512"),
+                    ("y", "240"),
+                    ("color", "#AABBCC"),
+                ],
+                "Button: 96 x 32 px | (512, 240) #AABBCC",
+                "按钮：96 x 32 像素 | (512, 240) #AABBCC",
+            ),
+            (
+                UiText::SmartTargetLabel,
+                &[("kind", "Button"), ("width", "96"), ("height", "32")],
+                &[("kind", "按钮"), ("width", "96"), ("height", "32")],
+                "Button | 96 x 32 px",
+                "按钮 | 96 x 32 像素",
+            ),
+            (
+                UiText::OverlaySmartTargetReady,
+                &[("width", "96"), ("height", "32")],
+                &[("width", "96"), ("height", "32")],
+                "Smart target ready: 96 x 32 physical pixels",
+                "智能目标就绪：96 x 32 个物理像素",
+            ),
+            (
+                UiText::OverlaySelectionReady,
+                &[("width", "640"), ("height", "360")],
+                &[("width", "640"), ("height", "360")],
+                "Selection ready: 640 x 360 physical pixels",
+                "选区就绪：640 x 360 个物理像素",
+            ),
+            (
+                UiText::OverlaySeedSelectionFailed,
+                &[("error", "selection is outside the screen")],
+                &[("error", "selection is outside the screen")],
+                "Could not seed acceptance selection: selection is outside the screen",
+                "无法准备验收选区：selection is outside the screen",
+            ),
+            (
+                UiText::ScrollingStartFailed,
+                &[("error", "capture window is unavailable")],
+                &[("error", "capture window is unavailable")],
+                "Could not start scrolling screenshot: capture window is unavailable",
+                "无法开始长截图：capture window is unavailable",
+            ),
+            (
+                UiText::ScrollingAssistFailed,
+                &[("error", "scroll input was rejected")],
+                &[("error", "scroll input was rejected")],
+                "Could not assist scroll: scroll input was rejected",
+                "无法辅助滚动：scroll input was rejected",
+            ),
+            (
+                UiText::ScrollingFrameCaptured,
+                &[("count", "3"), ("overlap", "120")],
+                &[("count", "3"), ("overlap", "120")],
+                "Captured scroll frame 3 (120 px overlap)",
+                "已捕获第 3 个滚动视口（重叠 120 像素）",
+            ),
+            (
+                UiText::ScrollingFrameCaptureFailed,
+                &[("error", "screen changed during capture")],
+                &[("error", "screen changed during capture")],
+                "Could not capture scroll frame: screen changed during capture",
+                "无法捕获滚动视口：screen changed during capture",
+            ),
+            (
+                UiText::ScrollingFinishFailed,
+                &[("error", "no compatible frames")],
+                &[("error", "no compatible frames")],
+                "Could not finish scrolling screenshot: no compatible frames",
+                "无法完成长截图：no compatible frames",
+            ),
+            (
+                UiText::ScrollingStitched,
+                &[("frames", "4"), ("joins", "3")],
+                &[("frames", "4"), ("joins", "3")],
+                "Scrolling screenshot stitched 4 frames with 3 overlap joins",
+                "长截图已拼接：4 个视口，3 个重叠连接",
+            ),
+            (
+                UiText::ScrollingOpenFailed,
+                &[("error", "editor window could not open")],
+                &[("error", "editor window could not open")],
+                "Could not open stitched capture: editor window could not open",
+                "无法打开拼接后的截图：editor window could not open",
+            ),
+            (
+                UiText::ScrollingOverlapMismatch,
+                &[("error", "no matching overlap")],
+                &[("error", "no matching overlap")],
+                "That frame did not overlap the previous one: no matching overlap. Adjust the scroll position and capture again.",
+                "该视口与上一视口没有重叠：no matching overlap。请调整滚动位置后重新捕获。",
+            ),
+            (
+                UiText::ScrollingManyFrames,
+                &[("count", "4")],
+                &[("count", "4")],
+                "4 frames",
+                "4 个视口",
+            ),
+            (
+                UiText::ScrollingReadyToFinish,
+                &[("count", "4")],
+                &[("count", "4")],
+                "4 - ready to finish",
+                "4，可以完成",
+            ),
+            (
+                UiText::ScrollingCaptureAnother,
+                &[("count", "4")],
+                &[("count", "4")],
+                "4 - capture another",
+                "4，请再捕获一个",
+            ),
+        ];
+
+        for (key, english_replacements, chinese_replacements, english, simplified_chinese) in cases
+        {
+            assert_eq!(
+                Locale::English.format_template(*key, english_replacements),
+                *english,
+                "English template {key:?}"
+            );
+            assert_eq!(
+                Locale::SimplifiedChinese.format_template(*key, chinese_replacements),
+                *simplified_chinese,
+                "Simplified Chinese template {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn annotation_feedback_localizes_tools_styles_and_text_editing() {
         assert_eq!(
             Locale::English.format_template(
