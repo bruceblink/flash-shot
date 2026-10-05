@@ -2547,6 +2547,128 @@ mod tests {
     }
 
     #[test]
+    fn recognition_and_support_templates_localize_dynamic_parameters() {
+        type TemplateCase<'a> = (
+            UiText,
+            &'a [(&'a str, &'a str)],
+            &'a [(&'a str, &'a str)],
+            &'a str,
+            &'a str,
+        );
+
+        let cases: &[TemplateCase<'_>] = &[
+            (
+                UiText::RecognitionQrFound,
+                &[("count", "3")],
+                &[("count", "3")],
+                "Found 3 QR code(s)",
+                "找到 3 个二维码",
+            ),
+            (
+                UiText::RecognitionQrFailed,
+                &[("error", "camera busy")],
+                &[("error", "camera busy")],
+                "QR recognition failed: camera busy",
+                "二维码识别失败：camera busy",
+            ),
+            (
+                UiText::RecognitionTextInProgress,
+                &[("language", "Simplified Chinese")],
+                &[("language", "简体中文")],
+                "Recognizing text locally (Simplified Chinese)...",
+                "正在本地识别文字（简体中文）...",
+            ),
+            (
+                UiText::RecognitionOcrFailed,
+                &[("error", "bad image")],
+                &[("error", "bad image")],
+                "OCR failed: bad image",
+                "OCR 失败：bad image",
+            ),
+            (
+                UiText::TranslationUnavailable,
+                &[("error", "missing endpoint")],
+                &[("error", "missing endpoint")],
+                "Translation is unavailable: missing endpoint",
+                "翻译不可用：missing endpoint",
+            ),
+            (
+                UiText::TranslationSupportReady,
+                &[("language", "en")],
+                &[("language", "en")],
+                "Translation ready: HTTPS endpoint configured for en",
+                "翻译已就绪：已为 en 配置 HTTPS 端点",
+            ),
+            (
+                UiText::TranslationSupportNeedsAttention,
+                &[("error", "invalid target language")],
+                &[("error", "invalid target language")],
+                "Translation configuration needs attention: invalid target language",
+                "翻译配置需要检查：invalid target language",
+            ),
+            (
+                UiText::TranslationServiceReady,
+                &[("count", "7")],
+                &[("count", "7")],
+                "Translation service ready (7 characters)",
+                "翻译服务已就绪（7 个字符）",
+            ),
+            (
+                UiText::OcrSupportReady,
+                &[
+                    ("version", "Tesseract 5.4.0"),
+                    ("language", "Simplified Chinese"),
+                ],
+                &[("version", "Tesseract 5.4.0"), ("language", "简体中文")],
+                "Local OCR ready: Tesseract 5.4.0 with Simplified Chinese",
+                "本地 OCR 已就绪：Tesseract 5.4.0，使用 简体中文",
+            ),
+            (
+                UiText::OcrSupportLanguageMissing,
+                &[("language", "Simplified Chinese")],
+                &[("language", "简体中文")],
+                "Tesseract is installed but the Simplified Chinese language data is missing. Install that language pack or choose another OCR language.",
+                "Tesseract 已安装，但缺少 简体中文 语言数据。请安装语言包或选择其他 OCR 语言。",
+            ),
+            (
+                UiText::OcrSupportCheckFailed,
+                &[("error", "probe timed out")],
+                &[("error", "probe timed out")],
+                "Could not check local OCR support: probe timed out",
+                "无法检查本地 OCR 支持：probe timed out",
+            ),
+            (
+                UiText::OcrLanguageChanged,
+                &[("language", "Simplified Chinese")],
+                &[("language", "简体中文")],
+                "Local OCR language: Simplified Chinese",
+                "本地 OCR 语言：简体中文",
+            ),
+            (
+                UiText::OcrLanguageSaveFailed,
+                &[("error", "access denied")],
+                &[("error", "access denied")],
+                "Could not save OCR language preference: access denied",
+                "无法保存 OCR 语言偏好：access denied",
+            ),
+        ];
+
+        for (key, english_replacements, chinese_replacements, english, simplified_chinese) in cases
+        {
+            assert_eq!(
+                Locale::English.format_template(*key, english_replacements),
+                *english,
+                "English template {key:?}"
+            );
+            assert_eq!(
+                Locale::SimplifiedChinese.format_template(*key, chinese_replacements),
+                *simplified_chinese,
+                "Simplified Chinese template {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn annotation_feedback_localizes_tools_styles_and_text_editing() {
         assert_eq!(
             Locale::English.format_template(
