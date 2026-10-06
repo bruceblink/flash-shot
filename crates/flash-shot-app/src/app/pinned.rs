@@ -33,7 +33,6 @@ fn pinned_control_tooltip(locale: Locale, control: &str) -> &'static str {
         "show-all" => locale.text(UiText::PinShowAllTooltip),
         "copy" => locale.text(UiText::PinCopyTooltip),
         "save" => locale.text(UiText::PinSaveTooltip),
-        "print" => locale.text(UiText::PinPrintTooltip),
         "close" => locale.text(UiText::PinCloseTooltip),
         _ => "",
     }
@@ -50,11 +49,10 @@ pub(super) struct PinnedImage {
     topmost_requested: bool,
     opacity: u8,
     mouse_through: bool,
-    status: String,
+    status: &'static str,
     feedback_visible: bool,
     feedback_generation: u64,
     copy_in_flight: bool,
-    print_in_flight: bool,
     pending_zoom_size: Option<Size<Pixels>>,
 }
 
@@ -80,11 +78,10 @@ impl PinnedImage {
             topmost_requested: false,
             opacity: 255,
             mouse_through: false,
-            status: locale.text(UiText::PinCapture).to_owned(),
+            status: locale.text(UiText::PinCapture),
             feedback_visible: false,
             feedback_generation: 0,
             copy_in_flight: false,
-            print_in_flight: false,
             pending_zoom_size: None,
         }
     }
@@ -156,91 +153,6 @@ impl PinnedImage {
         self.show_operation_feedback(feedback, cx);
     }
 
-    /// Prints the immutable image snapshot while this Pin remains available after cancel or error.
-    pub(super) fn print_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let locale = self.locale;
-        let owner_hwnd = native_window_handle(window).unwrap_or_default();
-        let current_pin = gpui::Window::window_handle(window).downcast::<PinnedImage>();
-        if self.print_in_flight {
-            self.show_operation_feedback(locale.text(UiText::PinPrintBusy), cx);
-            return;
-        }
-        if owner_hwnd == 0 {
-            self.show_operation_feedback(
-                locale.format_template(
-                    UiText::PinPrintFailed,
-                    &[("error", locale.text(UiText::PinWindowHandleUnavailable))],
-                ),
-                cx,
-            );
-            return;
-        }
-
-        let app = self.app.clone();
-        if !app.update(cx, |app, _| app.try_begin_print_job()) {
-            self.show_operation_feedback(locale.text(UiText::PinPrintBusy), cx);
-            return;
-        }
-        let dialog_windows = match app.update(cx, |app, cx| {
-            app.demote_print_windows_for_dialog(owner_hwnd, current_pin, cx)
-        }) {
-            Ok(windows) => windows,
-            Err(error) => {
-                app.update(cx, |app, cx| app.finish_print_job(cx));
-                let detail = error.to_string();
-                self.show_operation_feedback(
-                    locale.format_template(UiText::PinPrintFailed, &[("error", &detail)]),
-                    cx,
-                );
-                return;
-            }
-        };
-
-        self.print_in_flight = true;
-        self.show_operation_feedback(locale.text(UiText::PinPrinting), cx);
-        let frame = self.frame.clone();
-        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let mut cx = cx.clone();
-            async move {
-                let result = cx
-                    .background_executor()
-                    .spawn(async move { crate::platform::printing::print_image(owner_hwnd, frame) })
-                    .await;
-                FlashShotApp::restore_print_windows_after_dialog(&dialog_windows);
-                if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
-                        this.finish_print_status(result, cx);
-                    });
-                }
-                app.update(&mut cx, |app, cx| app.finish_print_job(cx));
-            }
-        })
-        .detach();
-    }
-
-    /// Applies a printer result to the original Pin if it is still open.
-    fn finish_print_status(
-        &mut self,
-        result: std::io::Result<crate::platform::printing::PrintOutcome>,
-        cx: &mut Context<Self>,
-    ) {
-        self.print_in_flight = false;
-        let status = match result {
-            Ok(crate::platform::printing::PrintOutcome::Submitted) => {
-                self.locale.text(UiText::PinPrinted).to_owned()
-            }
-            Ok(crate::platform::printing::PrintOutcome::Cancelled) => {
-                self.locale.text(UiText::PinPrintCancelled).to_owned()
-            }
-            Err(error) => {
-                let detail = error.to_string();
-                self.locale
-                    .format_template(UiText::PinPrintFailed, &[("error", &detail)])
-            }
-        };
-        self.show_operation_feedback(status, cx);
-    }
-
     /// Keeps controls visible while a no-input acceptance runner exercises native Pin actions.
     pub(super) fn show_controls_for_acceptance(&mut self, cx: &mut Context<Self>) {
         self.show_operation_feedback(self.locale.text(UiText::PinCapture), cx);
@@ -261,7 +173,7 @@ impl PinnedImage {
         self.colors = colors;
         self.theme_mode = theme_mode;
         self.locale = locale;
-        self.status = locale.text(UiText::PinCapture).to_owned();
+        self.status = locale.text(UiText::PinCapture);
         self.feedback_visible = false;
         cx.notify();
     }
@@ -296,11 +208,6 @@ impl PinnedImage {
         self.frame.bounds
     }
 
-    /// Exposes Pin's printer feedback and busy state to native acceptance probes.
-    pub(super) fn print_state_for_acceptance(&self) -> (String, bool) {
-        (self.status.clone(), self.print_in_flight)
-    }
-
     /// Clones the immutable Pin source so acceptance can compare content without screen scraping.
     pub(super) fn frame_for_acceptance(&self) -> crate::platform::capture::CaptureFrame {
         self.frame.clone()
@@ -312,8 +219,8 @@ impl PinnedImage {
     }
 
     /// Keeps a completed action visible long enough for keyboard and pointer users to read it.
-    fn show_operation_feedback(&mut self, status: impl Into<String>, cx: &mut Context<Self>) {
-        self.status = status.into();
+    fn show_operation_feedback(&mut self, status: &'static str, cx: &mut Context<Self>) {
+        self.status = status;
         self.feedback_visible = true;
         self.feedback_generation = self.feedback_generation.wrapping_add(1);
         let generation = self.feedback_generation;
@@ -606,14 +513,11 @@ impl Render for PinnedImage {
             .flex_wrap()
             .items_center()
             .gap(px(ThemeMetrics::PIN_TOOLBAR_GAP))
-            .when(
-                !self.feedback_visible && !self.copy_in_flight && !self.print_in_flight,
-                |toolbar| {
-                    toolbar
-                        .invisible()
-                        .group_hover("pinned-window", |toolbar| toolbar.visible())
-                },
-            )
+            .when(!self.feedback_visible && !self.copy_in_flight, |toolbar| {
+                toolbar
+                    .invisible()
+                    .group_hover("pinned-window", |toolbar| toolbar.visible())
+            })
             .child(
                 div()
                     .flex()
@@ -630,7 +534,7 @@ impl Render for PinnedImage {
                             .bg(colors.toolbar_surface)
                             .text_xs()
                             .text_color(colors.muted)
-                            .child(self.status.clone()),
+                            .child(self.status),
                     )
                     .child(pinned_tool_button(
                         "pinned-save",
@@ -640,15 +544,6 @@ impl Render for PinnedImage {
                         locale,
                         PinnedButtonTone::Neutral,
                         cx.listener(|this, _, _, cx| this.save_image(cx)),
-                    ))
-                    .child(pinned_tool_button(
-                        "pinned-print",
-                        locale.text(UiText::PinPrint),
-                        "print",
-                        colors,
-                        locale,
-                        PinnedButtonTone::Neutral,
-                        cx.listener(|this, _, window, cx| this.print_image(window, cx)),
                     ))
                     .child(pinned_tool_button(
                         "pinned-zoom-out",
@@ -768,7 +663,6 @@ impl Render for PinnedImage {
                     Some(PinnedKeyboardCommand::Close) => this.close(window, cx),
                     Some(PinnedKeyboardCommand::Copy) => this.copy_image(cx),
                     Some(PinnedKeyboardCommand::Save) => this.save_image(cx),
-                    Some(PinnedKeyboardCommand::Print) => this.print_image(window, cx),
                     Some(PinnedKeyboardCommand::ZoomOut) => this.zoom(0.8, window, cx),
                     Some(PinnedKeyboardCommand::ZoomIn) => this.zoom(1.25, window, cx),
                     Some(PinnedKeyboardCommand::CycleOpacity) => this.cycle_opacity(window, cx),
@@ -802,7 +696,6 @@ enum PinnedKeyboardCommand {
     Close,
     Copy,
     Save,
-    Print,
     ZoomOut,
     ZoomIn,
     CycleOpacity,
@@ -821,7 +714,6 @@ fn pinned_keyboard_command(keystroke: &Keystroke) -> Option<PinnedKeyboardComman
         return match keystroke.key.as_str() {
             "c" => Some(PinnedKeyboardCommand::Copy),
             "s" => Some(PinnedKeyboardCommand::Save),
-            "p" => Some(PinnedKeyboardCommand::Print),
             "-" => Some(PinnedKeyboardCommand::ZoomOut),
             "=" | "+" => Some(PinnedKeyboardCommand::ZoomIn),
             "o" => Some(PinnedKeyboardCommand::CycleOpacity),
@@ -1045,10 +937,6 @@ mod tests {
         assert_eq!(
             pinned_keyboard_command(&key("s", control)),
             Some(PinnedKeyboardCommand::Save)
-        );
-        assert_eq!(
-            pinned_keyboard_command(&key("p", control)),
-            Some(PinnedKeyboardCommand::Print)
         );
         assert_eq!(
             pinned_keyboard_command(&key("=", control)),

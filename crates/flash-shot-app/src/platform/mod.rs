@@ -6,7 +6,6 @@ pub mod clipboard;
 pub mod cursor;
 pub mod directory;
 pub mod display;
-pub mod printing;
 pub mod process_group;
 pub mod process_pause;
 pub mod scroll;

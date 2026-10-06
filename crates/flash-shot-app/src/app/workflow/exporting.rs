@@ -540,7 +540,7 @@ impl FlashShotApp {
 
     /// Returns every live capture-overlay HWND so native dialogs can be placed above them.
     #[cfg(windows)]
-    pub(in crate::app) fn capture_overlay_native_handles(
+    fn capture_overlay_native_handles(
         &self,
         cx: &mut Context<Self>,
     ) -> std::io::Result<Vec<isize>> {
