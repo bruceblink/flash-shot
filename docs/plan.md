@@ -1,7 +1,7 @@
 # 主线开发计划
 
 更新日期：2026-10-07
-当前版本：`0.1.3`
+当前版本：`0.2.0`
 目标版本：`0.2.0` Snow Apps UI 与核心功能对齐
 
 本文档是 Flash Shot 唯一的主线开发计划。它整合此前的 B、W、U、M、R、D、P 路线，
@@ -100,16 +100,16 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | G2 | gpui-kit 生产接入评估与迁移 | 已完成（生产 Release 与完整组件矩阵，2026-10-05） | 生产截图工作区使用 gpui-kit 并通过 Release 验收；本次无版本冲突或回滚阻碍 |
 | U5 | 设置面板精简与 gpui-kit 组件落地 | 已完成（U5.4 综合设置页矩阵，2026-09-27；单屏 100%） | 重复内容收敛、所有设置键兼容、双语/双主题/三尺寸无截断或重叠；高 DPI/多屏按 D1 暂缓 |
 | C1 | Capture/Pin 原生打印核心动作 | 暂缓（2026-10-06；按用户决定移出当前版本） | 重新排期后再确定 Windows Capture/Pin 打印入口、真实输出、取消恢复、窗口层级和资源清理验收 |
-| U1 | 动态文案国际化收尾（验收支撑项） | 部分完成 | 用户可见动态状态全部参数化并有 English/简体中文测试；随 UI/功能切片补齐相关文案 |
-| U2 | App/Library/Record 入口和恢复动作收尾 | 部分完成 | 主/次/破坏性/忙/错误/恢复层级和真实键鼠矩阵通过 |
-| U3 | 视觉 token、滚动和其他页面布局收尾 | 部分完成 | ThemeMetrics 覆盖稳定，真实输入和可用 DPI 矩阵通过 |
-| U4 | Pin 中英文实时输入与窗口生命周期 | 部分完成 | 锁定/解锁入口和状态清晰；锁定期间移动、缩放等几何变化被阻止；真实点击、焦点、关闭、再次 Capture 和语言/主题矩阵通过 |
+| U1 | 动态文案国际化收尾（验收支撑项） | 已完成（2026-10-07） | 用户可见动态状态模板有 English/简体中文精确测试；UI 状态矩阵有对应 Release 输入证据 |
+| U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
+| U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
+| U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
 | M1 | 按职责拆分 runner 与 overlay | 待开始 | 行为证据稳定后完成至少一个职责拆分且报告、快捷键和用户行为无回归 |
 | R1 | 私有 capture-core 提取评估后的最小实现 | 待开始 | 仅在行为稳定、API/许可证/MSRV 明确后执行，不影响 `0.2.0` 主链 |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-主线执行顺序调整为：**U2 App/Library/Record 核心入口、动作和恢复 → U4 Pin 核心生命周期 → U3 跨页面视觉、滚动与布局收尾 → Capture/Library/Record/Pin/App/OCR 端到端对齐复核与发布**。C1 原生打印暂缓，不阻塞 `0.2.0`；U1 作为验收支撑项，在修改相关界面或状态时同步补齐；不再以孤立的文案测试替代 UI 或核心功能切片。G0、G1、G2、U5 和 W7.1-W7.11 均已交付，不重复开发；M1、R1、P3 不阻塞 `0.2.0`，D1 在具备对应硬件后单独执行。
+主线执行顺序调整为：**U2 App/Library/Record 核心入口、动作和恢复 → U4 Pin 核心生命周期 → U3 跨页面视觉、滚动与布局收尾 → Capture/Library/Record/Pin/App/OCR 端到端对齐复核与发布**。C1 原生打印暂缓，不阻塞 `0.2.0`；U1 动态文案矩阵已完成，后续新增状态继续同步补齐。U1-U4 已完成，当前只剩版本门禁、Release 构建和发布资产复核。G0、G1、G2、U5 和 W7.1-W7.11 均已交付，不重复开发；M1、R1、P3 不阻塞 `0.2.0`，D1 在具备对应硬件后单独执行。
 
 ## 4. 开发切片与交付记录
 
@@ -272,7 +272,9 @@ Snow Shot 的参考提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6` 新增 Wind
 - 端到端复核覆盖 Capture → annotate/undo/redo → Copy/Save/Pin/Cancel，Library → search/filter/select/open/remove/retention，Record → source/folder/support/start/pause/resume/stop/output，Pin → Copy/Save 和关闭恢复，以及 App 设置、更新和快捷键；OCR/二维码识别核验实际结果、复制和失败路径；
 - 每个子切片都必须单独验证、单独提交和立即推送，不能把多个页面或主流程改造合并成一个无法回滚的提交。
 
-**U3.1 当前结果（2026-09-27）**：设置页、状态栏和历史操作控件中原本散落的状态指示器、页面标记、说明间距、快捷操作最小宽度、开关圆钮和历史选择按钮高度，现统一由 `ThemeMetrics` 提供；默认像素值保持不变，减少后续真实输入与 DPI 调整时的重复几何来源。验证包括 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` 和 `cargo test -p flash-shot-app --lib`（399 项通过）。U3 仍为部分完成，真实窗口键鼠与高 DPI/多屏证据尚未补齐。
+**U3.1 当前结果（2026-09-27）**：设置页、状态栏和历史操作控件中原本散落的状态指示器、页面标记、说明间距、快捷操作最小宽度、开关圆钮和历史选择按钮高度，现统一由 `ThemeMetrics` 提供；默认像素值保持不变，减少后续真实输入与 DPI 调整时的重复几何来源。验证包括 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` 和 `cargo test -p flash-shot-app --lib`（399 项通过）。当时仍缺少真实窗口键鼠证据，已由 U3.2 当前源码长截图矩阵补齐。
+
+**U3.2 当前结果（2026-10-07；当前源码长截图三出口通过）**：当前 Windows Release runner 在单屏 `2560x1440`、DPI 96、English/深色下通过 More → Scroll shot、真实滚动追加第二帧、Finish 拼接以及 Copy、Save、Cancel 三条出口。Copy 的 PNG、DIB 和独立剪贴板消费者像素均与拼接源精确匹配；Save 文件像素精确匹配；Cancel 关闭编辑器。三份最新报告分别为 `target/release-v0.2-u3-scroll-copy-r3/session-1791365285288-7020/report.json`、`target/release-v0.2-u3-scroll-save-r3/session-1791365406411-32256/report.json` 和 `target/release-v0.2-u3-scroll-cancel-r2/session-1791365457106-23608/report.json`；每份均记录两帧、97px 重叠、最终 `1484x663` 拼接结果与清理状态通过。Computer Use 当前没有提供可操作的 Flash Shot 原生应用，以上为 Windows Release runner 的真实输入证据；150%/200% DPI 和多屏仍按 D1 暂缓。
 
 **U2.1 当前结果（2026-09-27）**：新增 `settings-interaction-acceptance` Release runner，使用真实 Windows 鼠标点击四个设置入口，再用紧凑布局的右箭头或宽布局的下箭头循环导航，并验证 Enter/Space 激活；每一步通过 GPUI 命令通道回读 `SettingsSection`，保存窗口物理边界/DPI、原生窗口截图和输入清理状态。runner 需要显式 `--allow-input`，会在输入前确认修饰键/鼠标按钮已释放，输入时核对前景 HWND，并在异常时恢复鼠标与窗口层级。单屏 100% 的 520x640 English/深色与 980x760 简体中文/浅色可丢弃会话均通过 4 次鼠标点击、5 次方向导航、Enter/Space 和资源清理；证据分别为 `target/settings-interaction-acceptance-u2-final-520-en/session-23124/report.json` 和 `target/settings-interaction-acceptance-u2-final-980-zh/session-29084/report.json`，每个目录保存 10 张 PNG、DPI 96、scale 1.0。U2 仍需补齐 App/Library/Record 主动作、恢复入口及更多语言/主题/尺寸矩阵，因此保持部分完成。
 
@@ -331,6 +333,12 @@ Snow Shot 的参考提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6` 新增 Wind
 **U1.11 当前结果（2026-10-05）**：新增快速保存及打开图库图片路径的 English/简体中文逐字断言，覆盖 16 个模板入口，包括目录选择/保存错误、文件名参数、打开与固定进度、标注附属文件警告和窗口恢复错误；目标测试 `cargo test -p flash-shot-app --lib --offline i18n::tests::quick_save_and_open_templates_localize_paths_and_recovery_details`（1 项通过）。最终内容通过 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --all-features --locked --offline`（712 项通过）和 `git diff --check`。
 
 **U1.12 当前结果（2026-10-05）**：新增保存、复制和标注操作的 English/简体中文逐字断言，覆盖 36 个模板入口，包括输出路径、操作错误、标注参数和选择位置；目标测试 `cargo test -p flash-shot-app --lib --offline i18n::tests::save_copy_and_annotation_templates_localize_paths_and_errors`（1 项通过）。最终内容通过 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --all-features --locked --offline`（713 项通过）和 `git diff --check`。
+
+**U1.13 当前结果（2026-10-07）**：U1.2-U1.12 已为动态状态模板补齐 English/简体中文的精确测试；App 更新、录屏忙/失败/恢复、Library 操作和 Pin 外观的双语真实窗口结果分别见 U2.1-U2.15、U4.1-U4.5。当前源码再通过 OCR/QR 的真实失败重试、结果复制和取消流程，验证 OCR/QR 状态进入同一动态文案验收范围。U1 退出条件完成；Computer Use 当前不可操作 Flash Shot 原生窗口，窗口输入证据来自 Windows Release runner，模板逐字断言来自 workspace 测试。
+
+**U2.15 当前结果（2026-10-07；App/Library/Record/OCR/QR 对齐收口）**：汇总 U2.1-U2.14 的当前源码双语窗口证据，覆盖 App 更新与快捷入口、Library 搜索/筛选/选择/打开/复制/Pin/删除/保留数量、Record support/start/重试/pause/resume/stop/MP4 和历史资源清理。English/深色与简体中文/浅色均有真实 Windows Release 键鼠报告，窗口宽度覆盖 520、980、1400 与 2560 像素级工作区；单屏 DPI 96。新增 OCR/QR Release 会话覆盖一次失败、重试、结果逐字复制、取消和最终清理，报告 `target/release-v0.2-recognition-r10/session-1791364671629-16560/report.json` 为 `status=passed`。完整报告和截图索引见 [Windows 手工验收记录](windows-manual-acceptance.md)。已验证组合之外的高 DPI 和多屏仍由 D1 暂缓。
+
+**U4.5 当前结果（2026-10-07；Pin 锁定双语输入验收通过）**：当前源码 Windows Release runner 在 English/深色和简体中文/浅色下真实发送 Ctrl+L、拖动和缩放输入。锁定后两次几何输入都保持 HWND 边界不变；解锁后拖动位置改变且缩放尺寸增大；按钮、状态文案和选中状态在两种语言截图中可见。报告为 `target/release-v0.2-u4-pin-lock-en-r2/session-1791367702774-20476/report.json` 与 `target/release-v0.2-u4-pin-lock-zh-r1/session-1791367888421-10816/report.json`，均为 schema 32、`status=passed`、DPI 96；三 Pin 输入内容一致，再次 Capture/Cancel 保留原 Pin，关闭后 session idle、overlay/Pin/可见进程窗口均为 0，Capture preflight 可用，桌面 fixture 已清理。Computer Use 当前未提供 Flash Shot 原生窗口；以上为 Windows Release runner 的真实输入和截图证据。Flash Shot 的锁定状态仅在当前 Pin 窗口期间有效，不在新窗口或进程重启后持久化。
 
 
 ### M1：按职责拆分大型模块
