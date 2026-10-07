@@ -1,12 +1,24 @@
 //! Real Windows mouse and keyboard acceptance for the settings navigation shell.
 
-use std::{fs, io, path::PathBuf, process, time::Duration};
+use std::{
+    fs, io,
+    path::PathBuf,
+    process,
+    sync::{Arc, mpsc},
+    time::Duration,
+};
 #[cfg(windows)]
 use std::{thread, time::Instant};
 
 use flash_shot::{
-    SettingsInteractionAcceptanceOptions, history::ScreenshotHistory, i18n::Locale,
-    performance::PerformanceRecorder, settings::UserSettings, theme::ThemeMode,
+    SettingsInteractionAcceptanceOptions,
+    domain::geometry::PhysicalRect,
+    history::{HistorySource, ScreenshotHistory},
+    i18n::Locale,
+    performance::PerformanceRecorder,
+    platform::capture::{CaptureFrame, PixelFormat},
+    settings::UserSettings,
+    theme::ThemeMode,
 };
 #[cfg(windows)]
 use serde::Serialize;
@@ -34,6 +46,7 @@ struct Options {
     exercise_record_start: bool,
     exercise_record_success: bool,
     exercise_library_format: bool,
+    exercise_library_single_delete: bool,
     exercise_pin_appearance: bool,
     output_dir: PathBuf,
     width: i32,
@@ -61,6 +74,7 @@ struct Report {
     keyboard_steps: Vec<StepReport>,
     action_steps: Vec<ActionStepReport>,
     recording_success: Option<RecordingSuccessReport>,
+    library_single_delete: Option<LibrarySingleDeleteReport>,
     pin_appearance: Option<PinAppearanceReport>,
     cleanup: CleanupReport,
 }
@@ -115,6 +129,19 @@ struct RecordingSuccessReport {
 
 #[cfg(windows)]
 #[derive(Serialize)]
+struct LibrarySingleDeleteReport {
+    initial_entries: usize,
+    single_confirmation_observed: bool,
+    cancel_preserved_entries: bool,
+    confirmation_reopened: bool,
+    target_removed: bool,
+    neighbor_preserved: bool,
+    remaining_entries: usize,
+    screenshots: Vec<String>,
+}
+
+#[cfg(windows)]
+#[derive(Serialize)]
 struct PinAppearanceReport {
     initial_locale: String,
     initial_theme: String,
@@ -151,6 +178,7 @@ impl Options {
             exercise_record_start: false,
             exercise_record_success: false,
             exercise_library_format: false,
+            exercise_library_single_delete: false,
             exercise_pin_appearance: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
@@ -171,6 +199,7 @@ impl Options {
                 "--exercise-record-start" => options.exercise_record_start = true,
                 "--exercise-record-success" => options.exercise_record_success = true,
                 "--exercise-library-format" => options.exercise_library_format = true,
+                "--exercise-library-single-delete" => options.exercise_library_single_delete = true,
                 "--exercise-pin-appearance" => options.exercise_pin_appearance = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
@@ -199,12 +228,19 @@ impl Options {
         if !options.allow_input {
             return Err("settings-interaction-acceptance requires --allow-input".to_owned());
         }
+        if options.exercise_library_single_delete && (options.width < 900 || options.height < 1_000)
+        {
+            return Err(
+                "single-entry Library deletion acceptance requires --width >= 900 and --height >= 1000"
+                    .to_owned(),
+            );
+        }
         Ok(options)
     }
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-single-delete] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -285,7 +321,12 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         session_dir.join("history")
     };
     fs::create_dir_all(&history_dir)?;
-    let history = ScreenshotHistory::open_with_limit(&history_dir, 30)?;
+    let mut history = ScreenshotHistory::open_with_limit(&history_dir, 30)?;
+    let library_remove_paths = if options.exercise_library_single_delete {
+        Some(create_single_delete_fixtures(&mut history, &history_dir)?)
+    } else {
+        None
+    };
     let performance = PerformanceRecorder::new(session_dir.join("metrics"))?;
     let mut settings = UserSettings::default();
     settings.locale = options.locale;
@@ -307,6 +348,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let (command_tx, command_rx) = async_channel::bounded(1);
+    let quit_commands = command_tx.clone();
     let worker_options = input::WorkerOptions {
         output_dir: session_dir.clone(),
         width: options.width,
@@ -320,16 +362,29 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         exercise_record_start: options.exercise_record_start,
         exercise_record_success: options.exercise_record_success,
         exercise_library_format: options.exercise_library_format,
+        exercise_library_single_delete: options.exercise_library_single_delete,
+        library_remove_paths,
         exercise_pin_appearance: options.exercise_pin_appearance,
         commands: command_tx,
     };
-    thread::spawn(move || {
+    let (input_error_tx, input_error_rx) = mpsc::channel();
+    let input_worker = thread::spawn(move || {
         if let Err(error) = input::run_input_probe(worker_options) {
+            let error = error.to_string();
             eprintln!("settings input probe failed: {error}");
-            process::exit(1);
+            let _ = input_error_tx.send(error);
+            let (quit_tx, quit_rx) = mpsc::sync_channel(1);
+            if quit_commands
+                .send_blocking(flash_shot::SettingsInteractionAcceptanceCommand::Quit(
+                    quit_tx,
+                ))
+                .is_ok()
+            {
+                let _ = quit_rx.recv_timeout(Duration::from_secs(2));
+            }
         }
     });
-    flash_shot::run_settings_interaction_acceptance(
+    let application_result = flash_shot::run_settings_interaction_acceptance(
         Instant::now(),
         performance,
         history,
@@ -356,11 +411,71 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             exercise_pin_appearance: options.exercise_pin_appearance,
             commands: command_rx,
         },
-    )?;
-    if options.exercise_library_format {
+    );
+    input_worker
+        .join()
+        .map_err(|_| io::Error::other("settings input acceptance worker panicked"))?;
+    if options.exercise_library_format || options.exercise_library_single_delete {
         remove_acceptance_history_root(&history_dir)?;
     }
+    application_result?;
+    if let Ok(error) = input_error_rx.try_recv() {
+        return Err(io::Error::other(error).into());
+    }
     Ok(())
+}
+
+#[cfg(windows)]
+/// Seeds two managed captures so the real-input probe can prove one removal preserves its neighbor.
+fn create_single_delete_fixtures(
+    history: &mut ScreenshotHistory,
+    root: &std::path::Path,
+) -> io::Result<(PathBuf, PathBuf)> {
+    for index in 0..2 {
+        let path = root.join(format!("library-delete-{index}.png"));
+        acceptance_fixture_frame(index).save_png(&path)?;
+        history.record_with_source(path, HistorySource::Selection)?;
+        thread::sleep(Duration::from_millis(5));
+    }
+    let entries = history.entries();
+    let target = entries
+        .front()
+        .map(|entry| entry.path.clone())
+        .ok_or_else(|| io::Error::other("single-delete fixture has no first entry"))?;
+    let neighbor = entries
+        .get(1)
+        .map(|entry| entry.path.clone())
+        .ok_or_else(|| io::Error::other("single-delete fixture has no neighboring entry"))?;
+    Ok((target, neighbor))
+}
+
+#[cfg(windows)]
+/// Creates a small, fully decodable PNG for Library preview and deletion acceptance.
+fn acceptance_fixture_frame(index: usize) -> CaptureFrame {
+    const WIDTH: u32 = 96;
+    const HEIGHT: u32 = 64;
+    let mut pixels = vec![0_u8; WIDTH as usize * HEIGHT as usize * 4];
+    for (offset, pixel) in pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        pixel[0] = ((offset + index * 17) % 251) as u8;
+        pixel[1] = ((offset / WIDTH as usize + index * 31) % 251) as u8;
+        pixel[2] = ((offset / 4 + index * 47) % 251) as u8;
+        pixel[3] = 255;
+    }
+    CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: WIDTH as i32,
+            bottom: HEIGHT as i32,
+        },
+        width: WIDTH,
+        height: HEIGHT,
+        stride: WIDTH as usize * 4,
+        format: PixelFormat::Bgra8,
+        pixels: Arc::from(pixels),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    }
 }
 
 #[cfg(windows)]
@@ -412,6 +527,7 @@ mod tests {
         assert!(!options.exercise_record_start);
         assert!(!options.exercise_record_success);
         assert!(!options.exercise_library_format);
+        assert!(!options.exercise_library_single_delete);
         assert!(!options.exercise_pin_appearance);
         let options = Options::parse_args(
             [
@@ -458,6 +574,33 @@ mod tests {
         )
         .unwrap();
         assert!(options.exercise_library_format);
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-single-delete"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
+                ]
+                .into_iter()
+            )
+            .unwrap()
+            .exercise_library_single_delete
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-single-delete"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                ]
+                .into_iter()
+            )
+            .is_err()
+        );
         let options = Options::parse_args(
             [
                 OsString::from("--allow-input"),

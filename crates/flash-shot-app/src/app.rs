@@ -1220,6 +1220,15 @@ impl FlashShotApp {
                                 section: section.to_owned(),
                                 locale: this.settings.locale.label().to_owned(),
                                 theme: this.settings.theme_mode.label().to_owned(),
+                                history_entry_count: this.history.entries().len(),
+                                history_clear_confirmation: this.history_clear_confirmation,
+                                history_clear_scope: match this.history_clear_scope {
+                                    HistoryClearScope::All => "all",
+                                    HistoryClearScope::Filtered => "filtered",
+                                    HistoryClearScope::Selected => "selected",
+                                    HistoryClearScope::Single => "single",
+                                }
+                                .to_owned(),
                                 pinned_window_count: this.pinned_windows.len(),
                                 pinned_appearances,
                                 update_check_in_flight: this.update_check_in_flight,

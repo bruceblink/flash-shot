@@ -297,6 +297,12 @@ impl FlashShotApp {
         cx: &mut Context<Self>,
     ) {
         if self.settings_section != section {
+            if section != SettingsSection::Files
+                && self.history_clear_confirmation
+                && self.history_clear_scope == HistoryClearScope::Single
+            {
+                self.cancel_history_clear(cx);
+            }
             self.settings_section = section;
             if section != SettingsSection::Files {
                 self.history_search.active = false;
@@ -310,6 +316,9 @@ impl FlashShotApp {
     /// Expands the saved-capture list only after the user asks for it, avoiding thumbnail work in
     /// the default settings view while still making every retained capture reachable.
     pub(in crate::app) fn toggle_history_expanded(&mut self, cx: &mut Context<Self>) {
+        if self.single_history_clear_pending() {
+            return;
+        }
         self.history_expanded = !self.history_expanded;
         cx.notify();
     }
@@ -319,6 +328,9 @@ impl FlashShotApp {
         filter: HistoryFilter,
         cx: &mut Context<Self>,
     ) {
+        if self.single_history_clear_pending() {
+            return;
+        }
         if self.history_filter != filter {
             self.history_filter = filter;
             self.history_expanded = false;
@@ -354,6 +366,11 @@ impl FlashShotApp {
                 locale.format_template(UiText::HistorySelectionCount, &[("count", &count)]);
         }
         cx.notify();
+    }
+
+    /// Keeps a pending row-level confirmation visible until the user confirms or cancels it.
+    pub(in crate::app) fn single_history_clear_pending(&self) -> bool {
+        self.history_clear_confirmation && self.history_clear_scope == HistoryClearScope::Single
     }
 
     /// Adds every current filter match to the selection without deleting anything implicitly.

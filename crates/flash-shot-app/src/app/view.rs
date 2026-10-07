@@ -1,6 +1,6 @@
 //! The small, on-demand settings window for the background capture service.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::PathBuf};
 
 use gpui::{
     CursorStyle, ElementInputHandler, FocusHandle, FontWeight, KeyDownEvent, ObjectFit, Window,
@@ -60,6 +60,7 @@ impl gpui::Render for FlashShotApp {
         let locale = self.settings.locale;
         let compact_navigation =
             uses_compact_settings_navigation(f32::from(window.bounds().size.width));
+        let show_status = !self.single_history_clear_pending();
         let recording_state = RecordingViewState {
             active: self.recording_control.is_some() || self.recording_acceptance_active,
             starting: self.recording_start_in_flight,
@@ -266,6 +267,11 @@ impl gpui::Render for FlashShotApp {
                                                     clear_confirmation: self
                                                         .history_clear_confirmation,
                                                     clear_scope: self.history_clear_scope,
+                                                    single_clear_path: single_history_clear_path(
+                                                        self.history_clear_confirmation,
+                                                        self.history_clear_scope,
+                                                        &self.history_clear_paths,
+                                                    ),
                                                     clear_count: self.history_clear_count,
                                                     clear_in_flight: self.history_clear_in_flight,
                                                     reader_in_flight: self.history_reader.is_some(),
@@ -296,37 +302,39 @@ impl gpui::Render for FlashShotApp {
                             ),
                     ),
             )
-            .child(
-                div()
-                    .h(px(metrics.status_height))
-                    .flex_none()
-                    .px_5()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .border_t_1()
-                    .border_color(colors.border)
-                    .bg(colors.surface)
-                    .text_sm()
-                    .text_color(colors.text_muted)
-                    .child(
-                        div()
-                            .w(px(metrics.status_indicator_width))
-                            .h(px(metrics.status_indicator_height))
-                            .rounded_full()
-                            .bg(status_indicator_color(&self.status, is_idle, colors)),
-                    )
-                    .child(
-                        // Failure diagnostics include actionable retry guidance; the fixed status
-                        // height is deliberately allowed to wrap it instead of hiding the tail.
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .whitespace_normal()
-                            .line_height(px(metrics.status_line_height))
-                            .child(self.status.clone()),
-                    ),
-            )
+            .when(show_status, |root| {
+                root.child(
+                    div()
+                        .h(px(metrics.status_height))
+                        .flex_none()
+                        .px_5()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .border_t_1()
+                        .border_color(colors.border)
+                        .bg(colors.surface)
+                        .text_sm()
+                        .text_color(colors.text_muted)
+                        .child(
+                            div()
+                                .w(px(metrics.status_indicator_width))
+                                .h(px(metrics.status_indicator_height))
+                                .rounded_full()
+                                .bg(status_indicator_color(&self.status, is_idle, colors)),
+                        )
+                        .child(
+                            // Failure diagnostics include actionable retry guidance; the fixed status
+                            // height is deliberately allowed to wrap it instead of hiding the tail.
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .whitespace_normal()
+                                .line_height(px(metrics.status_line_height))
+                                .child(self.status.clone()),
+                        ),
+                )
+            })
     }
 }
 
@@ -1335,6 +1343,7 @@ struct HistoryViewState {
     filter: HistoryFilter,
     clear_confirmation: bool,
     clear_scope: HistoryClearScope,
+    single_clear_path: Option<PathBuf>,
     clear_count: usize,
     clear_in_flight: bool,
     reader_in_flight: bool,
@@ -1366,6 +1375,7 @@ fn history_settings(
         filter,
         clear_confirmation,
         clear_scope,
+        single_clear_path,
         clear_count,
         clear_in_flight,
         reader_in_flight,
@@ -1381,14 +1391,18 @@ fn history_settings(
     let metrics = ThemeMetrics::default();
     let now_ms = current_timestamp_ms();
     let is_empty = entries.is_empty();
+    let single_confirmation = single_clear_path.is_some();
+    let show_global_confirmation = clear_confirmation
+        && (clear_scope != HistoryClearScope::Single || single_clear_path.is_none());
     settings_section(locale.text(UiText::LibraryRecentCaptures), colors)
         .child(history_search_box(
             &search_query,
-            search_active,
+            search_active && !single_confirmation,
             search_focus,
             colors,
             app.clone(),
             locale,
+            !single_confirmation,
         ))
         .child(
             div()
@@ -1396,20 +1410,32 @@ fn history_settings(
                 .flex()
                 .flex_wrap()
                 .gap(px(metrics.space_1))
-                .children(HistoryFilter::ALL.map(|candidate| {
-                    let selected = candidate == filter;
-                    let filter_app = app.clone();
-                    settings_segment_button(
-                        format!("settings-history-filter-{}", candidate.label()),
-                        history_filter_label(locale, candidate),
-                        selected,
+                .when(single_confirmation, |filters| {
+                    filters.child(settings_segment_button(
+                        format!("settings-history-filter-{}", filter.label()),
+                        history_filter_label(locale, filter),
+                        true,
                         colors,
-                        move |_, _, cx| {
-                            filter_app
-                                .update(cx, |this, cx| this.select_history_filter(candidate, cx))
-                        },
-                    )
-                })),
+                        |_, _, _| {},
+                    ))
+                })
+                .when(!single_confirmation, |filters| {
+                    filters.children(HistoryFilter::ALL.map(|candidate| {
+                        let selected = candidate == filter;
+                        let filter_app = app.clone();
+                        settings_segment_button(
+                            format!("settings-history-filter-{}", candidate.label()),
+                            history_filter_label(locale, candidate),
+                            selected,
+                            colors,
+                            move |_, _, cx| {
+                                filter_app.update(cx, |this, cx| {
+                                    this.select_history_filter(candidate, cx)
+                                })
+                            },
+                        )
+                    }))
+                }),
         )
         .child(
             div()
@@ -1483,7 +1509,7 @@ fn history_settings(
                     }),
             )
         })
-        .when(clear_confirmation, |section| {
+        .when(show_global_confirmation, |section| {
             let confirm_app = app.clone();
             let cancel_app = app.clone();
             section.child(
@@ -1522,39 +1548,41 @@ fn history_settings(
                     )),
             )
         })
-        .when(filtered_entries > HISTORY_PREVIEW_LIMIT, |section| {
-            let remaining = filtered_entries.saturating_sub(HISTORY_PREVIEW_LIMIT);
-            let toggle_app = app.clone();
-            let toggle_label = if expanded {
-                locale.text(UiText::LibraryShowRecent).to_owned()
-            } else {
-                let count = remaining.to_string();
-                locale.format_template(UiText::LibraryShowMore, &[("count", &count)])
-            };
-            section.child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(metrics.library_action_gap))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(colors.muted)
-                            .child(history_visibility_label(locale, filtered_entries, expanded)),
-                    )
-                    .child(settings_button(
-                        "settings-toggle-history-list",
-                        &toggle_label,
-                        colors,
-                        true,
-                        move |_, _, cx| {
-                            toggle_app.update(cx, |this, cx| this.toggle_history_expanded(cx))
-                        },
-                    )),
-            )
-        })
+        .when(
+            filtered_entries > HISTORY_PREVIEW_LIMIT && !single_confirmation,
+            |section| {
+                let remaining = filtered_entries.saturating_sub(HISTORY_PREVIEW_LIMIT);
+                let toggle_app = app.clone();
+                let toggle_label = if expanded {
+                    locale.text(UiText::LibraryShowRecent).to_owned()
+                } else {
+                    let count = remaining.to_string();
+                    locale.format_template(UiText::LibraryShowMore, &[("count", &count)])
+                };
+                section.child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(metrics.library_action_gap))
+                        .child(
+                            div().text_sm().text_color(colors.muted).child(
+                                history_visibility_label(locale, filtered_entries, expanded),
+                            ),
+                        )
+                        .child(settings_button(
+                            "settings-toggle-history-list",
+                            &toggle_label,
+                            colors,
+                            true,
+                            move |_, _, cx| {
+                                toggle_app.update(cx, |this, cx| this.toggle_history_expanded(cx))
+                            },
+                        )),
+                )
+            },
+        )
         .when(
             filtered_entries > 0
                 && (filter != HistoryFilter::All || !search_query.trim().is_empty()),
@@ -1612,6 +1640,168 @@ fn history_settings(
                     && !retention_in_flight
                     && !deletion_in_flight
                     && !mutation_pending;
+                let confirming_removal = single_clear_path.as_ref() == Some(&entry.path);
+                let row_actions = div()
+                    .w_full()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(metrics.library_action_gap))
+                    .when(confirming_removal, |actions| {
+                        let confirm_app = app.clone();
+                        let cancel_app = app.clone();
+                        actions
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(metrics.library_selection_min_width))
+                                    .text_sm()
+                                    .text_color(colors.muted)
+                                    .child(history_clear_confirmation_label(
+                                        locale,
+                                        1,
+                                        HistoryClearScope::Single,
+                                    )),
+                            )
+                            .child(settings_danger_button(
+                                format!("settings-confirm-remove-history-{}", entry.created_at_ms),
+                                locale.text(UiText::LibraryDeleteCapture),
+                                colors,
+                                is_idle
+                                    && !file_read_in_flight
+                                    && !clear_in_flight
+                                    && !retention_in_flight
+                                    && !deletion_in_flight,
+                                move |_, _, cx| {
+                                    confirm_app.update(cx, |this, cx| this.clear_history(cx))
+                                },
+                            ))
+                            .child(settings_button(
+                                format!("settings-cancel-remove-history-{}", entry.created_at_ms),
+                                locale.text(UiText::OverlayCancel),
+                                colors,
+                                true,
+                                move |_, _, cx| {
+                                    cancel_app.update(cx, |this, cx| this.cancel_history_clear(cx))
+                                },
+                            ))
+                    })
+                    .when(!confirming_removal, |actions| {
+                        actions
+                            .child(history_selection_button(
+                                format!("settings-select-history-{}", entry.created_at_ms),
+                                if selected {
+                                    locale.text(UiText::OverlaySelected)
+                                } else {
+                                    locale.text(UiText::OverlaySelect)
+                                },
+                                selected,
+                                colors,
+                                selection_enabled,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.toggle_history_selection(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                            // Opening a saved capture is the primary Library workflow; Copy and Pin
+                            // remain available beside it without competing for the same emphasis.
+                            .child(settings_primary_button(
+                                format!("settings-open-history-{}", entry.created_at_ms),
+                                locale.text(UiText::LibraryOpen),
+                                colors,
+                                reader_enabled,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.open_history_image(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                            .child(settings_button(
+                                format!("settings-copy-history-{}", entry.created_at_ms),
+                                if reader_in_flight {
+                                    locale.text(UiText::LibraryWorking)
+                                } else {
+                                    locale.text(UiText::OverlayCopy)
+                                },
+                                colors,
+                                reader_enabled,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.copy_history_image(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                            .child(settings_button(
+                                format!("settings-pin-history-{}", entry.created_at_ms),
+                                locale.text(UiText::OverlayPin),
+                                colors,
+                                reader_enabled,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.pin_history_image(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                            .when(thumbnail_failed, |actions| {
+                                let retry_app = app.clone();
+                                let retry_path = entry.path.clone();
+                                actions.child(settings_button(
+                                    format!(
+                                        "settings-retry-history-preview-{}",
+                                        entry.created_at_ms
+                                    ),
+                                    locale.text(UiText::LibraryRetryPreview),
+                                    colors,
+                                    reader_enabled,
+                                    move |_, _, cx| {
+                                        retry_app.update(cx, |this, cx| {
+                                            this.retry_history_thumbnail(retry_path.clone(), cx)
+                                        })
+                                    },
+                                ))
+                            })
+                            .child(settings_danger_button(
+                                format!("settings-remove-history-{}", entry.created_at_ms),
+                                if deleting {
+                                    locale.text(UiText::LibraryRemoving)
+                                } else {
+                                    locale.text(UiText::LibraryRemove)
+                                },
+                                colors,
+                                is_idle
+                                    && !file_read_in_flight
+                                    && !deleting
+                                    && !clear_confirmation
+                                    && !clear_in_flight
+                                    && !retention_in_flight
+                                    && !mutation_pending,
+                                {
+                                    let app = app.clone();
+                                    let path = entry.path.clone();
+                                    move |_, _, cx| {
+                                        app.update(cx, |this, cx| {
+                                            this.request_single_history_clear(path.clone(), cx)
+                                        })
+                                    }
+                                },
+                            ))
+                    });
                 history_row(
                     &label,
                     thumbnail,
@@ -1621,124 +1811,7 @@ fn history_settings(
                     colors,
                     metrics,
                 )
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(metrics.library_action_gap))
-                        .child(history_selection_button(
-                            format!("settings-select-history-{}", entry.created_at_ms),
-                            if selected {
-                                locale.text(UiText::OverlaySelected)
-                            } else {
-                                locale.text(UiText::OverlaySelect)
-                            },
-                            selected,
-                            colors,
-                            selection_enabled,
-                            {
-                                let app = app.clone();
-                                let path = entry.path.clone();
-                                move |_, _, cx| {
-                                    app.update(cx, |this, cx| {
-                                        this.toggle_history_selection(path.clone(), cx)
-                                    })
-                                }
-                            },
-                        ))
-                        // Opening a saved capture is the primary Library workflow; Copy and Pin
-                        // remain available beside it without competing for the same emphasis.
-                        .child(settings_primary_button(
-                            format!("settings-open-history-{}", entry.created_at_ms),
-                            locale.text(UiText::LibraryOpen),
-                            colors,
-                            reader_enabled,
-                            {
-                                let app = app.clone();
-                                let path = entry.path.clone();
-                                move |_, _, cx| {
-                                    app.update(cx, |this, cx| {
-                                        this.open_history_image(path.clone(), cx)
-                                    })
-                                }
-                            },
-                        ))
-                        .child(settings_button(
-                            format!("settings-copy-history-{}", entry.created_at_ms),
-                            if reader_in_flight {
-                                locale.text(UiText::LibraryWorking)
-                            } else {
-                                locale.text(UiText::OverlayCopy)
-                            },
-                            colors,
-                            reader_enabled,
-                            {
-                                let app = app.clone();
-                                let path = entry.path.clone();
-                                move |_, _, cx| {
-                                    app.update(cx, |this, cx| {
-                                        this.copy_history_image(path.clone(), cx)
-                                    })
-                                }
-                            },
-                        ))
-                        .child(settings_button(
-                            format!("settings-pin-history-{}", entry.created_at_ms),
-                            locale.text(UiText::OverlayPin),
-                            colors,
-                            reader_enabled,
-                            {
-                                let app = app.clone();
-                                let path = entry.path.clone();
-                                move |_, _, cx| {
-                                    app.update(cx, |this, cx| {
-                                        this.pin_history_image(path.clone(), cx)
-                                    })
-                                }
-                            },
-                        ))
-                        .when(thumbnail_failed, |actions| {
-                            let retry_app = app.clone();
-                            let retry_path = entry.path.clone();
-                            actions.child(settings_button(
-                                format!("settings-retry-history-preview-{}", entry.created_at_ms),
-                                locale.text(UiText::LibraryRetryPreview),
-                                colors,
-                                reader_enabled,
-                                move |_, _, cx| {
-                                    retry_app.update(cx, |this, cx| {
-                                        this.retry_history_thumbnail(retry_path.clone(), cx)
-                                    })
-                                },
-                            ))
-                        })
-                        .child(settings_danger_button(
-                            format!("settings-remove-history-{}", entry.created_at_ms),
-                            if deleting {
-                                locale.text(UiText::LibraryRemoving)
-                            } else {
-                                locale.text(UiText::LibraryRemove)
-                            },
-                            colors,
-                            is_idle
-                                && !file_read_in_flight
-                                && !deleting
-                                && !clear_confirmation
-                                && !clear_in_flight
-                                && !retention_in_flight
-                                && !mutation_pending,
-                            {
-                                let app = app.clone();
-                                let path = entry.path.clone();
-                                move |_, _, cx| {
-                                    app.update(cx, |this, cx| {
-                                        this.request_single_history_clear(path.clone(), cx)
-                                    })
-                                }
-                            },
-                        )),
-                )
+                .child(row_actions)
             },
         ))
         .when(!clear_confirmation, |section| {
@@ -1770,6 +1843,7 @@ fn history_search_box(
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
     locale: Locale,
+    enabled: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let metrics = ThemeMetrics::default();
     let input_app = app.clone();
@@ -1792,8 +1866,10 @@ fn history_search_box(
         .text_sm()
         .cursor(CursorStyle::IBeam)
         .on_click(move |_, window, cx| {
-            activate_app.update(cx, |this, cx| this.activate_history_search(cx));
-            activate_focus.focus(window, cx);
+            if enabled {
+                activate_app.update(cx, |this, cx| this.activate_history_search(cx));
+                activate_focus.focus(window, cx);
+            }
         })
         .child(
             canvas(
@@ -1830,7 +1906,7 @@ fn history_search_box(
                     query.to_owned()
                 }),
         )
-        .when(!query.is_empty(), |search| {
+        .when(!query.is_empty() && enabled, |search| {
             search.child(
                 div()
                     .id("settings-clear-history-search")
@@ -1873,6 +1949,17 @@ fn history_filter_summary_label(locale: Locale, filter: HistoryFilter) -> String
         Locale::English => label.to_ascii_lowercase(),
         Locale::SimplifiedChinese => label.to_owned(),
     }
+}
+
+/// Resolves a single-row confirmation to the path captured when the user requested deletion.
+fn single_history_clear_path(
+    pending: bool,
+    scope: HistoryClearScope,
+    paths: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
+    (pending && scope == HistoryClearScope::Single)
+        .then(|| paths.first().cloned())
+        .flatten()
 }
 
 /// Makes the destructive confirmation name its exact scope instead of relying on a generic warning.
@@ -2894,8 +2981,9 @@ mod tests {
         recording_toggle_label, relative_timestamp_label, settings_actions_available,
         settings_navigation_activation, settings_navigation_direction,
         settings_navigation_items_for_locale, settings_page_copy_for_locale, settings_page_intro,
-        settings_path_label, status_indicator_color, translation_service_test_label,
-        update_check_label_for_locale, uses_compact_settings_navigation, visible_history_entries,
+        settings_path_label, single_history_clear_path, status_indicator_color,
+        translation_service_test_label, update_check_label_for_locale,
+        uses_compact_settings_navigation, visible_history_entries,
     };
     use crate::app::{HistoryClearScope, HistoryFilter, SettingsSection};
     use crate::history::{HistoryEntry, HistorySource};
@@ -2987,6 +3075,31 @@ mod tests {
                 HistoryClearScope::Single
             ),
             "删除这张已保存截图？"
+        );
+    }
+
+    #[test]
+    fn single_history_confirmation_targets_its_snapshotted_path_only() {
+        let path = PathBuf::from("D:/Screenshots/capture.png");
+        assert_eq!(
+            single_history_clear_path(true, HistoryClearScope::Single, std::slice::from_ref(&path)),
+            Some(path.clone())
+        );
+        assert_eq!(
+            single_history_clear_path(true, HistoryClearScope::All, std::slice::from_ref(&path)),
+            None
+        );
+        assert_eq!(
+            single_history_clear_path(
+                false,
+                HistoryClearScope::Single,
+                std::slice::from_ref(&path)
+            ),
+            None
+        );
+        assert_eq!(
+            single_history_clear_path(true, HistoryClearScope::Single, &[]),
+            None
         );
     }
 

@@ -28,6 +28,9 @@ impl FlashShotApp {
     }
 
     pub(super) fn activate_history_search(&mut self, cx: &mut Context<Self>) {
+        if self.single_history_clear_pending() {
+            return;
+        }
         self.history_search.active = true;
         let cursor = self.history_search.content.len();
         self.history_search.selected_range = cursor..cursor;
@@ -36,7 +39,7 @@ impl FlashShotApp {
     }
 
     pub(super) fn clear_history_search(&mut self, cx: &mut Context<Self>) {
-        if self.history_search.content.is_empty() {
+        if self.single_history_clear_pending() || self.history_search.content.is_empty() {
             return;
         }
         self.history_search.content.clear();
@@ -53,6 +56,12 @@ impl FlashShotApp {
         keystroke: &Keystroke,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.single_history_clear_pending() {
+            if keystroke.key == "escape" {
+                self.cancel_history_clear(cx);
+            }
+            return true;
+        }
         if self.handle_history_search_key(keystroke, cx) {
             return true;
         }
@@ -132,7 +141,7 @@ impl FlashShotApp {
         keystroke: &Keystroke,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.history_search.active {
+        if self.single_history_clear_pending() || !self.history_search.active {
             return false;
         }
         if keystroke.modifiers.secondary() && keystroke.key == "a" {
@@ -185,7 +194,7 @@ impl FlashShotApp {
         marked_range_utf16: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.history_search.active {
+        if self.single_history_clear_pending() || !self.history_search.active {
             return false;
         }
         let range = replacement_range_utf16

@@ -281,6 +281,44 @@ pub(super) fn click_library_format(window: NativeWindow, compact: bool) -> io::R
 }
 
 #[cfg(windows)]
+/// Clicks Remove on the first visible Library row in the tall, wide single-delete acceptance view.
+pub(super) fn click_library_remove(window: NativeWindow, _compact: bool) -> io::Result<()> {
+    click_library_row_action(window, 490, 880)
+}
+
+#[cfg(windows)]
+/// Confirms the row-level removal after its inline prompt has replaced the row actions.
+pub(super) fn click_library_confirm_single_remove(
+    window: NativeWindow,
+    _compact: bool,
+) -> io::Result<()> {
+    click_library_row_action(window, 850, 880)
+}
+
+#[cfg(windows)]
+/// Cancels the row-level removal while leaving both managed screenshots intact.
+pub(super) fn click_library_cancel_single_remove(
+    window: NativeWindow,
+    _compact: bool,
+) -> io::Result<()> {
+    click_library_row_action(window, 940, 880)
+}
+
+#[cfg(windows)]
+/// Converts a documented logical point in the row action strip to physical desktop coordinates.
+fn click_library_row_action(
+    window: NativeWindow,
+    logical_x: i32,
+    logical_y: i32,
+) -> io::Result<()> {
+    move_and_click(
+        window,
+        window.left + scale_logical_extent(window, logical_x),
+        window.top + scale_logical_extent(window, logical_y),
+    )
+}
+
+#[cfg(windows)]
 /// Sends one key press/release pair and repairs a partially accepted SendInput batch.
 pub(super) fn send_key(window: NativeWindow, virtual_key: u16) -> io::Result<()> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{

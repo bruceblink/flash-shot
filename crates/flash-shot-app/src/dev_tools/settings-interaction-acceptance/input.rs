@@ -9,14 +9,15 @@ use std::{
 };
 
 use super::native::{
-    CursorRestore, WindowZOrderRestore, capture_step, click_library_format, click_navigation_item,
-    click_record_idle_toggle, click_record_support, click_record_toggle, click_system_language,
-    click_system_theme, click_update_action, ensure_input_idle, focus_window, send_key, snapshot,
-    visible_window,
+    CursorRestore, NativeWindow, WindowZOrderRestore, capture_step,
+    click_library_cancel_single_remove, click_library_confirm_single_remove, click_library_format,
+    click_library_remove, click_navigation_item, click_record_idle_toggle, click_record_support,
+    click_record_toggle, click_system_language, click_system_theme, click_update_action,
+    ensure_input_idle, focus_window, send_key, snapshot, visible_window,
 };
 use super::{
-    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, PinAppearanceReport,
-    RecordingSuccessReport, Report, StepReport, WindowBounds,
+    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, LibrarySingleDeleteReport,
+    PinAppearanceReport, RecordingSuccessReport, Report, StepReport, WindowBounds,
 };
 use flash_shot::{
     SettingsInteractionAcceptanceCommand, SettingsInteractionState,
@@ -38,6 +39,8 @@ pub(super) struct WorkerOptions {
     pub(super) exercise_record_start: bool,
     pub(super) exercise_record_success: bool,
     pub(super) exercise_library_format: bool,
+    pub(super) exercise_library_single_delete: bool,
+    pub(super) library_remove_paths: Option<(PathBuf, PathBuf)>,
     pub(super) exercise_pin_appearance: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
@@ -521,6 +524,11 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             screenshot: after_screenshot,
         });
     }
+    let library_single_delete = if options.exercise_library_single_delete {
+        Some(exercise_library_single_delete(&options, window, compact)?)
+    } else {
+        None
+    };
     let cursor_restored = cursor_restore.restore()?;
     let input_released = [
         VK_LBUTTON, VK_DOWN, VK_F4, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
@@ -536,8 +544,11 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             || options.exercise_record_start
             || options.exercise_record_success
             || options.exercise_library_format
+            || options.exercise_library_single_delete
         {
-            if options.exercise_record_success {
+            if options.exercise_library_single_delete {
+                5
+            } else if options.exercise_record_success {
                 3
             } else {
                 2
@@ -553,6 +564,14 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             && pin_appearance
                 .as_ref()
                 .is_none_or(|report| report.pin_count == 3 && report.all_pins_updated)
+            && library_single_delete.as_ref().is_none_or(|report| {
+                report.single_confirmation_observed
+                    && report.cancel_preserved_entries
+                    && report.confirmation_reopened
+                    && report.target_removed
+                    && report.neighbor_preserved
+                    && report.remaining_entries == 1
+            })
             && cursor_restored
             && input_released
             && window_demoted
@@ -578,6 +597,7 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
         keyboard_steps,
         action_steps,
         recording_success,
+        library_single_delete,
         pin_appearance,
         cleanup: CleanupReport {
             cursor_restored,
@@ -601,7 +621,97 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
 }
 
 #[cfg(windows)]
-/// Polls the production settings snapshot until a recording lifecycle predicate becomes true.
+/// Uses real mouse input to cancel and then confirm one row-level Library removal.
+fn exercise_library_single_delete(
+    options: &WorkerOptions,
+    window: NativeWindow,
+    compact: bool,
+) -> io::Result<LibrarySingleDeleteReport> {
+    let (target, neighbor) = options
+        .library_remove_paths
+        .as_ref()
+        .ok_or_else(|| io::Error::other("single-delete fixture paths were not provided"))?;
+    focus_window(window)?;
+    click_navigation_item(window, compact, 1)?;
+    let initial = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 2
+            && !state.history_clear_confirmation
+    })?;
+    thread::sleep(options.settle);
+    let initial_screenshot = capture_step(&window, &options.output_dir, "library-delete-before")?;
+
+    focus_window(window)?;
+    click_library_remove(window, compact)?;
+    let confirmation = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 2
+            && state.history_clear_confirmation
+            && state.history_clear_scope == "single"
+    })?;
+    thread::sleep(options.settle);
+    let confirmation_screenshot =
+        capture_step(&window, &options.output_dir, "library-delete-confirm")?;
+    let single_confirmation_observed = confirmation.history_clear_scope == "single";
+
+    focus_window(window)?;
+    click_library_cancel_single_remove(window, compact)?;
+    let cancelled = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 2
+            && !state.history_clear_confirmation
+            && state.status == options.locale.text(UiText::HistoryRemoveCancelled)
+    })?;
+    thread::sleep(options.settle);
+    let cancelled_screenshot =
+        capture_step(&window, &options.output_dir, "library-delete-cancelled")?;
+    let cancel_preserved_entries =
+        cancelled.history_entry_count == 2 && target.is_file() && neighbor.is_file();
+
+    focus_window(window)?;
+    click_library_remove(window, compact)?;
+    let reopened = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 2
+            && state.history_clear_confirmation
+            && state.history_clear_scope == "single"
+    })?;
+    let confirmation_reopened =
+        reopened.history_clear_confirmation && reopened.history_clear_scope == "single";
+    thread::sleep(options.settle);
+    let reopened_screenshot =
+        capture_step(&window, &options.output_dir, "library-delete-confirm-again")?;
+
+    focus_window(window)?;
+    click_library_confirm_single_remove(window, compact)?;
+    let removed = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 1
+            && !state.history_clear_confirmation
+    })?;
+    thread::sleep(options.settle);
+    let removed_screenshot = capture_step(&window, &options.output_dir, "library-delete-removed")?;
+
+    Ok(LibrarySingleDeleteReport {
+        initial_entries: initial.history_entry_count,
+        single_confirmation_observed,
+        cancel_preserved_entries,
+        confirmation_reopened,
+        target_removed: !target.exists(),
+        neighbor_preserved: neighbor.is_file(),
+        remaining_entries: removed.history_entry_count,
+        screenshots: vec![
+            initial_screenshot,
+            confirmation_screenshot,
+            cancelled_screenshot,
+            reopened_screenshot,
+            removed_screenshot,
+        ],
+    })
+}
+
+#[cfg(windows)]
+/// Polls the production settings snapshot until the requested lifecycle predicate becomes true.
 fn wait_for_settings_state(
     commands: &async_channel::Sender<SettingsInteractionAcceptanceCommand>,
     timeout: Duration,
@@ -617,9 +727,12 @@ fn wait_for_settings_state(
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "recording state did not reach the expected lifecycle: {} (section={}, pinned_window_count={}, pinned_appearances={})",
+                    "settings state did not reach the expected lifecycle: {} (section={}, entries={}, clear_confirmation={}, clear_scope={}, pinned_window_count={}, pinned_appearances={})",
                     state.status,
                     state.section,
+                    state.history_entry_count,
+                    state.history_clear_confirmation,
+                    state.history_clear_scope,
                     state.pinned_window_count,
                     state.pinned_appearances.len()
                 ),
