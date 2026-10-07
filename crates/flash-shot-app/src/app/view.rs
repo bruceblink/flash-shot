@@ -1498,7 +1498,11 @@ fn history_settings(
                     ))
                     .child(settings_danger_button(
                         "settings-confirm-clear-history",
-                        locale.text(UiText::LibraryDeleteCaptures),
+                        locale.text(if clear_scope == HistoryClearScope::Single {
+                            UiText::LibraryDeleteCapture
+                        } else {
+                            UiText::LibraryDeleteCaptures
+                        }),
                         colors,
                         is_idle
                             && !file_read_in_flight
@@ -1729,7 +1733,7 @@ fn history_settings(
                                 let path = entry.path.clone();
                                 move |_, _, cx| {
                                     app.update(cx, |this, cx| {
-                                        this.remove_history_image(path.clone(), cx)
+                                        this.request_single_history_clear(path.clone(), cx)
                                     })
                                 }
                             },
@@ -1879,6 +1883,9 @@ fn history_clear_confirmation_label(
 ) -> String {
     let count = count.to_string();
     match scope {
+        HistoryClearScope::Single => locale
+            .text(UiText::LibraryClearSingleConfirmation)
+            .to_owned(),
         HistoryClearScope::All => {
             locale.format_template(UiText::LibraryClearAllConfirmation, &[("count", &count)])
         }
@@ -2968,6 +2975,18 @@ mod tests {
                 HistoryClearScope::Selected
             ),
             "删除 2 张已选择的已保存截图？"
+        );
+        assert_eq!(
+            history_clear_confirmation_label(Locale::English, 1, HistoryClearScope::Single),
+            "Delete this saved screenshot?"
+        );
+        assert_eq!(
+            history_clear_confirmation_label(
+                Locale::SimplifiedChinese,
+                1,
+                HistoryClearScope::Single
+            ),
+            "删除这张已保存截图？"
         );
     }
 

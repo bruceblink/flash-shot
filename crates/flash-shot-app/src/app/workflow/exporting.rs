@@ -831,11 +831,20 @@ impl FlashShotApp {
         self.history_clear_confirmation = false;
         self.history_clear_scope = HistoryClearScope::default();
         self.history_clear_count = 0;
-        let count = paths.len().to_string();
-        self.status = self
-            .settings
-            .locale
-            .format_template(crate::i18n::UiText::HistoryClearing, &[("count", &count)]);
+        self.status = if scope == HistoryClearScope::Single {
+            let path = paths
+                .first()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            self.settings
+                .locale
+                .format_template(crate::i18n::UiText::HistoryRemoving, &[("path", &path)])
+        } else {
+            let count = paths.len().to_string();
+            self.settings
+                .locale
+                .format_template(crate::i18n::UiText::HistoryClearing, &[("count", &count)])
+        };
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -882,6 +891,25 @@ impl FlashShotApp {
                     failure_count,
                 )
             }
+            Ok(()) if failure_count == 0 && scope == HistoryClearScope::Single => {
+                Self::history_clear_success_status(
+                    self.settings.locale,
+                    scope,
+                    deleted_count,
+                    failure_count,
+                )
+            }
+            Ok(()) if scope == HistoryClearScope::Single => {
+                let error = deletion
+                    .failures
+                    .first()
+                    .map(|(_, error)| error.as_str())
+                    .unwrap_or("unknown file deletion error");
+                self.settings.locale.format_template(
+                    crate::i18n::UiText::HistoryRemoveFailed,
+                    &[("error", error)],
+                )
+            }
             Ok(()) if failure_count == 0 => Self::history_clear_success_status(
                 self.settings.locale,
                 scope,
@@ -923,8 +951,9 @@ impl FlashShotApp {
                 HistoryClearScope::All => crate::i18n::UiText::HistoryCleared,
                 HistoryClearScope::Filtered => crate::i18n::UiText::HistoryClearedFiltered,
                 HistoryClearScope::Selected => crate::i18n::UiText::HistoryDeletedSelected,
+                HistoryClearScope::Single => crate::i18n::UiText::HistoryDeletedSingle,
             };
-            if scope == HistoryClearScope::All {
+            if matches!(scope, HistoryClearScope::All | HistoryClearScope::Single) {
                 locale.text(key).to_owned()
             } else {
                 locale.format_template(key, &[("count", &deleted)])
@@ -1393,6 +1422,24 @@ mod tests {
                 1,
             ),
             "已清除 2 张截图；1 张无法删除"
+        );
+        assert_eq!(
+            super::FlashShotApp::history_clear_success_status(
+                Locale::English,
+                HistoryClearScope::Single,
+                1,
+                0,
+            ),
+            "Removed saved screenshot from history"
+        );
+        assert_eq!(
+            super::FlashShotApp::history_clear_success_status(
+                Locale::SimplifiedChinese,
+                HistoryClearScope::Single,
+                1,
+                0,
+            ),
+            "已从历史记录移除已保存截图"
         );
     }
 

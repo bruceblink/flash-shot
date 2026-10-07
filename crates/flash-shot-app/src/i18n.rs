@@ -532,10 +532,12 @@ pub enum UiText {
     HistoryClearScopeFiltered,
     HistoryClearScopeSelected,
     HistoryClearCancelled,
+    HistoryRemoveCancelled,
     HistoryWaitingForReads,
     HistoryClearing,
     HistoryCleared,
     HistoryDeletedSelected,
+    HistoryDeletedSingle,
     HistoryClearedFiltered,
     HistoryClearedWithFailures,
     HistoryRemoving,
@@ -780,6 +782,7 @@ pub enum UiText {
     LibraryClearSelection,
     LibraryDeleteSelected,
     LibraryDeleteCaptures,
+    LibraryDeleteCapture,
     LibraryShowRecent,
     LibraryShowMore,
     LibraryDeleteFiltered,
@@ -798,6 +801,7 @@ pub enum UiText {
     LibraryClearAllConfirmation,
     LibraryClearFilteredConfirmation,
     LibraryClearSelectedConfirmation,
+    LibraryClearSingleConfirmation,
     LibraryShowingAll,
     LibraryShowingPreview,
     LibraryMatches,
@@ -1339,10 +1343,12 @@ impl UiText {
             Self::HistoryClearScopeFiltered => "filtered",
             Self::HistoryClearScopeSelected => "selected",
             Self::HistoryClearCancelled => "Screenshot history clear cancelled",
+            Self::HistoryRemoveCancelled => "Screenshot removal cancelled",
             Self::HistoryWaitingForReads => "Waiting for active history reads before deleting...",
             Self::HistoryClearing => "Clearing {count} saved capture(s)...",
             Self::HistoryCleared => "Screenshot history cleared",
             Self::HistoryDeletedSelected => "Deleted {count} selected capture(s)",
+            Self::HistoryDeletedSingle => "Removed saved screenshot from history",
             Self::HistoryClearedFiltered => "Cleared {count} filtered capture(s)",
             Self::HistoryClearedWithFailures => {
                 "Cleared {deleted} capture(s); {failed} could not be deleted"
@@ -1611,6 +1617,7 @@ impl UiText {
             Self::LibraryClearSelection => "Clear selection",
             Self::LibraryDeleteSelected => "Delete selected",
             Self::LibraryDeleteCaptures => "Delete captures",
+            Self::LibraryDeleteCapture => "Delete screenshot",
             Self::LibraryShowRecent => "Show recent",
             Self::LibraryShowMore => "Show {count} more",
             Self::LibraryDeleteFiltered => "Delete {count} filtered",
@@ -1629,6 +1636,7 @@ impl UiText {
             Self::LibraryClearAllConfirmation => "Delete all {count} saved captures?",
             Self::LibraryClearFilteredConfirmation => "Delete {count} filtered saved captures?",
             Self::LibraryClearSelectedConfirmation => "Delete {count} selected saved captures?",
+            Self::LibraryClearSingleConfirmation => "Delete this saved screenshot?",
             Self::LibraryShowingAll => "Showing all {count} captures",
             Self::LibraryShowingPreview => "Showing {shown} of {count} captures",
             Self::LibraryMatches => "{count} match(es) for \"{query}\"",
@@ -2100,10 +2108,12 @@ impl UiText {
             Self::HistoryClearScopeFiltered => "筛选结果",
             Self::HistoryClearScopeSelected => "已选择",
             Self::HistoryClearCancelled => "已取消清除截图历史记录",
+            Self::HistoryRemoveCancelled => "已取消移除截图",
             Self::HistoryWaitingForReads => "正在等待历史记录读取完成后再删除...",
             Self::HistoryClearing => "正在清除 {count} 张已保存截图...",
             Self::HistoryCleared => "截图历史记录已清除",
             Self::HistoryDeletedSelected => "已删除 {count} 张已选择的截图",
+            Self::HistoryDeletedSingle => "已从历史记录移除已保存截图",
             Self::HistoryClearedFiltered => "已清除 {count} 张筛选出的截图",
             Self::HistoryClearedWithFailures => "已清除 {deleted} 张截图；{failed} 张无法删除",
             Self::HistoryRemoving => "正在移除 {path}...",
@@ -2348,6 +2358,7 @@ impl UiText {
             Self::LibraryClearSelection => "清除选择",
             Self::LibraryDeleteSelected => "删除已选择项",
             Self::LibraryDeleteCaptures => "删除截图",
+            Self::LibraryDeleteCapture => "删除截图",
             Self::LibraryShowRecent => "显示最近项目",
             Self::LibraryShowMore => "再显示 {count} 项",
             Self::LibraryDeleteFiltered => "删除 {count} 项筛选结果",
@@ -2366,6 +2377,7 @@ impl UiText {
             Self::LibraryClearAllConfirmation => "删除全部 {count} 张已保存截图？",
             Self::LibraryClearFilteredConfirmation => "删除 {count} 张筛选出的已保存截图？",
             Self::LibraryClearSelectedConfirmation => "删除 {count} 张已选择的已保存截图？",
+            Self::LibraryClearSingleConfirmation => "删除这张已保存截图？",
             Self::LibraryShowingAll => "正在显示全部 {count} 张截图",
             Self::LibraryShowingPreview => "正在显示 {count} 张截图中的 {shown} 张",
             Self::LibraryMatches => "“{query}”匹配到 {count} 项",
@@ -3480,6 +3492,42 @@ mod tests {
                 &[("count", "50"), ("error", "磁盘已满")],
             ),
             "本次会话的历史保留数量为 50 张截图，但无法保存：磁盘已满"
+        );
+    }
+
+    #[test]
+    fn single_history_deletion_labels_are_localized() {
+        assert_eq!(
+            Locale::English.text(UiText::LibraryDeleteCapture),
+            "Delete screenshot"
+        );
+        assert_eq!(
+            Locale::English.text(UiText::LibraryClearSingleConfirmation),
+            "Delete this saved screenshot?"
+        );
+        assert_eq!(
+            Locale::English.text(UiText::HistoryDeletedSingle),
+            "Removed saved screenshot from history"
+        );
+        assert_eq!(
+            Locale::English.text(UiText::HistoryRemoveCancelled),
+            "Screenshot removal cancelled"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::LibraryDeleteCapture),
+            "删除截图"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::LibraryClearSingleConfirmation),
+            "删除这张已保存截图？"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::HistoryDeletedSingle),
+            "已从历史记录移除已保存截图"
+        );
+        assert_eq!(
+            Locale::SimplifiedChinese.text(UiText::HistoryRemoveCancelled),
+            "已取消移除截图"
         );
     }
 

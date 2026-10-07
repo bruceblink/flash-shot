@@ -16307,7 +16307,7 @@ mod tests {
     fn selection_copy_status_checks_accept_localized_completion_text() {
         for locale in [Locale::English, Locale::SimplifiedChinese] {
             let copied = locale.text(UiText::SelectionCopiedToClipboard);
-            assert!(capture_state_reports_selection_copied(&copied, locale));
+            assert!(capture_state_reports_selection_copied(copied, locale));
             assert!(!capture_state_reports_selection_copied(
                 "Copy failed",
                 locale

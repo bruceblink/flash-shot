@@ -379,6 +379,7 @@ pub(super) enum HistoryClearScope {
     All,
     Filtered,
     Selected,
+    Single,
 }
 
 /// Identifies the user-visible history action that currently owns one saved PNG.

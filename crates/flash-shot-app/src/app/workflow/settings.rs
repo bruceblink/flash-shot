@@ -423,6 +423,33 @@ impl FlashShotApp {
         self.request_history_clear_scope(HistoryClearScope::Selected, cx);
     }
 
+    /// Starts a confirmation for exactly one retained capture before its file can be removed.
+    pub(in crate::app) fn request_single_history_clear(
+        &mut self,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.history_mutation_can_start()
+            || !self
+                .history
+                .entries()
+                .iter()
+                .any(|entry| entry.path == path)
+        {
+            return;
+        }
+        self.history_clear_scope = HistoryClearScope::Single;
+        self.history_clear_count = 1;
+        self.history_clear_paths = vec![path];
+        self.history_clear_confirmation = true;
+        self.status = self
+            .settings
+            .locale
+            .text(UiText::LibraryClearSingleConfirmation)
+            .to_owned();
+        cx.notify();
+    }
+
     /// Captures the exact deletion set before asking for confirmation so later list changes cannot
     /// silently widen a destructive filtered-history operation.
     fn request_history_clear_scope(&mut self, scope: HistoryClearScope, cx: &mut Context<Self>) {
@@ -445,6 +472,7 @@ impl FlashShotApp {
                 .filter(|entry| self.history_selected_paths.contains(&entry.path))
                 .map(|entry| entry.path.clone())
                 .collect(),
+            HistoryClearScope::Single => return,
         };
         if paths.is_empty() {
             self.history_clear_scope = HistoryClearScope::default();
@@ -454,7 +482,12 @@ impl FlashShotApp {
                 HistoryClearScope::Selected => {
                     locale.text(UiText::HistorySelectAtLeastOne).to_owned()
                 }
-                _ => locale.text(UiText::HistoryAlreadyEmpty).to_owned(),
+                HistoryClearScope::All | HistoryClearScope::Filtered => {
+                    locale.text(UiText::HistoryAlreadyEmpty).to_owned()
+                }
+                HistoryClearScope::Single => unreachable!(
+                    "single-entry requests are handled before the multi-entry clear path"
+                ),
             };
         } else {
             self.history_clear_scope = scope;
@@ -484,17 +517,18 @@ impl FlashShotApp {
             .collect()
     }
 
-    /// Leaves every managed screenshot untouched after an accidental clear request.
+    /// Leaves the snapshotted screenshots untouched after a user cancels deletion.
     pub(in crate::app) fn cancel_history_clear(&mut self, cx: &mut Context<Self>) {
+        let status = if self.history_clear_scope == HistoryClearScope::Single {
+            UiText::HistoryRemoveCancelled
+        } else {
+            UiText::HistoryClearCancelled
+        };
         self.history_clear_confirmation = false;
         self.history_clear_scope = HistoryClearScope::default();
         self.history_clear_count = 0;
         self.history_clear_paths.clear();
-        self.status = self
-            .settings
-            .locale
-            .text(UiText::HistoryClearCancelled)
-            .to_owned();
+        self.status = self.settings.locale.text(status).to_owned();
         cx.notify();
     }
 
@@ -1117,10 +1151,16 @@ fn history_clear_confirmation_status(
     count: usize,
     scope: HistoryClearScope,
 ) -> String {
+    if scope == HistoryClearScope::Single {
+        return locale
+            .text(UiText::LibraryClearSingleConfirmation)
+            .to_owned();
+    }
     let scope_label = match scope {
         HistoryClearScope::All => locale.text(UiText::HistoryClearScopeAll),
         HistoryClearScope::Filtered => locale.text(UiText::HistoryClearScopeFiltered),
         HistoryClearScope::Selected => locale.text(UiText::HistoryClearScopeSelected),
+        HistoryClearScope::Single => unreachable!("single-entry requests have a dedicated label"),
     };
     let count = count.to_string();
     locale.format_template(
@@ -1300,6 +1340,18 @@ mod tests {
                 HistoryClearScope::Selected
             ),
             "确认删除 已选择 的 2 张已保存截图"
+        );
+        assert_eq!(
+            history_clear_confirmation_status(Locale::English, 1, HistoryClearScope::Single),
+            "Delete this saved screenshot?"
+        );
+        assert_eq!(
+            history_clear_confirmation_status(
+                Locale::SimplifiedChinese,
+                1,
+                HistoryClearScope::Single
+            ),
+            "删除这张已保存截图？"
         );
     }
 

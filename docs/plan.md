@@ -1,6 +1,6 @@
 # 主线开发计划
 
-更新日期：2026-10-05
+更新日期：2026-10-07
 当前版本：`0.1.3`
 目标版本：`0.2.0` Snow Apps UI 与核心功能对齐
 
@@ -289,6 +289,8 @@ Snow Shot 的参考提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6` 新增 Wind
 **U2.7 当前结果（2026-09-27）**：为 `settings-interaction-acceptance` 增加 `--exercise-record-success`，使用隔离录屏目录通过真实 Windows 鼠标点击生产 `Record display`，等待 FFmpeg 进入活动态，再点击 `Stop recording` 并等待保存完成。English/深色 `520x640` 报告为 `target/settings-interaction-acceptance-u2-record-success-520-en-final/session-30696/report.json`，简体中文/浅色 `980x760` 报告为 `target/settings-interaction-acceptance-u2-record-success-980-zh-final/session-24616/report.json`；两份均为 schema 3、`status=passed`，均观察到活动态和停止态、生成唯一非空 MP4、DPI 96、输入/鼠标/窗口清理通过。English MP4 经 FFprobe 校验为 H.264 2560x1440、1.566992 秒、173747 bytes；简体中文 MP4 为 H.264 2560x1440、1.633984 秒、327475 bytes；活动态、停止态和保存态截图已目视复核。Computer Use 当前不可用，证据来自同一提交的 Release runner；U2 仍需其他 Record 恢复入口和更完整矩阵。
 
 **U2.8 当前结果（2026-10-03）**：`settings-interaction-acceptance --exercise-pin-appearance` 在同一进程内打开三个生产 Pin，再通过真实鼠标输入切换 App 页主题与语言；GPUI 状态桥逐窗回读三 Pin 的实际外观。English/深色 `520x640` 会话报告 `target/settings-interaction-u4-live-en-20261003/session-20108/report.json`，简体中文/浅色 `980x760` 会话报告 `target/settings-interaction-u4-live-zh-20261003/session-13736/report.json`；两份均为 schema 4、`status=passed`、`pin_count=3`、`all_pins_updated=true`、DPI 96、scale 1.0，并保存外观切换前/后的三张窗口截图。鼠标位置、键盘状态、窗口层级与验收进程均恢复；Computer Use 未提供可操作的 Flash Shot 窗口，证据来自 Release runner 原生输入，不宣称为 Computer Use。
+
+**U2.9 当前结果（2026-10-07；代码与自动化测试通过，原生 UI 未验收）**：对照固定 Snow Shot 提交 `850d27c113b2f81b43950b839b6180af50e82d13`，其 Library 单条删除通过确认后才执行；Flash Shot 行内“移除”现改为保存单条目标路径并显示双语确认，取消时清除确认快照并保留文件，确认时复用现有受保护删除流程，成功/失败状态按单条动作反馈。`cargo test -p flash-shot-app --lib --all-features --locked --offline` 551 项通过，格式和严格 Clippy 通过。当前 Computer Use 会话无法枚举或绑定原生窗口，项目窗口截图探针也未捕获 Flash Shot 窗口，因此不把这次结果记作真实窗口输入或视觉验收；U2 仍保持部分完成。
 
 **U4.1 当前结果（2026-09-27）**：当前源码 Release `pin-lifecycle-acceptance` 复验 English/深色与简体中文/浅色两个组合；每组在单屏 `2560x1440`、DPI 96、scale 1.0 下创建 3 个 Pin，完成缩放、透明度、内存 Copy、隔离 Save、Solo、Show all、焦点保持、关闭和 Capture preflight。English 报告为 `target/pin-lifecycle-acceptance-u4-followup-en/session-1790499114528-28552/report.json`，简体中文报告为 `target/pin-lifecycle-acceptance-u4-followup-zh/session-1790499162252-28692/report.json`；两份 schema 5 均为 `status=passed`，Copy `complete_frame_equal=true`、Save 文件存在、`show_all_preserved_focus=true`、`capture_preflight_ready=true`，每组关闭后保留 2 个窗口。该 runner 不注入真实鼠标/键盘，Computer Use 当前不可用，U4 仍需真实 Pin 输入、语言切换和再次 Capture 矩阵。
 
