@@ -172,6 +172,8 @@ pub struct FlashShotApp {
     recognition_retry: Option<RecognitionRetry>,
     recognition_in_flight: bool,
     recognition_generation: u64,
+    #[cfg(feature = "dev-tools")]
+    recognition_failure_once: bool,
     translation_service_test_in_flight: bool,
     translation_service_test_generation: u64,
     ocr_support_check_in_flight: bool,
@@ -540,6 +542,11 @@ impl TextEdit {
 }
 
 impl FlashShotApp {
+    #[cfg(feature = "dev-tools")]
+    pub(crate) fn inject_recognition_failure_for_acceptance(&mut self) {
+        self.recognition_failure_once = true;
+    }
+
     pub(crate) fn set_settings_window_handle(&mut self, handle: isize) {
         self.settings_window_handle = Some(handle);
     }
@@ -882,6 +889,8 @@ impl FlashShotApp {
             recognition_retry: None,
             recognition_in_flight: false,
             recognition_generation: 0,
+            #[cfg(feature = "dev-tools")]
+            recognition_failure_once: false,
             translation_service_test_in_flight: false,
             translation_service_test_generation: 0,
             ocr_support_check_in_flight: false,
@@ -993,10 +1002,26 @@ impl FlashShotApp {
                                 pin.update(cx, |pin, _, _| pin.source_bounds_for_acceptance())
                                     .ok()
                             });
+                            let pinned_locked_states = this
+                                .pinned_windows
+                                .iter()
+                                .filter_map(|pin| {
+                                    pin.read_with(cx, |pin, _| pin.locked_for_acceptance())
+                                        .ok()
+                                })
+                                .collect();
                             let action_toolbar_bounds = this.overlay_windows.iter().find_map(|overlay| {
                                 overlay
                                     .update(cx, |overlay, _, _| {
                                         overlay.action_toolbar_bounds_for_acceptance()
+                                    })
+                                    .ok()
+                                    .flatten()
+                            });
+                            let secondary_menu_bounds = this.overlay_windows.iter().find_map(|overlay| {
+                                overlay
+                                    .update(cx, |overlay, _, _| {
+                                        overlay.secondary_menu_bounds_for_acceptance()
                                     })
                                     .ok()
                                     .flatten()
@@ -1112,6 +1137,15 @@ impl FlashShotApp {
                                 annotations,
                                 selection_copy_active: this.selection_copy_is_active(),
                                 clipboard_write_active: this.clipboard_write_lease.is_some(),
+                                recognition_in_flight: this.recognition_in_flight,
+                                recognition_result_length: this
+                                    .recognition_result
+                                    .as_ref()
+                                    .map(|result| result.text.chars().count()),
+                                recognition_retry: this.recognition_retry.map(|retry| match retry {
+                                    RecognitionRetry::Ocr => "ocr",
+                                    RecognitionRetry::Translation => "translation",
+                                }.to_owned()),
                                 manual_scroll_state: manual_scroll_state_label(
                                     this.manual_scroll.state(),
                                 )
@@ -1127,11 +1161,13 @@ impl FlashShotApp {
                                 manual_scroll_selection: this.manual_scroll_selection,
                                 overlay_count: this.overlay_windows.len(),
                                 action_toolbar_bounds,
+                                secondary_menu_bounds,
                                 more_actions_visible: this.overlay_more_actions,
                                 annotation_controls_visible: this.overlay_annotation_controls,
                                 annotation_tool_group_visible: this.annotation_tool_group.is_some(),
                                 pinned_count: this.pinned_windows.len(),
                                 pinned_source_bounds,
+                                pinned_locked_states,
                                 capture_teardown_pending: this.capture_teardown_pending,
                                 operation_generation: this.operation_generation,
                                 background_tasks_idle: this.capture_background_tasks_idle(),
@@ -1154,6 +1190,22 @@ impl FlashShotApp {
                                 .collect();
                             let _ = reply
                                 .send(crate::OverlayInteractionCaptureContent { selection, pins });
+                        }
+                        crate::OverlayInteractionAcceptanceCommand::OpenHistoryImage {
+                            path,
+                            reply,
+                        } => {
+                            let result = this
+                                .history
+                                .record_with_source(
+                                    path.clone(),
+                                    crate::history::HistorySource::Selection,
+                                )
+                                .map_err(|error| error.to_string());
+                            if result.is_ok() {
+                                this.open_history_image(path, cx);
+                            }
+                            let _ = reply.send(result);
                         }
                         crate::OverlayInteractionAcceptanceCommand::ShowCaptureSettings => {
                             this.select_settings_section(SettingsSection::Capture, cx);

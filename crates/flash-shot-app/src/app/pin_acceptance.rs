@@ -286,12 +286,15 @@ mod windows {
                         .read_with(cx, |pin, _| pin.appearance_labels_for_acceptance())
                         .ok()
                 })
-                .map(|(locale, theme, width, height)| crate::PinAppearanceState {
-                    locale: locale.to_owned(),
-                    theme: theme.to_owned(),
-                    width,
-                    height,
-                })
+                .map(
+                    |(locale, theme, width, height, locked)| crate::PinAppearanceState {
+                        locale: locale.to_owned(),
+                        theme: theme.to_owned(),
+                        width,
+                        height,
+                        locked,
+                    },
+                )
                 .collect()
         }
 

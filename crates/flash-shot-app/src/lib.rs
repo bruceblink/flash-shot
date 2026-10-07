@@ -108,6 +108,8 @@ pub fn run_settings_ui_acceptance(
             interaction_commands: None,
             interaction_copy_results: None,
             #[cfg(feature = "dev-tools")]
+            interaction_recognition_failure_once: false,
+            #[cfg(feature = "dev-tools")]
             interaction_copy_race: None,
             history_resource_commands: None,
             settings_interaction_commands: None,
@@ -204,6 +206,10 @@ pub enum OverlayInteractionAcceptanceCommand {
     Snapshot(SyncSender<OverlayInteractionRecordingState>),
     CaptureSnapshot(SyncSender<OverlayInteractionCaptureState>),
     CaptureContent(SyncSender<OverlayInteractionCaptureContent>),
+    OpenHistoryImage {
+        path: PathBuf,
+        reply: SyncSender<Result<(), String>>,
+    },
     ShowCaptureSettings,
     PrepareOnePixelSelection,
     ShowRecordingSettings,
@@ -256,6 +262,7 @@ pub struct PinAppearanceState {
     pub theme: String,
     pub width: u32,
     pub height: u32,
+    pub locked: bool,
 }
 
 /// Minimal production recording state returned to the isolated input probe.
@@ -284,6 +291,12 @@ pub struct OverlayInteractionCaptureState {
     pub selection_copy_active: bool,
     /// Whether any production image writer currently owns the shared clipboard lease.
     pub clipboard_write_active: bool,
+    /// Whether a production QR, OCR, or translation request is still running.
+    pub recognition_in_flight: bool,
+    /// Character count of the current recognition result, without exposing its text.
+    pub recognition_result_length: Option<usize>,
+    /// Failed recognizer that the More menu currently offers to retry.
+    pub recognition_retry: Option<String>,
     /// Current production manual-scroll lifecycle label (for example, `collecting`).
     pub manual_scroll_state: String,
     /// Number of viewport frames accepted by the active manual-scroll session.
@@ -304,11 +317,15 @@ pub struct OverlayInteractionCaptureState {
     /// This is an acceptance-only geometry probe. It lets native input tests prove that a
     /// manual toolbar move changed the toolbar while the committed selection stayed fixed.
     pub action_toolbar_bounds: Option<domain::geometry::PhysicalRect>,
+    /// Physical-pixel bounds relative to the overlay client area for native menu input tests.
+    pub secondary_menu_bounds: Option<domain::geometry::PhysicalRect>,
     pub more_actions_visible: bool,
     pub annotation_controls_visible: bool,
     pub annotation_tool_group_visible: bool,
     pub pinned_count: usize,
     pub pinned_source_bounds: Option<domain::geometry::PhysicalRect>,
+    /// Geometry lock state for each live Pin, in the same order as the native window registry.
+    pub pinned_locked_states: Vec<bool>,
     /// Whether a previously visible capture overlay is still waiting for deferred native teardown.
     pub capture_teardown_pending: bool,
     /// Monotonic token used to reject callbacks that belong to an older capture lifecycle.
@@ -401,6 +418,8 @@ pub struct OverlayInteractionAcceptanceOptions {
     pub commands: async_channel::Receiver<OverlayInteractionAcceptanceCommand>,
     /// `Some` redirects Copy into a process-local observer; `None` exercises `SystemClipboard`.
     pub copy_results: Option<Sender<platform::capture::CaptureFrame>>,
+    /// Injects one missing-OCR-program result so the real retry control can be exercised.
+    pub recognition_failure_once: bool,
 }
 
 /// Process-local controls for the no-input history thumbnail resource acceptance session.
@@ -465,6 +484,8 @@ impl OverlayInteractionAcceptanceOptions {
             interaction_shortcut_readiness: Some(self.shortcut_readiness),
             interaction_commands: Some(self.commands),
             interaction_copy_results: self.copy_results,
+            #[cfg(feature = "dev-tools")]
+            interaction_recognition_failure_once: self.recognition_failure_once,
             ..SettingsWindowOptions::default()
         }
     }
@@ -614,6 +635,7 @@ mod overlay_interaction_clipboard_tests {
             shortcut_readiness: readiness,
             commands: command_results,
             copy_results: Some(copy_results),
+            recognition_failure_once: false,
         }
         .into_settings_window_options();
 
@@ -631,6 +653,7 @@ mod overlay_interaction_clipboard_tests {
             shortcut_readiness: readiness,
             commands: command_results,
             copy_results: None,
+            recognition_failure_once: false,
         }
         .into_settings_window_options();
 
@@ -860,6 +883,8 @@ struct SettingsWindowOptions {
     interaction_commands: Option<async_channel::Receiver<OverlayInteractionAcceptanceCommand>>,
     /// `Some` installs the acceptance sink; `None` leaves the production system clipboard active.
     interaction_copy_results: Option<Sender<platform::capture::CaptureFrame>>,
+    #[cfg(feature = "dev-tools")]
+    interaction_recognition_failure_once: bool,
     /// Optional acceptance-only checkpoint used to order the Copy cancellation race.
     #[cfg(feature = "dev-tools")]
     interaction_copy_race: Option<OverlayInteractionCopyRace>,
@@ -889,6 +914,8 @@ impl Default for SettingsWindowOptions {
             interaction_shortcut_readiness: None,
             interaction_commands: None,
             interaction_copy_results: None,
+            #[cfg(feature = "dev-tools")]
+            interaction_recognition_failure_once: false,
             #[cfg(feature = "dev-tools")]
             interaction_copy_race: None,
             history_resource_commands: None,
@@ -957,6 +984,9 @@ fn run_with_settings_window(
         let interaction_commands = window_options.interaction_commands;
         let interaction_copy_results = window_options.interaction_copy_results;
         #[cfg(feature = "dev-tools")]
+        let interaction_recognition_failure_once =
+            window_options.interaction_recognition_failure_once;
+        #[cfg(feature = "dev-tools")]
         let interaction_copy_race = window_options.interaction_copy_race;
         let history_resource_commands = window_options.history_resource_commands;
         let settings_interaction_commands = window_options.settings_interaction_commands;
@@ -999,6 +1029,10 @@ fn run_with_settings_window(
             } else {
                 cx.new(|cx| FlashShotApp::new(performance, history, settings, settings_path, cx))
             };
+            #[cfg(feature = "dev-tools")]
+            if interaction_recognition_failure_once {
+                app.update(cx, |app, _| app.inject_recognition_failure_for_acceptance());
+            }
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()
             {

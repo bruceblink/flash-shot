@@ -17,7 +17,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-dev-tools = []
+dev-tools = ["dep:qrcode"]
 
 [dependencies]
 flash-shot-domain.workspace = true
@@ -30,6 +30,7 @@ gpui_platform.workspace = true
 image.workspace = true
 log.workspace = true
 png.workspace = true
+qrcode = { workspace = true, optional = true }
 raw-window-handle.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -40,6 +41,3 @@ uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
-
-[dev-dependencies]
-qrcode.workspace = true

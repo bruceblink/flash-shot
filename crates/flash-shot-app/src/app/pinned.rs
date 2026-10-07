@@ -27,6 +27,8 @@ fn pinned_control_tooltip(locale: Locale, control: &str) -> &'static str {
     match control {
         "zoom-out" => locale.text(UiText::PinZoomOutTooltip),
         "zoom-in" => locale.text(UiText::PinZoomInTooltip),
+        "lock" => locale.text(UiText::PinLockTooltip),
+        "unlock" => locale.text(UiText::PinUnlockTooltip),
         "opacity" => locale.text(UiText::PinOpacityTooltip),
         "mouse-through" => locale.text(UiText::PinMouseThroughTooltip),
         "solo" => locale.text(UiText::PinSoloTooltip),
@@ -47,6 +49,7 @@ pub(super) struct PinnedImage {
     locale: Locale,
     focus_handle: FocusHandle,
     topmost_requested: bool,
+    locked: bool,
     opacity: u8,
     mouse_through: bool,
     status: &'static str,
@@ -76,6 +79,7 @@ impl PinnedImage {
             locale,
             focus_handle: cx.focus_handle(),
             topmost_requested: false,
+            locked: false,
             opacity: 255,
             mouse_through: false,
             status: locale.text(UiText::PinCapture),
@@ -194,12 +198,13 @@ impl PinnedImage {
     /// Returns the human-readable labels used by the settings input acceptance state bridge.
     pub(super) fn appearance_labels_for_acceptance(
         &self,
-    ) -> (&'static str, &'static str, u32, u32) {
+    ) -> (&'static str, &'static str, u32, u32, bool) {
         (
             self.locale.label(),
             self.theme_mode.label(),
             self.frame.width,
             self.frame.height,
+            self.locked,
         )
     }
 
@@ -253,6 +258,10 @@ impl PinnedImage {
 
     /// Scales the complete native window so the contained image remains undistorted.
     pub(super) fn zoom(&mut self, scale: f32, window: &mut Window, cx: &mut Context<Self>) {
+        if !pin_geometry_change_allowed(self.locked) {
+            self.show_operation_feedback(self.locale.text(UiText::PinLocked), cx);
+            return;
+        }
         let target = next_pin_zoom_size(window.bounds().size, self.pending_zoom_size, scale);
         self.pending_zoom_size = Some(target);
         let saved_center = native_window_handle(window).and_then(|handle| {
@@ -286,6 +295,24 @@ impl PinnedImage {
             self.locale.text(UiText::PinZoomedOut)
         };
         self.show_operation_feedback(feedback, cx);
+    }
+
+    /// Toggles the Pin's drag region and programmatic zoom guard as one geometry state.
+    pub(super) fn toggle_lock_mode(&mut self, cx: &mut Context<Self>) {
+        let next = !self.locked;
+        self.locked = next;
+        self.pending_zoom_size = None;
+        let status = if next {
+            UiText::PinLocked
+        } else {
+            UiText::PinUnlocked
+        };
+        self.show_operation_feedback(self.locale.text(status), cx);
+    }
+
+    /// Exposes only the geometry lock state to isolated native acceptance reports.
+    pub(super) const fn locked_for_acceptance(&self) -> bool {
+        self.locked
     }
 
     /// Cycles through readable reference-image opacity levels without moving the window.
@@ -494,6 +521,7 @@ impl Render for PinnedImage {
         }
         let colors = self.colors;
         let locale = self.locale;
+        let locked = self.locked;
         if !self.topmost_requested
             && let Ok(handle) = window.window_handle()
             && let RawWindowHandle::Win32(handle) = handle.as_raw()
@@ -543,6 +571,19 @@ impl Render for PinnedImage {
                             .text_color(colors.muted)
                             .child(self.status),
                     )
+                    .child(pinned_tool_button(
+                        "pinned-lock",
+                        pinned_lock_button_label(locale, locked),
+                        if locked { "unlock" } else { "lock" },
+                        colors,
+                        locale,
+                        if locked {
+                            PinnedButtonTone::Selected
+                        } else {
+                            PinnedButtonTone::Neutral
+                        },
+                        cx.listener(|this, _, _, cx| this.toggle_lock_mode(cx)),
+                    ))
                     .child(pinned_tool_button(
                         "pinned-save",
                         locale.text(UiText::PinSave),
@@ -658,7 +699,9 @@ impl Render for PinnedImage {
             .right(px(0.0))
             .bottom(px(0.0))
             .left(px(0.0))
-            .window_control_area(WindowControlArea::Drag);
+            .when(!locked, |region| {
+                region.window_control_area(WindowControlArea::Drag)
+            });
 
         div()
             .size_full()
@@ -670,6 +713,7 @@ impl Render for PinnedImage {
                     Some(PinnedKeyboardCommand::Close) => this.close(window, cx),
                     Some(PinnedKeyboardCommand::Copy) => this.copy_image(cx),
                     Some(PinnedKeyboardCommand::Save) => this.save_image(cx),
+                    Some(PinnedKeyboardCommand::ToggleLock) => this.toggle_lock_mode(cx),
                     Some(PinnedKeyboardCommand::ZoomOut) => this.zoom(0.8, window, cx),
                     Some(PinnedKeyboardCommand::ZoomIn) => this.zoom(1.25, window, cx),
                     Some(PinnedKeyboardCommand::CycleOpacity) => this.cycle_opacity(window, cx),
@@ -685,7 +729,11 @@ impl Render for PinnedImage {
             }))
             .bg(colors.background)
             .border_1()
-            .border_color(colors.border)
+            .border_color(if locked {
+                colors.toolbar_focus
+            } else {
+                colors.border
+            })
             .child(image)
             .child(drag_region)
             .child(toolbar)
@@ -703,6 +751,7 @@ enum PinnedKeyboardCommand {
     Close,
     Copy,
     Save,
+    ToggleLock,
     ZoomOut,
     ZoomIn,
     CycleOpacity,
@@ -721,6 +770,7 @@ fn pinned_keyboard_command(keystroke: &Keystroke) -> Option<PinnedKeyboardComman
         return match keystroke.key.as_str() {
             "c" => Some(PinnedKeyboardCommand::Copy),
             "s" => Some(PinnedKeyboardCommand::Save),
+            "l" => Some(PinnedKeyboardCommand::ToggleLock),
             "-" => Some(PinnedKeyboardCommand::ZoomOut),
             "=" | "+" => Some(PinnedKeyboardCommand::ZoomIn),
             "o" => Some(PinnedKeyboardCommand::CycleOpacity),
@@ -769,6 +819,20 @@ fn pin_zoom_target_reached(actual: Size<Pixels>, target: Size<Pixels>, scale_fac
         && device_extent(actual.height) == device_extent(target.height)
 }
 
+/// Prevents every Pin size or position action while its geometry lock is active.
+const fn pin_geometry_change_allowed(locked: bool) -> bool {
+    !locked
+}
+
+/// Uses the active catalog for the visible Pin lock action.
+fn pinned_lock_button_label(locale: Locale, locked: bool) -> &'static str {
+    locale.text(if locked {
+        UiText::PinUnlock
+    } else {
+        UiText::PinLock
+    })
+}
+
 fn opacity_percentage(opacity: u8) -> u8 {
     ((u16::from(opacity) * 100 + 127) / 255) as u8
 }
@@ -807,9 +871,10 @@ fn pin_feedback_timer_is_current(current_generation: u64, timer_generation: u64)
 mod tests {
     use super::{
         PinnedKeyboardCommand, copy_pinned_image, next_pin_opacity, next_pin_zoom_size,
-        opacity_percentage, pin_feedback_timer_is_current, pin_opacity_button_label,
-        pin_zoom_target_reached, pinned_close_key, pinned_control_tooltip, pinned_copy_can_start,
-        pinned_keyboard_command, pinned_save_result_status,
+        opacity_percentage, pin_feedback_timer_is_current, pin_geometry_change_allowed,
+        pin_opacity_button_label, pin_zoom_target_reached, pinned_close_key,
+        pinned_control_tooltip, pinned_copy_can_start, pinned_keyboard_command,
+        pinned_lock_button_label, pinned_save_result_status,
     };
     use crate::i18n::Locale;
     use crate::{
@@ -901,6 +966,8 @@ mod tests {
         for control in [
             "zoom-out",
             "zoom-in",
+            "lock",
+            "unlock",
             "opacity",
             "mouse-through",
             "solo",
@@ -912,6 +979,7 @@ mod tests {
             assert!(!pinned_control_tooltip(Locale::English, control).is_empty());
         }
         assert!(pinned_control_tooltip(Locale::English, "close").contains("Escape"));
+        assert!(pinned_control_tooltip(Locale::English, "lock").contains("Ctrl+L"));
         assert_eq!(
             pinned_control_tooltip(Locale::SimplifiedChinese, "copy"),
             "复制图片（Ctrl+C）"
@@ -944,6 +1012,10 @@ mod tests {
         assert_eq!(
             pinned_keyboard_command(&key("s", control)),
             Some(PinnedKeyboardCommand::Save)
+        );
+        assert_eq!(
+            pinned_keyboard_command(&key("l", control)),
+            Some(PinnedKeyboardCommand::ToggleLock)
         );
         assert_eq!(
             pinned_keyboard_command(&key("=", control)),
@@ -991,6 +1063,22 @@ mod tests {
         assert_eq!(
             pin_opacity_button_label(Locale::SimplifiedChinese, 191),
             "75%"
+        );
+    }
+
+    #[test]
+    fn pin_geometry_changes_are_rejected_only_while_locked() {
+        assert!(pin_geometry_change_allowed(false));
+        assert!(!pin_geometry_change_allowed(true));
+        assert_eq!(pinned_lock_button_label(Locale::English, false), "Lock");
+        assert_eq!(pinned_lock_button_label(Locale::English, true), "Unlock");
+        assert_eq!(
+            pinned_lock_button_label(Locale::SimplifiedChinese, false),
+            "锁定"
+        );
+        assert_eq!(
+            pinned_lock_button_label(Locale::SimplifiedChinese, true),
+            "解锁"
         );
     }
 

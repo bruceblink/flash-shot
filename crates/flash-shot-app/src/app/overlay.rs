@@ -723,6 +723,22 @@ impl CaptureOverlay {
         })
     }
 
+    /// Exposes client-relative More panel bounds so native acceptance can add the HWND origin.
+    pub(super) fn secondary_menu_bounds_for_acceptance(&self) -> Option<PhysicalRect> {
+        let snapshot = self.last_workspace_snapshot?;
+        let toolbar = snapshot.action_toolbar?;
+        let menu = snapshot.secondary_menu?;
+        let scale = self.last_workspace_scale_factor.max(0.01);
+        let left = toolbar.left + menu.left;
+        let top = toolbar.top + menu.top_offset;
+        Some(PhysicalRect {
+            left: (left * scale).round() as i32,
+            top: (top * scale).round() as i32,
+            right: ((left + menu.width) * scale).round() as i32,
+            bottom: ((top + menu.height) * scale).round() as i32,
+        })
+    }
+
     /// Starts a toolbar move without allowing the full-screen selection surface to see the click.
     fn begin_toolbar_drag(
         &mut self,

@@ -128,6 +128,18 @@ impl FlashShotApp {
             )],
         );
         cx.notify();
+        #[cfg(feature = "dev-tools")]
+        if std::mem::take(&mut self.recognition_failure_once) {
+            self.finish_text_recognition(
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "acceptance-injected OCR executable unavailable",
+                )),
+                generation,
+                cx,
+            );
+            return;
+        }
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {

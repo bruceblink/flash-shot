@@ -14,7 +14,8 @@ use flash_shot::{
     OverlayInteractionAnnotationState, OverlayInteractionCaptureContent,
     OverlayInteractionCaptureState, OverlayInteractionRecordingState,
     app::overlay_toolbar::{
-        WorkspaceAnnotationToolSpec, WorkspaceInlineAction, WorkspaceResultAction,
+        WorkspaceAnnotationToolSpec, WorkspaceInlineAction, WorkspaceMoreAction,
+        WorkspaceResultAction,
     },
     domain::annotation::AnnotationTool,
     domain::geometry::{PhysicalPoint, PhysicalRect},
@@ -38,7 +39,13 @@ use flash_shot::{
 };
 
 use super::support::recording_probe;
+#[cfg(windows)]
+use qrcode::{Color as QrColor, QrCode};
 use recording_probe::MediaMetadata;
+
+#[cfg(windows)]
+#[path = "overlay-interaction-acceptance/recognition_ui.rs"]
+mod recognition_ui;
 #[cfg(windows)]
 use recording_probe::{extract_video_frame, extract_video_frame_series, probe_media};
 
@@ -72,7 +79,7 @@ use windows_sys::Win32::{
         },
         LibraryLoader::GetModuleHandleW,
         Memory::{GlobalLock, GlobalSize, GlobalUnlock},
-        Ole::CF_DIB,
+        Ole::{CF_DIB, CF_UNICODETEXT},
         Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
         Threading::GetCurrentProcessId,
     },
@@ -110,6 +117,8 @@ use windows_sys::Win32::{
 use windows_sys::core::BOOL;
 
 const CAPTURE_SHORTCUT: &str = "Ctrl+Alt+F24";
+const PIN_LOCK_KEY: u16 = 0x4c;
+const PIN_ZOOM_IN_KEY: u16 = 0xbb;
 const DEFAULT_OUTPUT_DIR: &str = "target/overlay-interaction-acceptance";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_SETTLE_DELAY: Duration = Duration::from_millis(500);
@@ -175,6 +184,10 @@ const SCROLL_SECONDARY_ACTION_WIDTHS: [f32; 11] = [
 ];
 const SCROLL_FIXTURE_SCROLL_STEP: i32 = 96;
 #[cfg(windows)]
+const OCR_FIXTURE_TEXT: &str = "FLASH SHOT";
+#[cfg(windows)]
+const QR_FIXTURE_TEXT: &str = "FLASH_SHOT_QR_ACCEPTANCE_2026";
+#[cfg(windows)]
 const PROFILE_DIRECTORY_ENV: &str = "FLASH_SHOT_PROFILE_DIR";
 #[cfg(windows)]
 const RECORDING_DIRECTORY_ENV: &str = "FLASH_SHOT_RECORDING_DIRECTORY";
@@ -215,6 +228,7 @@ enum CaptureScenarioOption {
     PinsCoexist,
     SelectionTransform,
     ScrollRoundtrip,
+    Recognition,
     AnnotationRegression,
     ToolGroup,
     ToolbarDrag,
@@ -236,6 +250,7 @@ impl CaptureScenarioOption {
             Self::PinsCoexist => "capture_pins_coexist",
             Self::SelectionTransform => "capture_selection_transform",
             Self::ScrollRoundtrip => "capture_scroll_roundtrip",
+            Self::Recognition => "capture_recognition_ui",
             Self::AnnotationRegression => "capture_annotation_regression",
             Self::ToolGroup => "capture_tool_group",
             Self::ToolbarDrag => "capture_toolbar_drag",
@@ -256,6 +271,7 @@ impl CaptureScenarioOption {
                 | Self::PinsCoexist
                 | Self::SelectionTransform
                 | Self::ScrollRoundtrip
+                | Self::Recognition
                 | Self::AnnotationRegression
                 | Self::ToolGroup
                 | Self::ToolbarDrag
@@ -514,6 +530,7 @@ impl Options {
                         "pins-coexist" => CaptureScenarioOption::PinsCoexist,
                         "selection-transform" => CaptureScenarioOption::SelectionTransform,
                         "scroll-roundtrip" => CaptureScenarioOption::ScrollRoundtrip,
+                        "recognition" => CaptureScenarioOption::Recognition,
                         "annotation-regression" => CaptureScenarioOption::AnnotationRegression,
                         "tool-group" => CaptureScenarioOption::ToolGroup,
                         "toolbar-drag" => CaptureScenarioOption::ToolbarDrag,
@@ -529,7 +546,7 @@ impl Options {
                         }
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'recognition', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
                     .to_owned(),
                             );
                         }
@@ -612,6 +629,14 @@ impl Options {
                     .to_owned(),
             );
         }
+        if options.capture_scenario == CaptureScenarioOption::Recognition
+            && !options.allow_system_clipboard
+        {
+            return Err(
+                "recognition acceptance copies real fixture text; rerun with --allow-system-clipboard"
+                    .to_owned(),
+            );
+        }
         let copy_capable_capture = matches!(
             options.capture_scenario,
             CaptureScenarioOption::Standard
@@ -637,13 +662,16 @@ impl Options {
         let pins_system_copy = options.capture_scenario == CaptureScenarioOption::PinsCoexist;
         let scroll_system_copy = options.capture_scenario == CaptureScenarioOption::ScrollRoundtrip
             && options.scroll_export == ScrollExportOption::Copy;
+        let recognition_system_copy =
+            options.capture_scenario == CaptureScenarioOption::Recognition;
         if options.allow_system_clipboard
             && !standard_system_copy
             && !pins_system_copy
             && !scroll_system_copy
+            && !recognition_system_copy
         {
             return Err(
-                "--allow-system-clipboard is only valid with standard capture, copy-only, clipboard-contention-retry, pins-coexist, or scroll-roundtrip Copy"
+                "--allow-system-clipboard is only valid with standard capture, copy-only, clipboard-contention-retry, pins-coexist, scroll-roundtrip Copy, or recognition"
                     .to_owned(),
             );
         }
@@ -700,7 +728,7 @@ fn parse_theme(value: Option<OsString>) -> Result<ThemeMode, String> {
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|recognition|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -1326,78 +1354,6 @@ fn tool_group_interaction_plan_for_capture_selection(
     })
 }
 
-/// Locates the production Scroll shot item in the expanded More menu using its fixed width rows.
-fn scroll_shot_point_for_logical_selection(
-    bounds: PhysicalRect,
-    scale: f32,
-    width: f32,
-    height: f32,
-    start: (f32, f32),
-    end: (f32, f32),
-    annotation_controls_visible: bool,
-) -> io::Result<PhysicalPoint> {
-    if start.0 < 0.0
-        || start.1 < 0.0
-        || end.0 <= start.0
-        || end.1 <= start.1
-        || end.0 > width
-        || end.1 > height
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "scroll-shot selection must be increasing and inside the overlay client",
-        ));
-    }
-    let (toolbar_width, toolbar_height, _) = scroll_toolbar_dimensions(annotation_controls_visible);
-    if width < toolbar_width + 36.0 {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "scroll roundtrip acceptance requires room for the complete action toolbar",
-        ));
-    }
-    let toolbar_left = (end.0 - toolbar_width).clamp(18.0, width - 18.0 - toolbar_width);
-    let top_limit = (height - 96.0 - toolbar_height).max(18.0);
-    let below = end.1 + ThemeMetrics::WORKSPACE_SELECTION_GAP;
-    let above = start.1 - ThemeMetrics::WORKSPACE_SELECTION_GAP - toolbar_height;
-    let toolbar_top = if below <= top_limit {
-        below
-    } else {
-        above.max(18.0).min(top_limit)
-    };
-
-    let menu_width = scroll_secondary_menu_width();
-    let menu_height = scroll_secondary_menu_height(menu_width);
-    let menu_offset = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
-        + ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
-        + ThemeMetrics::WORKSPACE_POPOVER_GAP;
-    let above_menu_top = toolbar_top - menu_offset - menu_height;
-    let below_menu_bottom = toolbar_top + toolbar_height + menu_offset + menu_height;
-    let actions_above = below > top_limit;
-    let opens_above =
-        if annotation_controls_visible && !actions_above && below_menu_bottom <= height - 96.0 {
-            false
-        } else if annotation_controls_visible && actions_above && above_menu_top >= 18.0 {
-            true
-        } else {
-            above_menu_top >= 18.0 || below_menu_bottom > height - 96.0
-        };
-    let menu_top = if opens_above {
-        toolbar_top - menu_offset - menu_height
-    } else {
-        toolbar_top + menu_offset
-    };
-    let menu_left_offset = ((toolbar_width - menu_width) / 2.0).clamp(
-        18.0 - toolbar_left,
-        width - 18.0 - menu_width - toolbar_left,
-    );
-    let menu_left = toolbar_left + menu_left_offset;
-    let scroll_center = scroll_menu_item_center(menu_left, menu_top, menu_width, 4)?;
-    Ok(PhysicalPoint {
-        x: bounds.left + (scroll_center.0 * scale).round() as i32,
-        y: bounds.top + (scroll_center.1 * scale).round() as i32,
-    })
-}
-
 /// Measures the compact production action row from shared icon and spacing tokens.
 fn scroll_toolbar_dimensions(annotation_controls_visible: bool) -> (f32, f32, f32) {
     let button = ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA;
@@ -1484,6 +1440,7 @@ fn scroll_toolbar_more_point_for_capture_selection(
 }
 
 /// Finds the narrowest More-menu width whose fixed action labels fit in four production rows.
+#[cfg(test)]
 fn scroll_secondary_menu_width() -> f32 {
     let gap = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
     let chrome = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
@@ -1507,6 +1464,7 @@ fn scroll_secondary_menu_width() -> f32 {
 }
 
 /// Computes the More panel height from its wrapped rows and shared toolbar tokens.
+#[cfg(test)]
 fn scroll_secondary_menu_height(width: f32) -> f32 {
     let rows = scroll_secondary_menu_row_count(width) as f32;
     rows * ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA
@@ -1516,6 +1474,7 @@ fn scroll_secondary_menu_height(width: f32) -> f32 {
 }
 
 /// Applies the same greedy flex wrapping as the More action renderer.
+#[cfg(test)]
 fn scroll_secondary_menu_row_count(width: f32) -> usize {
     let content_width = (width
         - ThemeMetrics::WORKSPACE_TOOLBAR_PADDING * 2.0
@@ -1546,6 +1505,23 @@ fn scroll_menu_item_center(
     menu_width: f32,
     item_index: usize,
 ) -> io::Result<(f32, f32)> {
+    more_menu_item_center(
+        menu_left,
+        menu_top,
+        menu_width,
+        item_index,
+        &SCROLL_SECONDARY_ACTION_WIDTHS,
+    )
+}
+
+/// Mirrors the More panel's stable action widths and right-aligned flex wrapping.
+fn more_menu_item_center(
+    menu_left: f32,
+    menu_top: f32,
+    menu_width: f32,
+    item_index: usize,
+    action_widths: &[f32],
+) -> io::Result<(f32, f32)> {
     let border = ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH;
     let padding = ThemeMetrics::WORKSPACE_TOOLBAR_PADDING;
     let gap = ThemeMetrics::WORKSPACE_TOOLBAR_GAP;
@@ -1554,7 +1530,7 @@ fn scroll_menu_item_center(
     let mut rows = Vec::<(usize, usize, f32)>::new();
     let mut row_start = 0;
     let mut row_width = 0.0;
-    for (index, item_width) in SCROLL_SECONDARY_ACTION_WIDTHS.iter().copied().enumerate() {
+    for (index, item_width) in action_widths.iter().copied().enumerate() {
         let next_width = if row_width == 0.0 {
             item_width
         } else {
@@ -1568,7 +1544,7 @@ fn scroll_menu_item_center(
             row_width = next_width;
         }
     }
-    rows.push((row_start, SCROLL_SECONDARY_ACTION_WIDTHS.len(), row_width));
+    rows.push((row_start, action_widths.len(), row_width));
     let (row_index, (first, _last, row_width)) = rows
         .iter()
         .copied()
@@ -1576,14 +1552,265 @@ fn scroll_menu_item_center(
         .find(|(_, (first, last, _))| (*first..*last).contains(&item_index))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "More item index is absent"))?;
     let row_offset = content_width - row_width;
-    let preceding_width = SCROLL_SECONDARY_ACTION_WIDTHS[first..item_index]
-        .iter()
-        .sum::<f32>()
+    let preceding_width = action_widths[first..item_index].iter().sum::<f32>()
         + item_index.saturating_sub(first) as f32 * gap;
-    let item_width = SCROLL_SECONDARY_ACTION_WIDTHS[item_index];
+    let item_width = action_widths[item_index];
     let x = menu_left + border + padding + row_offset + preceding_width + item_width / 2.0;
     let y = menu_top + border + padding + row_index as f32 * (button + gap) + button / 2.0;
     Ok((x, y))
+}
+
+/// Targets a menu row inside the exact bounds returned by the production overlay layout.
+fn scroll_menu_item_screen_point(
+    menu_bounds: PhysicalRect,
+    dpi: u32,
+    item_index: usize,
+) -> io::Result<PhysicalPoint> {
+    if dpi == 0 || menu_bounds.width() == 0 || menu_bounds.height() == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "More menu bounds and DPI must be nonzero",
+        ));
+    }
+    let scale = dpi as f32 / WINDOWS_BASE_DPI;
+    let menu_width = menu_bounds.width() as f32 / scale;
+    let (x, y) = scroll_menu_item_center(0.0, 0.0, menu_width, item_index)?;
+    let point = PhysicalPoint {
+        x: menu_bounds.left + (x * scale).round() as i32,
+        y: menu_bounds.top + (y * scale).round() as i32,
+    };
+    if !menu_bounds.contains(point) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("computed More menu item point {point:?} escaped {menu_bounds:?}"),
+        ));
+    }
+    Ok(point)
+}
+
+#[cfg(windows)]
+/// Draws one high-contrast OCR fixture without fonts, anti-aliasing, or user screen content.
+fn ocr_acceptance_frame() -> io::Result<CaptureFrame> {
+    const WIDTH: u32 = 1024;
+    const HEIGHT: u32 = 600;
+    const SCALE: usize = 8;
+    let mut pixels = vec![255_u8; WIDTH as usize * HEIGHT as usize * 4];
+    let text_width = OCR_FIXTURE_TEXT.chars().count() * 7 * SCALE;
+    let start_x = (WIDTH as usize - text_width) / 2;
+    let start_y = (HEIGHT as usize - 7 * SCALE) / 2;
+    for (character_index, character) in OCR_FIXTURE_TEXT.chars().enumerate() {
+        let glyph = ocr_acceptance_glyph(character).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("OCR acceptance font does not contain {character:?}"),
+            )
+        })?;
+        for (row, bits) in glyph.into_iter().enumerate() {
+            for column in 0..5 {
+                if bits & (1 << (4 - column)) == 0 {
+                    continue;
+                }
+                for pixel_y in 0..SCALE {
+                    for pixel_x in 0..SCALE {
+                        let x = start_x + character_index * 7 * SCALE + column * SCALE + pixel_x;
+                        let y = start_y + row * SCALE + pixel_y;
+                        let offset = (y * WIDTH as usize + x) * 4;
+                        pixels[offset..offset + 3].fill(0);
+                    }
+                }
+            }
+        }
+    }
+    acceptance_capture_frame(WIDTH, HEIGHT, pixels)
+}
+
+#[cfg(windows)]
+/// Returns a seven-row, five-column glyph for the fixed OCR acceptance phrase.
+fn ocr_acceptance_glyph(character: char) -> Option<[u8; 7]> {
+    match character {
+        'A' => Some([
+            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ]),
+        'C' => Some([
+            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
+        ]),
+        'F' => Some([
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
+        ]),
+        'H' => Some([
+            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ]),
+        'K' => Some([
+            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
+        ]),
+        'L' => Some([
+            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
+        ]),
+        'O' => Some([
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ]),
+        'R' => Some([
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
+        ]),
+        'S' => Some([
+            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
+        ]),
+        'T' => Some([
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ]),
+        ' ' => Some([0; 7]),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+/// Encodes the exact QR payload that the More → QR interaction must return.
+fn qr_acceptance_frame() -> io::Result<CaptureFrame> {
+    const SCALE: usize = 24;
+    const QUIET_ZONE: usize = 4;
+    let code = QrCode::new(QR_FIXTURE_TEXT.as_bytes()).map_err(io::Error::other)?;
+    let code_width = code.width();
+    let width = (code_width + QUIET_ZONE * 2) * SCALE;
+    let mut pixels = vec![255_u8; width * width * 4];
+    let colors = code.to_colors();
+    for y in 0..code_width {
+        for x in 0..code_width {
+            if colors[y * code_width + x] != QrColor::Dark {
+                continue;
+            }
+            for pixel_y in 0..SCALE {
+                for pixel_x in 0..SCALE {
+                    let x = (x + QUIET_ZONE) * SCALE + pixel_x;
+                    let y = (y + QUIET_ZONE) * SCALE + pixel_y;
+                    let offset = (y * width + x) * 4;
+                    pixels[offset..offset + 3].fill(0);
+                }
+            }
+        }
+    }
+    let dimension = u32::try_from(width)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "QR fixture is too large"))?;
+    acceptance_capture_frame(dimension, dimension, pixels)
+}
+
+#[cfg(windows)]
+fn acceptance_capture_frame(width: u32, height: u32, pixels: Vec<u8>) -> io::Result<CaptureFrame> {
+    let stride = usize::try_from(width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "fixture stride overflowed"))?;
+    let frame = CaptureFrame {
+        bounds: PhysicalRect {
+            left: 0,
+            top: 0,
+            right: i32::try_from(width).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "fixture width overflowed")
+            })?,
+            bottom: i32::try_from(height).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "fixture height overflowed")
+            })?,
+        },
+        width,
+        height,
+        stride,
+        format: PixelFormat::Bgra8,
+        pixels: std::sync::Arc::from(pixels),
+        capture_duration: Duration::ZERO,
+        cpu_copy_count: 1,
+    };
+    frame.validate()?;
+    Ok(frame)
+}
+
+/// Targets a More action using the production catalog widths for the current result/retry state.
+fn more_menu_action_screen_point(
+    menu_bounds: PhysicalRect,
+    dpi: u32,
+    action: WorkspaceMoreAction,
+    has_result: bool,
+    has_retry: bool,
+) -> io::Result<PhysicalPoint> {
+    if dpi == 0 || menu_bounds.width() == 0 || menu_bounds.height() == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "More menu bounds and DPI must be nonzero",
+        ));
+    }
+    let mut widths = WorkspaceMoreAction::always_visible_catalog()
+        .iter()
+        .map(|action| action.width())
+        .collect::<Vec<_>>();
+    if has_retry {
+        widths.push(WorkspaceMoreAction::RetryRecognition.width());
+    }
+    if has_result {
+        widths.extend([
+            WorkspaceMoreAction::CopyRecognition.width(),
+            WorkspaceMoreAction::ClearRecognition.width(),
+        ]);
+    }
+    let item_index = match action {
+        WorkspaceMoreAction::RetryRecognition => {
+            WorkspaceMoreAction::always_visible_catalog().len()
+        }
+        WorkspaceMoreAction::CopyRecognition => {
+            WorkspaceMoreAction::always_visible_catalog().len() + usize::from(has_retry)
+        }
+        WorkspaceMoreAction::ClearRecognition => {
+            WorkspaceMoreAction::always_visible_catalog().len() + usize::from(has_retry) + 1
+        }
+        _ => action.index(),
+    };
+    let scale = dpi as f32 / WINDOWS_BASE_DPI;
+    let menu_width = menu_bounds.width() as f32 / scale;
+    let (x, row_y) = more_menu_item_center(0.0, 0.0, menu_width, item_index, &widths)?;
+    let y = if has_result
+        && matches!(
+            action,
+            WorkspaceMoreAction::CopyRecognition | WorkspaceMoreAction::ClearRecognition
+        ) {
+        let menu_height = menu_bounds.height() as f32 / scale;
+        menu_height
+            - ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH
+            - ThemeMetrics::WORKSPACE_TOOLBAR_PADDING
+            - ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA / 2.0
+    } else {
+        row_y
+    };
+    let point = PhysicalPoint {
+        x: menu_bounds.left + (x * scale).round() as i32,
+        y: menu_bounds.top + (y * scale).round() as i32,
+    };
+    if !menu_bounds.contains(point) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("computed More action point {point:?} escaped {menu_bounds:?}"),
+        ));
+    }
+    Ok(point)
+}
+
+/// Targets the center of the third, Finish button in the production scroll-control row.
+fn scroll_finish_button_screen_point(bounds: PhysicalRect) -> io::Result<PhysicalPoint> {
+    if bounds.width() <= 0 || bounds.height() <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "scroll control bounds must be nonempty",
+        ));
+    }
+    // The visible row uses four flex buttons; Finish is centered at roughly 71% of the
+    // native window width and halfway through the window's content area.
+    let point = PhysicalPoint {
+        x: bounds.left + (i64::from(bounds.width()) * 71 / 100) as i32,
+        y: bounds.top + (i64::from(bounds.height()) * 45 / 100) as i32,
+    };
+    if !bounds.contains(point) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("computed scroll Finish point {point:?} escaped {bounds:?}"),
+        ));
+    }
+    Ok(point)
 }
 
 /// Chooses a tall viewport that stays inside the fixture and above the scrolling controller.
@@ -2125,6 +2352,7 @@ struct AcceptanceReport {
     pins_coexist: Option<PinsCoexistReport>,
     selection_transform: Option<SelectionTransformReport>,
     scroll_roundtrip: Option<ScrollRoundtripReport>,
+    recognition: Option<RecognitionReport>,
     annotation_regression: Option<AnnotationRegressionReport>,
     tool_group: Option<ToolGroupReport>,
     save_failure_retry: Option<SaveFailureRetryReport>,
@@ -2132,6 +2360,23 @@ struct AcceptanceReport {
     save_dialog_permission_retry: Option<SaveDialogPermissionRetryReport>,
     recording_failure_retry: Option<RecordingFailureRetryReport>,
     error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct RecognitionReport {
+    ocr_fixture: String,
+    qr_fixture: String,
+    ocr_failure_status: String,
+    ocr_failure_selection_preserved: bool,
+    ocr_retry_available: bool,
+    ocr_retry_succeeded: bool,
+    ocr_result_length: usize,
+    ocr_clipboard_matches_fixture: bool,
+    ocr_cancelled: bool,
+    qr_result_length: usize,
+    qr_clipboard_matches_fixture: bool,
+    qr_cancelled: bool,
+    cleanup: CleanupReport,
 }
 
 #[derive(serde::Serialize)]
@@ -2397,6 +2642,7 @@ struct PinsCoexistReport {
     pins: Vec<PinReport>,
     arranged_windows: Vec<WindowReport>,
     pointer_drag: WindowDragReport,
+    lock_mode: PinLockReport,
     requested_capture_selection: PhysicalRect,
     committed_capture_selection: PhysicalRect,
     windows_during_capture: Vec<WindowReport>,
@@ -2409,6 +2655,25 @@ struct PinsCoexistReport {
     closed_with_escape: usize,
     system_clipboard_copy: Option<PinSystemClipboardCopyReport>,
     cleanup: CleanupReport,
+}
+
+#[derive(serde::Serialize)]
+struct PinLockReport {
+    lock_shortcut: &'static str,
+    lock_state_observed: bool,
+    bounds_before_locked_drag: PhysicalRect,
+    bounds_after_locked_drag: PhysicalRect,
+    locked_drag_blocked: bool,
+    bounds_before_locked_zoom: PhysicalRect,
+    bounds_after_locked_zoom: PhysicalRect,
+    locked_zoom_blocked: bool,
+    unlock_state_observed: bool,
+    bounds_before_unlocked_drag: PhysicalRect,
+    bounds_after_unlocked_drag: PhysicalRect,
+    unlocked_drag_restored: bool,
+    bounds_before_unlocked_zoom: PhysicalRect,
+    bounds_after_unlocked_zoom: PhysicalRect,
+    unlocked_zoom_restored: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -3172,6 +3437,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::PinsCoexist
             | CaptureScenarioOption::SelectionTransform
             | CaptureScenarioOption::ScrollRoundtrip
+            | CaptureScenarioOption::Recognition
             | CaptureScenarioOption::AnnotationRegression
             | CaptureScenarioOption::SaveFailureRetry
             | CaptureScenarioOption::SavePermissionRetry
@@ -3243,6 +3509,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             shortcut_readiness: shortcut_ready_tx,
             commands: interaction_rx,
             copy_results: app_copy_results,
+            recognition_failure_once: options.capture_scenario
+                == CaptureScenarioOption::Recognition,
         },
         app_copy_race,
     )?;
@@ -3255,7 +3523,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
         // Increment when the machine-readable report shape changes. Schema 32 records the
         // selected locale/theme alongside the deterministic Pins source fixture.
-        schema_version: 32,
+        schema_version: 33,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -3287,6 +3555,7 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         pins_coexist: None,
         selection_transform: None,
         scroll_roundtrip: None,
+        recognition: None,
         annotation_regression: None,
         tool_group: None,
         save_failure_retry: None,
@@ -5050,6 +5319,7 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::ScrollRoundtrip) => {
             execute_scroll_roundtrip_interactions(context, report)
         }
+        (None, CaptureScenarioOption::Recognition) => recognition_ui::execute(context, report),
         (None, CaptureScenarioOption::AnnotationRegression) => {
             execute_annotation_regression_interactions(context, report)
         }
@@ -6016,6 +6286,7 @@ fn execute_pins_coexist_interactions(
         actual_delta_x: drag_after.left - drag_before.left,
         actual_delta_y: drag_after.top - drag_before.top,
     };
+    let lock_mode = exercise_pin_lock_mode(context, report, handles[0])?;
 
     // The default Pins coexistence probe uses an injected sink and never touches user data.
     // An explicit system-clipboard flag opts into one real Ctrl+C on the first Pin so the
@@ -6200,6 +6471,7 @@ fn execute_pins_coexist_interactions(
             .map(NativeWindow::report)
             .collect(),
         pointer_drag,
+        lock_mode,
         requested_capture_selection: capture_drag.selection,
         committed_capture_selection,
         windows_during_capture: windows_during_capture
@@ -6227,6 +6499,185 @@ fn execute_pins_coexist_interactions(
         },
     });
     write_report(&context.report_path, report)
+}
+
+#[cfg(windows)]
+/// Tests the Pin lock with real keyboard and pointer input and records both geometry states.
+fn exercise_pin_lock_mode(
+    context: &WorkerContext,
+    report: &mut AcceptanceReport,
+    handle: *mut c_void,
+) -> io::Result<PinLockReport> {
+    let initial = owned_window(handle)?;
+    focus_owned_window(initial, context.timeout)?;
+    let foreground = inject_ctrl_key(handle, PIN_LOCK_KEY, "L")?;
+    let locked_state = wait_for_capture_state(context, "Pin lock shortcut", |state| {
+        state.pinned_locked_states.first() == Some(&true)
+    })?;
+    if locked_state.pinned_count != PIN_COEXIST_COUNT {
+        return Err(io::Error::other(
+            "Pin lock shortcut changed the registered window count",
+        ));
+    }
+    record_step(
+        report,
+        &context.report_path,
+        "pin_lock_enabled",
+        foreground,
+        None,
+    )?;
+    thread::sleep(context.settle_delay);
+
+    let locked_window = owned_window(handle)?;
+    let locked_bounds = locked_window.bounds;
+    let locked_screenshot = capture_evidence(context, "pin-lock-enabled.png", locked_window)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_lock_visual_state",
+        locked_window,
+        Some(&locked_screenshot),
+    )?;
+
+    let bounds_before_locked_drag = locked_bounds;
+    let locked_drag_start = PhysicalPoint {
+        x: locked_bounds.left + locked_bounds.width() as i32 / 2,
+        y: locked_bounds.bottom - 24,
+    };
+    let locked_drag_end = PhysicalPoint {
+        x: locked_drag_start.x + 36,
+        y: locked_drag_start.y - 24,
+    };
+    let _ = inject_native_window_drag(handle, locked_drag_start, locked_drag_end)?;
+    thread::sleep(context.settle_delay);
+    let bounds_after_locked_drag = owned_window(handle)?.bounds;
+    let locked_drag_blocked = bounds_after_locked_drag == bounds_before_locked_drag;
+    if !locked_drag_blocked {
+        return Err(io::Error::other(format!(
+            "locked Pin changed bounds during drag input: {bounds_before_locked_drag:?} -> {bounds_after_locked_drag:?}"
+        )));
+    }
+
+    let foreground = inject_ctrl_key(handle, PIN_ZOOM_IN_KEY, "Equals")?;
+    thread::sleep(context.settle_delay);
+    let bounds_after_locked_zoom = owned_window(handle)?.bounds;
+    let locked_zoom_blocked = bounds_after_locked_zoom == bounds_after_locked_drag;
+    if !locked_zoom_blocked {
+        return Err(io::Error::other(format!(
+            "locked Pin changed bounds during zoom input: {bounds_after_locked_drag:?} -> {bounds_after_locked_zoom:?}"
+        )));
+    }
+    record_step(
+        report,
+        &context.report_path,
+        "pin_lock_blocks_geometry",
+        foreground,
+        None,
+    )?;
+
+    let foreground = inject_ctrl_key(handle, PIN_LOCK_KEY, "L")?;
+    let unlocked_state = wait_for_capture_state(context, "Pin unlock shortcut", |state| {
+        state.pinned_locked_states.first() == Some(&false)
+    })?;
+    if unlocked_state.pinned_count != PIN_COEXIST_COUNT {
+        return Err(io::Error::other(
+            "Pin unlock shortcut changed the registered window count",
+        ));
+    }
+    thread::sleep(context.settle_delay);
+    let unlocked_window = owned_window(handle)?;
+    record_step(
+        report,
+        &context.report_path,
+        "pin_lock_disabled",
+        foreground,
+        Some(&capture_evidence(
+            context,
+            "pin-lock-disabled.png",
+            unlocked_window,
+        )?),
+    )?;
+
+    let bounds_before_unlocked_drag = unlocked_window.bounds;
+    let drag_start = PhysicalPoint {
+        x: bounds_before_unlocked_drag.left + bounds_before_unlocked_drag.width() as i32 / 2,
+        y: bounds_before_unlocked_drag.bottom - 24,
+    };
+    let drag_end = PhysicalPoint {
+        x: drag_start.x + 36,
+        y: drag_start.y - 24,
+    };
+    let drag = inject_native_window_drag(handle, drag_start, drag_end)?;
+    let bounds_after_unlocked_drag = wait_for_window_drag(
+        handle,
+        bounds_before_unlocked_drag,
+        drag.start,
+        drag.end,
+        context.timeout,
+    )?;
+    let unlocked_drag_restored = window_drag_matches(
+        bounds_before_unlocked_drag,
+        bounds_after_unlocked_drag,
+        drag.start,
+        drag.end,
+        2,
+    );
+    if !unlocked_drag_restored {
+        return Err(io::Error::other(
+            "Pin movement did not resume after unlocking",
+        ));
+    }
+    record_step(
+        report,
+        &context.report_path,
+        "pin_unlocked_drag_restored",
+        drag.foreground,
+        None,
+    )?;
+
+    let bounds_before_unlocked_zoom = owned_window(handle)?.bounds;
+    let foreground = inject_ctrl_key(handle, PIN_ZOOM_IN_KEY, "Equals")?;
+    let deadline = Instant::now() + context.timeout;
+    let bounds_after_unlocked_zoom = loop {
+        let bounds = owned_window(handle)?.bounds;
+        if bounds.width() > bounds_before_unlocked_zoom.width()
+            && bounds.height() > bounds_before_unlocked_zoom.height()
+        {
+            break bounds;
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Pin zoom did not resume after unlocking",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    record_step(
+        report,
+        &context.report_path,
+        "pin_unlocked_zoom_restored",
+        foreground,
+        None,
+    )?;
+
+    Ok(PinLockReport {
+        lock_shortcut: "Ctrl+L",
+        lock_state_observed: true,
+        bounds_before_locked_drag,
+        bounds_after_locked_drag,
+        locked_drag_blocked,
+        bounds_before_locked_zoom: bounds_after_locked_drag,
+        bounds_after_locked_zoom,
+        locked_zoom_blocked,
+        unlock_state_observed: true,
+        bounds_before_unlocked_drag,
+        bounds_after_unlocked_drag,
+        unlocked_drag_restored,
+        bounds_before_unlocked_zoom,
+        bounds_after_unlocked_zoom,
+        unlocked_zoom_restored: true,
+    })
 }
 
 #[cfg(windows)]
@@ -8013,6 +8464,7 @@ fn execute_scroll_roundtrip_interactions(
     let _more_state = wait_for_capture_state(context, "scroll roundtrip More", |state| {
         state.session_state == "selecting" && state.more_actions_visible && state.overlay_count == 1
     })?;
+    thread::sleep(context.settle_delay);
     let more = capture_evidence(context, "02-scroll-more.png", overlay)?;
     ensure_evidence_changed(
         &selected,
@@ -8026,12 +8478,12 @@ fn execute_scroll_roundtrip_interactions(
         foreground,
         Some(&more),
     )?;
-    let scroll_point = scroll_shot_point_for_capture_selection(
-        overlay.handle,
-        display,
-        initial_selection,
-        initial_state.annotation_controls_visible,
-    )?;
+    let menu_client_bounds = _more_state.secondary_menu_bounds.ok_or_else(|| {
+        io::Error::other("scroll More state did not expose the rendered menu bounds")
+    })?;
+    let client_bounds = client_bounds_for_window(overlay.handle)?;
+    let menu_bounds = translated_rect(menu_client_bounds, client_bounds.left, client_bounds.top)?;
+    let scroll_point = scroll_menu_item_screen_point(menu_bounds, overlay.dpi, 4)?;
     if !overlay.bounds.contains(scroll_point) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -8146,7 +8598,12 @@ fn execute_scroll_roundtrip_interactions(
         scroll_control,
         Some(&control_ready),
     )?;
-    let foreground = inject_key(scroll_control.handle, VK_RETURN)?;
+    let finish_point = scroll_finish_button_screen_point(scroll_control.bounds)?;
+    let foreground = inject_settled_mouse_click(
+        scroll_control.handle,
+        finish_point,
+        Duration::from_millis(150),
+    )?;
     record_step(
         report,
         &context.report_path,
@@ -8154,15 +8611,24 @@ fn execute_scroll_roundtrip_interactions(
         foreground,
         None,
     )?;
-    let finished = wait_for_capture_state(context, "scroll roundtrip Finish", |state| {
-        state.overlay_count == 1
-            && state.selection.is_some()
-            && !state.more_actions_visible
-            && !state.annotation_controls_visible
-            && state
-                .status
-                .starts_with("Scrolling screenshot stitched 2 frames")
-    })?;
+    let finished = wait_for_capture_state(
+        context,
+        &format!(
+            "scroll roundtrip Finish at {finish_point:?} in {:?}",
+            scroll_control.bounds
+        ),
+        |state| {
+            state.overlay_count == 1
+                && state.selection.is_some_and(|selection| {
+                    selection.width() == initial_selection.width()
+                        && selection.height() > initial_selection.height()
+                })
+                && !state.more_actions_visible
+                && !state.annotation_controls_visible
+                && state.manual_scroll_state == "idle"
+                && !state.manual_scroll_finish_in_flight
+        },
+    )?;
     let stitched_selection = finished
         .selection
         .ok_or_else(|| io::Error::other("finished scrolling selection disappeared"))?;
@@ -8642,6 +9108,48 @@ fn copy_open_clipboard_bytes(format: u32, label: &str) -> io::Result<Vec<u8>> {
     // SAFETY: balances the successful GlobalLock; clipboard ownership is unchanged.
     unsafe { GlobalUnlock(handle) };
     Ok(bytes)
+}
+
+#[cfg(windows)]
+/// Reads only the deterministic text fixture written by this explicitly opted-in acceptance run.
+fn read_system_clipboard_text() -> io::Result<String> {
+    let mut opened = false;
+    for attempt in 0..8 {
+        // SAFETY: a null owner is valid for this bounded synchronous clipboard read.
+        if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
+            opened = true;
+            break;
+        }
+        if attempt + 1 < 8 {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    if !opened {
+        return Err(io::Error::last_os_error());
+    }
+    let result = (|| {
+        let bytes = copy_open_clipboard_bytes(CF_UNICODETEXT as u32, "Unicode text")?;
+        if bytes.len() % 2 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "clipboard Unicode text has an odd byte length",
+            ));
+        }
+        let units = bytes
+            .chunks_exact(2)
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+            .take_while(|unit| *unit != 0)
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("clipboard Unicode text is invalid: {error}"),
+            )
+        })
+    })();
+    // SAFETY: balances the successful OpenClipboard call on this thread.
+    unsafe { CloseClipboard() };
+    result
 }
 
 #[cfg(windows)]
@@ -11482,19 +11990,19 @@ fn translated_rect(rect: PhysicalRect, delta_x: i32, delta_y: i32) -> io::Result
         left: rect
             .left
             .checked_add(delta_x)
-            .ok_or_else(|| io::Error::other("selection nudge overflowed left"))?,
+            .ok_or_else(|| io::Error::other("rectangle translation overflowed left"))?,
         top: rect
             .top
             .checked_add(delta_y)
-            .ok_or_else(|| io::Error::other("selection nudge overflowed top"))?,
+            .ok_or_else(|| io::Error::other("rectangle translation overflowed top"))?,
         right: rect
             .right
             .checked_add(delta_x)
-            .ok_or_else(|| io::Error::other("selection nudge overflowed right"))?,
+            .ok_or_else(|| io::Error::other("rectangle translation overflowed right"))?,
         bottom: rect
             .bottom
             .checked_add(delta_y)
-            .ok_or_else(|| io::Error::other("selection nudge overflowed bottom"))?,
+            .ok_or_else(|| io::Error::other("rectangle translation overflowed bottom"))?,
     })
 }
 
@@ -14685,50 +15193,6 @@ fn interaction_plan_for_capture_selection(
 }
 
 #[cfg(windows)]
-fn scroll_shot_point_for_capture_selection(
-    handle: *mut c_void,
-    capture_bounds: PhysicalRect,
-    selection: PhysicalRect,
-    annotation_controls_visible: bool,
-) -> io::Result<PhysicalPoint> {
-    let window = owned_window(handle)?;
-    let client = client_bounds_for_window(handle)?;
-    let scale = window.dpi as f32 / WINDOWS_BASE_DPI;
-    let (width, height) = overlay_logical_size(client, scale)?;
-    let top_left = map_capture_point_to_screen(
-        PhysicalPoint {
-            x: selection.left,
-            y: selection.top,
-        },
-        client,
-        capture_bounds,
-    )?;
-    let bottom_right = map_capture_point_to_screen(
-        PhysicalPoint {
-            x: selection.right,
-            y: selection.bottom,
-        },
-        client,
-        capture_bounds,
-    )?;
-    let logical = |point: PhysicalPoint| {
-        (
-            (point.x - client.left) as f32 / scale,
-            (point.y - client.top) as f32 / scale,
-        )
-    };
-    scroll_shot_point_for_logical_selection(
-        client,
-        scale,
-        width,
-        height,
-        logical(top_left),
-        logical(bottom_right),
-        annotation_controls_visible,
-    )
-}
-
-#[cfg(windows)]
 /// Re-measures the overlay before placing the real bottom-right narrow-selection controls.
 fn narrow_edge_interaction_plan_for_window(
     handle: *mut c_void,
@@ -15357,6 +15821,33 @@ fn inject_ctrl_c(expected: *mut c_void) -> io::Result<NativeWindow> {
 }
 
 #[cfg(windows)]
+/// Sends one Ctrl+key command from a neutral key state and releases both keys on every outcome.
+fn inject_ctrl_key(
+    expected: *mut c_void,
+    virtual_key: u16,
+    key_name: &str,
+) -> io::Result<NativeWindow> {
+    let foreground = guard_foreground(expected)?;
+    ensure_input_keys_released(&[(virtual_key, key_name), (VK_CONTROL, "Control")])?;
+    let inputs = [
+        keyboard_input(VK_CONTROL, false),
+        keyboard_input(virtual_key, false),
+        keyboard_input(virtual_key, true),
+        keyboard_input(VK_CONTROL, true),
+    ];
+    let cleanup = [
+        keyboard_input(virtual_key, true),
+        keyboard_input(VK_CONTROL, true),
+    ];
+    send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    wait_for_input_keys_released(
+        &[(virtual_key, key_name), (VK_CONTROL, "Control")],
+        Duration::from_millis(250),
+    )?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
 /// Activates the scroll controller's explicit Shift+Space auto-capture command.
 fn inject_scroll_auto_capture(expected: *mut c_void) -> io::Result<NativeWindow> {
     let foreground = guard_foreground(expected)?;
@@ -15463,6 +15954,31 @@ fn inject_mouse_click(expected: *mut c_void, point: PhysicalPoint) -> io::Result
             mouse_button_input(MOUSEEVENTF_LEFTDOWN),
             mouse_button_input(MOUSEEVENTF_LEFTUP),
         ],
+        &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
+    )?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Settles the pointer over a production control before committing one guarded mouse click.
+fn inject_settled_mouse_click(
+    expected: *mut c_void,
+    point: PhysicalPoint,
+    settle: Duration,
+) -> io::Result<NativeWindow> {
+    let foreground = inject_mouse_move(expected, point)?;
+    thread::sleep(settle);
+    guard_foreground(expected)?;
+    guard_current_pointer_target(expected)?;
+    send_input_batch_with_cleanup(
+        expected,
+        &[mouse_button_input(MOUSEEVENTF_LEFTDOWN)],
+        &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
+    )?;
+    thread::sleep(Duration::from_millis(50));
+    send_input_batch_with_cleanup(
+        expected,
+        &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
         &[mouse_button_input(MOUSEEVENTF_LEFTUP)],
     )?;
     Ok(foreground)
@@ -15993,9 +16509,17 @@ fn guard_pointer_target(expected: *mut c_void, point: PhysicalPoint) -> io::Resu
         })
     };
     if hit.is_null() || (hit != expected && unsafe { IsChild(expected, hit) } == 0) {
+        let hit_class = window_class_name(hit).unwrap_or_else(|_| "unavailable".to_owned());
+        let mut hit_process_id = 0;
+        if !hit.is_null() {
+            // SAFETY: the pointer result is a live HWND returned by WindowFromPoint.
+            unsafe { GetWindowThreadProcessId(hit, &mut hit_process_id) };
+        }
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "pointer target is covered by another native window; input injection was aborted",
+            format!(
+                "pointer target {point:?} resolves to {hit:?} (class {hit_class:?}, process {hit_process_id}), expected window {expected:?}; input injection was aborted"
+            ),
         ));
     }
     Ok(())
@@ -16227,18 +16751,19 @@ impl Drop for CursorRestore {
 mod tests {
     use super::{
         CaptureScenarioOption, CopyTriggerOption, DEFAULT_OUTPUT_DIR, Options, RecordTargetOption,
-        ScrollExportOption, SelectionBoundaryCase, SelectionTransformKind,
+        ScrollExportOption, SelectionBoundaryCase, SelectionTransformKind, WorkspaceMoreAction,
         capture_state_reports_annotation_text_prompt, capture_state_reports_save_failure,
         capture_state_reports_selection_copied, capture_state_reports_selection_saved,
         capture_state_reports_tool_selected, copy_trigger_acknowledged, ensure_input_authorized,
         expected_selection_transform, first_stable_recording_match, interaction_command_channel,
         interaction_plan, map_capture_point_to_screen, map_screen_point_to_capture,
-        map_screen_selection_to_capture, narrow_edge_interaction_plan, normalize_axis,
-        pin_close_button_point, pin_coexist_interaction_plan, recording_control_plan,
-        recording_failed, recording_saved, rect_contains_rect, scroll_roundtrip_cleanup_complete,
-        scroll_roundtrip_interaction_plan, scroll_secondary_menu_height,
-        scroll_secondary_menu_width, scroll_shot_point_for_logical_selection,
-        scroll_toolbar_dimensions, selection_aspect_ratio_preserved, selection_center_preserved,
+        map_screen_selection_to_capture, more_menu_action_screen_point,
+        narrow_edge_interaction_plan, normalize_axis, pin_close_button_point,
+        pin_coexist_interaction_plan, recording_control_plan, recording_failed, recording_saved,
+        rect_contains_rect, scroll_finish_button_screen_point, scroll_menu_item_screen_point,
+        scroll_roundtrip_cleanup_complete, scroll_roundtrip_interaction_plan,
+        scroll_secondary_menu_height, scroll_secondary_menu_width, scroll_toolbar_dimensions,
+        selection_aspect_ratio_preserved, selection_center_preserved,
         selection_copy_completed_in_editor, selection_transform_gesture, translated_rect,
         validate_distinct_recording_phase_fingerprints, validate_paused_progress,
         validate_recorded_media, validate_recording_target_bounds, validate_selection_geometry,
@@ -16255,7 +16780,10 @@ mod tests {
         validate_recording_frame_content, validate_same_pixel_content,
         validate_scroll_fixture_frame, watermark_style_row_width,
     };
-    use super::{MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState};
+    use super::{
+        MediaMetadata, OverlayInteractionCaptureState, OverlayInteractionRecordingState,
+        ThemeMetrics,
+    };
     use flash_shot::domain::{
         annotation::AnnotationTool,
         geometry::{PhysicalPoint, PhysicalRect},
@@ -16987,6 +17515,33 @@ mod tests {
     }
 
     #[test]
+    fn parser_requires_system_clipboard_opt_in_for_recognition_ui_copy() {
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "recognition",
+            ]))
+            .is_err()
+        );
+
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--allow-system-clipboard",
+            "--capture-scenario",
+            "recognition",
+        ]))
+        .unwrap();
+        assert_eq!(options.capture_scenario, CaptureScenarioOption::Recognition);
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_recognition_ui"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(options.allow_system_clipboard);
+    }
+
+    #[test]
     fn parser_gates_copy_capable_system_clipboard_and_copy_trigger() {
         let options =
             Options::parse_from(arguments(&["--allow-input", "--allow-system-clipboard"])).unwrap();
@@ -17146,6 +17701,9 @@ mod tests {
             annotations: Vec::new(),
             selection_copy_active: false,
             clipboard_write_active: false,
+            recognition_in_flight: false,
+            recognition_result_length: None,
+            recognition_retry: None,
             manual_scroll_state: "idle".to_owned(),
             manual_scroll_frame_count: 0,
             manual_scroll_can_finish: false,
@@ -17155,11 +17713,13 @@ mod tests {
             manual_scroll_selection: None,
             overlay_count: 0,
             action_toolbar_bounds: None,
+            secondary_menu_bounds: None,
             more_actions_visible: false,
             annotation_controls_visible: false,
             annotation_tool_group_visible: false,
             pinned_count: 0,
             pinned_source_bounds: None,
+            pinned_locked_states: Vec::new(),
             capture_teardown_pending: false,
             operation_generation: 0,
             background_tasks_idle: true,
@@ -17243,16 +17803,6 @@ mod tests {
             bottom: 1436,
         };
         let plan = scroll_roundtrip_interaction_plan(bounds, 1.0).unwrap();
-        let point = scroll_shot_point_for_logical_selection(
-            bounds,
-            1.0,
-            2560.0,
-            1440.0,
-            (2560.0 * 0.16, (1440.0_f32 * 0.12).max(120.0)),
-            (2560.0 * 0.74, (1440.0_f32 * 0.12).max(120.0) + 380.0),
-            false,
-        )
-        .unwrap();
         assert_eq!(
             PhysicalRect::new(plan.drag_start, plan.drag_end),
             PhysicalRect {
@@ -17262,25 +17812,68 @@ mod tests {
                 bottom: 549,
             }
         );
-        assert_eq!(point, PhysicalPoint { x: 1906, y: 422 });
-        assert!(bounds.contains(point));
-
-        let annotation_point = scroll_shot_point_for_logical_selection(
-            bounds,
-            1.0,
-            2560.0,
-            1440.0,
-            (2560.0 * 0.16, (1440.0_f32 * 0.12).max(120.0)),
-            (2560.0 * 0.74, (1440.0_f32 * 0.12).max(120.0) + 380.0),
-            true,
-        )
-        .unwrap();
-        assert_eq!(annotation_point, PhysicalPoint { x: 1775, y: 665 });
-        assert!(bounds.contains(annotation_point));
+        let menu_bounds = PhysicalRect {
+            left: 1200,
+            top: 400,
+            right: 1542,
+            bottom: 547,
+        };
+        let point = scroll_menu_item_screen_point(menu_bounds, 96, 4).unwrap();
+        assert_eq!(point, PhysicalPoint { x: 1492, y: 456 });
+        assert!(menu_bounds.contains(point));
         assert_eq!(scroll_toolbar_dimensions(false), (217.0, 42.0, 35.0));
         assert_eq!(scroll_toolbar_dimensions(true), (480.0, 42.0, 298.0));
         assert_eq!(scroll_secondary_menu_width(), 342.0);
         assert_eq!(scroll_secondary_menu_height(342.0), 147.0);
+    }
+
+    #[test]
+    fn scroll_finish_button_point_targets_the_third_visible_control() {
+        let bounds = PhysicalRect {
+            left: 2004,
+            top: 675,
+            right: 2540,
+            bottom: 885,
+        };
+        let point = scroll_finish_button_screen_point(bounds).unwrap();
+
+        assert_eq!(point, PhysicalPoint { x: 2384, y: 769 });
+        assert!(bounds.contains(point));
+    }
+
+    #[test]
+    fn recognition_more_action_points_follow_result_and_retry_catalog_widths() {
+        let menu_bounds = PhysicalRect {
+            left: 1200,
+            top: 400,
+            right: 1542,
+            bottom: 650,
+        };
+        for (action, has_result, has_retry) in [
+            (WorkspaceMoreAction::Qr, false, false),
+            (WorkspaceMoreAction::Ocr, false, false),
+            (WorkspaceMoreAction::RetryRecognition, false, true),
+            (WorkspaceMoreAction::CopyRecognition, true, false),
+            (WorkspaceMoreAction::ClearRecognition, true, false),
+        ] {
+            let point =
+                more_menu_action_screen_point(menu_bounds, 96, action, has_result, has_retry)
+                    .unwrap();
+            assert!(menu_bounds.contains(point), "{action:?}: {point:?}");
+            if matches!(
+                action,
+                WorkspaceMoreAction::CopyRecognition | WorkspaceMoreAction::ClearRecognition
+            ) {
+                assert_eq!(
+                    point.y,
+                    menu_bounds.bottom
+                        - ThemeMetrics::WORKSPACE_SEPARATOR_WIDTH as i32
+                        - ThemeMetrics::WORKSPACE_TOOLBAR_PADDING as i32
+                        - ThemeMetrics::WORKSPACE_ICON_BUTTON_HIT_AREA as i32 / 2,
+                    "{action:?} must target the row below the recognition preview"
+                );
+            }
+        }
     }
 
     #[test]
