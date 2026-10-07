@@ -834,6 +834,7 @@ fn recording_control_plan(
     client_width: u32,
     client_height: u32,
     scale: f32,
+    locale: Locale,
 ) -> io::Result<RecordingControlPlan> {
     if !scale.is_finite() || !(1.0..=4.0).contains(&scale) {
         return Err(io::Error::new(
@@ -853,10 +854,15 @@ fn recording_control_plan(
         x: client_origin.x + (x * scale).round() as i32,
         y: client_origin.y + (y * scale).round() as i32,
     };
+    let (record_x, pause_x) = match locale {
+        Locale::English => (386.0, 493.0),
+        Locale::SimplifiedChinese => (318.0, 402.0),
+    };
+    // The Record action row follows the folder controls in the current settings layout.
     Ok(RecordingControlPlan {
-        stop: point(386.0, 426.0),
+        stop: point(record_x, 468.0),
         // Pause changes to the wider Resume label in place; this point stays inside both buttons.
-        pause_or_resume: point(493.0, 426.0),
+        pause_or_resume: point(pause_x, 468.0),
     })
 }
 
@@ -12149,7 +12155,7 @@ fn execute_recording_failure_retry_interactions(
     let controller = wait_for_owned_window_visible(controller.handle, context.timeout)?;
     focus_owned_window(controller, context.timeout)?;
     thread::sleep(context.settle_delay);
-    let controls = recording_control_plan_for_window(controller.handle)?;
+    let controls = recording_control_plan_for_window(controller.handle, context.locale)?;
     let idle = capture_evidence(context, "01-recording-idle.png", controller)?;
     record_step(
         report,
@@ -12683,7 +12689,7 @@ fn execute_recording_interactions(
     let controller = wait_for_owned_window_visible(controller.handle, context.timeout)?;
     focus_owned_window(controller, context.timeout)?;
     thread::sleep(context.settle_delay);
-    let controls = recording_control_plan_for_window(controller.handle)?;
+    let controls = recording_control_plan_for_window(controller.handle, context.locale)?;
     let recording = capture_evidence(context, "03-recording.png", controller)?;
     record_step(
         report,
@@ -13158,23 +13164,36 @@ fn wait_for_recording_failure(
 }
 
 fn recording_failed(state: &OverlayInteractionRecordingState) -> bool {
-    [
-        "Recording is unavailable",
-        "This FFmpeg build cannot",
-        "Could not start screen recording",
-        "Could not stop screen recording",
-        "Could not change recording pause state",
-        "Screen recording failed",
-    ]
-    .iter()
-    .any(|prefix| state.status.starts_with(prefix))
+    let messages = [
+        UiText::RecordingStartFailureMissingFfmpeg,
+        UiText::RecordingStartFailureUnsupported,
+        UiText::RecordingStartFailureGeneric,
+        UiText::RecordingStopFailed,
+        UiText::RecordingPauseFailed,
+        UiText::RecordingFailed,
+    ];
+    [Locale::English, Locale::SimplifiedChinese]
+        .into_iter()
+        .any(|locale| {
+            messages.iter().any(|message| {
+                let template = locale.text(*message);
+                let prefix = template.split('{').next().unwrap_or(template);
+                state.status.starts_with(prefix)
+            })
+        })
 }
 
 fn recording_saved(state: &OverlayInteractionRecordingState) -> bool {
     !state.active
         && !state.starting
         && !state.stopping
-        && state.status.starts_with("Screen recording saved to ")
+        && [Locale::English, Locale::SimplifiedChinese]
+            .into_iter()
+            .any(|locale| {
+                let template = locale.text(UiText::RecordingSaved);
+                let prefix = template.split('{').next().unwrap_or(template);
+                state.status.starts_with(prefix)
+            })
 }
 
 fn record_recording_state(
@@ -14736,7 +14755,10 @@ fn pin_coexist_interaction_plan_for_window(
 
 #[cfg(windows)]
 /// Re-reads the client origin and DPI immediately before clicking Record-page controls.
-fn recording_control_plan_for_window(handle: *mut c_void) -> io::Result<RecordingControlPlan> {
+fn recording_control_plan_for_window(
+    handle: *mut c_void,
+    locale: Locale,
+) -> io::Result<RecordingControlPlan> {
     let window = owned_window(handle)?;
     let client = client_bounds_for_window(handle)?;
     recording_control_plan(
@@ -14747,6 +14769,7 @@ fn recording_control_plan_for_window(handle: *mut c_void) -> io::Result<Recordin
         client.width(),
         client.height(),
         window.dpi as f32 / WINDOWS_BASE_DPI,
+        locale,
     )
 }
 
@@ -18072,18 +18095,47 @@ mod tests {
 
     #[test]
     fn record_page_control_points_use_client_coordinates_and_dpi() {
-        let unscaled =
-            recording_control_plan(PhysicalPoint { x: 10, y: 20 }, 980, 760, 1.0).unwrap();
-        assert_eq!(unscaled.stop, PhysicalPoint { x: 396, y: 446 });
-        assert_eq!(unscaled.pause_or_resume, PhysicalPoint { x: 503, y: 446 });
+        let unscaled = recording_control_plan(
+            PhysicalPoint { x: 10, y: 20 },
+            980,
+            760,
+            1.0,
+            Locale::English,
+        )
+        .unwrap();
+        assert_eq!(unscaled.stop, PhysicalPoint { x: 396, y: 488 });
+        assert_eq!(unscaled.pause_or_resume, PhysicalPoint { x: 503, y: 488 });
 
-        let plan =
-            recording_control_plan(PhysicalPoint { x: 100, y: 200 }, 1470, 1140, 1.5).unwrap();
+        let chinese = recording_control_plan(
+            PhysicalPoint { x: 10, y: 20 },
+            980,
+            760,
+            1.0,
+            Locale::SimplifiedChinese,
+        )
+        .unwrap();
+        assert_eq!(chinese.stop, PhysicalPoint { x: 328, y: 488 });
+        assert_eq!(chinese.pause_or_resume, PhysicalPoint { x: 412, y: 488 });
 
-        assert_eq!(plan.stop, PhysicalPoint { x: 679, y: 839 });
-        assert_eq!(plan.pause_or_resume, PhysicalPoint { x: 840, y: 839 });
-        assert!(recording_control_plan(PhysicalPoint::default(), 600, 480, 1.0).is_err());
-        assert!(recording_control_plan(PhysicalPoint::default(), 980, 760, 0.0).is_err());
+        let plan = recording_control_plan(
+            PhysicalPoint { x: 100, y: 200 },
+            1470,
+            1140,
+            1.5,
+            Locale::English,
+        )
+        .unwrap();
+
+        assert_eq!(plan.stop, PhysicalPoint { x: 679, y: 902 });
+        assert_eq!(plan.pause_or_resume, PhysicalPoint { x: 840, y: 902 });
+        assert!(
+            recording_control_plan(PhysicalPoint::default(), 600, 480, 1.0, Locale::English,)
+                .is_err()
+        );
+        assert!(
+            recording_control_plan(PhysicalPoint::default(), 980, 760, 0.0, Locale::English,)
+                .is_err()
+        );
     }
 
     #[test]
@@ -18114,11 +18166,20 @@ mod tests {
         assert!(recording_saved(&recording_state(
             "Screen recording saved to C:\\recordings\\clip.mp4"
         )));
+        assert!(recording_saved(&recording_state(
+            "屏幕录制已保存到 C:\\recordings\\clip.mp4"
+        )));
         assert!(!recording_failed(&recording_state(
             "Screen recording saved to C:\\recordings\\clip.mp4"
         )));
         assert!(recording_failed(&recording_state(
             "Could not start screen recording: missing encoder"
+        )));
+        assert!(recording_failed(&recording_state(
+            "屏幕录制失败：启动失败。请检查 FFmpeg 和输出目录，然后重试。"
+        )));
+        assert!(recording_failed(&recording_state(
+            "无法启动屏幕录制：缺少编码器"
         )));
         let mut pause_error = recording_state("Could not change recording pause state: denied");
         pause_error.active = true;
