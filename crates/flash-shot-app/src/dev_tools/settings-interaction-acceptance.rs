@@ -48,6 +48,7 @@ struct Options {
     exercise_library_format: bool,
     exercise_library_search_selection: bool,
     exercise_library_single_delete: bool,
+    exercise_library_open_copy: bool,
     exercise_pin_appearance: bool,
     output_dir: PathBuf,
     width: i32,
@@ -77,6 +78,7 @@ struct Report {
     recording_success: Option<RecordingSuccessReport>,
     library_search_selection: Option<LibrarySearchSelectionReport>,
     library_single_delete: Option<LibrarySingleDeleteReport>,
+    library_open_copy: Option<LibraryOpenCopyReport>,
     pin_appearance: Option<PinAppearanceReport>,
     cleanup: CleanupReport,
 }
@@ -158,6 +160,23 @@ struct LibrarySearchSelectionReport {
 
 #[cfg(windows)]
 #[derive(Serialize)]
+struct LibraryOpenCopyReport {
+    initial_entries: usize,
+    copy_status_observed: bool,
+    clipboard_width: u32,
+    clipboard_height: u32,
+    clipboard_pixels_match: bool,
+    open_result_observed: bool,
+    editor_window_observed: bool,
+    selection_matches_fixture: bool,
+    cancel_returned_to_idle: bool,
+    editor_window_closed: bool,
+    history_file_preserved: bool,
+    screenshots: Vec<String>,
+}
+
+#[cfg(windows)]
+#[derive(Serialize)]
 struct PinAppearanceReport {
     initial_locale: String,
     initial_theme: String,
@@ -196,6 +215,7 @@ impl Options {
             exercise_library_format: false,
             exercise_library_search_selection: false,
             exercise_library_single_delete: false,
+            exercise_library_open_copy: false,
             exercise_pin_appearance: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
@@ -220,6 +240,7 @@ impl Options {
                     options.exercise_library_search_selection = true
                 }
                 "--exercise-library-single-delete" => options.exercise_library_single_delete = true,
+                "--exercise-library-open-copy" => options.exercise_library_open_copy = true,
                 "--exercise-pin-appearance" => options.exercise_pin_appearance = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
@@ -248,7 +269,9 @@ impl Options {
         if !options.allow_input {
             return Err("settings-interaction-acceptance requires --allow-input".to_owned());
         }
-        if (options.exercise_library_single_delete || options.exercise_library_search_selection)
+        if (options.exercise_library_single_delete
+            || options.exercise_library_search_selection
+            || options.exercise_library_open_copy)
             && (options.width < 900 || options.height < 1_000)
         {
             return Err(
@@ -256,18 +279,23 @@ impl Options {
                 .to_owned(),
             );
         }
-        if options.exercise_library_single_delete && options.exercise_library_search_selection {
-            return Err(
-                "single-delete and search-selection Library exercises must run separately"
-                    .to_owned(),
-            );
+        let library_exercise_count = [
+            options.exercise_library_single_delete,
+            options.exercise_library_search_selection,
+            options.exercise_library_open_copy,
+        ]
+        .into_iter()
+        .filter(|enabled| *enabled)
+        .count();
+        if library_exercise_count > 1 {
+            return Err("Library interaction exercises must run separately".to_owned());
         }
         Ok(options)
     }
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-search-selection] [--exercise-library-single-delete] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-search-selection] [--exercise-library-single-delete] [--exercise-library-open-copy] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -354,6 +382,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let library_open_path = if options.exercise_library_open_copy {
+        Some(create_library_open_fixture(&mut history, &history_dir)?)
+    } else {
+        None
+    };
     if options.exercise_library_search_selection {
         create_library_search_fixtures(&mut history, &history_dir)?;
     }
@@ -394,7 +427,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         exercise_library_format: options.exercise_library_format,
         exercise_library_search_selection: options.exercise_library_search_selection,
         exercise_library_single_delete: options.exercise_library_single_delete,
+        exercise_library_open_copy: options.exercise_library_open_copy,
         library_remove_paths,
+        library_open_path,
         exercise_pin_appearance: options.exercise_pin_appearance,
         commands: command_tx,
     };
@@ -449,6 +484,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     if options.exercise_library_format
         || options.exercise_library_search_selection
         || options.exercise_library_single_delete
+        || options.exercise_library_open_copy
     {
         remove_acceptance_history_root(&history_dir)?;
     }
@@ -504,6 +540,18 @@ fn create_library_search_fixtures(
 }
 
 #[cfg(windows)]
+/// Seeds one retained image whose exact pixels and file contents can be checked after Library use.
+fn create_library_open_fixture(
+    history: &mut ScreenshotHistory,
+    root: &std::path::Path,
+) -> io::Result<PathBuf> {
+    let path = root.join("library-open-copy.png");
+    acceptance_fixture_frame(0).save_png(&path)?;
+    history.record_with_source(path.clone(), HistorySource::Selection)?;
+    Ok(path)
+}
+
+#[cfg(windows)]
 /// Creates a small, fully decodable PNG for Library preview and deletion acceptance.
 fn acceptance_fixture_frame(index: usize) -> CaptureFrame {
     const WIDTH: u32 = 96;
@@ -547,7 +595,13 @@ fn remove_acceptance_history_root(path: &std::path::Path) -> io::Result<()> {
             Err(_) => {}
         }
         if std::time::Instant::now() >= deadline {
-            return Ok(());
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "acceptance history root remains after cleanup: {}",
+                    path.display()
+                ),
+            ));
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -583,6 +637,7 @@ mod tests {
         assert!(!options.exercise_library_format);
         assert!(!options.exercise_library_search_selection);
         assert!(!options.exercise_library_single_delete);
+        assert!(!options.exercise_library_open_copy);
         assert!(!options.exercise_pin_appearance);
         let options = Options::parse_args(
             [
@@ -648,6 +703,21 @@ mod tests {
             Options::parse_args(
                 [
                     OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-open-copy"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
+                ]
+                .into_iter()
+            )
+            .unwrap()
+            .exercise_library_open_copy
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
                     OsString::from("--exercise-library-search-selection"),
                     OsString::from("--width"),
                     OsString::from("980"),
@@ -658,6 +728,31 @@ mod tests {
             )
             .unwrap()
             .exercise_library_search_selection
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-open-copy"),
+                ]
+                .into_iter()
+            )
+            .is_err()
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-open-copy"),
+                    OsString::from("--exercise-library-single-delete"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
+                ]
+                .into_iter()
+            )
+            .is_err()
         );
         assert!(
             Options::parse_args(

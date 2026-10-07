@@ -1250,6 +1250,11 @@ impl FlashShotApp {
                                     HistoryClearScope::Single => "single",
                                 }
                                 .to_owned(),
+                                capture_session_state: format!("{:?}", this.session.state()),
+                                capture_selection_bounds: this.session.selection().map(|bounds| {
+                                    (bounds.left, bounds.top, bounds.right, bounds.bottom)
+                                }),
+                                overlay_window_count: this.overlay_windows.len(),
                                 pinned_window_count: this.pinned_windows.len(),
                                 pinned_appearances,
                                 update_check_in_flight: this.update_check_in_flight,

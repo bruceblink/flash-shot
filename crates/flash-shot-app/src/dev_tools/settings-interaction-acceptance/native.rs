@@ -323,6 +323,18 @@ pub(super) fn click_library_remove(window: NativeWindow, _compact: bool) -> io::
 }
 
 #[cfg(windows)]
+/// Copies the first visible retained image using its production Library row action.
+pub(super) fn click_library_copy(window: NativeWindow) -> io::Result<()> {
+    click_library_row_action(window, 375, 880)
+}
+
+#[cfg(windows)]
+/// Opens the first visible retained image using its production Library row action.
+pub(super) fn click_library_open(window: NativeWindow) -> io::Result<()> {
+    click_library_row_action(window, 300, 880)
+}
+
+#[cfg(windows)]
 /// Confirms the row-level removal after its inline prompt has replaced the row actions.
 pub(super) fn click_library_confirm_single_remove(
     window: NativeWindow,
@@ -765,4 +777,76 @@ pub(super) fn visible_window() -> io::Result<Option<NativeWindow>> {
     };
     unsafe { EnumWindows(Some(callback), &mut search as *mut Search as LPARAM) };
     Ok(search.window)
+}
+
+#[cfg(windows)]
+/// Finds one visible window from this process while excluding a known settings HWND.
+pub(super) fn visible_window_except(
+    excluded: NativeWindow,
+    minimum_width: i32,
+    minimum_height: i32,
+) -> io::Result<Option<NativeWindow>> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::Foundation::{LPARAM, RECT};
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible,
+    };
+    use windows_sys::core::BOOL;
+
+    struct Search {
+        process_id: u32,
+        excluded_handle: *mut c_void,
+        minimum_width: i32,
+        minimum_height: i32,
+        windows: Vec<NativeWindow>,
+    }
+
+    unsafe extern "system" fn callback(handle: *mut c_void, parameter: LPARAM) -> BOOL {
+        let search = unsafe { &mut *(parameter as *mut Search) };
+        if handle == search.excluded_handle || unsafe { IsWindowVisible(handle) } == 0 {
+            return 1;
+        }
+        let mut process_id = 0;
+        unsafe { GetWindowThreadProcessId(handle, &mut process_id) };
+        if process_id != search.process_id {
+            return 1;
+        }
+        let mut rect = RECT::default();
+        if unsafe { GetWindowRect(handle, &mut rect) } == 0 {
+            return 1;
+        }
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        if width >= search.minimum_width && height >= search.minimum_height {
+            search.windows.push(NativeWindow {
+                handle,
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                dpi: unsafe { GetDpiForWindow(handle) }.max(96),
+            });
+        }
+        1
+    }
+
+    let mut search = Search {
+        process_id: unsafe { GetCurrentProcessId() },
+        excluded_handle: excluded.handle,
+        minimum_width,
+        minimum_height,
+        windows: Vec::new(),
+    };
+    if unsafe { EnumWindows(Some(callback), &mut search as *mut Search as LPARAM) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    match search.windows.len() {
+        0 => Ok(None),
+        1 => Ok(search.windows.pop()),
+        count => Err(io::Error::other(format!(
+            "expected at most one visible editor window, found {count}"
+        ))),
+    }
 }

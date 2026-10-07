@@ -11,21 +11,22 @@ use std::{
 use super::native::{
     CursorRestore, NativeWindow, WindowZOrderRestore, capture_step,
     click_library_cancel_single_remove, click_library_clear_search, click_library_clear_selection,
-    click_library_confirm_single_remove, click_library_filter_all, click_library_filter_selection,
-    click_library_format, click_library_remove, click_library_search,
-    click_library_select_all_filtered, click_navigation_item, click_record_idle_toggle,
-    click_record_support, click_record_toggle, click_system_language, click_system_theme,
-    click_update_action, ensure_input_idle, focus_window, send_key, send_unicode_text, snapshot,
-    visible_window,
+    click_library_confirm_single_remove, click_library_copy, click_library_filter_all,
+    click_library_filter_selection, click_library_format, click_library_open, click_library_remove,
+    click_library_search, click_library_select_all_filtered, click_navigation_item,
+    click_record_idle_toggle, click_record_support, click_record_toggle, click_system_language,
+    click_system_theme, click_update_action, ensure_input_idle, focus_window, send_key,
+    send_unicode_text, snapshot, visible_window, visible_window_except,
 };
 use super::{
-    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, LibrarySearchSelectionReport,
-    LibrarySingleDeleteReport, PinAppearanceReport, RecordingSuccessReport, Report, StepReport,
-    WindowBounds,
+    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, LibraryOpenCopyReport,
+    LibrarySearchSelectionReport, LibrarySingleDeleteReport, PinAppearanceReport,
+    RecordingSuccessReport, Report, StepReport, WindowBounds,
 };
 use flash_shot::{
     SettingsInteractionAcceptanceCommand, SettingsInteractionState,
     i18n::{Locale, UiText},
+    platform::{capture::CaptureFrame, clipboard::SystemClipboard},
     theme::ThemeMode,
 };
 
@@ -45,7 +46,9 @@ pub(super) struct WorkerOptions {
     pub(super) exercise_library_format: bool,
     pub(super) exercise_library_search_selection: bool,
     pub(super) exercise_library_single_delete: bool,
+    pub(super) exercise_library_open_copy: bool,
     pub(super) library_remove_paths: Option<(PathBuf, PathBuf)>,
+    pub(super) library_open_path: Option<PathBuf>,
     pub(super) exercise_pin_appearance: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
@@ -54,7 +57,8 @@ pub(super) struct WorkerOptions {
 /// Navigates the settings surface, records observed GPUI state, and restores desktop side effects.
 pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std::error::Error>> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, VK_DOWN, VK_F4, VK_LBUTTON, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
+        GetAsyncKeyState, VK_DOWN, VK_ESCAPE, VK_F4, VK_LBUTTON, VK_MENU, VK_RETURN, VK_RIGHT,
+        VK_SPACE,
     };
 
     let deadline = Instant::now() + options.timeout;
@@ -541,9 +545,14 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     } else {
         None
     };
+    let library_open_copy = if options.exercise_library_open_copy {
+        Some(exercise_library_open_copy(&options, window, compact)?)
+    } else {
+        None
+    };
     let cursor_restored = cursor_restore.restore()?;
     let input_released = [
-        VK_LBUTTON, VK_DOWN, VK_F4, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
+        VK_ESCAPE, VK_LBUTTON, VK_DOWN, VK_F4, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
     ]
     .into_iter()
     .all(|key| unsafe { GetAsyncKeyState(key as i32) >= 0 });
@@ -558,8 +567,11 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             || options.exercise_library_format
             || options.exercise_library_search_selection
             || options.exercise_library_single_delete
+            || options.exercise_library_open_copy
         {
-            if options.exercise_library_search_selection {
+            if options.exercise_library_open_copy {
+                7
+            } else if options.exercise_library_search_selection {
                 6
             } else if options.exercise_library_single_delete {
                 5
@@ -597,6 +609,19 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
                     && report.selection_cleared
                     && report.all_filter_entries == 3
             })
+            && library_open_copy.as_ref().is_none_or(|report| {
+                report.initial_entries == 1
+                    && report.copy_status_observed
+                    && report.clipboard_width == 96
+                    && report.clipboard_height == 64
+                    && report.clipboard_pixels_match
+                    && report.open_result_observed
+                    && report.editor_window_observed
+                    && report.selection_matches_fixture
+                    && report.cancel_returned_to_idle
+                    && report.editor_window_closed
+                    && report.history_file_preserved
+            })
             && cursor_restored
             && input_released
             && window_demoted
@@ -624,6 +649,7 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
         recording_success,
         library_search_selection,
         library_single_delete,
+        library_open_copy,
         pin_appearance,
         cleanup: CleanupReport {
             cursor_restored,
@@ -872,6 +898,113 @@ fn exercise_library_single_delete(
 }
 
 #[cfg(windows)]
+/// Copies a retained image, opens it in the production editor, and verifies Escape recovery.
+fn exercise_library_open_copy(
+    options: &WorkerOptions,
+    window: NativeWindow,
+    compact: bool,
+) -> io::Result<LibraryOpenCopyReport> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+
+    let path = options
+        .library_open_path
+        .as_ref()
+        .ok_or_else(|| io::Error::other("Library open/copy fixture path was not provided"))?;
+    let original_bytes = fs::read(path)?;
+    let expected_frame = CaptureFrame::open_png(path)?;
+    focus_window(window)?;
+    click_navigation_item(window, compact, 1)?;
+    let initial = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 1
+            && state.history_filtered_entry_count == 1
+            && state.capture_session_state == "Idle"
+    })?;
+    thread::sleep(options.settle);
+    let mut screenshots = vec![capture_step(
+        &window,
+        &options.output_dir,
+        "library-open-copy-before",
+    )?];
+
+    focus_window(window)?;
+    click_library_copy(window)?;
+    let copied = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 1
+            && state.capture_session_state == "Idle"
+            && state.status == options.locale.text(UiText::HistoryCopiedToClipboard)
+    })?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &window,
+        &options.output_dir,
+        "library-open-copy-copied",
+    )?);
+    let clipboard_frame = SystemClipboard.read_image()?;
+    let clipboard_pixels_match = clipboard_frame.width == expected_frame.width
+        && clipboard_frame.height == expected_frame.height
+        && clipboard_frame.stride == expected_frame.stride
+        && clipboard_frame.pixels.as_ref() == expected_frame.pixels.as_ref();
+
+    focus_window(window)?;
+    click_library_open(window)?;
+    let opened = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 1
+            && state.capture_session_state == "Selecting"
+            && state.capture_selection_bounds
+                == Some((
+                    expected_frame.bounds.left,
+                    expected_frame.bounds.top,
+                    expected_frame.bounds.right,
+                    expected_frame.bounds.bottom,
+                ))
+            && state.overlay_window_count == 1
+    })?;
+    let editor_window = wait_for_window_except(window, options.timeout)?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &editor_window,
+        &options.output_dir,
+        "library-open-editor",
+    )?);
+
+    send_key(editor_window, VK_ESCAPE)?;
+    let cancelled = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.history_entry_count == 1
+            && state.capture_session_state == "Idle"
+            && state.overlay_window_count == 0
+    })?;
+    let editor_window_closed = wait_for_no_window_except(window, options.timeout)?;
+    let history_file_preserved = path.is_file() && fs::read(path)? == original_bytes;
+
+    Ok(LibraryOpenCopyReport {
+        initial_entries: initial.history_entry_count,
+        copy_status_observed: copied.status
+            == options.locale.text(UiText::HistoryCopiedToClipboard),
+        clipboard_width: clipboard_frame.width,
+        clipboard_height: clipboard_frame.height,
+        clipboard_pixels_match,
+        open_result_observed: opened.capture_session_state == "Selecting"
+            && opened.overlay_window_count == 1,
+        editor_window_observed: editor_window.handle != window.handle,
+        selection_matches_fixture: opened.capture_selection_bounds
+            == Some((
+                expected_frame.bounds.left,
+                expected_frame.bounds.top,
+                expected_frame.bounds.right,
+                expected_frame.bounds.bottom,
+            )),
+        cancel_returned_to_idle: cancelled.capture_session_state == "Idle"
+            && cancelled.overlay_window_count == 0,
+        editor_window_closed,
+        history_file_preserved,
+        screenshots,
+    })
+}
+
+#[cfg(windows)]
 /// Polls the production settings snapshot until the requested lifecycle predicate becomes true.
 fn wait_for_settings_state(
     commands: &async_channel::Sender<SettingsInteractionAcceptanceCommand>,
@@ -888,7 +1021,7 @@ fn wait_for_settings_state(
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "settings state did not reach the expected lifecycle: {} (section={}, entries={}, filtered_entries={}, selected={}, filter={}, query={:?}, search_active={}, clear_confirmation={}, clear_scope={}, pinned_window_count={}, pinned_appearances={})",
+                    "settings state did not reach the expected lifecycle: {} (section={}, entries={}, filtered_entries={}, selected={}, filter={}, query={:?}, search_active={}, clear_confirmation={}, clear_scope={}, session={}, selection={:?}, overlays={}, pinned_window_count={}, pinned_appearances={})",
                     state.status,
                     state.section,
                     state.history_entry_count,
@@ -899,10 +1032,49 @@ fn wait_for_settings_state(
                     state.history_search_active,
                     state.history_clear_confirmation,
                     state.history_clear_scope,
+                    state.capture_session_state,
+                    state.capture_selection_bounds,
+                    state.overlay_window_count,
                     state.pinned_window_count,
                     state.pinned_appearances.len()
                 ),
             ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(windows)]
+/// Waits for one visible production editor window while excluding the hidden settings surface.
+fn wait_for_window_except(
+    settings_window: NativeWindow,
+    timeout: Duration,
+) -> io::Result<NativeWindow> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(window) = visible_window_except(settings_window, 420, 350)? {
+            return Ok(window);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Library Open did not create a visible editor window",
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(windows)]
+/// Confirms that Escape closed the editor and left no other visible large window in this process.
+fn wait_for_no_window_except(settings_window: NativeWindow, timeout: Duration) -> io::Result<bool> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if visible_window_except(settings_window, 420, 350)?.is_none() {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
         }
         thread::sleep(Duration::from_millis(50));
     }
