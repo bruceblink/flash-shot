@@ -50,6 +50,7 @@ struct Options {
     exercise_library_single_delete: bool,
     exercise_library_open_copy: bool,
     exercise_library_retention: bool,
+    exercise_library_pin: bool,
     exercise_pin_appearance: bool,
     output_dir: PathBuf,
     width: i32,
@@ -81,6 +82,7 @@ struct Report {
     library_single_delete: Option<LibrarySingleDeleteReport>,
     library_open_copy: Option<LibraryOpenCopyReport>,
     library_retention: Option<LibraryRetentionReport>,
+    library_pin: Option<LibraryPinReport>,
     pin_appearance: Option<PinAppearanceReport>,
     cleanup: CleanupReport,
 }
@@ -193,6 +195,19 @@ struct LibraryRetentionReport {
 
 #[cfg(windows)]
 #[derive(Serialize)]
+struct LibraryPinReport {
+    initial_entries: usize,
+    pinned_window_observed: bool,
+    pin_source_matches_fixture: bool,
+    pin_closed_with_escape: bool,
+    no_visible_pin_window_remains: bool,
+    history_file_preserved: bool,
+    remaining_entries: usize,
+    screenshots: Vec<String>,
+}
+
+#[cfg(windows)]
+#[derive(Serialize)]
 struct PinAppearanceReport {
     initial_locale: String,
     initial_theme: String,
@@ -233,6 +248,7 @@ impl Options {
             exercise_library_single_delete: false,
             exercise_library_open_copy: false,
             exercise_library_retention: false,
+            exercise_library_pin: false,
             exercise_pin_appearance: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
@@ -259,6 +275,7 @@ impl Options {
                 "--exercise-library-single-delete" => options.exercise_library_single_delete = true,
                 "--exercise-library-open-copy" => options.exercise_library_open_copy = true,
                 "--exercise-library-retention" => options.exercise_library_retention = true,
+                "--exercise-library-pin" => options.exercise_library_pin = true,
                 "--exercise-pin-appearance" => options.exercise_pin_appearance = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
@@ -290,7 +307,8 @@ impl Options {
         if (options.exercise_library_single_delete
             || options.exercise_library_search_selection
             || options.exercise_library_open_copy
-            || options.exercise_library_retention)
+            || options.exercise_library_retention
+            || options.exercise_library_pin)
             && (options.width < 900 || options.height < 1_000)
         {
             return Err(
@@ -303,6 +321,7 @@ impl Options {
             options.exercise_library_search_selection,
             options.exercise_library_open_copy,
             options.exercise_library_retention,
+            options.exercise_library_pin,
         ]
         .into_iter()
         .filter(|enabled| *enabled)
@@ -310,12 +329,15 @@ impl Options {
         if library_exercise_count > 1 {
             return Err("Library interaction exercises must run separately".to_owned());
         }
+        if options.exercise_library_pin && options.exercise_pin_appearance {
+            return Err("Library Pin and Pin appearance exercises must run separately".to_owned());
+        }
         Ok(options)
     }
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-search-selection] [--exercise-library-single-delete] [--exercise-library-open-copy] [--exercise-library-retention] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-search-selection] [--exercise-library-single-delete] [--exercise-library-open-copy] [--exercise-library-retention] [--exercise-library-pin] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -415,6 +437,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let library_pin_path = if options.exercise_library_pin {
+        Some(create_library_pin_fixture(&mut history, &history_dir)?)
+    } else {
+        None
+    };
     if options.exercise_library_search_selection {
         create_library_search_fixtures(&mut history, &history_dir)?;
     }
@@ -457,9 +484,11 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         exercise_library_single_delete: options.exercise_library_single_delete,
         exercise_library_open_copy: options.exercise_library_open_copy,
         exercise_library_retention: options.exercise_library_retention,
+        exercise_library_pin: options.exercise_library_pin,
         library_remove_paths,
         library_open_path,
         library_retention_paths,
+        library_pin_path,
         exercise_pin_appearance: options.exercise_pin_appearance,
         commands: command_tx,
     };
@@ -516,6 +545,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         || options.exercise_library_single_delete
         || options.exercise_library_open_copy
         || options.exercise_library_retention
+        || options.exercise_library_pin
     {
         remove_acceptance_history_root(&history_dir)?;
     }
@@ -597,6 +627,18 @@ fn create_library_retention_fixtures(
         thread::sleep(Duration::from_millis(5));
     }
     Ok(paths)
+}
+
+#[cfg(windows)]
+/// Seeds one managed image for testing the production Library Pin action and Escape cleanup.
+fn create_library_pin_fixture(
+    history: &mut ScreenshotHistory,
+    root: &std::path::Path,
+) -> io::Result<PathBuf> {
+    let path = root.join("library-pin.png");
+    acceptance_fixture_frame(0).save_png(&path)?;
+    history.record_with_source(path.clone(), HistorySource::Selection)?;
+    Ok(path)
 }
 
 #[cfg(windows)]
@@ -687,6 +729,7 @@ mod tests {
         assert!(!options.exercise_library_single_delete);
         assert!(!options.exercise_library_open_copy);
         assert!(!options.exercise_library_retention);
+        assert!(!options.exercise_library_pin);
         assert!(!options.exercise_pin_appearance);
         let options = Options::parse_args(
             [
@@ -782,6 +825,21 @@ mod tests {
             Options::parse_args(
                 [
                     OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-pin"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
+                ]
+                .into_iter()
+            )
+            .unwrap()
+            .exercise_library_pin
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
                     OsString::from("--exercise-library-search-selection"),
                     OsString::from("--width"),
                     OsString::from("980"),
@@ -798,6 +856,36 @@ mod tests {
                 [
                     OsString::from("--allow-input"),
                     OsString::from("--exercise-library-open-copy"),
+                ]
+                .into_iter()
+            )
+            .is_err()
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-pin"),
+                    OsString::from("--exercise-library-retention"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
+                ]
+                .into_iter()
+            )
+            .is_err()
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-pin"),
+                    OsString::from("--exercise-pin-appearance"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
                 ]
                 .into_iter()
             )

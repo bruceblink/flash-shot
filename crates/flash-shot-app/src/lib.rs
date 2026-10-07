@@ -249,11 +249,13 @@ pub struct SettingsInteractionState {
     pub status: String,
 }
 
-/// Reports the language and theme that one already-open Pin is rendering.
+/// Reports the language, theme, and uncapped source size rendered by one live Pin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PinAppearanceState {
     pub locale: String,
     pub theme: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Minimal production recording state returned to the isolated input probe.

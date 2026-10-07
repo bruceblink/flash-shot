@@ -192,8 +192,15 @@ impl PinnedImage {
     }
 
     /// Returns the human-readable labels used by the settings input acceptance state bridge.
-    pub(super) fn appearance_labels_for_acceptance(&self) -> (&'static str, &'static str) {
-        (self.locale.label(), self.theme_mode.label())
+    pub(super) fn appearance_labels_for_acceptance(
+        &self,
+    ) -> (&'static str, &'static str, u32, u32) {
+        (
+            self.locale.label(),
+            self.theme_mode.label(),
+            self.frame.width,
+            self.frame.height,
+        )
     }
 
     /// Exposes only task completion to the no-input Pin lifecycle probe.

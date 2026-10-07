@@ -335,6 +335,16 @@ pub(super) fn click_library_open(window: NativeWindow) -> io::Result<()> {
 }
 
 #[cfg(windows)]
+/// Pins the first visible Library row using its locale-specific action position.
+pub(super) fn click_library_pin(window: NativeWindow, locale: Locale) -> io::Result<()> {
+    let logical_x = match locale {
+        Locale::English => 445,
+        Locale::SimplifiedChinese => 413,
+    };
+    click_library_row_action(window, logical_x, 880)
+}
+
+#[cfg(windows)]
 /// Advances the Library's persistent capture-retention setting in the wide acceptance layout.
 pub(super) fn click_library_retention(window: NativeWindow, locale: Locale) -> io::Result<()> {
     let logical_x = match locale {

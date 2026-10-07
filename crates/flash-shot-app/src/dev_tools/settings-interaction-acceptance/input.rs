@@ -12,14 +12,15 @@ use super::native::{
     CursorRestore, NativeWindow, WindowZOrderRestore, capture_step,
     click_library_cancel_single_remove, click_library_clear_search, click_library_clear_selection,
     click_library_confirm_single_remove, click_library_copy, click_library_filter_all,
-    click_library_filter_selection, click_library_format, click_library_open, click_library_remove,
-    click_library_retention, click_library_search, click_library_select_all_filtered,
-    click_navigation_item, click_record_idle_toggle, click_record_support, click_record_toggle,
-    click_system_language, click_system_theme, click_update_action, ensure_input_idle,
-    focus_window, send_key, send_unicode_text, snapshot, visible_window, visible_window_except,
+    click_library_filter_selection, click_library_format, click_library_open, click_library_pin,
+    click_library_remove, click_library_retention, click_library_search,
+    click_library_select_all_filtered, click_navigation_item, click_record_idle_toggle,
+    click_record_support, click_record_toggle, click_system_language, click_system_theme,
+    click_update_action, ensure_input_idle, focus_window, send_key, send_unicode_text, snapshot,
+    visible_window, visible_window_except,
 };
 use super::{
-    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, LibraryOpenCopyReport,
+    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, LibraryOpenCopyReport, LibraryPinReport,
     LibraryRetentionReport, LibrarySearchSelectionReport, LibrarySingleDeleteReport,
     PinAppearanceReport, RecordingSuccessReport, Report, StepReport, WindowBounds,
 };
@@ -48,9 +49,11 @@ pub(super) struct WorkerOptions {
     pub(super) exercise_library_single_delete: bool,
     pub(super) exercise_library_open_copy: bool,
     pub(super) exercise_library_retention: bool,
+    pub(super) exercise_library_pin: bool,
     pub(super) library_remove_paths: Option<(PathBuf, PathBuf)>,
     pub(super) library_open_path: Option<PathBuf>,
     pub(super) library_retention_paths: Option<Vec<PathBuf>>,
+    pub(super) library_pin_path: Option<PathBuf>,
     pub(super) exercise_pin_appearance: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
@@ -557,6 +560,11 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     } else {
         None
     };
+    let library_pin = if options.exercise_library_pin {
+        Some(exercise_library_pin(&options, window, compact)?)
+    } else {
+        None
+    };
     let cursor_restored = cursor_restore.restore()?;
     let input_released = [
         VK_ESCAPE, VK_LBUTTON, VK_DOWN, VK_F4, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
@@ -576,8 +584,11 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             || options.exercise_library_single_delete
             || options.exercise_library_open_copy
             || options.exercise_library_retention
+            || options.exercise_library_pin
         {
-            if options.exercise_library_retention {
+            if options.exercise_library_pin {
+                9
+            } else if options.exercise_library_retention {
                 8
             } else if options.exercise_library_open_copy {
                 7
@@ -642,6 +653,15 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
                     && report.final_limit == 10
                     && report.final_entries == 10
             })
+            && library_pin.as_ref().is_none_or(|report| {
+                report.initial_entries == 1
+                    && report.pinned_window_observed
+                    && report.pin_source_matches_fixture
+                    && report.pin_closed_with_escape
+                    && report.no_visible_pin_window_remains
+                    && report.history_file_preserved
+                    && report.remaining_entries == 1
+            })
             && cursor_restored
             && input_released
             && window_demoted
@@ -671,6 +691,7 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
         library_single_delete,
         library_open_copy,
         library_retention,
+        library_pin,
         pin_appearance,
         cleanup: CleanupReport {
             cursor_restored,
@@ -1103,6 +1124,87 @@ fn exercise_library_retention(
 }
 
 #[cfg(windows)]
+/// Pins a retained image in the production window and verifies Escape closes it without changing history.
+fn exercise_library_pin(
+    options: &WorkerOptions,
+    window: NativeWindow,
+    compact: bool,
+) -> io::Result<LibraryPinReport> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+
+    let path = options
+        .library_pin_path
+        .as_ref()
+        .ok_or_else(|| io::Error::other("Library Pin fixture path was not provided"))?;
+    let original_bytes = fs::read(path)?;
+    let expected_frame = CaptureFrame::open_png(path)?;
+    focus_window(window)?;
+    click_navigation_item(window, compact, 1)?;
+    let initial = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 1
+            && state.history_filtered_entry_count == 1
+            && state.pinned_window_count == 0
+    })?;
+    thread::sleep(options.settle);
+    let mut screenshots = vec![capture_step(
+        &window,
+        &options.output_dir,
+        "library-pin-before",
+    )?];
+
+    focus_window(window)?;
+    click_library_pin(window, options.locale)?;
+    let pinned = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 1
+            && state.pinned_window_count == 1
+            && state.pinned_appearances.len() == 1
+            && state.pinned_appearances.iter().all(|pin| {
+                pin.locale == options.locale.label()
+                    && pin.theme == options.theme.label()
+                    && pin.width == expected_frame.width
+                    && pin.height == expected_frame.height
+            })
+    })?;
+    let pin_window = wait_for_window_except_with_size(window, options.timeout, 1, 1)?;
+    focus_window(pin_window)?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &pin_window,
+        &options.output_dir,
+        "library-pin-window",
+    )?);
+
+    send_key(pin_window, VK_ESCAPE)?;
+    let closed = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.history_entry_count == 1
+            && state.pinned_window_count == 0
+            && state.pinned_appearances.is_empty()
+    })?;
+    let no_visible_pin_window_remains =
+        wait_for_no_window_except_with_size(window, options.timeout, 1, 1)?;
+    let history_file_preserved = path.is_file() && fs::read(path)? == original_bytes;
+
+    Ok(LibraryPinReport {
+        initial_entries: initial.history_entry_count,
+        pinned_window_observed: pin_window.handle != window.handle
+            && pinned.pinned_window_count == 1,
+        pin_source_matches_fixture: pinned.pinned_appearances.len() == 1
+            && pinned.pinned_appearances[0].width == expected_frame.width
+            && pinned.pinned_appearances[0].height == expected_frame.height
+            && pinned.pinned_appearances[0].locale == options.locale.label()
+            && pinned.pinned_appearances[0].theme == options.theme.label(),
+        pin_closed_with_escape: closed.pinned_window_count == 0
+            && closed.pinned_appearances.is_empty(),
+        no_visible_pin_window_remains,
+        history_file_preserved,
+        remaining_entries: closed.history_entry_count,
+        screenshots,
+    })
+}
+
+#[cfg(windows)]
 /// Polls the production settings snapshot until the requested lifecycle predicate becomes true.
 fn wait_for_settings_state(
     commands: &async_channel::Sender<SettingsInteractionAcceptanceCommand>,
@@ -1150,9 +1252,21 @@ fn wait_for_window_except(
     settings_window: NativeWindow,
     timeout: Duration,
 ) -> io::Result<NativeWindow> {
+    wait_for_window_except_with_size(settings_window, timeout, 420, 350)
+}
+
+#[cfg(windows)]
+/// Waits for one visible app window while excluding the hidden settings surface.
+fn wait_for_window_except_with_size(
+    settings_window: NativeWindow,
+    timeout: Duration,
+    minimum_width: i32,
+    minimum_height: i32,
+) -> io::Result<NativeWindow> {
     let deadline = Instant::now() + timeout;
     loop {
-        if let Some(window) = visible_window_except(settings_window, 420, 350)? {
+        if let Some(window) = visible_window_except(settings_window, minimum_width, minimum_height)?
+        {
             return Ok(window);
         }
         if Instant::now() >= deadline {
@@ -1168,9 +1282,20 @@ fn wait_for_window_except(
 #[cfg(windows)]
 /// Confirms that Escape closed the editor and left no other visible large window in this process.
 fn wait_for_no_window_except(settings_window: NativeWindow, timeout: Duration) -> io::Result<bool> {
+    wait_for_no_window_except_with_size(settings_window, timeout, 420, 350)
+}
+
+#[cfg(windows)]
+/// Confirms no qualifying visible app window remains while ignoring the settings HWND.
+fn wait_for_no_window_except_with_size(
+    settings_window: NativeWindow,
+    timeout: Duration,
+    minimum_width: i32,
+    minimum_height: i32,
+) -> io::Result<bool> {
     let deadline = Instant::now() + timeout;
     loop {
-        if visible_window_except(settings_window, 420, 350)?.is_none() {
+        if visible_window_except(settings_window, minimum_width, minimum_height)?.is_none() {
             return Ok(true);
         }
         if Instant::now() >= deadline {
