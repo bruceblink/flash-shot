@@ -1216,11 +1216,32 @@ impl FlashShotApp {
                             let pinned_appearances = this.pin_appearance_states_for_acceptance(cx);
                             #[cfg(not(windows))]
                             let pinned_appearances = Vec::new();
+                            let history_search_query = this.history_search_query().to_owned();
+                            let history_search_normalized =
+                                history_search_query.trim().to_lowercase();
+                            let history_filtered_entry_count = this
+                                .history
+                                .entries()
+                                .iter()
+                                .filter(|entry| {
+                                    history_entry_matches(
+                                        entry,
+                                        this.history_filter,
+                                        &history_search_normalized,
+                                        this.settings.locale,
+                                    )
+                                })
+                                .count();
                             let _ = reply.send(crate::SettingsInteractionState {
                                 section: section.to_owned(),
                                 locale: this.settings.locale.label().to_owned(),
                                 theme: this.settings.theme_mode.label().to_owned(),
                                 history_entry_count: this.history.entries().len(),
+                                history_filtered_entry_count,
+                                history_selected_count: this.history_selected_paths.len(),
+                                history_filter: this.history_filter.label().to_ascii_lowercase(),
+                                history_search_query,
+                                history_search_active: this.history_search_is_active(),
                                 history_clear_confirmation: this.history_clear_confirmation,
                                 history_clear_scope: match this.history_clear_scope {
                                     HistoryClearScope::All => "all",

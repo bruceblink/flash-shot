@@ -281,6 +281,42 @@ pub(super) fn click_library_format(window: NativeWindow, compact: bool) -> io::R
 }
 
 #[cfg(windows)]
+/// Selects source-only captures in the stable wide Library acceptance layout.
+pub(super) fn click_library_filter_selection(window: NativeWindow) -> io::Result<()> {
+    click_library_control(window, 290, 687)
+}
+
+#[cfg(windows)]
+/// Restores all source types after the search/selection acceptance flow.
+pub(super) fn click_library_filter_all(window: NativeWindow) -> io::Result<()> {
+    click_library_control(window, 215, 687)
+}
+
+#[cfg(windows)]
+/// Focuses the Library search field before native Unicode input is sent.
+pub(super) fn click_library_search(window: NativeWindow) -> io::Result<()> {
+    click_library_control(window, 500, 640)
+}
+
+#[cfg(windows)]
+/// Clears the query through the visible production search-clear button.
+pub(super) fn click_library_clear_search(window: NativeWindow) -> io::Result<()> {
+    click_library_control(window, 956, 640)
+}
+
+#[cfg(windows)]
+/// Selects every row matched by the current Library query and source filter.
+pub(super) fn click_library_select_all_filtered(window: NativeWindow) -> io::Result<()> {
+    click_library_control(window, 350, 766)
+}
+
+#[cfg(windows)]
+/// Clears the in-memory history selection without deleting any saved screenshot.
+pub(super) fn click_library_clear_selection(window: NativeWindow) -> io::Result<()> {
+    click_library_control(window, 475, 766)
+}
+
+#[cfg(windows)]
 /// Clicks Remove on the first visible Library row in the tall, wide single-delete acceptance view.
 pub(super) fn click_library_remove(window: NativeWindow, _compact: bool) -> io::Result<()> {
     click_library_row_action(window, 490, 880)
@@ -311,6 +347,12 @@ fn click_library_row_action(
     logical_x: i32,
     logical_y: i32,
 ) -> io::Result<()> {
+    click_library_control(window, logical_x, logical_y)
+}
+
+#[cfg(windows)]
+/// Converts a stable wide-layout control point to physical desktop coordinates.
+fn click_library_control(window: NativeWindow, logical_x: i32, logical_y: i32) -> io::Result<()> {
     move_and_click(
         window,
         window.left + scale_logical_extent(window, logical_x),
@@ -382,6 +424,80 @@ pub(super) fn send_key(window: NativeWindow, virtual_key: u16) -> io::Result<()>
             ))
         }
     }
+}
+
+#[cfg(windows)]
+/// Sends bounded Unicode text with paired key-down/up events and releases a partial key-down.
+pub(super) fn send_unicode_text(window: NativeWindow, text: &str) -> io::Result<()> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput,
+    };
+    let units = text.encode_utf16().collect::<Vec<_>>();
+    if units.is_empty() || units.len() > 64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "acceptance text must contain between 1 and 64 UTF-16 code units",
+        ));
+    }
+    for unit in units {
+        guard_foreground(window)?;
+        let inputs = [
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wScan: unit,
+                        dwFlags: KEYEVENTF_UNICODE,
+                        ..Default::default()
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wScan: unit,
+                        dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                        ..Default::default()
+                    },
+                },
+            },
+        ];
+        let sent = unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        if sent == inputs.len() as u32 {
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if sent == 1 {
+            let release = INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wScan: unit,
+                        dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                        ..Default::default()
+                    },
+                },
+            };
+            if unsafe { SendInput(1, &release, std::mem::size_of::<INPUT>() as i32) } != 1 {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "{error}; Unicode key-up cleanup failed: {}",
+                        io::Error::last_os_error()
+                    ),
+                ));
+            }
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[cfg(windows)]

@@ -46,6 +46,7 @@ struct Options {
     exercise_record_start: bool,
     exercise_record_success: bool,
     exercise_library_format: bool,
+    exercise_library_search_selection: bool,
     exercise_library_single_delete: bool,
     exercise_pin_appearance: bool,
     output_dir: PathBuf,
@@ -74,6 +75,7 @@ struct Report {
     keyboard_steps: Vec<StepReport>,
     action_steps: Vec<ActionStepReport>,
     recording_success: Option<RecordingSuccessReport>,
+    library_search_selection: Option<LibrarySearchSelectionReport>,
     library_single_delete: Option<LibrarySingleDeleteReport>,
     pin_appearance: Option<PinAppearanceReport>,
     cleanup: CleanupReport,
@@ -142,6 +144,20 @@ struct LibrarySingleDeleteReport {
 
 #[cfg(windows)]
 #[derive(Serialize)]
+struct LibrarySearchSelectionReport {
+    initial_entries: usize,
+    selection_filter_entries: usize,
+    query_entries: usize,
+    selected_after_query: usize,
+    entries_after_clearing_query: usize,
+    selection_preserved_after_clearing_query: bool,
+    selection_cleared: bool,
+    all_filter_entries: usize,
+    screenshots: Vec<String>,
+}
+
+#[cfg(windows)]
+#[derive(Serialize)]
 struct PinAppearanceReport {
     initial_locale: String,
     initial_theme: String,
@@ -178,6 +194,7 @@ impl Options {
             exercise_record_start: false,
             exercise_record_success: false,
             exercise_library_format: false,
+            exercise_library_search_selection: false,
             exercise_library_single_delete: false,
             exercise_pin_appearance: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
@@ -199,6 +216,9 @@ impl Options {
                 "--exercise-record-start" => options.exercise_record_start = true,
                 "--exercise-record-success" => options.exercise_record_success = true,
                 "--exercise-library-format" => options.exercise_library_format = true,
+                "--exercise-library-search-selection" => {
+                    options.exercise_library_search_selection = true
+                }
                 "--exercise-library-single-delete" => options.exercise_library_single_delete = true,
                 "--exercise-pin-appearance" => options.exercise_pin_appearance = true,
                 "--output-dir" => {
@@ -228,10 +248,17 @@ impl Options {
         if !options.allow_input {
             return Err("settings-interaction-acceptance requires --allow-input".to_owned());
         }
-        if options.exercise_library_single_delete && (options.width < 900 || options.height < 1_000)
+        if (options.exercise_library_single_delete || options.exercise_library_search_selection)
+            && (options.width < 900 || options.height < 1_000)
         {
             return Err(
-                "single-entry Library deletion acceptance requires --width >= 900 and --height >= 1000"
+                "Library history interaction acceptance requires --width >= 900 and --height >= 1000"
+                .to_owned(),
+            );
+        }
+        if options.exercise_library_single_delete && options.exercise_library_search_selection {
+            return Err(
+                "single-delete and search-selection Library exercises must run separately"
                     .to_owned(),
             );
         }
@@ -240,7 +267,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-single-delete] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-search-selection] [--exercise-library-single-delete] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -327,6 +354,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    if options.exercise_library_search_selection {
+        create_library_search_fixtures(&mut history, &history_dir)?;
+    }
     let performance = PerformanceRecorder::new(session_dir.join("metrics"))?;
     let mut settings = UserSettings::default();
     settings.locale = options.locale;
@@ -362,6 +392,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         exercise_record_start: options.exercise_record_start,
         exercise_record_success: options.exercise_record_success,
         exercise_library_format: options.exercise_library_format,
+        exercise_library_search_selection: options.exercise_library_search_selection,
         exercise_library_single_delete: options.exercise_library_single_delete,
         library_remove_paths,
         exercise_pin_appearance: options.exercise_pin_appearance,
@@ -415,7 +446,10 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     input_worker
         .join()
         .map_err(|_| io::Error::other("settings input acceptance worker panicked"))?;
-    if options.exercise_library_format || options.exercise_library_single_delete {
+    if options.exercise_library_format
+        || options.exercise_library_search_selection
+        || options.exercise_library_single_delete
+    {
         remove_acceptance_history_root(&history_dir)?;
     }
     application_result?;
@@ -447,6 +481,26 @@ fn create_single_delete_fixtures(
         .map(|entry| entry.path.clone())
         .ok_or_else(|| io::Error::other("single-delete fixture has no neighboring entry"))?;
     Ok((target, neighbor))
+}
+
+#[cfg(windows)]
+/// Seeds source- and filename-distinct rows for real Library filter, search, and selection input.
+fn create_library_search_fixtures(
+    history: &mut ScreenshotHistory,
+    root: &std::path::Path,
+) -> io::Result<()> {
+    let fixtures = [
+        ("library-needle-only.png", HistorySource::Selection),
+        ("library-selection-other.png", HistorySource::Selection),
+        ("library-scroll-other.png", HistorySource::Scrolling),
+    ];
+    for (index, (name, source)) in fixtures.into_iter().enumerate() {
+        let path = root.join(name);
+        acceptance_fixture_frame(index).save_png(&path)?;
+        history.record_with_source(path, source)?;
+        thread::sleep(Duration::from_millis(5));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -527,6 +581,7 @@ mod tests {
         assert!(!options.exercise_record_start);
         assert!(!options.exercise_record_success);
         assert!(!options.exercise_library_format);
+        assert!(!options.exercise_library_search_selection);
         assert!(!options.exercise_library_single_delete);
         assert!(!options.exercise_pin_appearance);
         let options = Options::parse_args(
@@ -588,6 +643,31 @@ mod tests {
             )
             .unwrap()
             .exercise_library_single_delete
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-search-selection"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
+                ]
+                .into_iter()
+            )
+            .unwrap()
+            .exercise_library_search_selection
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-search-selection"),
+                ]
+                .into_iter()
+            )
+            .is_err()
         );
         assert!(
             Options::parse_args(

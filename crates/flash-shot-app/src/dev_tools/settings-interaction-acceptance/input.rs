@@ -10,14 +10,18 @@ use std::{
 
 use super::native::{
     CursorRestore, NativeWindow, WindowZOrderRestore, capture_step,
-    click_library_cancel_single_remove, click_library_confirm_single_remove, click_library_format,
-    click_library_remove, click_navigation_item, click_record_idle_toggle, click_record_support,
-    click_record_toggle, click_system_language, click_system_theme, click_update_action,
-    ensure_input_idle, focus_window, send_key, snapshot, visible_window,
+    click_library_cancel_single_remove, click_library_clear_search, click_library_clear_selection,
+    click_library_confirm_single_remove, click_library_filter_all, click_library_filter_selection,
+    click_library_format, click_library_remove, click_library_search,
+    click_library_select_all_filtered, click_navigation_item, click_record_idle_toggle,
+    click_record_support, click_record_toggle, click_system_language, click_system_theme,
+    click_update_action, ensure_input_idle, focus_window, send_key, send_unicode_text, snapshot,
+    visible_window,
 };
 use super::{
-    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, LibrarySingleDeleteReport,
-    PinAppearanceReport, RecordingSuccessReport, Report, StepReport, WindowBounds,
+    ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, LibrarySearchSelectionReport,
+    LibrarySingleDeleteReport, PinAppearanceReport, RecordingSuccessReport, Report, StepReport,
+    WindowBounds,
 };
 use flash_shot::{
     SettingsInteractionAcceptanceCommand, SettingsInteractionState,
@@ -39,6 +43,7 @@ pub(super) struct WorkerOptions {
     pub(super) exercise_record_start: bool,
     pub(super) exercise_record_success: bool,
     pub(super) exercise_library_format: bool,
+    pub(super) exercise_library_search_selection: bool,
     pub(super) exercise_library_single_delete: bool,
     pub(super) library_remove_paths: Option<(PathBuf, PathBuf)>,
     pub(super) exercise_pin_appearance: bool,
@@ -524,6 +529,13 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             screenshot: after_screenshot,
         });
     }
+    let library_search_selection = if options.exercise_library_search_selection {
+        Some(exercise_library_search_selection(
+            &options, window, compact,
+        )?)
+    } else {
+        None
+    };
     let library_single_delete = if options.exercise_library_single_delete {
         Some(exercise_library_single_delete(&options, window, compact)?)
     } else {
@@ -544,9 +556,12 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             || options.exercise_record_start
             || options.exercise_record_success
             || options.exercise_library_format
+            || options.exercise_library_search_selection
             || options.exercise_library_single_delete
         {
-            if options.exercise_library_single_delete {
+            if options.exercise_library_search_selection {
+                6
+            } else if options.exercise_library_single_delete {
                 5
             } else if options.exercise_record_success {
                 3
@@ -571,6 +586,16 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
                     && report.target_removed
                     && report.neighbor_preserved
                     && report.remaining_entries == 1
+            })
+            && library_search_selection.as_ref().is_none_or(|report| {
+                report.initial_entries == 3
+                    && report.selection_filter_entries == 2
+                    && report.query_entries == 1
+                    && report.selected_after_query == 1
+                    && report.entries_after_clearing_query == 2
+                    && report.selection_preserved_after_clearing_query
+                    && report.selection_cleared
+                    && report.all_filter_entries == 3
             })
             && cursor_restored
             && input_released
@@ -597,6 +622,7 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
         keyboard_steps,
         action_steps,
         recording_success,
+        library_search_selection,
         library_single_delete,
         pin_appearance,
         cleanup: CleanupReport {
@@ -618,6 +644,141 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     } else {
         Err(io::Error::other("one or more settings input steps failed").into())
     }
+}
+
+#[cfg(windows)]
+/// Exercises source filtering, filename search, selection, and the matching clear recovery action.
+fn exercise_library_search_selection(
+    options: &WorkerOptions,
+    window: NativeWindow,
+    compact: bool,
+) -> io::Result<LibrarySearchSelectionReport> {
+    focus_window(window)?;
+    click_navigation_item(window, compact, 1)?;
+    let initial = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 3
+            && state.history_filtered_entry_count == 3
+            && state.history_filter == "all"
+            && state.history_search_query.is_empty()
+    })?;
+    thread::sleep(options.settle);
+    let mut screenshots = vec![capture_step(
+        &window,
+        &options.output_dir,
+        "library-search-before",
+    )?];
+
+    focus_window(window)?;
+    click_library_filter_selection(window)?;
+    let filtered = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_filter == "selections"
+            && state.history_filtered_entry_count == 2
+    })?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &window,
+        &options.output_dir,
+        "library-search-source-filter",
+    )?);
+
+    focus_window(window)?;
+    click_library_search(window)?;
+    wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library" && state.history_search_active
+    })?;
+    thread::sleep(INPUT_SETTLE_DELAY);
+    send_unicode_text(window, "needle")?;
+    thread::sleep(INPUT_SETTLE_DELAY);
+    screenshots.push(capture_step(
+        &window,
+        &options.output_dir,
+        "library-search-input",
+    )?);
+    let searched = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_filter == "selections"
+            && state.history_search_query == "needle"
+            && state.history_filtered_entry_count == 1
+    })?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &window,
+        &options.output_dir,
+        "library-search-query",
+    )?);
+
+    focus_window(window)?;
+    click_library_select_all_filtered(window)?;
+    let selected = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_selected_count == 1
+            && state.history_search_query == "needle"
+            && state.history_filtered_entry_count == 1
+    })?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &window,
+        &options.output_dir,
+        "library-search-selected",
+    )?);
+
+    focus_window(window)?;
+    click_library_clear_search(window)?;
+    let search_cleared = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_filter == "selections"
+            && state.history_search_query.is_empty()
+            && state.history_filtered_entry_count == 2
+            && state.history_selected_count == 1
+    })?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &window,
+        &options.output_dir,
+        "library-search-cleared",
+    )?);
+
+    focus_window(window)?;
+    click_library_clear_selection(window)?;
+    let selection_cleared = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_selected_count == 0
+            && state.status == options.locale.text(UiText::HistorySelectionCleared)
+    })?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &window,
+        &options.output_dir,
+        "library-search-selection-cleared",
+    )?);
+
+    focus_window(window)?;
+    click_library_filter_all(window)?;
+    let all_filter = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_filter == "all"
+            && state.history_filtered_entry_count == 3
+    })?;
+    thread::sleep(options.settle);
+    screenshots.push(capture_step(
+        &window,
+        &options.output_dir,
+        "library-search-all-restored",
+    )?);
+
+    Ok(LibrarySearchSelectionReport {
+        initial_entries: initial.history_entry_count,
+        selection_filter_entries: filtered.history_filtered_entry_count,
+        query_entries: searched.history_filtered_entry_count,
+        selected_after_query: selected.history_selected_count,
+        entries_after_clearing_query: search_cleared.history_filtered_entry_count,
+        selection_preserved_after_clearing_query: search_cleared.history_selected_count == 1,
+        selection_cleared: selection_cleared.history_selected_count == 0,
+        all_filter_entries: all_filter.history_filtered_entry_count,
+        screenshots,
+    })
 }
 
 #[cfg(windows)]
@@ -727,10 +888,15 @@ fn wait_for_settings_state(
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "settings state did not reach the expected lifecycle: {} (section={}, entries={}, clear_confirmation={}, clear_scope={}, pinned_window_count={}, pinned_appearances={})",
+                    "settings state did not reach the expected lifecycle: {} (section={}, entries={}, filtered_entries={}, selected={}, filter={}, query={:?}, search_active={}, clear_confirmation={}, clear_scope={}, pinned_window_count={}, pinned_appearances={})",
                     state.status,
                     state.section,
                     state.history_entry_count,
+                    state.history_filtered_entry_count,
+                    state.history_selected_count,
+                    state.history_filter,
+                    state.history_search_query,
+                    state.history_search_active,
                     state.history_clear_confirmation,
                     state.history_clear_scope,
                     state.pinned_window_count,
