@@ -13,15 +13,15 @@ use super::native::{
     click_library_cancel_single_remove, click_library_clear_search, click_library_clear_selection,
     click_library_confirm_single_remove, click_library_copy, click_library_filter_all,
     click_library_filter_selection, click_library_format, click_library_open, click_library_remove,
-    click_library_search, click_library_select_all_filtered, click_navigation_item,
-    click_record_idle_toggle, click_record_support, click_record_toggle, click_system_language,
-    click_system_theme, click_update_action, ensure_input_idle, focus_window, send_key,
-    send_unicode_text, snapshot, visible_window, visible_window_except,
+    click_library_retention, click_library_search, click_library_select_all_filtered,
+    click_navigation_item, click_record_idle_toggle, click_record_support, click_record_toggle,
+    click_system_language, click_system_theme, click_update_action, ensure_input_idle,
+    focus_window, send_key, send_unicode_text, snapshot, visible_window, visible_window_except,
 };
 use super::{
     ActionStepReport, CleanupReport, INPUT_SETTLE_DELAY, LibraryOpenCopyReport,
-    LibrarySearchSelectionReport, LibrarySingleDeleteReport, PinAppearanceReport,
-    RecordingSuccessReport, Report, StepReport, WindowBounds,
+    LibraryRetentionReport, LibrarySearchSelectionReport, LibrarySingleDeleteReport,
+    PinAppearanceReport, RecordingSuccessReport, Report, StepReport, WindowBounds,
 };
 use flash_shot::{
     SettingsInteractionAcceptanceCommand, SettingsInteractionState,
@@ -47,8 +47,10 @@ pub(super) struct WorkerOptions {
     pub(super) exercise_library_search_selection: bool,
     pub(super) exercise_library_single_delete: bool,
     pub(super) exercise_library_open_copy: bool,
+    pub(super) exercise_library_retention: bool,
     pub(super) library_remove_paths: Option<(PathBuf, PathBuf)>,
     pub(super) library_open_path: Option<PathBuf>,
+    pub(super) library_retention_paths: Option<Vec<PathBuf>>,
     pub(super) exercise_pin_appearance: bool,
     pub(super) commands: async_channel::Sender<SettingsInteractionAcceptanceCommand>,
 }
@@ -550,6 +552,11 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
     } else {
         None
     };
+    let library_retention = if options.exercise_library_retention {
+        Some(exercise_library_retention(&options, window, compact)?)
+    } else {
+        None
+    };
     let cursor_restored = cursor_restore.restore()?;
     let input_released = [
         VK_ESCAPE, VK_LBUTTON, VK_DOWN, VK_F4, VK_MENU, VK_RETURN, VK_RIGHT, VK_SPACE,
@@ -568,8 +575,11 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
             || options.exercise_library_search_selection
             || options.exercise_library_single_delete
             || options.exercise_library_open_copy
+            || options.exercise_library_retention
         {
-            if options.exercise_library_open_copy {
+            if options.exercise_library_retention {
+                8
+            } else if options.exercise_library_open_copy {
                 7
             } else if options.exercise_library_search_selection {
                 6
@@ -622,6 +632,16 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
                     && report.editor_window_closed
                     && report.history_file_preserved
             })
+            && library_retention.as_ref().is_none_or(|report| {
+                report.initial_entries == 12
+                    && report.initial_limit == 30
+                    && report.applied_limits == [100, 300, 10]
+                    && report.entry_counts_after_updates == [12, 12, 10]
+                    && report.oldest_entries_removed
+                    && report.newest_entries_preserved
+                    && report.final_limit == 10
+                    && report.final_entries == 10
+            })
             && cursor_restored
             && input_released
             && window_demoted
@@ -650,6 +670,7 @@ pub(super) fn run_input_probe(options: WorkerOptions) -> Result<(), Box<dyn std:
         library_search_selection,
         library_single_delete,
         library_open_copy,
+        library_retention,
         pin_appearance,
         cleanup: CleanupReport {
             cursor_restored,
@@ -1005,6 +1026,83 @@ fn exercise_library_open_copy(
 }
 
 #[cfg(windows)]
+/// Changes retention through the real Library control and verifies oldest-file pruning.
+fn exercise_library_retention(
+    options: &WorkerOptions,
+    window: NativeWindow,
+    compact: bool,
+) -> io::Result<LibraryRetentionReport> {
+    let paths = options
+        .library_retention_paths
+        .as_ref()
+        .ok_or_else(|| io::Error::other("Library retention fixture paths were not provided"))?;
+    if paths.len() != 12 {
+        return Err(io::Error::other(format!(
+            "Library retention requires 12 fixture images, received {}",
+            paths.len()
+        )));
+    }
+
+    focus_window(window)?;
+    click_navigation_item(window, compact, 1)?;
+    let initial = wait_for_settings_state(&options.commands, options.timeout, |state| {
+        state.section == "library"
+            && state.history_entry_count == 12
+            && state.history_limit == 30
+            && state.history_retention_target.is_none()
+    })?;
+    thread::sleep(options.settle);
+    let mut screenshots = vec![capture_step(
+        &window,
+        &options.output_dir,
+        "library-retention-before",
+    )?];
+    let mut applied_limits = Vec::with_capacity(3);
+    let mut entry_counts_after_updates = Vec::with_capacity(3);
+
+    for target in [100_u16, 300, 10] {
+        focus_window(window)?;
+        click_library_retention(window, options.locale)?;
+        let expected_entries = if target == 10 { 10 } else { 12 };
+        let expected_status = options.locale.format_template(
+            UiText::HistoryRetentionUpdated,
+            &[("count", &target.to_string())],
+        );
+        let updated = wait_for_settings_state(&options.commands, options.timeout, |state| {
+            state.section == "library"
+                && state.history_limit == target
+                && state.history_retention_target.is_none()
+                && state.history_entry_count == expected_entries
+                && state.status == expected_status
+        })?;
+        thread::sleep(options.settle);
+        screenshots.push(capture_step(
+            &window,
+            &options.output_dir,
+            &format!("library-retention-{target}"),
+        )?);
+        applied_limits.push(updated.history_limit);
+        entry_counts_after_updates.push(updated.history_entry_count);
+    }
+
+    let oldest_entries_removed = paths.iter().take(2).all(|path| !path.exists());
+    let newest_entries_preserved = paths.iter().skip(2).all(|path| path.is_file());
+    let final_state =
+        snapshot(&options.commands).map_err(|error| io::Error::other(error.to_string()))?;
+    Ok(LibraryRetentionReport {
+        initial_entries: initial.history_entry_count,
+        initial_limit: initial.history_limit,
+        applied_limits,
+        entry_counts_after_updates,
+        oldest_entries_removed,
+        newest_entries_preserved,
+        final_limit: final_state.history_limit,
+        final_entries: final_state.history_entry_count,
+        screenshots,
+    })
+}
+
+#[cfg(windows)]
 /// Polls the production settings snapshot until the requested lifecycle predicate becomes true.
 fn wait_for_settings_state(
     commands: &async_channel::Sender<SettingsInteractionAcceptanceCommand>,
@@ -1021,7 +1119,7 @@ fn wait_for_settings_state(
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "settings state did not reach the expected lifecycle: {} (section={}, entries={}, filtered_entries={}, selected={}, filter={}, query={:?}, search_active={}, clear_confirmation={}, clear_scope={}, session={}, selection={:?}, overlays={}, pinned_window_count={}, pinned_appearances={})",
+                    "settings state did not reach the expected lifecycle: {} (section={}, entries={}, filtered_entries={}, selected={}, filter={}, query={:?}, search_active={}, history_limit={}, retention_target={:?}, clear_confirmation={}, clear_scope={}, session={}, selection={:?}, overlays={}, pinned_window_count={}, pinned_appearances={})",
                     state.status,
                     state.section,
                     state.history_entry_count,
@@ -1030,6 +1128,8 @@ fn wait_for_settings_state(
                     state.history_filter,
                     state.history_search_query,
                     state.history_search_active,
+                    state.history_limit,
+                    state.history_retention_target,
                     state.history_clear_confirmation,
                     state.history_clear_scope,
                     state.capture_session_state,

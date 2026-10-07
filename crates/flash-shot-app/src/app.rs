@@ -1242,6 +1242,8 @@ impl FlashShotApp {
                                 history_filter: this.history_filter.label().to_ascii_lowercase(),
                                 history_search_query,
                                 history_search_active: this.history_search_is_active(),
+                                history_limit: this.settings.history_limit,
+                                history_retention_target: this.history_retention_target,
                                 history_clear_confirmation: this.history_clear_confirmation,
                                 history_clear_scope: match this.history_clear_scope {
                                     HistoryClearScope::All => "all",

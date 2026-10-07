@@ -49,6 +49,7 @@ struct Options {
     exercise_library_search_selection: bool,
     exercise_library_single_delete: bool,
     exercise_library_open_copy: bool,
+    exercise_library_retention: bool,
     exercise_pin_appearance: bool,
     output_dir: PathBuf,
     width: i32,
@@ -79,6 +80,7 @@ struct Report {
     library_search_selection: Option<LibrarySearchSelectionReport>,
     library_single_delete: Option<LibrarySingleDeleteReport>,
     library_open_copy: Option<LibraryOpenCopyReport>,
+    library_retention: Option<LibraryRetentionReport>,
     pin_appearance: Option<PinAppearanceReport>,
     cleanup: CleanupReport,
 }
@@ -177,6 +179,20 @@ struct LibraryOpenCopyReport {
 
 #[cfg(windows)]
 #[derive(Serialize)]
+struct LibraryRetentionReport {
+    initial_entries: usize,
+    initial_limit: u16,
+    applied_limits: Vec<u16>,
+    entry_counts_after_updates: Vec<usize>,
+    oldest_entries_removed: bool,
+    newest_entries_preserved: bool,
+    final_limit: u16,
+    final_entries: usize,
+    screenshots: Vec<String>,
+}
+
+#[cfg(windows)]
+#[derive(Serialize)]
 struct PinAppearanceReport {
     initial_locale: String,
     initial_theme: String,
@@ -216,6 +232,7 @@ impl Options {
             exercise_library_search_selection: false,
             exercise_library_single_delete: false,
             exercise_library_open_copy: false,
+            exercise_library_retention: false,
             exercise_pin_appearance: false,
             output_dir: PathBuf::from(DEFAULT_OUTPUT_DIR),
             width: 520,
@@ -241,6 +258,7 @@ impl Options {
                 }
                 "--exercise-library-single-delete" => options.exercise_library_single_delete = true,
                 "--exercise-library-open-copy" => options.exercise_library_open_copy = true,
+                "--exercise-library-retention" => options.exercise_library_retention = true,
                 "--exercise-pin-appearance" => options.exercise_pin_appearance = true,
                 "--output-dir" => {
                     options.output_dir = args.next().map(PathBuf::from).ok_or_else(usage)?;
@@ -271,7 +289,8 @@ impl Options {
         }
         if (options.exercise_library_single_delete
             || options.exercise_library_search_selection
-            || options.exercise_library_open_copy)
+            || options.exercise_library_open_copy
+            || options.exercise_library_retention)
             && (options.width < 900 || options.height < 1_000)
         {
             return Err(
@@ -283,6 +302,7 @@ impl Options {
             options.exercise_library_single_delete,
             options.exercise_library_search_selection,
             options.exercise_library_open_copy,
+            options.exercise_library_retention,
         ]
         .into_iter()
         .filter(|enabled| *enabled)
@@ -295,7 +315,7 @@ impl Options {
 }
 
 fn usage() -> String {
-    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-search-selection] [--exercise-library-single-delete] [--exercise-library-open-copy] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: settings-interaction-acceptance --allow-input [--exercise-app-update] [--exercise-record-support] [--exercise-record-start] [--exercise-record-success] [--exercise-library-format] [--exercise-library-search-selection] [--exercise-library-single-delete] [--exercise-library-open-copy] [--exercise-library-retention] [--exercise-pin-appearance] [--output-dir <path>] [--width <px>] [--height <px>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 fn required_value(value: Option<std::ffi::OsString>, name: &str) -> Result<String, String> {
@@ -387,6 +407,14 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let library_retention_paths = if options.exercise_library_retention {
+        Some(create_library_retention_fixtures(
+            &mut history,
+            &history_dir,
+        )?)
+    } else {
+        None
+    };
     if options.exercise_library_search_selection {
         create_library_search_fixtures(&mut history, &history_dir)?;
     }
@@ -428,8 +456,10 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         exercise_library_search_selection: options.exercise_library_search_selection,
         exercise_library_single_delete: options.exercise_library_single_delete,
         exercise_library_open_copy: options.exercise_library_open_copy,
+        exercise_library_retention: options.exercise_library_retention,
         library_remove_paths,
         library_open_path,
+        library_retention_paths,
         exercise_pin_appearance: options.exercise_pin_appearance,
         commands: command_tx,
     };
@@ -485,6 +515,7 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         || options.exercise_library_search_selection
         || options.exercise_library_single_delete
         || options.exercise_library_open_copy
+        || options.exercise_library_retention
     {
         remove_acceptance_history_root(&history_dir)?;
     }
@@ -549,6 +580,23 @@ fn create_library_open_fixture(
     acceptance_fixture_frame(0).save_png(&path)?;
     history.record_with_source(path.clone(), HistorySource::Selection)?;
     Ok(path)
+}
+
+#[cfg(windows)]
+/// Seeds ordered managed captures so retention proves which files it prunes and preserves.
+fn create_library_retention_fixtures(
+    history: &mut ScreenshotHistory,
+    root: &std::path::Path,
+) -> io::Result<Vec<PathBuf>> {
+    let mut paths = Vec::with_capacity(12);
+    for index in 0..12 {
+        let path = root.join(format!("library-retention-{index:02}.png"));
+        acceptance_fixture_frame(index).save_png(&path)?;
+        history.record_with_source(path.clone(), HistorySource::Selection)?;
+        paths.push(path);
+        thread::sleep(Duration::from_millis(5));
+    }
+    Ok(paths)
 }
 
 #[cfg(windows)]
@@ -638,6 +686,7 @@ mod tests {
         assert!(!options.exercise_library_search_selection);
         assert!(!options.exercise_library_single_delete);
         assert!(!options.exercise_library_open_copy);
+        assert!(!options.exercise_library_retention);
         assert!(!options.exercise_pin_appearance);
         let options = Options::parse_args(
             [
@@ -718,6 +767,21 @@ mod tests {
             Options::parse_args(
                 [
                     OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-retention"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
+                ]
+                .into_iter()
+            )
+            .unwrap()
+            .exercise_library_retention
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
                     OsString::from("--exercise-library-search-selection"),
                     OsString::from("--width"),
                     OsString::from("980"),
@@ -734,6 +798,21 @@ mod tests {
                 [
                     OsString::from("--allow-input"),
                     OsString::from("--exercise-library-open-copy"),
+                ]
+                .into_iter()
+            )
+            .is_err()
+        );
+        assert!(
+            Options::parse_args(
+                [
+                    OsString::from("--allow-input"),
+                    OsString::from("--exercise-library-retention"),
+                    OsString::from("--exercise-library-open-copy"),
+                    OsString::from("--width"),
+                    OsString::from("980"),
+                    OsString::from("--height"),
+                    OsString::from("1400"),
                 ]
                 .into_iter()
             )

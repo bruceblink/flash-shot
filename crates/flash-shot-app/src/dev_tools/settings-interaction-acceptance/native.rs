@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use flash_shot::{SettingsInteractionAcceptanceCommand, SettingsInteractionState};
+use flash_shot::{SettingsInteractionAcceptanceCommand, SettingsInteractionState, i18n::Locale};
 
 #[cfg(windows)]
 /// Holds one borrowed top-level HWND plus its measured screen bounds and monitor DPI.
@@ -332,6 +332,16 @@ pub(super) fn click_library_copy(window: NativeWindow) -> io::Result<()> {
 /// Opens the first visible retained image using its production Library row action.
 pub(super) fn click_library_open(window: NativeWindow) -> io::Result<()> {
     click_library_row_action(window, 300, 880)
+}
+
+#[cfg(windows)]
+/// Advances the Library's persistent capture-retention setting in the wide acceptance layout.
+pub(super) fn click_library_retention(window: NativeWindow, locale: Locale) -> io::Result<()> {
+    let logical_x = match locale {
+        Locale::English => 740,
+        Locale::SimplifiedChinese => 640,
+    };
+    click_library_control(window, logical_x, 510)
 }
 
 #[cfg(windows)]

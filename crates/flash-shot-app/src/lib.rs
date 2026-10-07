@@ -228,6 +228,8 @@ pub struct SettingsInteractionState {
     pub history_filter: String,
     pub history_search_query: String,
     pub history_search_active: bool,
+    pub history_limit: u16,
+    pub history_retention_target: Option<u16>,
     pub history_clear_confirmation: bool,
     pub history_clear_scope: String,
     pub capture_session_state: String,
