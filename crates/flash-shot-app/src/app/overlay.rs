@@ -59,6 +59,9 @@ use overlay_layout::*;
 #[path = "overlay_controls.rs"]
 mod overlay_controls;
 use overlay_controls::*;
+#[path = "overlay_input.rs"]
+mod overlay_input;
+use overlay_input::*;
 
 const OVERLAY_EDGE_INSET: f32 = ThemeMetrics::OVERLAY_EDGE_INSET;
 // Keep fallback controls above a scaled Windows taskbar when the borderless
@@ -161,85 +164,6 @@ pub(super) struct CaptureOverlay {
     topmost_requested: bool,
     annotation_arrange_actions_for: Option<AnnotationId>,
     _app_observation: Subscription,
-}
-
-/// Captures the newest pointer sample that arrived before one rendered frame.
-///
-/// A new sample replaces the previous one while a callback is already scheduled. The generation
-/// makes an old callback harmless after a new gesture or mouse-up discards its pending sample.
-/// `push` returns a generation exactly once per pending frame, which is the testable scheduling
-/// contract used by the real GPUI `on_mouse_move` listener below.
-#[derive(Debug)]
-struct FrameInputBatch<T> {
-    latest: Option<T>,
-    generation: u64,
-    scheduled: bool,
-}
-
-impl<T> Default for FrameInputBatch<T> {
-    fn default() -> Self {
-        Self {
-            latest: None,
-            generation: 0,
-            scheduled: false,
-        }
-    }
-}
-
-impl<T> FrameInputBatch<T> {
-    /// Stores the latest input and returns a generation only when this frame needs a new callback.
-    fn push(&mut self, input: T) -> Option<u64> {
-        self.latest = Some(input);
-        if self.scheduled {
-            None
-        } else {
-            self.scheduled = true;
-            Some(self.generation)
-        }
-    }
-
-    /// Takes the latest sample only when the callback still belongs to the active gesture.
-    fn take(&mut self, generation: u64) -> Option<T> {
-        if self.scheduled && self.generation == generation {
-            self.scheduled = false;
-            self.latest.take()
-        } else {
-            None
-        }
-    }
-
-    /// Cancels an outstanding frame callback before a new gesture or final mouse position wins.
-    fn invalidate(&mut self) {
-        self.latest = None;
-        self.scheduled = false;
-        self.generation = self.generation.wrapping_add(1);
-    }
-}
-
-/// Contains the pointer state that must stay internally consistent when one frame applies it.
-#[derive(Clone, Copy, Debug)]
-struct PendingSelectionUpdate {
-    operation_generation: u64,
-    hover_point: Option<PhysicalPoint>,
-    dragging_point: Option<PhysicalPoint>,
-    preserve_aspect_ratio: bool,
-    resize_from_center: bool,
-}
-
-/// Retains the pointer and toolbar geometry captured at the start of a manual toolbar move.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ToolbarDragGesture {
-    pointer_start: ViewPoint,
-    toolbar_start: ActionToolbarLayout,
-    selection: PhysicalRect,
-}
-
-/// Stores a manually chosen toolbar origin until the selection changes.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ManualToolbarPosition {
-    selection: PhysicalRect,
-    left: f32,
-    top: f32,
 }
 
 impl CaptureOverlay {
