@@ -1139,6 +1139,29 @@ impl FlashShotApp {
                                 // Report the committed session rectangle used by Save, Pin, and
                                 // Copy, never an in-flight mouse-move preview awaiting mouse-up.
                                 selection: this.session.selection(),
+                                inspection_target_kind: this.inspection_target.map(|target| {
+                                    match target.kind {
+                                        crate::platform::window_inspector::InspectionKind::Control => {
+                                            "control"
+                                        }
+                                        crate::platform::window_inspector::InspectionKind::Window => {
+                                            "window"
+                                        }
+                                    }
+                                    .to_owned()
+                                }),
+                                inspection_target_bounds: this
+                                    .inspection_target
+                                    .map(|target| target.bounds),
+                                smart_target_preference: match this.smart_target_kind {
+                                    crate::platform::window_inspector::InspectionKind::Control => {
+                                        "control"
+                                    }
+                                    crate::platform::window_inspector::InspectionKind::Window => {
+                                        "window"
+                                    }
+                                }
+                                .to_owned(),
                                 annotations,
                                 selection_copy_active: this.selection_copy_is_active(),
                                 clipboard_write_active: this.clipboard_write_lease.is_some(),

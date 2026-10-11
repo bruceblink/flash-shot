@@ -59,6 +59,9 @@ mod recording_ui;
 #[path = "overlay-interaction-acceptance/scroll_ui.rs"]
 mod scroll_ui;
 #[cfg(windows)]
+#[path = "overlay-interaction-acceptance/smart_target_ui.rs"]
+mod smart_target_ui;
+#[cfg(windows)]
 use recording_probe::{extract_video_frame, extract_video_frame_series, probe_media};
 
 #[cfg(windows)]
@@ -105,14 +108,14 @@ use windows_sys::Win32::{
             KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
             MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
             VK_A, VK_C, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_R, VK_RETURN,
-            VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE,
+            VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE, VK_W,
         },
         WindowsAndMessaging::{
-            BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
-            DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows, FindWindowW,
-            GUITHREADINFO, GW_OWNER, GWLP_USERDATA, GetClassNameW, GetClientRect, GetCursorPos,
-            GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindow,
-            GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+            BS_PUSHBUTTON, BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW,
+            DefWindowProcW, DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows,
+            FindWindowW, GUITHREADINFO, GW_OWNER, GWLP_USERDATA, GetClassNameW, GetClientRect,
+            GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics,
+            GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
             GetWindowThreadProcessId, HTCAPTION, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IsChild,
             IsIconic, IsWindow, IsWindowVisible, MOUSEWHEEL_ROUTING_MOUSE_POS, MSG, PostMessageW,
             PostQuitMessage, RegisterClassW, SM_CMONITORS, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
@@ -120,8 +123,8 @@ use windows_sys::Win32::{
             SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
             SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
             ShowWindow, SystemParametersInfoW, TranslateMessage, WM_CLOSE, WM_DESTROY,
-            WM_ERASEBKGND, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE,
-            WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE, WindowFromPoint,
+            WM_ERASEBKGND, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_CHILD,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE, WindowFromPoint,
         },
     },
 };
@@ -154,6 +157,7 @@ const PAUSE_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
 const DESKTOP_QUIESCENCE_SETTLE: Duration = Duration::from_millis(300);
 const MAX_RECORDING_GRID_MAE: f64 = 18.0;
 const WINDOW_TARGET_CHILD_MODE: &str = "--window-target-child";
+const SMART_TARGET_CHILD_MODE: &str = "--smart-target-child";
 const SCROLL_TARGET_CHILD_MODE: &str = "--scroll-target-child";
 const SCROLL_FIXTURE_OFFSET_MESSAGE: u32 = 0x0400 + 0x53;
 const CLIPBOARD_CONSUMER_CHILD_MODE: &str = "--clipboard-consumer-child";
@@ -250,6 +254,7 @@ enum CaptureScenarioOption {
     SaveFailureRetry,
     SavePermissionRetry,
     SaveDialogPermissionRetry,
+    SmartTarget,
 }
 
 impl CaptureScenarioOption {
@@ -272,6 +277,7 @@ impl CaptureScenarioOption {
             Self::SaveFailureRetry => "capture_save_failure_retry",
             Self::SavePermissionRetry => "capture_save_permission_retry",
             Self::SaveDialogPermissionRetry => "capture_save_dialog_permission_retry",
+            Self::SmartTarget => "capture_smart_target",
         }
     }
 
@@ -292,6 +298,7 @@ impl CaptureScenarioOption {
                 | Self::SaveFailureRetry
                 | Self::SavePermissionRetry
                 | Self::SaveDialogPermissionRetry
+                | Self::SmartTarget
         )
     }
 }
@@ -556,9 +563,10 @@ impl Options {
                         "save-dialog-permission-retry" => {
                             CaptureScenarioOption::SaveDialogPermissionRetry
                         }
+                        "smart-target" => CaptureScenarioOption::SmartTarget,
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'recognition', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', or 'save-dialog-permission-retry'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'recognition', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', 'save-dialog-permission-retry', or 'smart-target'"
                     .to_owned(),
                             );
                         }
@@ -740,7 +748,7 @@ fn parse_theme(value: Option<OsString>) -> Result<ThemeMode, String> {
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|recognition|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|recognition|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry|smart-target> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -2371,6 +2379,8 @@ struct AcceptanceReport {
     save_permission_retry: Option<SavePermissionRetryReport>,
     save_dialog_permission_retry: Option<SaveDialogPermissionRetryReport>,
     recording_failure_retry: Option<RecordingFailureRetryReport>,
+    #[cfg(windows)]
+    smart_target: Option<smart_target_ui::SmartTargetReport>,
     error: Option<String>,
 }
 
@@ -3174,6 +3184,16 @@ struct RecordingWindowFixture {
 }
 
 #[cfg(windows)]
+struct SmartTargetFixture {
+    child: process::Child,
+    process_group: ProcessGroup,
+    process_id: u32,
+    target: HWND,
+    bounds: PhysicalRect,
+    stopped: bool,
+}
+
+#[cfg(windows)]
 struct ScrollWindowFixture {
     child: process::Child,
     process_group: ProcessGroup,
@@ -3324,6 +3344,15 @@ pub(super) fn entrypoint() {
         return;
     }
     #[cfg(windows)]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(SMART_TARGET_CHILD_MODE))
+    {
+        if let Err(error) = run_smart_target_fixture_child(std::env::args_os().skip(2)) {
+            eprintln!("smart target fixture failed: {error}");
+            process::exit(1);
+        }
+        return;
+    }
+    #[cfg(windows)]
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(SCROLL_TARGET_CHILD_MODE))
     {
         if let Err(error) = run_scroll_fixture_child(std::env::args_os().skip(2)) {
@@ -3453,7 +3482,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::AnnotationRegression
             | CaptureScenarioOption::SaveFailureRetry
             | CaptureScenarioOption::SavePermissionRetry
-            | CaptureScenarioOption::SaveDialogPermissionRetry,
+            | CaptureScenarioOption::SaveDialogPermissionRetry
+            | CaptureScenarioOption::SmartTarget,
         ) => (520.0, 640.0),
     };
 
@@ -3533,8 +3563,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 32 records the
-        // selected locale/theme alongside the deterministic Pins source fixture.
+        // Increment when the machine-readable report shape changes. Schema 33 records the
+        // smart-target preference and resolved control/window bounds alongside the existing
+        // locale, theme, and deterministic fixture fields.
         schema_version: 33,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
@@ -3574,6 +3605,8 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         save_permission_retry: None,
         save_dialog_permission_retry: None,
         recording_failure_retry: None,
+        #[cfg(windows)]
+        smart_target: None,
         error: None,
     }
 }
@@ -3721,6 +3754,93 @@ fn run_recording_window_fixture_child(
         }
     }
     destroy_recording_fixture_windows(&windows);
+    Ok(())
+}
+
+#[cfg(windows)]
+/// Runs one top-level Win32 fixture with a real child button for UI Automation hit testing.
+fn run_smart_target_fixture_child(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
+    let (token, bounds) = parse_recording_window_fixture_arguments(arguments)?;
+    if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(5) {
+            return Err(error);
+        }
+    }
+    LIVE_FIXTURE_WINDOWS.store(0, Ordering::Release);
+    let class_name = wide_null(WINDOW_FIXTURE_CLASS);
+    let instance = unsafe { GetModuleHandleW(ptr::null()) };
+    if instance.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let window_class = WNDCLASSW {
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(recording_fixture_window_proc),
+        hInstance: instance,
+        lpszClassName: class_name.as_ptr(),
+        ..Default::default()
+    };
+    if unsafe { RegisterClassW(&window_class) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(1410) {
+            return Err(error);
+        }
+    }
+    let title = recording_fixture_title(&token, "SmartTarget");
+    let target = create_recording_fixture_window(instance, &class_name, &title, bounds, 1, true)?;
+    let button_class = wide_null("BUTTON");
+    let button_title = wide_null("Smart target control");
+    let button_left = bounds.width() as i32 / 4;
+    let button_top = bounds.height() as i32 / 3;
+    let button_width = (bounds.width() as i32 / 2).max(120);
+    let button_height = (bounds.height() as i32 / 4).max(48);
+    let control = unsafe {
+        CreateWindowExW(
+            0,
+            button_class.as_ptr(),
+            button_title.as_ptr(),
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+            button_left,
+            button_top,
+            button_width,
+            button_height,
+            target,
+            ptr::null_mut(),
+            instance,
+            ptr::null(),
+        )
+    };
+    if control.is_null() {
+        unsafe { DestroyWindow(target) };
+        return Err(io::Error::last_os_error());
+    }
+    set_fixture_window_bounds_topmost(target, bounds, true)?;
+    unsafe {
+        UpdateWindow(control);
+        UpdateWindow(target);
+    }
+
+    let mut message = MSG::default();
+    loop {
+        let result = unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) };
+        if result == -1 {
+            let error = io::Error::last_os_error();
+            if unsafe { IsWindow(target) } != 0 {
+                unsafe { DestroyWindow(target) };
+            }
+            return Err(error);
+        }
+        if result == 0 {
+            break;
+        }
+        unsafe {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    if unsafe { IsWindow(target) } != 0 {
+        unsafe { DestroyWindow(target) };
+    }
     Ok(())
 }
 
@@ -4574,6 +4694,157 @@ impl Drop for RecordingWindowFixture {
 }
 
 #[cfg(windows)]
+impl SmartTargetFixture {
+    /// Starts the external Win32 window and verifies its top-level bounds before input begins.
+    fn launch(bounds: PhysicalRect, timeout: Duration) -> io::Result<Self> {
+        validate_recording_fixture_bounds(bounds)?;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let token = format!("{}-{timestamp}", process::id());
+        let target_title = recording_fixture_title(&token, "SmartTarget");
+        let process_group = ProcessGroup::create()?;
+        let mut child = process::Command::new(std::env::current_exe()?)
+            .arg(SMART_TARGET_CHILD_MODE)
+            .arg(&token)
+            .arg(bounds.left.to_string())
+            .arg(bounds.top.to_string())
+            .arg(bounds.right.to_string())
+            .arg(bounds.bottom.to_string())
+            .stdin(process::Stdio::null())
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::inherit())
+            .spawn()?;
+        if let Err(error) = process_group.assign(&child) {
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "smart target fixture could not join its Job Object ({error}); cleanup={cleanup:?}"
+            )));
+        }
+        let process_id = child.id();
+        let target = match wait_for_smart_target_fixture_window(
+            &mut child,
+            process_id,
+            &target_title,
+            timeout,
+        ) {
+            Ok(target) => target,
+            Err(error) => {
+                let cleanup = terminate_process_group_bounded(
+                    &process_group,
+                    &mut child,
+                    Duration::from_millis(500),
+                );
+                return Err(io::Error::other(format!(
+                    "smart target fixture did not become ready ({error}); cleanup={cleanup:?}"
+                )));
+            }
+        };
+        let observed = external_window_bounds(target, process_id)?;
+        if observed != bounds || unsafe { IsWindowVisible(target) } == 0 {
+            let cleanup = terminate_process_group_bounded(
+                &process_group,
+                &mut child,
+                Duration::from_millis(500),
+            );
+            return Err(io::Error::other(format!(
+                "smart target fixture bounds are {observed:?}, expected {bounds:?}; cleanup={cleanup:?}"
+            )));
+        }
+        Ok(Self {
+            child,
+            process_group,
+            process_id,
+            target,
+            bounds,
+            stopped: false,
+        })
+    }
+
+    fn report(&self) -> io::Result<WindowReport> {
+        let bounds = external_window_bounds(self.target, self.process_id)?;
+        if bounds != self.bounds {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "smart target fixture moved to {bounds:?}, expected {:?}",
+                    self.bounds
+                ),
+            ));
+        }
+        let dpi = unsafe { GetDpiForWindow(self.target) };
+        if dpi == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(WindowReport {
+            handle: self.target as usize,
+            bounds,
+            dpi,
+        })
+    }
+
+    /// The child button is centered in this deterministic portion of the fixture.
+    fn control_point(&self) -> PhysicalPoint {
+        PhysicalPoint {
+            x: self.bounds.left + self.bounds.width() as i32 / 2,
+            y: self.bounds.top + self.bounds.height() as i32 / 2,
+        }
+    }
+
+    /// Reasserts the fixture below the capture surface and above unrelated desktop windows.
+    fn raise_topmost(&self) -> io::Result<()> {
+        set_fixture_window_bounds_topmost(self.target, self.bounds, true)
+    }
+
+    fn shutdown(&mut self, timeout: Duration) -> io::Result<()> {
+        if self.stopped {
+            return Ok(());
+        }
+        if !self.target.is_null() && unsafe { IsWindow(self.target) } != 0 {
+            unsafe { PostMessageW(self.target, WM_CLOSE, 0, 0) };
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.child.try_wait()?.is_some() {
+                self.stopped = true;
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                let cleanup = terminate_process_group_bounded(
+                    &self.process_group,
+                    &mut self.child,
+                    Duration::from_millis(500),
+                );
+                self.stopped = true;
+                return Err(io::Error::other(format!(
+                    "smart target fixture required forced process cleanup ({cleanup:?})"
+                )));
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SmartTargetFixture {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = terminate_process_group_bounded(
+                &self.process_group,
+                &mut self.child,
+                Duration::from_millis(500),
+            );
+            self.stopped = true;
+        }
+    }
+}
+
+#[cfg(windows)]
 impl ScrollWindowFixture {
     /// Starts the deterministic wheel target in a separate process so the capture area contains
     /// no acceptance-process controls when the production auto-capture hides its own controller.
@@ -5152,6 +5423,38 @@ fn wait_for_scroll_fixture_window(
 }
 
 #[cfg(windows)]
+fn wait_for_smart_target_fixture_window(
+    child: &mut process::Child,
+    process_id: u32,
+    title: &str,
+    timeout: Duration,
+) -> io::Result<HWND> {
+    let wide_title = wide_null(title);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Err(io::Error::other(format!(
+                "smart target fixture exited before its window was ready: {status}"
+            )));
+        }
+        let window = unsafe { FindWindowW(ptr::null(), wide_title.as_ptr()) };
+        if !window.is_null()
+            && unsafe { IsWindowVisible(window) } != 0
+            && external_window_bounds(window, process_id).is_ok()
+        {
+            return Ok(window);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "smart target fixture window did not become ready",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(windows)]
 fn wait_for_recording_fixture_windows(
     child: &mut process::Child,
     process_id: u32,
@@ -5387,6 +5690,7 @@ fn run_interaction_sequence(
         (None, CaptureScenarioOption::RecordingFailureRetry) => {
             recording_ui::execute_failure_retry(context, report)
         }
+        (None, CaptureScenarioOption::SmartTarget) => smart_target_ui::execute(context, report),
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
     let cursor_result = cursor.restore();
@@ -13296,6 +13600,23 @@ fn inject_ctrl_s(expected: *mut c_void) -> io::Result<NativeWindow> {
 }
 
 #[cfg(windows)]
+/// Sends the local `Alt+W` smart-target toggle while preserving the runner's input guards.
+fn inject_alt_w(expected: *mut c_void) -> io::Result<NativeWindow> {
+    let foreground = guard_foreground(expected)?;
+    ensure_input_keys_released(&[(VK_W, "W"), (VK_MENU, "Alt")])?;
+    let inputs = [
+        keyboard_input(VK_MENU, false),
+        keyboard_input(VK_W, false),
+        keyboard_input(VK_W, true),
+        keyboard_input(VK_MENU, true),
+    ];
+    let cleanup = [keyboard_input(VK_W, true), keyboard_input(VK_MENU, true)];
+    send_input_batch_with_cleanup(expected, &inputs, &cleanup)?;
+    wait_for_input_keys_released(&[(VK_W, "W"), (VK_MENU, "Alt")], Duration::from_millis(250))?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
 /// Sends the Pin's production Ctrl+C shortcut from a neutral key state and releases both keys.
 fn inject_ctrl_c(expected: *mut c_void) -> io::Result<NativeWindow> {
     let foreground = guard_foreground(expected)?;
@@ -14867,6 +15188,30 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_smart_target_scenario_without_clipboard_access() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "smart-target",
+        ]))
+        .unwrap();
+
+        assert_eq!(options.capture_scenario, CaptureScenarioOption::SmartTarget);
+        assert_eq!(options.capture_scenario.workflow(), "capture_smart_target");
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(!options.allow_system_clipboard);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "smart-target",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn parser_accepts_save_failure_retry_scenario_without_clipboard_access() {
         let options = Options::parse_from(arguments(&[
             "--allow-input",
@@ -15192,6 +15537,9 @@ mod tests {
         let clean = OverlayInteractionCaptureState {
             session_state: "completed".to_owned(),
             selection: Some(selection),
+            inspection_target_kind: None,
+            inspection_target_bounds: None,
+            smart_target_preference: "control".to_owned(),
             annotations: Vec::new(),
             selection_copy_active: false,
             clipboard_write_active: false,

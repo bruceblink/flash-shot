@@ -103,7 +103,7 @@ mod platform {
         let Some((window, window_bounds)) = window_at(point)? else {
             return Ok(None);
         };
-        if let Ok(Some(control_bounds)) = uia_control_at(window, point)
+        if let Ok(Some(control_bounds)) = uia_control_at(window, point, window_bounds)
             && control_bounds != window_bounds
         {
             return Ok(Some(InspectionTarget {
@@ -311,6 +311,7 @@ mod platform {
     fn uia_control_at(
         window: HWND,
         point: PhysicalPoint,
+        window_bounds: PhysicalRect,
     ) -> windows::core::Result<Option<PhysicalRect>> {
         let _com = ComGuard::initialize()?;
         let bounds = {
@@ -318,38 +319,48 @@ mod platform {
                 unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }?;
             let root = unsafe { automation.ElementFromHandle(window) }?;
             let walker = unsafe { automation.ControlViewWalker() }?;
-            let control = deepest_control_at(&walker, root, point)?;
-            unsafe { control.CurrentBoundingRectangle() }?
+            deepest_control_at(&walker, &root, point, window_bounds)?
         };
-        let bounds = physical_rect(bounds);
         // UI Automation can report a descendant bounding rectangle that no longer matches the
         // queried point after a live window changes. Returning it would make callers highlight a
         // different control, so fall back to the verified top-level window in that case.
-        Ok((bounds.width() > 0 && bounds.height() > 0 && bounds.contains(point)).then_some(bounds))
+        Ok(bounds.filter(|bounds| bounds.contains(point)))
     }
 
     fn deepest_control_at(
         walker: &windows::Win32::UI::Accessibility::IUIAutomationTreeWalker,
-        root: IUIAutomationElement,
+        root: &IUIAutomationElement,
         point: PhysicalPoint,
-    ) -> windows::core::Result<IUIAutomationElement> {
-        let mut current = root;
-        loop {
-            let mut child = unsafe { walker.GetFirstChildElement(&current) }.ok();
-            let mut match_child = None;
-            while let Some(candidate) = child {
-                let bounds = unsafe { candidate.CurrentBoundingRectangle() }?;
-                if physical_rect(bounds).contains(point) {
-                    match_child = Some(candidate);
-                    break;
+        window_bounds: PhysicalRect,
+    ) -> windows::core::Result<Option<PhysicalRect>> {
+        let mut child = unsafe { walker.GetFirstChildElement(root) }.ok();
+        let mut deepest = None;
+        while let Some(candidate) = child {
+            let candidate_bounds = physical_rect(unsafe { candidate.CurrentBoundingRectangle() }?);
+            // A provider can expose a desktop-sized intermediate element. It is still useful
+            // as a traversal branch, but it must never become the selected control itself.
+            if candidate_bounds.contains(point) {
+                if is_descendant_bounds(candidate_bounds, window_bounds) {
+                    deepest = Some(candidate_bounds);
                 }
-                child = unsafe { walker.GetNextSiblingElement(&candidate) }.ok();
+                if let Some(descendant) =
+                    deepest_control_at(walker, &candidate, point, window_bounds)?
+                {
+                    deepest = Some(descendant);
+                }
             }
-            let Some(child) = match_child else {
-                return Ok(current);
-            };
-            current = child;
+            child = unsafe { walker.GetNextSiblingElement(&candidate) }.ok();
         }
+        Ok(deepest)
+    }
+
+    const fn is_descendant_bounds(bounds: PhysicalRect, window_bounds: PhysicalRect) -> bool {
+        bounds.width() > 0
+            && bounds.height() > 0
+            && bounds.left >= window_bounds.left
+            && bounds.top >= window_bounds.top
+            && bounds.right <= window_bounds.right
+            && bounds.bottom <= window_bounds.bottom
     }
 
     struct ComGuard;

@@ -284,6 +284,12 @@ pub struct OverlayInteractionRecordingState {
 pub struct OverlayInteractionCaptureState {
     pub session_state: String,
     pub selection: Option<domain::geometry::PhysicalRect>,
+    /// Current smart-selection result kind (`control` or `window`) under the pointer.
+    pub inspection_target_kind: Option<String>,
+    /// Physical bounds of the current smart-selection result.
+    pub inspection_target_bounds: Option<domain::geometry::PhysicalRect>,
+    /// Session-scoped smart-selection preference used for the next hit test.
+    pub smart_target_preference: String,
     /// Current committed annotations, exposed as stable kind/geometry/content summaries for
     /// native regression probes without leaking the mutable editor document.
     pub annotations: Vec<OverlayInteractionAnnotationState>,
