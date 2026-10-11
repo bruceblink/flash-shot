@@ -3174,7 +3174,11 @@ impl Render for CaptureOverlay {
                                                     primary_action_tooltip(locale, "copy")
                                                 },
                                             ),
-                                            cx.listener(|this, _, _, cx| {
+                                            cx.listener(|this, _, window, cx| {
+                                                // Copy becomes disabled while its background worker runs.
+                                                // Keep keyboard cancellation routed through the overlay
+                                                // instead of leaving focus on the disabled toolbar button.
+                                                this.focus_handle.focus(window, cx);
                                                 let app = this.app.clone();
                                                 cx.defer(move |cx| {
                                                     app.update(cx, |app, cx| app.copy_selection(cx))
