@@ -104,7 +104,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
-| M1 | 按职责拆分 runner 与 overlay | 待开始 | 行为证据稳定后完成至少一个职责拆分且报告、快捷键和用户行为无回归 |
+| M1 | 按职责拆分 runner 与 overlay | 进行中（M1.1 已完成，2026-10-11） | 行为证据稳定后完成至少一个职责拆分且报告、快捷键和用户行为无回归；后续继续拆分 Copy/Pin/Recording 和 overlay 职责 |
 | R1 | 私有 capture-core 提取评估后的最小实现 | 待开始 | 仅在行为稳定、API/许可证/MSRV 明确后执行，不影响 `0.2.0` 主链 |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
@@ -345,6 +345,15 @@ Snow Shot 的参考提交 `2fa463ad5d45e2fc431190b6dc4e278dcd5b01a6` 新增 Wind
 
 前置条件是 W7、U1-U4 的行为证据和报告 schema 稳定。先拆 `overlay-interaction-acceptance` 的 Capture/Copy/Pin/Scroll/Recording runner，
 再拆 `overlay.rs` 的渲染、输入、选择变换、菜单/工具状态和导出生命周期。每次只迁移一个职责；CLI 参数、输出目录、报告字段、快捷键和用户行为必须保持不变。
+
+**M1.1 当前结果（2026-10-11；Scroll runner 编排拆分）**：将 `scroll-roundtrip` 的主编排迁移到独立的
+`crates/flash-shot-app/src/dev_tools/overlay-interaction-acceptance/scroll_ui.rs`，主文件只保留场景路由和共享辅助函数。
+CLI 参数、输出目录、报告 schema、真实输入顺序和清理边界保持不变。当前源码 Release runner 在单屏
+`2560x1440`、DPI 96、English/深色下重新通过 Scroll shot、第二帧追加、Finish 和 Cancel；报告为
+`target/m1-scroll-roundtrip-r1/session-1791683146105-21412/report.json`，schema 33、`status=passed`，两帧重叠
+97px，拼接结果 `1484x663`，最终 `overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、
+`capture_teardown_pending=false`、`capture_preflight_ready=true`。Computer Use 当前没有可操作的 Flash Shot 原生窗口，
+以上为 Windows Release runner 的真实输入证据；后续继续拆分 Copy/Pin/Recording runner。
 
 ### R1：可复用截图核心的最小实现
 
