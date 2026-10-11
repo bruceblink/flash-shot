@@ -104,7 +104,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
-| M1 | 按职责拆分 runner 与 overlay | 进行中（M1.1-M1.7 已完成，2026-10-11） | Scroll、Copy、Pin、Recording runner、overlay 绘制、选区坐标与工作区布局职责已独立，报告、快捷键和用户行为无回归；后续继续拆分 overlay 职责 |
+| M1 | 按职责拆分 runner 与 overlay | 进行中（M1.1-M1.8 已完成，2026-10-11） | Scroll、Copy、Pin、Recording runner、overlay 绘制、选区坐标、工作区布局与工具栏控制职责已独立，报告、快捷键和用户行为无回归；后续继续拆分 overlay 输入职责 |
 | R1 | 私有 capture-core 提取评估后的最小实现 | 待开始 | 仅在行为稳定、API/许可证/MSRV 明确后执行，不影响 `0.2.0` 主链 |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
@@ -412,6 +412,13 @@ Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Window
 当前源码 Release runner 在单屏 `2560x1440`、DPI 96、English/深色下重新通过标准 Capture、1px 微调、More/Less、重捕获、Save 取消/重试、Pin、toolbar Copy 和 Escape 清理链。
 报告 `target/m1-overlay-layout-standard/session-1791706994009-28948/report.json` 为 schema 33、`status=passed`；Save、Pin 和隔离 Copy 均 `exact_match=true`，重捕获代次推进，最终 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、`capture_preflight_ready=true`。
 Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Windows Release runner 的真实输入和清理证据；后续继续拆分 overlay 的输入职责。
+
+**M1.8 当前结果（2026-10-11；overlay 工具栏控制职责拆分）**：将 More/工具组焦点导航、快捷键传播过滤、标注/主动作按钮构造和 `SelectionCursor` 类型迁移到
+`crates/flash-shot-app/src/app/overlay_controls.rs`。`overlay.rs` 保留 `CaptureOverlay` 生命周期、事件编排和渲染组合；控制模块继续使用原有可访问名称、焦点句柄、命中区和快捷键语义。
+
+当前源码 Release runner 在单屏 `2560x1440`、DPI 96、English/深色下重新通过标准 Capture、1px 微调、More/Less、重捕获、Save 取消/重试、Pin、toolbar Copy 和 Escape 清理链。
+报告 `target/m1-overlay-controls-standard/session-1791707998143-33112/report.json` 为 schema 33、`status=passed`；Save、Pin 和隔离 Copy 均 `exact_match=true`，重捕获代次推进，最终 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、`capture_preflight_ready=true`。
+Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Windows Release runner 的真实输入和清理证据；后续继续拆分 overlay 的选择输入职责。
 
 ### R1：可复用截图核心的最小实现
 
