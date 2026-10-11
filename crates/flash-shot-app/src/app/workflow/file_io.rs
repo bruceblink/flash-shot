@@ -14,10 +14,12 @@ pub(super) fn copy_selection_snapshot_cancellable(
     clipboard: &(impl ClipboardService + ?Sized),
     cancellation: &crate::app::SelectionCopyCancellation,
 ) -> std::io::Result<bool> {
-    if cancellation.is_cancelled() {
+    let Some(copied) = prepare_selection_frame_cancellable(frame, document, selection, || {
+        cancellation.is_cancelled()
+    })?
+    else {
         return Ok(false);
-    }
-    let copied = prepare_selection_frame(frame, document, selection)?;
+    };
     clipboard.copy_image_cancellable(&copied, cancellation)
 }
 

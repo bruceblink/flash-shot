@@ -18,15 +18,16 @@ The baseline pins `gpui` and the official `gpui_platform` launcher to the same r
 
 The repository currently includes:
 
-- virtual-desktop capture, mixed-DPI selection, window/control inspection, magnification, and keyboard nudging on Windows;
+- virtual-desktop capture, physical-pixel and mixed-DPI handling paths, window/control inspection, magnification, and keyboard nudging on Windows; real multi-display and 150%/200% matrices remain in D1 acceptance;
 - delayed capture, optional system-cursor compositing, copy/save, pinning, and screenshot history;
 - native rectangle, ellipse, line, arrow, pen, text, blur, mosaic, highlight, watermark, and sequence annotations;
 - manual, assisted, and scroll-then-auto-capture workflows, QR recognition, optional local OCR, HTTPS translation, and in-overlay retries after a failure;
-- display, window, and region recording with audio selection, pause/resume, progress, and Job Object cleanup;
+- display, window, and region recording with audio discovery/selection, pause/resume, progress, and Job Object cleanup;
 - repeatable performance/resource stress tooling, structured diagnostics, and local quality gates.
 
 The recording backend and the display, window, and region UI lifecycles have passed acceptance on
-one 100%-scaled display. Fixed-source desktop-composition semantics after moving, resizing,
+one 100%-scaled display. Audio input discovery and selection are implemented; audio-track output
+and input-failure recovery remain in the follow-up acceptance plan. Fixed-source desktop-composition semantics after moving, resizing,
 occluding, and minimizing a recorded window are also covered by a native Release probe. Producing
 an MP4 requires an FFmpeg build that supports `ddagrab` or `gdigrab`; 150%/200% scaling remains in
 the real-environment matrix.

@@ -1,8 +1,8 @@
 # 主线开发计划
 
-更新日期：2026-10-07
+更新日期：2026-10-11
 当前版本：`0.2.0`
-目标版本：`0.2.0` Snow Apps UI 与核心功能对齐（已于 2026-10-07 发布）
+目标版本：`0.2.0` 已发布；后续主线为固定 Snow Apps 基准下的差距收口
 
 本文档是 Flash Shot 唯一的主线开发计划。它整合此前的 B、W、U、M、R、D、P 路线，
 只保留当前状态、未完成工作、执行顺序和退出条件。已经完成的切片只保留结果摘要，
@@ -45,8 +45,9 @@
 
 ## 当前验收目标
 
-**`0.2.0` 主线已于 2026-10-07 发布。** 本版本完成 Snow Shot UI 与核心功能对齐，范围覆盖截图工作区、App、Library、Record、Pin 及实际用户流程。
-这不是 100% 复刻 Snow Apps 或重写其每个项目：以 Flash Shot 为产品基础，用 Rust + GPUI 只补齐 `0.2.0` 范围内需要的核心功能和用户界面对齐；每个切片都要说明页面与交互、真实功能结果、错误恢复和资源清理证据。
+**`0.2.0` 主线已于 2026-10-07 发布。** 本版本关闭的是单屏 100%、DPI 96 范围内的截图工作区、App、Library、Record 视频生命周期、Pin 和 OCR/二维码主流程。
+Snow Apps 的整体能力仍有差距；后续计划只收口用户可观察的核心流程，不把内部架构重写当作对齐完成条件。
+这不是 100% 复刻 Snow Apps 或重写其每个项目：以 Flash Shot 为产品基础，用 Rust + GPUI 逐项补齐已选范围内的核心功能和用户界面对齐；每个切片都要说明页面与交互、真实功能结果、错误恢复和资源清理证据。
 Snow Shot 是固定源码体验基准，不是逐项照搬清单：每项差异都明确选择“采用、适配、暂缓”并写明理由；
 紧凑工具栏、清晰图标层级、上下文操作和稳定键鼠行为属于界面对齐，Capture/Library/Record/Pin/App 的状态转换与可观察结果属于当前核心功能对齐。Print 保留为 Snow Shot 参考能力，按用户决定暂缓开发。
 Snow Shot 设置面板仅用于了解设置能力和必要操作，不复制其面板结构或流程；Flash Shot 继续采用 U5 已验证的设置简化、分组和现有设置键兼容规则。
@@ -73,6 +74,22 @@ Snow Apps 参考固定为用户提供的 `F:/project/snow-apps` 源码提交
 
 `0.2.0` 以 Windows 截图产品的 UI 与核心功能对齐为主：全局快捷键、选区、标注、撤销/重做、复制、保存、Pin、历史、滚动截图、可选 OCR/二维码识别、录屏、设置/更新和失败恢复；原生打印暂缓。
 UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留已验证的截图像素、导出和持久化协议、快捷键语义、报告字段和资源清理边界。
+
+### 2026-10-11 对齐差距复审
+
+本次复审对照固定 Snow Apps 提交 `850d27c113b2f81b43950b839b6180af50e82d13`，检查生产入口、状态模型和当前 Windows Release 证据。结论区分“已有实现”“已有验收”和“仍需实现”，不把 Snow Apps 的全部工具和设置项自动纳入 Flash Shot 范围。
+
+| 优先级 | 对齐域 | 当前 Flash Shot 结果 | 固定 Snow Apps 的可观察差异 | 后续处理 |
+| --- | --- | --- | --- | --- |
+| P0 | 截图工作区主链 | Capture、矩形选区、标注、Copy/Save/Pin/Cancel、工具组和双语/双主题单屏矩阵已有 Release runner 证据；Computer Use 当前不可用 | Snow 还提供 Window/SubElement 目标偏好、hit path/refinement、非矩形区域和更完整的选择编辑控件 | S1 先补入口矩阵、智能选区目标切换和选区恢复证据；圆角/阴影/非矩形区域另列适配项 |
+| P0 | Record 视频主链 | Display/Window/Region、FFmpeg、暂停/恢复/停止、H.264 产物和窗口源边界已有验收 | 当前证据只核验视频流；Snow 还提供麦克风/系统声音状态、音量增益和输入失败反馈 | S2 补无音频、麦克风、系统声音三条产物和失败恢复链；不重复已通过的视频生命周期 |
+| P1 | 全局快捷动作 | Flash 的全局注册动作是 Capture、FullScreen、FocusedWindow；延时、全屏 Copy/Save/Pin、Record 等主要从托盘进入 | Snow 的 `GlobalShortcutAction` 还覆盖延时、Copy、Record、History、Settings、Pin clipboard、选中文件等动作 | S1 冻结 Flash 需要支持的快捷动作集合，逐项补注册冲突、禁用和恢复验收；不照搬 Snow 的全部动作 |
+| P1 | 滚动截图 | 已有手动/辅助垂直采集、重叠拼接、至少两帧限制、Copy/Save/Cancel 和失败恢复 | Snow 具备水平/垂直模式、连续流、自动滚动、实时缩略图、裁剪预览和窗口排除 | S3 先评估水平与连续流的用户收益，再决定自动滚动、预览和裁剪；当前垂直主链保持冻结 |
+| P1 | Pin、Library、识别结果 | Pin 锁定/解锁、几何限制、透明度、鼠标穿透、Copy/快速 Save 和多窗口；Library 搜索/来源筛选/打开/Copy/Pin/删除/保留数量；OCR/二维码结果 Copy/Clear/Retry 已有主流程 | Snow 还提供 Pin 原图 Copy、手动 Save As、文件 Pin/分组管理、历史日期筛选/分页/完整可编辑会话、二维码逐码 URL 操作和 Pin 识别结果持久化 | S4 按用户优先级选择独立切片；当前核心只承诺已有 Capture 结果和 Pin/Library 生命周期。HTTPS 翻译、Print、Snow 设置面板结构继续暂缓 |
+| P2 | 标注工具与识别格式 | Flash 有 11 种基础标注模型和撤销/重做/移动/缩放逻辑；完整真实绘制验收仍不覆盖所有工具 | Snow 还有橡皮擦、聚光灯、滤镜、更多形状/样式，以及 Table/LaTeX/Markdown/HTML 识别结果 | 只在核心流程稳定后按需求排期；不把高级工具列为 `0.2.0` 回归阻塞 |
+| P1 | DPI、多屏与性能 | 代码包含物理坐标、负坐标和 DPI 处理；当前 Release 证据集中在单屏 100%、DPI 96 | Snow 的显示会话、选择器和滚动链覆盖更广的显示器/窗口组合；Flash 缺少真实 150%/200% 和混合 DPI 证据；4K 交互帧预算也未有同源测量 | D1 具备硬件后执行；同时统一性能报告的输入/输出边界、样本标识和 4K 交互帧指标 |
+
+复审后的判定是：`0.2.0` 的已发布范围保持有效，但不能写成 Snow Apps 整体能力已完成。后续每个 S1-S4 切片必须重新对照固定提交，分别记录采用、适配或暂缓的原因，并保留 Release runner 与真实原生窗口证据的边界。
 
 ## 2. 已完成基线（不再排入后续开发）
 
@@ -104,12 +121,16 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
+| S1 | Capture 入口、智能选区与快捷动作对齐 | 待开发 | 补齐 Snow Apps 的全局 Capture 动作矩阵、窗口/控件目标切换和选区恢复证据；保持现有物理像素、快捷键冲突处理和清理边界 |
+| S2 | Record 音频产物与失败恢复 | 待开发 | 对显示器、窗口和区域录制分别验证无音频、麦克风、系统声音的实际音轨、暂停/恢复/停止、输入失败和清理；视频生命周期继续复用已通过的边界 |
+| S3 | 滚动截图交互收口 | 待开发 | 在核心手动垂直拼接稳定后，评估水平模式、连续流、自动滚动、实时缩略图和裁剪预览；每项单独验收，不以静态拼接结果代替交互证据 |
+| S4 | Pin、Library 与识别结果扩展 | 待开发 | 按用户优先级选择 Pin 文件/管理、历史日期筛选/分页、二维码逐码操作或 Pin 识别结果持久化；现有 Capture OCR/二维码/复制/重试作为已完成边界 |
 | M1 | 按职责拆分 runner 与 overlay | 已完成（M1.1-M1.13，2026-10-11） | Scroll、Copy、Pin、Recording runner、overlay 绘制、选区坐标、工作区布局、工具栏控制、选择输入状态、事件编排、Render 组合、acceptance fixture 与焦点/光标职责均已独立；当前源码 Release 报告和全量门禁保持通过 |
-| R1 | 私有 capture-core 提取评估后的最小实现 | 进行中（R1.1，2026-10-11） | 私有核心已统一选区帧准备；后续继续收敛完整帧、导出和取消边界，不创建公共 crate，不影响 `0.2.0` 主链 |
+| R1 | 私有 capture-core 提取评估后的最小实现 | 进行中（R1.1-R1.2，2026-10-11） | R1.1 统一选区帧准备，R1.2 已统一 Copy 的取消边界；后续只在有用户可见收益时继续完整帧/导出边界，不创建公共 crate |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-主线执行顺序为：**U2 App/Library/Record 核心入口、动作和恢复 → U4 Pin 核心生命周期 → U3 跨页面视觉、滚动与布局收尾 → Capture/Library/Record/Pin/App/OCR 端到端复核 → 发布 `v0.2.0`**。以上切片和发布门禁已完成；U1 动态文案矩阵已完成，后续新增状态继续同步补齐。C1 原生打印暂缓，不阻塞 `0.2.0`。G0、G1、G2、U5、W7.1-W7.11 和 M1 均已交付；下一步按 R1 评估私有 capture-core，P3 保持待开始，D1 在具备对应硬件后单独执行。
+主线执行顺序为：**完成 R1.2 取消边界 → S1 Capture 入口与智能选区 → S2 Record 音频产物 → S3 滚动截图交互 → S4 Pin/Library/识别结果扩展 → D1 高 DPI/多屏硬件矩阵**。R1.2 属于短维护切片；后续优先处理用户可观察差距，暂不继续扩大公共 capture-core API。C1 原生打印和 P3 插件平台继续暂缓。
 
 ## 4. 开发切片与交付记录
 
@@ -467,6 +488,11 @@ M1 退出条件已满足：runner 场景、overlay 绘制/布局/选择/控制/�
 当前源码 Release 标准报告 `target/r1-capture-core-standard/session-1791713513385-14132/report.json` 为 schema 33、`status=passed`；Save、Pin 和隔离 Copy 均 `exact_match=true`，最终 overlay/Pin/可见窗口/后台清理均通过。格式、严格 Clippy、719 项工作区测试和 Windows MSVC 检查通过。
 这一步只冻结“合成后裁切”的顺序和错误边界；完整帧准备、导出路径、取消令牌和跨平台公共 API 继续留在后续 R1 切片。
 
+**R1.2 当前结果（2026-10-11；选区复制取消边界）**：在同一私有模块新增
+`prepare_selection_frame_cancellable`。Copy workflow 在像素合成前检查取消状态，在同步帧准备完成后再次检查，只有仍未取消时才把拥有的帧交给剪贴板提交；已经进入同步像素合成的操作不会被伪装成可中断任务。Save、Pin、OCR 和二维码继续使用 R1.1 的帧准备入口。
+当前源码 Release 的 Enter 取消报告 `target/r1-capture-core-copy-cancel-enter/session-1791714508908-30168/report.json` 和 toolbar 取消报告 `target/r1-capture-core-copy-cancel-toolbar/session-1791714570220-14580/report.json` 均为 schema 33、`status=passed`；两条路径均确认 Escape 先于剪贴板提交、剪贴板未收到帧、选择复制 lease 和 clipboard-write lease 释放、取消文案可见、选区仍可清理。标准复核报告 `target/r1-capture-core-standard-final/session-1791714598084-29484/report.json` 的 Save、Pin、Copy 均 `exact_match=true`，最终窗口和后台资源为零。
+格式、严格 Clippy、工作区测试和 Windows MSVC 检查通过；Computer Use 当前不可用，以上为同一源码 Windows Release runner 的真实输入证据。R1.2 完成后暂停公共化，下一步优先处理 S1-S4 的用户可观察差距。
+
 ### D1：真实 DPI 与多屏
 
 具备真实 Windows 硬件后，分别验证 150%/200% DPI、负坐标双屏和混合 DPI：自由拖选、键盘微调、标注、Copy/Save/Pin、滚动、录屏、设置窗口和清理。
@@ -519,6 +545,6 @@ cargo check -p flash-shot-app --target x86_64-pc-windows-msvc --all-targets --al
 - CI、Release 构建、便携包/安装器、manifest、SHA-256 和下载复核通过；
 - README、需求、架构、计划、Windows 验收、分发和 Linux 可行性文档之间没有失效链接或相互矛盾的状态。
 
-**发布结果（2026-10-07）**：`v0.2.0` 已发布为 GitHub Latest Release。Windows Release workflow [37608239172](https://github.com/bruceblink/flash-shot/actions/runs/37608239172) 全部通过；发布前和发布后的下载资产复核、便携启动与哈希详情见 [Windows 手工验收记录](windows-manual-acceptance.md)。本版本目标完成。M1、R1、P3 留待后续版本；D1 和原生打印继续暂缓。
+**发布结果（2026-10-07）**：`v0.2.0` 已发布为 GitHub Latest Release。Windows Release workflow [37608239172](https://github.com/bruceblink/flash-shot/actions/runs/37608239172) 全部通过；发布前和发布后的下载资产复核、便携启动与哈希详情见 [Windows 手工验收记录](windows-manual-acceptance.md)。本版本的已选范围完成。M1 已在 2026-10-11 完成；R1 继续作为维护路线，S1-S4、D1 和原生打印按后续计划处理，P3 继续暂缓。
 
 不把历史静态截图或单一 runner 成功路径写成整条产品 UI 与功能对齐通过。
