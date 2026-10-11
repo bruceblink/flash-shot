@@ -104,7 +104,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
-| M1 | 按职责拆分 runner 与 overlay | 进行中（M1.1-M1.4 已完成，2026-10-11） | Scroll、Copy、Pin 与 Recording runner 已独立，报告、快捷键和用户行为无回归；后续继续拆分 overlay 职责 |
+| M1 | 按职责拆分 runner 与 overlay | 进行中（M1.1-M1.5 已完成，2026-10-11） | Scroll、Copy、Pin、Recording runner 与 overlay 绘制职责已独立，报告、快捷键和用户行为无回归；后续继续拆分 overlay 职责 |
 | R1 | 私有 capture-core 提取评估后的最小实现 | 待开始 | 仅在行为稳定、API/许可证/MSRV 明确后执行，不影响 `0.2.0` 主链 |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
@@ -391,6 +391,13 @@ CLI 参数、报告 schema、真实输入顺序、录屏状态和清理规则保
 故障重试确认启动失败状态清空、重试、暂停、恢复和 H.264 产物；区域和窗口录制均为 `520x320`、H.264，并确认暂停/恢复和内容误差分别为 `0.6419270833333334` 与 `0.5403645833333334`。
 窗口报告另外确认四个阶段、固定源边界、50 帧时间线和 fixture 清理。录制内容可能在多个阶段保持相同像素指纹；只要阶段的几何和可见性证据独立通过，重复指纹不再作为错误。
 Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Windows Release runner 的真实输入证据；后续继续拆分 overlay 职责。
+
+**M1.5 当前结果（2026-10-11；overlay 绘制职责拆分）**：将选区遮罩、放大镜、标注图层、标注文本/编号和几何绘制 helper 迁移到
+`crates/flash-shot-app/src/app/overlay_paint.rs`，`overlay.rs` 保留状态、输入和布局编排。绘制入口和测试辅助函数通过模块边界继续复用同一套 `PreviewTransform`、物理像素和主题颜色；不改变 Capture、标注、Copy、Save、Pin 或 Cancel 的状态转换。
+
+当前源码 Release runner 在单屏 `2560x1440`、DPI 96、English/深色下通过标准 Capture → 1px 微调 → More/Less → 再次 Capture → Cancel → Save 取消/重试 → Pin → toolbar Copy → Escape 清理链。
+报告 `target/m1-overlay-paint-standard/session-1791705315000-16316/report.json` 为 schema 33、`status=passed`；Save、Pin 和隔离 Copy 均 `exact_match=true`，Save 对话框取消后选区恢复，重捕获代次推进，最终 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、`capture_preflight_ready=true`。
+Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Windows Release runner 的真实输入和清理证据；后续继续拆分 overlay 的输入/布局职责。
 
 ### R1：可复用截图核心的最小实现
 
