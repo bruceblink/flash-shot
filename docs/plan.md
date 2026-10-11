@@ -104,12 +104,12 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
-| M1 | 按职责拆分 runner 与 overlay | 进行中（M1.1-M1.13 已完成，2026-10-11） | Scroll、Copy、Pin、Recording runner、overlay 绘制、选区坐标、工作区布局、工具栏控制、选择输入状态、事件编排、Render 组合、acceptance fixture 与焦点/光标职责已独立，报告、快捷键和用户行为无回归；后续继续拆分 overlay 平台边界 |
+| M1 | 按职责拆分 runner 与 overlay | 已完成（M1.1-M1.13，2026-10-11） | Scroll、Copy、Pin、Recording runner、overlay 绘制、选区坐标、工作区布局、工具栏控制、选择输入状态、事件编排、Render 组合、acceptance fixture 与焦点/光标职责均已独立；当前源码 Release 报告和全量门禁保持通过 |
 | R1 | 私有 capture-core 提取评估后的最小实现 | 待开始 | 仅在行为稳定、API/许可证/MSRV 明确后执行，不影响 `0.2.0` 主链 |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-主线执行顺序为：**U2 App/Library/Record 核心入口、动作和恢复 → U4 Pin 核心生命周期 → U3 跨页面视觉、滚动与布局收尾 → Capture/Library/Record/Pin/App/OCR 端到端复核 → 发布 `v0.2.0`**。以上切片和发布门禁已完成；U1 动态文案矩阵已完成，后续新增状态继续同步补齐。C1 原生打印暂缓，不阻塞 `0.2.0`。G0、G1、G2、U5 和 W7.1-W7.11 均已交付；M1 继续进行 runner 职责拆分，R1、P3 保持待开始，D1 在具备对应硬件后单独执行。
+主线执行顺序为：**U2 App/Library/Record 核心入口、动作和恢复 → U4 Pin 核心生命周期 → U3 跨页面视觉、滚动与布局收尾 → Capture/Library/Record/Pin/App/OCR 端到端复核 → 发布 `v0.2.0`**。以上切片和发布门禁已完成；U1 动态文案矩阵已完成，后续新增状态继续同步补齐。C1 原生打印暂缓，不阻塞 `0.2.0`。G0、G1、G2、U5、W7.1-W7.11 和 M1 均已交付；下一步按 R1 评估私有 capture-core，P3 保持待开始，D1 在具备对应硬件后单独执行。
 
 ## 4. 开发切片与交付记录
 
@@ -454,6 +454,8 @@ Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Window
 当前源码 Release runner 在单屏 `2560x1440`、DPI 96、English/深色下重新通过标准 Capture、1px 微调、More/Less、重捕获、Save 取消/重试、Pin、toolbar Copy 和 Escape 清理链。
 报告 `target/m1-overlay-focus-standard/session-1791712070817-31548/report.json` 为 schema 33、`status=passed`；Save、Pin 和隔离 Copy 均 `exact_match=true`，重捕获代次推进且 `input_released=true`，最终 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、`capture_preflight_ready=true`。
 Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Windows Release runner 的真实输入和清理证据；后续继续拆分 overlay 平台边界。
+
+M1 退出条件已满足：runner 场景、overlay 绘制/布局/选择/控制/事件/Render/验收 fixture/焦点边界均有独立模块；M1.1-M1.13 的当前源码 Release 报告均为 schema 33 通过，格式、严格 Clippy、工作区测试和 Windows MSVC 检查持续通过。后续不再为 M1 增加结构性拆分，除非回归修复需要。
 
 ### R1：可复用截图核心的最小实现
 
