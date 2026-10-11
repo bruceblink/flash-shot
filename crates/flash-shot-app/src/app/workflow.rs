@@ -13,6 +13,7 @@ mod settings;
 mod support;
 mod windowing;
 
+pub(super) use super::capture_core::prepare_selection_frame;
 use file_io::*;
 pub(in crate::app) use images::retain_history_thumbnail_pending;
 pub(super) use settings::shortcut_option_label;

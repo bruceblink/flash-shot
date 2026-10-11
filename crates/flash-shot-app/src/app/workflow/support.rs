@@ -541,10 +541,7 @@ pub(in crate::app) fn translate_selected_frame(
     config: crate::translation::TranslationConfig,
     ocr_language: Option<String>,
 ) -> TranslationOutcome {
-    let frame = match frame
-        .composite_annotations(&document)
-        .and_then(|frame| frame.crop(selection))
-    {
+    let frame = match prepare_selection_frame(&frame, &document, selection) {
         Ok(frame) => frame,
         Err(error) => return TranslationOutcome::PreparationFailed(error.to_string()),
     };

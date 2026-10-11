@@ -151,9 +151,7 @@ impl FlashShotApp {
                 let prepared = cx
                     .background_executor()
                     .spawn(async move {
-                        let pinned_frame = frame
-                            .composite_annotations(&document)
-                            .and_then(|frame| frame.crop(selection))?;
+                        let pinned_frame = prepare_selection_frame(&frame, &document, selection)?;
                         prepare_pinned_frame(pinned_frame)
                     })
                     .await;

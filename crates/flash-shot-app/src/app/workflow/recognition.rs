@@ -39,10 +39,7 @@ impl FlashShotApp {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        frame
-                            .composite_annotations(&document)?
-                            .crop(selection)?
-                            .decode_qr_codes()
+                        prepare_selection_frame(&frame, &document, selection)?.decode_qr_codes()
                     })
                     .await;
                 if let Some(this) = this.upgrade() {
@@ -146,7 +143,7 @@ impl FlashShotApp {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        let frame = frame.composite_annotations(&document)?.crop(selection)?;
+                        let frame = prepare_selection_frame(&frame, &document, selection)?;
                         crate::ocr::recognize_with_language(&frame, ocr_language.as_deref())
                     })
                     .await;

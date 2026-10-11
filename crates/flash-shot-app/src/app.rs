@@ -1,5 +1,6 @@
 //! GPUI capture workspace state and module boundaries.
 
+mod capture_core;
 mod history_search;
 mod overlay;
 pub(crate) mod overlay_toolbar;

@@ -17,7 +17,7 @@ pub(super) fn copy_selection_snapshot_cancellable(
     if cancellation.is_cancelled() {
         return Ok(false);
     }
-    let copied = frame.composite_annotations(document)?.crop(selection)?;
+    let copied = prepare_selection_frame(frame, document, selection)?;
     clipboard.copy_image_cancellable(&copied, cancellation)
 }
 
@@ -27,10 +27,7 @@ pub(super) fn save_annotated_frame_selection(
     selection: PhysicalRect,
     path: PathBuf,
 ) -> std::io::Result<()> {
-    frame
-        .composite_annotations(document)?
-        .crop(selection)?
-        .save_image(path)
+    prepare_selection_frame(frame, document, selection)?.save_image(path)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

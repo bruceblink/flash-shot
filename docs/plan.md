@@ -105,7 +105,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
 | M1 | 按职责拆分 runner 与 overlay | 已完成（M1.1-M1.13，2026-10-11） | Scroll、Copy、Pin、Recording runner、overlay 绘制、选区坐标、工作区布局、工具栏控制、选择输入状态、事件编排、Render 组合、acceptance fixture 与焦点/光标职责均已独立；当前源码 Release 报告和全量门禁保持通过 |
-| R1 | 私有 capture-core 提取评估后的最小实现 | 待开始 | 仅在行为稳定、API/许可证/MSRV 明确后执行，不影响 `0.2.0` 主链 |
+| R1 | 私有 capture-core 提取评估后的最小实现 | 进行中（R1.1，2026-10-11） | 私有核心已统一选区帧准备；后续继续收敛完整帧、导出和取消边界，不创建公共 crate，不影响 `0.2.0` 主链 |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
@@ -461,6 +461,11 @@ M1 退出条件已满足：runner 场景、overlay 绘制/布局/选择/控制/�
 
 只有在 B1-B4 和 W7 行为稳定、公共类型/API/许可证/MSRV 明确后，才在 workspace 内提取私有 capture-core 模块，覆盖请求、帧、标注合成、导出和取消边界。
 不在 `0.2.0` 为第三方发布公共 crate，不把 GPUI、Windows 窗口、剪贴板、FFmpeg、历史和设置带入核心模块。
+
+**R1.1 当前结果（2026-10-11；私有选区帧准备边界）**：新增 `crates/flash-shot-app/src/app/capture_core.rs`，提供私有
+`prepare_selection_frame`，统一执行标注合成后再按物理选区裁切。Copy、Save、Pin、QR/OCR 和翻译 workflow 已改用这一入口；GPUI、Windows、剪贴板、FFmpeg、历史和设置仍留在应用层，未创建公共 crate。
+当前源码 Release 标准报告 `target/r1-capture-core-standard/session-1791713513385-14132/report.json` 为 schema 33、`status=passed`；Save、Pin 和隔离 Copy 均 `exact_match=true`，最终 overlay/Pin/可见窗口/后台清理均通过。格式、严格 Clippy、719 项工作区测试和 Windows MSVC 检查通过。
+这一步只冻结“合成后裁切”的顺序和错误边界；完整帧准备、导出路径、取消令牌和跨平台公共 API 继续留在后续 R1 切片。
 
 ### D1：真实 DPI 与多屏
 
