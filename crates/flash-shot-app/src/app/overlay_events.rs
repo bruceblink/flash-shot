@@ -489,6 +489,12 @@ impl CaptureOverlay {
             cx.stop_propagation();
             return;
         }
+        if smart_target_toggle_shortcut(&event.keystroke)
+            && self.app.update(cx, |app, cx| app.toggle_smart_target(cx))
+        {
+            cx.stop_propagation();
+            return;
+        }
         if close_more_actions_shortcut(&event.keystroke)
             && self.close_annotation_tool_group_from_keyboard(window, cx)
         {

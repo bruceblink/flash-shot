@@ -220,9 +220,10 @@ mod tests {
         secondary_action_menu_width, secondary_action_tooltip, secondary_action_widths,
         secondary_menu_opens_above, selection_cursor, selection_dimension_label_layout,
         selection_point_from_view_or_screen, should_stop_overlay_action_key_propagation,
-        smart_target_hud_label, smart_target_hud_layout, snap_selection_pointer_to_frame_edge,
-        status_bottom_inset, status_bottom_inset_for_stacked_annotation,
-        toolbar_position_for_pointer, view_rect, visible_selection, workspace_layout_snapshot,
+        smart_target_hud_label, smart_target_hud_layout, smart_target_toggle_shortcut,
+        snap_selection_pointer_to_frame_edge, status_bottom_inset,
+        status_bottom_inset_for_stacked_annotation, toolbar_position_for_pointer, view_rect,
+        visible_selection, workspace_layout_snapshot,
     };
     use crate::domain::{
         annotation::{Annotation, AnnotationId, AnnotationKind, AnnotationStyle, AnnotationTool},
@@ -513,6 +514,19 @@ mod tests {
         assert!(primary_action_tooltip(Locale::SimplifiedChinese, "copy").contains("Enter"));
         assert!(!primary_action_tooltip(Locale::English, "draw").is_empty());
         assert_eq!(primary_action_tooltip(Locale::English, "unknown"), "");
+    }
+
+    #[test]
+    fn smart_target_toggle_uses_only_alt_w() {
+        assert!(smart_target_toggle_shortcut(
+            &Keystroke::parse("alt-w").unwrap()
+        ));
+        for key in ["w", "shift-alt-w", "ctrl-alt-w", "alt-shift-w"] {
+            assert!(
+                !smart_target_toggle_shortcut(&Keystroke::parse(key).unwrap()),
+                "{key}"
+            );
+        }
     }
 
     #[test]

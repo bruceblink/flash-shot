@@ -533,6 +533,7 @@ impl FlashShotApp {
         self.selection_drag.clear();
         self.hover_pixel = None;
         self.inspection_target = None;
+        self.smart_target_kind = InspectionKind::Control;
         self.pending_click_target = None;
         self.selection_acceptance_disable_smart_target_once = false;
         self.inspection_request = None;
@@ -787,6 +788,7 @@ impl FlashShotApp {
         self.selection_drag.clear();
         self.hover_pixel = None;
         self.inspection_target = None;
+        self.smart_target_kind = InspectionKind::Control;
         self.pending_click_target = None;
         self.selection_acceptance_disable_smart_target_once = false;
         self.inspection_request = None;
@@ -858,6 +860,7 @@ impl FlashShotApp {
         self.selection_drag.clear();
         self.hover_pixel = None;
         self.inspection_target = None;
+        self.smart_target_kind = InspectionKind::Control;
         self.pending_click_target = None;
         self.selection_acceptance_disable_smart_target_once = false;
         self.inspection_request = None;

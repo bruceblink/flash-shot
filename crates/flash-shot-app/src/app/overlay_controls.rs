@@ -230,6 +230,19 @@ pub(super) fn more_actions_shortcut(keystroke: &Keystroke) -> bool {
         && !keystroke.modifiers.function
 }
 
+/// Toggles the smart-selection target between the containing window and the deepest control.
+///
+/// Alt+W stays local to the capture overlay and does not overlap the global capture bindings or
+/// the annotation tool shortcuts.
+pub(super) fn smart_target_toggle_shortcut(keystroke: &Keystroke) -> bool {
+    keystroke.key == "w"
+        && keystroke.modifiers.alt
+        && !keystroke.modifiers.shift
+        && !keystroke.modifiers.control
+        && !keystroke.modifiers.platform
+        && !keystroke.modifiers.function
+}
+
 /// Recognizes Escape while More is open so it closes the menu before cancelling the capture.
 pub(super) fn close_more_actions_shortcut(keystroke: &Keystroke) -> bool {
     keystroke.key == "escape" && !keystroke.modifiers.modified()

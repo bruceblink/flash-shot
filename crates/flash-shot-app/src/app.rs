@@ -52,7 +52,7 @@ use crate::{
             TrayAutoStartState, TrayEvent, TrayLocale, TrayNotification, TrayRecordingState,
             TrayRecordingTarget, TrayService,
         },
-        window_inspector::InspectionTarget,
+        window_inspector::{InspectionKind, InspectionTarget},
     },
     settings::UserSettings,
     theme::ThemeColors,
@@ -116,6 +116,9 @@ pub struct FlashShotApp {
     selection_drag: SelectionDrag,
     hover_pixel: Option<PhysicalPoint>,
     inspection_target: Option<InspectionTarget>,
+    // The current smart-selection preference is session-scoped. Control mode follows the
+    // automatic deepest UI Automation hit; Window mode uses the containing top-level window.
+    smart_target_kind: InspectionKind,
     pending_click_target: Option<InspectionTarget>,
     // Acceptance-only override keeps a one-pixel geometry probe independent of smart-target discovery.
     selection_acceptance_disable_smart_target_once: bool,
@@ -844,6 +847,7 @@ impl FlashShotApp {
             selection_drag: SelectionDrag::default(),
             hover_pixel: None,
             inspection_target: None,
+            smart_target_kind: InspectionKind::Control,
             pending_click_target: None,
             selection_acceptance_disable_smart_target_once: false,
             inspection_request: None,

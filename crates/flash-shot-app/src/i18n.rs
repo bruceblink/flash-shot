@@ -444,6 +444,7 @@ pub enum UiText {
     InspectionControl,
     InspectionWindow,
     OverlaySmartTargetReady,
+    SmartTargetToggleHint,
     OverlaySelectionReady,
     OverlaySeedSelectionFailed,
     ScrollingScreenshot,
@@ -1219,6 +1220,7 @@ impl UiText {
             Self::OverlaySmartTargetReady => {
                 "Smart target ready: {width} x {height} physical pixels"
             }
+            Self::SmartTargetToggleHint => "Smart target mode changed (Alt+W to switch again)",
             Self::OverlaySelectionReady => "Selection ready: {width} x {height} physical pixels",
             Self::OverlaySeedSelectionFailed => "Could not seed acceptance selection: {error}",
             Self::ScrollingScreenshot => "Scrolling screenshot",
@@ -2016,6 +2018,7 @@ impl UiText {
             Self::InspectionControl => "控件",
             Self::InspectionWindow => "窗口",
             Self::OverlaySmartTargetReady => "智能目标就绪：{width} x {height} 个物理像素",
+            Self::SmartTargetToggleHint => "智能目标模式已切换（按 Alt+W 再次切换）",
             Self::OverlaySelectionReady => "选区就绪：{width} x {height} 个物理像素",
             Self::OverlaySeedSelectionFailed => "无法准备验收选区：{error}",
             Self::ScrollingScreenshot => "长截图",

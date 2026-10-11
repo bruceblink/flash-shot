@@ -121,7 +121,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
-| S1 | Capture 入口、智能选区与快捷动作对齐 | 待开发 | 补齐 Snow Apps 的全局 Capture 动作矩阵、窗口/控件目标切换和选区恢复证据；保持现有物理像素、快捷键冲突处理和清理边界 |
+| S1 | Capture 入口、智能选区与快捷动作对齐 | 进行中（S1.1，2026-10-11） | 补齐 Snow Apps 的全局 Capture 动作矩阵、窗口/控件目标切换和选区恢复证据；保持现有物理像素、快捷键冲突处理和清理边界 |
 | S2 | Record 音频产物与失败恢复 | 待开发 | 对显示器、窗口和区域录制分别验证无音频、麦克风、系统声音的实际音轨、暂停/恢复/停止、输入失败和清理；视频生命周期继续复用已通过的边界 |
 | S3 | 滚动截图交互收口 | 待开发 | 在核心手动垂直拼接稳定后，评估水平模式、连续流、自动滚动、实时缩略图和裁剪预览；每项单独验收，不以静态拼接结果代替交互证据 |
 | S4 | Pin、Library 与识别结果扩展 | 待开发 | 按用户优先级选择 Pin 文件/管理、历史日期筛选/分页、二维码逐码操作或 Pin 识别结果持久化；现有 Capture OCR/二维码/复制/重试作为已完成边界 |
@@ -492,6 +492,14 @@ M1 退出条件已满足：runner 场景、overlay 绘制/布局/选择/控制/�
 `prepare_selection_frame_cancellable`。Copy workflow 在像素合成前检查取消状态，在同步帧准备完成后再次检查，只有仍未取消时才把拥有的帧交给剪贴板提交；已经进入同步像素合成的操作不会被伪装成可中断任务。Save、Pin、OCR 和二维码继续使用 R1.1 的帧准备入口。
 当前源码 Release 的 Enter 取消报告 `target/r1-capture-core-copy-cancel-enter/session-1791714508908-30168/report.json` 和 toolbar 取消报告 `target/r1-capture-core-copy-cancel-toolbar/session-1791714570220-14580/report.json` 均为 schema 33、`status=passed`；两条路径均确认 Escape 先于剪贴板提交、剪贴板未收到帧、选择复制 lease 和 clipboard-write lease 释放、取消文案可见、选区仍可清理。标准复核报告 `target/r1-capture-core-standard-final/session-1791714598084-29484/report.json` 的 Save、Pin、Copy 均 `exact_match=true`，最终窗口和后台资源为零。
 格式、严格 Clippy、工作区测试和 Windows MSVC 检查通过；Computer Use 当前不可用，以上为同一源码 Windows Release runner 的真实输入证据。R1.2 完成后暂停公共化，下一步优先处理 S1-S4 的用户可观察差距。
+
+### S1：Capture 入口、智能选区与快捷动作对齐
+
+**S1.1 当前结果（2026-10-11；窗口/控件目标切换）**：在现有 UI Automation 命中链上增加独立的顶层窗口查询路径。截图工作区默认继续使用最深控件命中；用户在尚未提交选区时按 `Alt+W`，即可在窗口目标和控件目标之间切换。切换会绑定当前悬停物理点，旧的异步命中结果不会覆盖新偏好；新一轮 Capture、Cancel 或关闭工作区会将偏好和命中状态一起清理。选区提交仍复用现有物理像素边界、标注和导出流程。
+
+本切片只对齐 Snow Apps 的 Window/WindowSubElement 可观察目标切换，不引入 Qt 选择器服务、命中路径缓存或设置面板结构。全局快捷键的延时、全屏复制/保存/Pin、Record 和 Library 等动作仍按 S1 后续矩阵逐项冻结和验收。
+
+确定性测试覆盖 `Alt+W` 修饰键边界和窗口目标接口的非 Windows 安全回退；源码还按目标偏好丢弃旧的异步结果。完整工作区门禁见本次提交的验证记录。Computer Use 当前不可用，因此真实窗口输入仍需由 Windows Release runner 补充；本切片先标记为进行中，待 runner 记录窗口/控件两种目标的实际选区和 Escape 清理后再关闭 S1.1。
 
 ### D1：真实 DPI 与多屏
 

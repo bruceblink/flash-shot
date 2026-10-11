@@ -25,6 +25,11 @@ pub struct WindowCaptureTarget {
 
 pub trait WindowInspector {
     fn target_at(&self, point: PhysicalPoint) -> io::Result<Option<InspectionTarget>>;
+    /// Resolves the top-level window under a point without requiring a non-empty title.
+    ///
+    /// Smart selection uses this path when the user explicitly prefers a window target. The
+    /// existing `target_at` method remains the automatic deepest-control path.
+    fn window_target_at(&self, point: PhysicalPoint) -> io::Result<Option<InspectionTarget>>;
     fn window_capture_target_at(
         &self,
         point: PhysicalPoint,
@@ -38,6 +43,10 @@ pub struct SystemWindowInspector;
 impl WindowInspector for SystemWindowInspector {
     fn target_at(&self, point: PhysicalPoint) -> io::Result<Option<InspectionTarget>> {
         platform::target_at(point)
+    }
+
+    fn window_target_at(&self, point: PhysicalPoint) -> io::Result<Option<InspectionTarget>> {
+        platform::window_target_at(point)
     }
 
     fn window_capture_target_at(
@@ -104,6 +113,17 @@ mod platform {
         }
         Ok(Some(InspectionTarget {
             bounds: window_bounds,
+            kind: InspectionKind::Window,
+        }))
+    }
+
+    /// Resolves the same visible top-level window used by automatic hit testing.
+    pub fn window_target_at(point: PhysicalPoint) -> io::Result<Option<InspectionTarget>> {
+        let Some((_, bounds)) = window_at(point)? else {
+            return Ok(None);
+        };
+        Ok(Some(InspectionTarget {
+            bounds,
             kind: InspectionKind::Window,
         }))
     }
@@ -369,6 +389,10 @@ mod platform {
     use std::io;
 
     pub fn target_at(_point: PhysicalPoint) -> io::Result<Option<InspectionTarget>> {
+        Ok(None)
+    }
+
+    pub fn window_target_at(_point: PhysicalPoint) -> io::Result<Option<InspectionTarget>> {
         Ok(None)
     }
 

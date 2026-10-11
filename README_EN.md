@@ -77,7 +77,7 @@ The Record page's `Video folder` control shows the active MP4 destination and le
 
 The `Display` control cycles recordable monitors in primary-first order. Both display and audio discovery happen only after the respective control is clicked, keeping startup free of FFmpeg probing.
 
-The capture shortcut defaults to `Ctrl+Shift+Print Screen`. Set `FLASH_SHOT_CAPTURE_HOTKEY` before launch to use a different safe global combination, for example `Ctrl+Alt+S`, `Shift+F12`, or `Ctrl+PrintScreen`. It must include `Ctrl`, `Alt`, or `Shift`, plus one letter, `F1` through `F24`, or `PrintScreen`; invalid values fall back to the default.
+The capture workspace defaults to the deepest control under the pointer. Press `Alt+W` before committing a selection to switch between that control and its containing top-level window. The capture shortcut defaults to `Ctrl+Shift+Print Screen`. Set `FLASH_SHOT_CAPTURE_HOTKEY` before launch to use a different safe global combination, for example `Ctrl+Alt+S`, `Shift+F12`, or `Ctrl+PrintScreen`. It must include `Ctrl`, `Alt`, or `Shift`, plus one letter, `F1` through `F24`, or `PrintScreen`; invalid values fall back to the default.
 
 For a deterministic Release regression check of the clipboard path, run the opt-in synthetic gate below. It replaces
 the current system clipboard, measures 30 generated `1280x720` frames by default, records every valid and failed

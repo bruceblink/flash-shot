@@ -1193,17 +1193,24 @@ impl FlashShotApp {
         let Some(point) = self.inspection_request.take() else {
             return;
         };
+        let target_kind = self.smart_target_kind;
         self.inspection_in_flight = true;
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { SystemWindowInspector.target_at(point) })
+                    .spawn(async move {
+                        if target_kind == InspectionKind::Window {
+                            SystemWindowInspector.window_target_at(point)
+                        } else {
+                            SystemWindowInspector.target_at(point)
+                        }
+                    })
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.finish_inspection(point, result, cx)
+                        this.finish_inspection(point, target_kind, result, cx)
                     });
                 }
             }
@@ -1214,12 +1221,15 @@ impl FlashShotApp {
     fn finish_inspection(
         &mut self,
         point: crate::domain::geometry::PhysicalPoint,
+        target_kind: InspectionKind,
         result: std::io::Result<Option<InspectionTarget>>,
         cx: &mut Context<Self>,
     ) {
         self.inspection_in_flight = false;
         match result {
-            Ok(target) if self.hover_pixel == Some(point) => {
+            Ok(target)
+                if self.hover_pixel == Some(point) && self.smart_target_kind == target_kind =>
+            {
                 self.inspection_target = target.and_then(|target| {
                     let bounds = intersect_rect(target.bounds, self.frame.as_ref()?.bounds)?;
                     Some(InspectionTarget {
@@ -1238,5 +1248,33 @@ impl FlashShotApp {
         if self.inspection_request.is_some() {
             self.start_inspection(cx);
         }
+    }
+
+    /// Switches the pending smart target between the containing window and the deepest control.
+    ///
+    /// The request is tied to the current hover point. A stale asynchronous result is discarded
+    /// by `finish_inspection` when it belongs to the previous preference.
+    pub(in crate::app) fn toggle_smart_target(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.session.state() != CaptureSessionState::Selecting
+            || self.selection_drag.selection().is_some()
+        {
+            return false;
+        }
+        let Some(point) = self.hover_pixel else {
+            return false;
+        };
+        self.smart_target_kind = match self.smart_target_kind {
+            InspectionKind::Control => InspectionKind::Window,
+            InspectionKind::Window => InspectionKind::Control,
+        };
+        self.inspection_target = None;
+        self.request_inspection(point, cx);
+        self.status = self
+            .settings
+            .locale
+            .text(crate::i18n::UiText::SmartTargetToggleHint)
+            .to_owned();
+        cx.notify();
+        true
     }
 }
