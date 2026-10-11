@@ -64,6 +64,9 @@ mod overlay_input;
 use overlay_input::*;
 #[path = "overlay_acceptance.rs"]
 mod overlay_acceptance;
+#[path = "overlay_focus.rs"]
+mod overlay_focus;
+use overlay_focus::*;
 #[path = "overlay_events.rs"]
 mod overlay_events;
 #[path = "overlay_render.rs"]
@@ -180,47 +183,6 @@ pub(super) struct CaptureOverlay {
 /// Accepts deferred overlay input only while it still belongs to the active workflow.
 const fn accepts_overlay_input(overlay_generation: u64, current_generation: u64) -> bool {
     overlay_generation == current_generation
-}
-
-impl Focusable for CaptureOverlay {
-    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-/// Chooses pointer feedback without letting selection movement override an active drawing tool.
-fn selection_cursor(
-    selection: Option<PhysicalRect>,
-    transform: Option<PreviewTransform>,
-    pointer: ViewPoint,
-    annotation_tool_active: bool,
-    moving: bool,
-) -> SelectionCursor {
-    if annotation_tool_active {
-        return SelectionCursor::Crosshair;
-    }
-    if moving {
-        return SelectionCursor::Move;
-    }
-    let Some((selection, transform)) = selection.zip(transform) else {
-        return SelectionCursor::Crosshair;
-    };
-    if let Some(handle) = transform.resize_handle_at(selection, pointer, 10.0) {
-        return match handle {
-            crate::domain::selection::ResizeHandle::TopLeft
-            | crate::domain::selection::ResizeHandle::BottomRight => SelectionCursor::ResizeNwse,
-            crate::domain::selection::ResizeHandle::TopRight
-            | crate::domain::selection::ResizeHandle::BottomLeft => SelectionCursor::ResizeNesw,
-        };
-    }
-    if transform
-        .view_to_physical(pointer)
-        .is_some_and(|point| selection.contains(point))
-    {
-        SelectionCursor::Move
-    } else {
-        SelectionCursor::Crosshair
-    }
 }
 
 #[cfg(test)]
