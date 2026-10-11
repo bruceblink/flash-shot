@@ -104,7 +104,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
-| M1 | 按职责拆分 runner 与 overlay | 进行中（M1.1、M1.2 已完成，2026-10-11） | Scroll 与 Copy runner 已独立，报告、快捷键和用户行为无回归；后续继续拆分 Pin/Recording 和 overlay 职责 |
+| M1 | 按职责拆分 runner 与 overlay | 进行中（M1.1-M1.3 已完成，2026-10-11） | Scroll、Copy 与 Pin runner 已独立，报告、快捷键和用户行为无回归；后续继续拆分 Recording 和 overlay 职责 |
 | R1 | 私有 capture-core 提取评估后的最小实现 | 待开始 | 仅在行为稳定、API/许可证/MSRV 明确后执行，不影响 `0.2.0` 主链 |
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
@@ -367,7 +367,18 @@ CLI 参数、报告 schema、真实输入顺序、剪贴板边界和清理规则
 `target/m1-copy-cancel-enter-r2/session-1791693311843-13456/report.json` 和
 `target/m1-copy-cancel-toolbar-focus-fix/session-1791693174066-24108/report.json` 均为 schema 33、`status=passed`。
 Copy-only 和争用重试最终为 idle、overlay/Pin/可见进程窗口均为 0；Enter 与 toolbar 两种取消竞态均在剪贴板提交前释放 selection-copy 与 clipboard-write lease，未收到剪贴板帧，最终状态清理通过。
-Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Windows Release runner 的真实输入证据；后续继续拆分 Pin/Recording runner。
+Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Windows Release runner 的真实输入证据；后续继续拆分 Recording runner。
+
+**M1.3 当前结果（2026-10-11；Pin runner 编排拆分）**：将 `pins-coexist` 的主编排、Pin 锁定/解锁和系统剪贴板 Copy 辅助函数迁移到独立的
+`crates/flash-shot-app/src/dev_tools/overlay-interaction-acceptance/pin_ui.rs`，主文件只保留场景路由和共享辅助函数。
+CLI 参数、报告 schema、真实输入顺序、三窗口生命周期、Capture/Cancel 行为和清理规则保持不变。
+
+当前源码 Release runner 在单屏 `2560x1440`、DPI 96、English/深色下通过隔离剪贴板和真实系统剪贴板两条 Pin 验收：
+`target/m1-pins-coexist-r1/session-1791694027472-28880/report.json` 与
+`target/m1-pins-coexist-clipboard-r1/session-1791694066302-28528/report.json` 均为 schema 33、`status=passed`。
+两份报告均创建 3 个 Pin，锁定期间拖动/缩放被阻止，解锁后恢复，Capture 后 Cancel 保留 Pin，最终 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、`capture_preflight_ready=true`。
+真实系统剪贴板报告同时确认 PNG、CF_DIB 和独立消费者逐像素匹配，剪贴板 lease 已释放。
+Computer Use 当前没有可操作的 Flash Shot 原生窗口，以上为 Windows Release runner 的真实输入证据；后续继续拆分 Recording runner。
 
 ### R1：可复用截图核心的最小实现
 
