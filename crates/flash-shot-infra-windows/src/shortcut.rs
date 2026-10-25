@@ -380,9 +380,11 @@ mod tests {
     #[cfg(windows)]
     use std::sync::Mutex;
     #[cfg(windows)]
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, VK_F23, VK_F24};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, VK_F22, VK_F23, VK_F24,
+    };
 
-    // RegisterHotKey is process-wide, so these native tests must not reserve F24 concurrently.
+    // RegisterHotKey is process-wide, so tests using the reserved F22-F24 combinations must serialize.
     #[cfg(windows)]
     static HOTKEY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -426,6 +428,58 @@ mod tests {
         .unwrap();
         assert!(listener.is_active());
         drop(listener);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_conflict_releases_prior_registrations_for_retry() {
+        let _guard = HOTKEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let modifiers = MOD_NOREPEAT | MOD_CONTROL | MOD_ALT | MOD_SHIFT;
+        let (blocker, _events) = ShortcutListener::register_keys(vec![(
+            20,
+            super::ShortcutEvent::FocusedWindowRequested,
+            modifiers,
+            VK_F23 as u32,
+        )])
+        .expect("the isolated conflict shortcut should be available");
+
+        let conflict = GlobalShortcutService::register(&[
+            ShortcutBinding {
+                action: ShortcutAction::Capture,
+                shortcut: "Ctrl+Alt+Shift+F22"
+                    .parse()
+                    .expect("test shortcut is valid"),
+            },
+            ShortcutBinding {
+                action: ShortcutAction::FocusedWindow,
+                shortcut: "Ctrl+Alt+Shift+F23"
+                    .parse()
+                    .expect("test shortcut is valid"),
+            },
+        ]);
+        assert!(conflict.is_err());
+
+        drop(blocker);
+        let (recovered, _events) = ShortcutListener::register_keys(vec![(
+            21,
+            super::ShortcutEvent::CaptureRequested,
+            modifiers,
+            VK_F22 as u32,
+        )])
+        .expect("the first registration must be released when the later one conflicts");
+        assert!(recovered.is_active());
+        drop(recovered);
+
+        let (released, _events) = ShortcutListener::register_keys(vec![(
+            22,
+            super::ShortcutEvent::FocusedWindowRequested,
+            modifiers,
+            VK_F23 as u32,
+        )])
+        .expect("dropping the conflicting owner must release its native shortcut");
+        assert!(released.is_active());
     }
 
     #[test]

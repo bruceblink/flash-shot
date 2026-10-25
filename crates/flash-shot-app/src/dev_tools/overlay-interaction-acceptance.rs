@@ -59,6 +59,9 @@ mod recording_ui;
 #[path = "overlay-interaction-acceptance/scroll_ui.rs"]
 mod scroll_ui;
 #[cfg(windows)]
+#[path = "overlay-interaction-acceptance/shortcut_actions_ui.rs"]
+mod shortcut_actions_ui;
+#[cfg(windows)]
 #[path = "overlay-interaction-acceptance/smart_target_ui.rs"]
 mod smart_target_ui;
 #[cfg(windows)]
@@ -107,8 +110,8 @@ use windows_sys::Win32::{
             GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
             KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
             MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
-            VK_A, VK_C, VK_CONTROL, VK_ESCAPE, VK_F24, VK_LBUTTON, VK_MENU, VK_R, VK_RETURN,
-            VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE, VK_W,
+            VK_A, VK_C, VK_CONTROL, VK_ESCAPE, VK_F22, VK_F23, VK_F24, VK_LBUTTON, VK_MENU, VK_R,
+            VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE, VK_W,
         },
         WindowsAndMessaging::{
             BS_PUSHBUTTON, BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CreateWindowExW,
@@ -132,6 +135,8 @@ use windows_sys::Win32::{
 use windows_sys::core::BOOL;
 
 const CAPTURE_SHORTCUT: &str = "Ctrl+Alt+F24";
+const FULL_SCREEN_ACCEPTANCE_SHORTCUT: &str = "Ctrl+Alt+F23";
+const FOCUSED_WINDOW_ACCEPTANCE_SHORTCUT: &str = "Ctrl+Alt+F22";
 const PIN_LOCK_KEY: u16 = 0x4c;
 const PIN_ZOOM_IN_KEY: u16 = 0xbb;
 const DEFAULT_OUTPUT_DIR: &str = "target/overlay-interaction-acceptance";
@@ -255,6 +260,7 @@ enum CaptureScenarioOption {
     SavePermissionRetry,
     SaveDialogPermissionRetry,
     SmartTarget,
+    ShortcutActions,
 }
 
 impl CaptureScenarioOption {
@@ -278,6 +284,7 @@ impl CaptureScenarioOption {
             Self::SavePermissionRetry => "capture_save_permission_retry",
             Self::SaveDialogPermissionRetry => "capture_save_dialog_permission_retry",
             Self::SmartTarget => "capture_smart_target",
+            Self::ShortcutActions => "capture_shortcut_actions",
         }
     }
 
@@ -299,6 +306,7 @@ impl CaptureScenarioOption {
                 | Self::SavePermissionRetry
                 | Self::SaveDialogPermissionRetry
                 | Self::SmartTarget
+                | Self::ShortcutActions
         )
     }
 }
@@ -564,9 +572,10 @@ impl Options {
                             CaptureScenarioOption::SaveDialogPermissionRetry
                         }
                         "smart-target" => CaptureScenarioOption::SmartTarget,
+                        "shortcut-actions" => CaptureScenarioOption::ShortcutActions,
                         _ => {
                             return Err(
-                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'recognition', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', 'save-dialog-permission-retry', or 'smart-target'"
+                                "capture scenario must be 'copy-only', 'copy-cancellation-race', 'clipboard-contention-retry', 'recording-failure-retry', 'narrow-edge', 'selection-boundary-matrix', 'pins-coexist', 'selection-transform', 'scroll-roundtrip', 'recognition', 'annotation-regression', 'tool-group', 'toolbar-drag', 'save-failure-retry', 'save-permission-retry', 'save-dialog-permission-retry', 'smart-target', or 'shortcut-actions'"
                     .to_owned(),
                             );
                         }
@@ -748,7 +757,7 @@ fn parse_theme(value: Option<OsString>) -> Result<ThemeMode, String> {
 }
 
 fn usage() -> String {
-    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|recognition|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry|smart-target> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
+    "usage: overlay-interaction-acceptance --allow-input [--allow-system-clipboard] [--copy-trigger <toolbar|enter>] [--capture-scenario <copy-only|copy-cancellation-race|clipboard-contention-retry|recording-failure-retry|narrow-edge|selection-boundary-matrix|pins-coexist|selection-transform|scroll-roundtrip|recognition|annotation-regression|tool-group|toolbar-drag|save-failure-retry|save-permission-retry|save-dialog-permission-retry|smart-target|shortcut-actions> [--scroll-export <cancel|copy|save> [--allow-system-clipboard]] | --record-target <area|window>] [--output-dir <path>] [--timeout-ms <3000-60000>] [--settle-ms <100-5000>] [--locale <en|zh-CN>] [--theme <dark|light>]".to_owned()
 }
 
 /// Refuses before GPUI starts unless the caller explicitly authorizes global input injection.
@@ -2381,6 +2390,8 @@ struct AcceptanceReport {
     recording_failure_retry: Option<RecordingFailureRetryReport>,
     #[cfg(windows)]
     smart_target: Option<smart_target_ui::SmartTargetReport>,
+    #[cfg(windows)]
+    shortcut_actions: Option<shortcut_actions_ui::ShortcutActionsReport>,
     error: Option<String>,
 }
 
@@ -3444,6 +3455,10 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     settings.capture_shortcut = Some(CAPTURE_SHORTCUT.to_owned());
     settings.full_screen_shortcut = None;
     settings.focused_window_shortcut = None;
+    if options.capture_scenario == CaptureScenarioOption::ShortcutActions {
+        settings.full_screen_shortcut = Some(FULL_SCREEN_ACCEPTANCE_SHORTCUT.to_owned());
+        settings.focused_window_shortcut = Some(FOCUSED_WINDOW_ACCEPTANCE_SHORTCUT.to_owned());
+    }
     settings.capture_shortcut_enabled = true;
     settings.include_cursor = false;
     settings.quick_save_directory = Some(session_root.join("history"));
@@ -3483,7 +3498,8 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             | CaptureScenarioOption::SaveFailureRetry
             | CaptureScenarioOption::SavePermissionRetry
             | CaptureScenarioOption::SaveDialogPermissionRetry
-            | CaptureScenarioOption::SmartTarget,
+            | CaptureScenarioOption::SmartTarget
+            | CaptureScenarioOption::ShortcutActions,
         ) => (520.0, 640.0),
     };
 
@@ -3563,10 +3579,9 @@ fn run_windows(options: Options) -> Result<(), Box<dyn std::error::Error>> {
 /// Creates the persisted report before the worker can inject input or panic.
 fn initial_report(context: &WorkerContext) -> AcceptanceReport {
     AcceptanceReport {
-        // Increment when the machine-readable report shape changes. Schema 33 records the
-        // smart-target preference and resolved control/window bounds alongside the existing
-        // locale, theme, and deterministic fixture fields.
-        schema_version: 33,
+        // Increment when the machine-readable report shape changes. Schema 34 adds explicit
+        // global shortcut action results alongside smart-target and existing fixture fields.
+        schema_version: 34,
         test: "overlay_interaction_acceptance",
         workflow: context.record_target.map_or_else(
             || context.capture_scenario.workflow(),
@@ -3607,6 +3622,8 @@ fn initial_report(context: &WorkerContext) -> AcceptanceReport {
         recording_failure_retry: None,
         #[cfg(windows)]
         smart_target: None,
+        #[cfg(windows)]
+        shortcut_actions: None,
         error: None,
     }
 }
@@ -3706,6 +3723,7 @@ fn run_recording_window_fixture_child(
             bounds,
             2,
             true,
+            true,
         )?;
         windows.push(backdrop);
         let target = create_recording_fixture_window(
@@ -3714,6 +3732,7 @@ fn run_recording_window_fixture_child(
             &recording_fixture_title(&token, "Target"),
             bounds,
             1,
+            true,
             true,
         )?;
         windows.push(target);
@@ -3724,6 +3743,7 @@ fn run_recording_window_fixture_child(
             bounds,
             3,
             false,
+            true,
         )?;
         windows.push(occluder);
         set_fixture_window_bounds(backdrop, bounds, true)?;
@@ -3787,7 +3807,8 @@ fn run_smart_target_fixture_child(arguments: impl IntoIterator<Item = OsString>)
         }
     }
     let title = recording_fixture_title(&token, "SmartTarget");
-    let target = create_recording_fixture_window(instance, &class_name, &title, bounds, 1, true)?;
+    let target =
+        create_recording_fixture_window(instance, &class_name, &title, bounds, 1, true, false)?;
     let button_class = wide_null("BUTTON");
     let button_title = wide_null("Smart target control");
     let button_left = bounds.width() as i32 / 4;
@@ -4270,13 +4291,15 @@ fn create_recording_fixture_window(
     bounds: PhysicalRect,
     pattern: isize,
     visible: bool,
+    no_activate: bool,
 ) -> io::Result<HWND> {
     let title = wide_null(title);
     let style = WS_POPUP | if visible { WS_VISIBLE } else { 0 };
+    let extended_style = WS_EX_TOOLWINDOW | if no_activate { WS_EX_NOACTIVATE } else { 0 };
     // SAFETY: all string pointers are NUL-terminated and valid for the duration of this call.
     let window = unsafe {
         CreateWindowExW(
-            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            extended_style,
             class_name.as_ptr(),
             title.as_ptr(),
             style,
@@ -4799,6 +4822,33 @@ impl SmartTargetFixture {
     /// Reasserts the fixture below the capture surface and above unrelated desktop windows.
     fn raise_topmost(&self) -> io::Result<()> {
         set_fixture_window_bounds_topmost(self.target, self.bounds, true)
+    }
+
+    /// Focuses the external fixture so the focused-window shortcut resolves this exact HWND.
+    fn focus(&self, timeout: Duration) -> io::Result<()> {
+        self.raise_topmost()?;
+        // SAFETY: the handle is the visible, child-owned fixture validated during launch.
+        unsafe {
+            BringWindowToTop(self.target);
+            SetForegroundWindow(self.target);
+        }
+        let deadline = Instant::now() + timeout.min(Duration::from_secs(3));
+        loop {
+            if unsafe { GetForegroundWindow() } == self.target {
+                let mut foreground_process = 0;
+                unsafe { GetWindowThreadProcessId(self.target, &mut foreground_process) };
+                if foreground_process == self.process_id {
+                    return Ok(());
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "smart-target fixture could not become the foreground window",
+                ));
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
     }
 
     fn shutdown(&mut self, timeout: Duration) -> io::Result<()> {
@@ -5691,6 +5741,9 @@ fn run_interaction_sequence(
             recording_ui::execute_failure_retry(context, report)
         }
         (None, CaptureScenarioOption::SmartTarget) => smart_target_ui::execute(context, report),
+        (None, CaptureScenarioOption::ShortcutActions) => {
+            shortcut_actions_ui::execute(context, report)
+        }
         (None, CaptureScenarioOption::Standard) => execute_capture_interactions(context, report),
     };
     let cursor_result = cursor.restore();
@@ -13479,32 +13532,87 @@ fn raise_owned_window_above_topmost(window: NativeWindow) -> io::Result<()> {
 
 #[cfg(windows)]
 fn inject_capture_shortcut(expected: *mut c_void) -> io::Result<NativeWindow> {
+    let foreground = inject_global_shortcut(expected, VK_F24, "F24")?;
+    owned_window(foreground.handle)?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Sends a registered acceptance shortcut only after confirming its expected foreground owner.
+fn inject_global_shortcut(
+    expected: *mut c_void,
+    virtual_key: u16,
+    key_label: &'static str,
+) -> io::Result<NativeWindow> {
     let foreground = guard_foreground(expected)?;
-    // Keep the global shortcut independent from a user's current modifier state, then verify
-    // every injected key is released so a partial SendInput batch cannot poison the next step.
-    ensure_input_keys_released(&[(VK_CONTROL, "Control"), (VK_MENU, "Alt"), (VK_F24, "F24")])?;
+    send_global_shortcut_inputs(virtual_key, key_label, |inputs, cleanup| {
+        send_input_batch_with_cleanup(expected, inputs, cleanup)
+    })?;
+    Ok(foreground)
+}
+
+#[cfg(windows)]
+/// Injects the same shortcut while an external test fixture owns foreground focus.
+fn inject_global_shortcut_from_external_window(
+    expected: *mut c_void,
+    expected_process_id: u32,
+    virtual_key: u16,
+    key_label: &'static str,
+) -> io::Result<()> {
+    let foreground = unsafe { GetForegroundWindow() };
+    let mut process_id = 0;
+    if !foreground.is_null() {
+        unsafe { GetWindowThreadProcessId(foreground, &mut process_id) };
+    }
+    if foreground != expected || process_id != expected_process_id {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "global shortcut input was refused because the expected fixture lost foreground focus",
+        ));
+    }
+    send_global_shortcut_inputs(virtual_key, key_label, |inputs, cleanup| {
+        let result = send_input_unchecked(inputs);
+        if let Err(error) = result {
+            return match send_input_unchecked(cleanup) {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(io::Error::new(
+                    error.kind(),
+                    format!("{error}; external-window key release failed: {cleanup_error}"),
+                )),
+            };
+        }
+        Ok(())
+    })
+}
+
+#[cfg(windows)]
+/// Builds and releases one Ctrl+Alt hotkey batch, including cleanup after partial SendInput.
+fn send_global_shortcut_inputs(
+    virtual_key: u16,
+    key_label: &'static str,
+    mut send: impl FnMut(&[INPUT], &[INPUT]) -> io::Result<()>,
+) -> io::Result<()> {
+    let keys = [
+        (VK_CONTROL, "Control"),
+        (VK_MENU, "Alt"),
+        (virtual_key, key_label),
+    ];
+    ensure_input_keys_released(&keys)?;
     let inputs = [
         keyboard_input(VK_CONTROL, false),
         keyboard_input(VK_MENU, false),
-        keyboard_input(VK_F24, false),
-        keyboard_input(VK_F24, true),
+        keyboard_input(virtual_key, false),
+        keyboard_input(virtual_key, true),
         keyboard_input(VK_MENU, true),
         keyboard_input(VK_CONTROL, true),
     ];
-    send_input_batch_with_cleanup(
-        expected,
-        &inputs,
-        &[
-            keyboard_input(VK_F24, true),
-            keyboard_input(VK_MENU, true),
-            keyboard_input(VK_CONTROL, true),
-        ],
-    )?;
-    wait_for_input_keys_released(
-        &[(VK_CONTROL, "Control"), (VK_MENU, "Alt"), (VK_F24, "F24")],
-        Duration::from_millis(250),
-    )?;
-    Ok(foreground)
+    let cleanup = [
+        keyboard_input(virtual_key, true),
+        keyboard_input(VK_MENU, true),
+        keyboard_input(VK_CONTROL, true),
+    ];
+    send(&inputs, &cleanup)?;
+    wait_for_input_keys_released(&keys, Duration::from_millis(250))
 }
 
 #[cfg(windows)]
@@ -15205,6 +15313,36 @@ mod tests {
                 "--allow-input",
                 "--capture-scenario",
                 "smart-target",
+                "--allow-system-clipboard",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_accepts_shortcut_actions_scenario_without_clipboard_access() {
+        let options = Options::parse_from(arguments(&[
+            "--allow-input",
+            "--capture-scenario",
+            "shortcut-actions",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            options.capture_scenario,
+            CaptureScenarioOption::ShortcutActions
+        );
+        assert_eq!(
+            options.capture_scenario.workflow(),
+            "capture_shortcut_actions"
+        );
+        assert!(options.capture_scenario.requires_100_percent_display());
+        assert!(!options.allow_system_clipboard);
+        assert!(
+            Options::parse_from(arguments(&[
+                "--allow-input",
+                "--capture-scenario",
+                "shortcut-actions",
                 "--allow-system-clipboard",
             ]))
             .is_err()

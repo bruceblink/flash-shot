@@ -121,7 +121,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
-| S1 | Capture 入口、智能选区与快捷动作对齐 | 进行中（S1.2，2026-10-11） | S1.1 的窗口/控件目标切换已完成；下一步冻结全局 Capture 动作矩阵，继续保持现有物理像素、快捷键冲突处理和清理边界 |
+| S1 | Capture 入口、智能选区与快捷动作对齐 | 已完成（S1.1-S1.2，2026-10-26） | Capture 延时、全屏和焦点窗口三项全局动作及整组注册/恢复边界已冻结；保留现有物理像素、快捷键冲突处理和资源清理规则 |
 | S2 | Record 音频产物与失败恢复 | 待开发 | 对显示器、窗口和区域录制分别验证无音频、麦克风、系统声音的实际音轨、暂停/恢复/停止、输入失败和清理；视频生命周期继续复用已通过的边界 |
 | S3 | 滚动截图交互收口 | 待开发 | 在核心手动垂直拼接稳定后，评估水平模式、连续流、自动滚动、实时缩略图和裁剪预览；每项单独验收，不以静态拼接结果代替交互证据 |
 | S4 | Pin、Library 与识别结果扩展 | 待开发 | 按用户优先级选择 Pin 文件/管理、历史日期筛选/分页、二维码逐码操作或 Pin 识别结果持久化；现有 Capture OCR/二维码/复制/重试作为已完成边界 |
@@ -130,7 +130,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-主线执行顺序为：**完成 R1.2 取消边界 → 完成 S1.1 窗口/控件目标切换 → S1.2 全局快捷动作矩阵 → S2 Record 音频产物 → S3 滚动截图交互 → S4 Pin/Library/识别结果扩展 → D1 高 DPI/多屏硬件矩阵**。R1.2 属于短维护切片；后续优先处理用户可观察差距，暂不继续扩大公共 capture-core API。C1 原生打印和 P3 插件平台继续暂缓。
+主线执行顺序为：**R1.2 取消边界 → S1.1 窗口/控件目标切换 → S1.2 全局快捷动作矩阵 → S2 Record 音频产物 → S3 滚动截图交互 → S4 Pin/Library/识别结果扩展 → D1 高 DPI/多屏硬件矩阵**。R1.2 与 S1 已完成；接下来从 S2 开始，优先处理用户可观察差距，暂不继续扩大公共 capture-core API。C1 原生打印和 P3 插件平台继续暂缓。
 
 ## 4. 开发切片与交付记录
 
@@ -500,7 +500,13 @@ M1 退出条件已满足：runner 场景、overlay 绘制/布局/选择/控制/�
 本切片只对齐 Snow Apps 的 Window/WindowSubElement 可观察目标切换，不引入 Qt 选择器服务、命中路径缓存或设置面板结构。全局快捷键的延时、全屏复制/保存/Pin、Record 和 Library 等动作仍按 S1 后续矩阵逐项冻结和验收。
 
 确定性测试覆盖 `Alt+W` 修饰键边界和窗口目标接口的非 Windows 安全回退；源码还按目标偏好丢弃旧的异步结果。当前源码 Windows Release runner 报告
-`target/s1-smart-target-native-final2/session-1791729227574-25044/report.json` 为 schema 33、`status=passed`，在单屏 `2560x1440`、DPI 96 下真实验证默认控件和 `Alt+W` 窗口两条路径：控件边界为夹具内 `320x90`，窗口边界和提交选区均为 `640x360`；再次 Capture 将偏好恢复为 `control`，Escape 后 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、`capture_preflight_ready=true`。Computer Use 当前不可用，以上是同一提交的 Windows Release runner 原生输入证据；S1.1 已关闭，S1 继续进入全局快捷动作矩阵。
+`target/s1-smart-target-native-final2/session-1791729227574-25044/report.json` 为 schema 33、`status=passed`，在单屏 `2560x1440`、DPI 96 下真实验证默认控件和 `Alt+W` 窗口两条路径：控件边界为夹具内 `320x90`，窗口边界和提交选区均为 `640x360`；再次 Capture 将偏好恢复为 `control`，Escape 后 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、`capture_preflight_ready=true`。Computer Use 未操作 Flash Shot 原生窗口；以上是同一提交的 Windows Release runner 原生输入证据。S1.1 已关闭，后续转入 S1.2。
+
+**S1.2 当前结果（2026-10-26；全局 Capture 动作矩阵）**：支持三项全局动作：Capture 使用已配置的延时；全屏 Capture 选择当前显示器的完整物理边界；焦点窗口 Capture 选择触发时的前景顶层窗口。三项快捷键必须互不重复，并作为一个注册组管理。关闭快捷键会释放整组；快捷键变更或偏好写盘失败时，会恢复原组。若恢复也失败，应用和托盘状态会显示整组已停用，并给出变更与恢复错误。
+
+本切片只冻结上述三项现有动作，不增加 Snow Apps 的全局动作数量，也不改变全屏 Capture 后的 Copy/Save/Pin 流程；录屏、历史和设置仍从各自页面或托盘入口进入。Windows 原生冲突测试占用第二个快捷键，再尝试注册两项动作，确认首项部分注册被释放；解除占用后两项均可重新注册。双语模板测试覆盖变更失败和恢复失败的详情。
+
+当前源码 Windows Release runner 报告 `target/s1-shortcut-actions-native-final/session-1792972267425-26548/report.json` 为 schema 34、`status=passed`，并记录普通 Capture 无选区启动、全屏边界 `2560x1440`、焦点窗口夹具及其 `640x360` 选区；Escape 后 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、输入已释放、夹具已退出、`capture_preflight_ready=true`。Computer Use 启动当前源码 Release 后没有返回可操作窗口；刷新应用和窗口列表后仍未发现 Flash Shot 窗口。因此本项交互证据来自 Windows Release runner，不标记为 Computer Use 证据。S1 完成，下一步进入 S2 Record 音频产物与失败恢复。
 
 ### D1：真实 DPI 与多屏
 

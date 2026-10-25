@@ -830,11 +830,19 @@ impl FlashShotApp {
                     drop(service);
                     self.capture_shortcut = previous_label;
                     self.settings = previous_settings;
-                    self.restore_global_shortcuts(cx);
-                    self.status = locale.format_template(
-                        UiText::ShortcutPreferenceSaveFailed,
-                        &[("error", &error.to_string())],
-                    );
+                    self.status = match self.restore_global_shortcuts(cx) {
+                        Ok(()) => locale.format_template(
+                            UiText::ShortcutPreferenceSaveFailed,
+                            &[("error", &error.to_string())],
+                        ),
+                        Err(restore_error) => locale.format_template(
+                            UiText::GlobalShortcutRecoveryFailed,
+                            &[
+                                ("change_error", &error.to_string()),
+                                ("restore_error", &restore_error.to_string()),
+                            ],
+                        ),
+                    };
                 } else {
                     Self::listen_for_shortcut(events, cx);
                     self._shortcut = Some(service);
@@ -846,29 +854,47 @@ impl FlashShotApp {
             Err(error) => {
                 self.capture_shortcut = previous_label;
                 self.settings = previous_settings;
-                self.restore_global_shortcuts(cx);
-                self.capture_shortcut_enabled = self._shortcut.is_some();
-                self.set_tray_capture_shortcut_enabled(self.capture_shortcut_enabled);
-                self.status = locale.format_template(
-                    UiText::GlobalShortcutsRegisterFailed,
-                    &[("error", &error.to_string())],
-                );
+                self.status = match self.restore_global_shortcuts(cx) {
+                    Ok(()) => locale.format_template(
+                        UiText::GlobalShortcutsRegisterFailed,
+                        &[("error", &error.to_string())],
+                    ),
+                    Err(restore_error) => locale.format_template(
+                        UiText::GlobalShortcutRecoveryFailed,
+                        &[
+                            ("change_error", &error.to_string()),
+                            ("restore_error", &restore_error.to_string()),
+                        ],
+                    ),
+                };
             }
         }
         cx.notify();
     }
 
-    fn restore_global_shortcuts(&mut self, cx: &mut Context<Self>) {
-        let Ok(capture) = self.capture_shortcut.parse() else {
-            return;
-        };
-        match super::super::register_global_shortcuts(capture, &self.settings) {
+    fn restore_global_shortcuts(&mut self, cx: &mut Context<Self>) -> std::io::Result<()> {
+        let registration = self
+            .capture_shortcut
+            .parse()
+            .map_err(std::io::Error::other)
+            .and_then(|capture| super::super::register_global_shortcuts(capture, &self.settings));
+        match registration {
             Ok((service, events)) => {
                 Self::listen_for_shortcut(events, cx);
                 self._shortcut = Some(service);
+                self.capture_shortcut_enabled = true;
+                self.set_tray_capture_shortcut_enabled(true);
+                Ok(())
             }
             Err(error) => {
-                log::warn!(target: "flash_shot::shortcut", "global_hotkey_restore_failed error={error}")
+                self._shortcut = None;
+                self.capture_shortcut_enabled = false;
+                self.set_tray_capture_shortcut_enabled(false);
+                log::warn!(
+                    target: "flash_shot::shortcut",
+                    "global_hotkey_restore_failed error={error}"
+                );
+                Err(error)
             }
         }
     }

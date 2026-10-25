@@ -851,6 +851,7 @@ pub enum UiText {
     ShortcutsRemainDisabled,
     ShortcutPreferenceSaveFailed,
     GlobalShortcutsRegisterFailed,
+    GlobalShortcutRecoveryFailed,
     GlobalShortcutDisabled,
     GlobalShortcutEnabled,
     GlobalShortcutDisableFailed,
@@ -1701,6 +1702,9 @@ impl UiText {
             Self::ShortcutsRemainDisabled => "{status}; global shortcuts remain disabled",
             Self::ShortcutPreferenceSaveFailed => "Could not save shortcut preference: {error}",
             Self::GlobalShortcutsRegisterFailed => "Could not register global shortcuts: {error}",
+            Self::GlobalShortcutRecoveryFailed => {
+                "Could not apply shortcut change: {change_error}. Previous shortcuts could not be restored: {restore_error}. Global shortcuts are now disabled."
+            }
             Self::GlobalShortcutDisabled => "Global capture shortcut disabled",
             Self::GlobalShortcutEnabled => "Global capture shortcut enabled: {shortcut}",
             Self::GlobalShortcutDisableFailed => "Could not disable global shortcut: {error}",
@@ -2441,6 +2445,9 @@ impl UiText {
             Self::ShortcutsRemainDisabled => "{status}；全局快捷键仍处于禁用状态",
             Self::ShortcutPreferenceSaveFailed => "无法保存快捷键偏好：{error}",
             Self::GlobalShortcutsRegisterFailed => "无法注册全局快捷键：{error}",
+            Self::GlobalShortcutRecoveryFailed => {
+                "无法应用快捷键变更：{change_error}。也无法恢复原有快捷键：{restore_error}。全局快捷键目前已停用。"
+            }
             Self::GlobalShortcutDisabled => "全局截图快捷键已禁用",
             Self::GlobalShortcutEnabled => "全局截图快捷键已启用：{shortcut}",
             Self::GlobalShortcutDisableFailed => "无法禁用全局快捷键：{error}",
@@ -3370,6 +3377,33 @@ mod tests {
         assert_eq!(
             Locale::English.text(UiText::ExportSourceUnavailable),
             "Capture frame or annotation document is unavailable"
+        );
+    }
+
+    #[test]
+    fn global_shortcut_recovery_feedback_localizes_both_failures() {
+        let english = Locale::English.format_template(
+            UiText::GlobalShortcutRecoveryFailed,
+            &[
+                ("change_error", "new shortcut is in use"),
+                ("restore_error", "old shortcut is unavailable"),
+            ],
+        );
+        assert_eq!(
+            english,
+            "Could not apply shortcut change: new shortcut is in use. Previous shortcuts could not be restored: old shortcut is unavailable. Global shortcuts are now disabled."
+        );
+
+        let simplified_chinese = Locale::SimplifiedChinese.format_template(
+            UiText::GlobalShortcutRecoveryFailed,
+            &[
+                ("change_error", "新快捷键已占用"),
+                ("restore_error", "原快捷键不可用"),
+            ],
+        );
+        assert_eq!(
+            simplified_chinese,
+            "无法应用快捷键变更：新快捷键已占用。也无法恢复原有快捷键：原快捷键不可用。全局快捷键目前已停用。"
         );
     }
 
