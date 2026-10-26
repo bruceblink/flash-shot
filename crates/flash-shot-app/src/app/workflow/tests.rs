@@ -19,17 +19,17 @@ use super::{
     quick_save_annotated_frame_selection_in_with_prefix,
     quick_save_annotated_frame_selection_with_fallback,
     quick_save_full_screen_frame_in_with_prefix, quick_save_full_screen_frame_with_fallback,
-    quick_save_with_fallback, recognition_start_conflict_status, recording_audio_selection_label,
-    recording_directory_candidates, recording_discovery_conflict_status,
-    recording_discovery_result_is_applicable, recording_display_selection_label,
-    recording_output_path_from_candidates, recording_start_cancellation_generation,
-    recording_start_conflict_status, recording_start_failure_status,
-    recording_start_result_is_applicable, recording_support_check_conflict_status,
-    recording_support_status, recording_target_label, release_clipboard_write_lease,
-    reserve_quick_save_path, resolve_pointer_selection, save_annotated_frame_selection,
-    save_annotation_document, save_editable_project, selection_dimension_label,
-    selection_hover_status, selection_status, smart_target_status, style_for_tool,
-    text_annotation_with_content, tool_selected_status, translation_failure_status,
+    quick_save_with_fallback, recognition_start_conflict_status, recording_audio_gain_view,
+    recording_audio_selection_label, recording_directory_candidates,
+    recording_discovery_conflict_status, recording_discovery_result_is_applicable,
+    recording_display_selection_label, recording_output_path_from_candidates,
+    recording_start_cancellation_generation, recording_start_conflict_status,
+    recording_start_failure_status, recording_start_result_is_applicable,
+    recording_support_check_conflict_status, recording_support_status, recording_target_label,
+    release_clipboard_write_lease, reserve_quick_save_path, resolve_pointer_selection,
+    save_annotated_frame_selection, save_annotation_document, save_editable_project,
+    selection_dimension_label, selection_hover_status, selection_status, smart_target_status,
+    style_for_tool, text_annotation_with_content, tool_selected_status, translation_failure_status,
     translation_service_test_status, translation_support_status, update_check_status, with_alpha,
 };
 use crate::app::{
@@ -2149,6 +2149,35 @@ fn recording_audio_selection_cycles_from_auto_to_off_then_local_sources() {
             &sources,
         ),
         super::RecordingAudioSelection::Automatic
+    );
+}
+
+#[test]
+fn recording_audio_gain_follows_its_source_and_disappears_when_audio_is_off() {
+    let mut settings = crate::settings::UserSettings::default();
+    settings.recording_microphone_gain_db = -12;
+    settings.recording_system_audio_gain_db = 6;
+    let mic = super::RecordingAudioSelection::Source(AudioSource::Microphone {
+        device: "USB Mic".to_owned(),
+    });
+    let system = super::RecordingAudioSelection::Source(AudioSource::SystemAudio {
+        device: "default".to_owned(),
+    });
+    assert_eq!(
+        recording_audio_gain_view(Locale::English, &mic, &settings),
+        Some(("Microphone gain".to_owned(), -12))
+    );
+    assert_eq!(
+        recording_audio_gain_view(Locale::SimplifiedChinese, &system, &settings),
+        Some(("系统声音增益".to_owned(), 6))
+    );
+    assert_eq!(
+        recording_audio_gain_view(
+            Locale::English,
+            &super::RecordingAudioSelection::Disabled,
+            &settings
+        ),
+        None
     );
 }
 

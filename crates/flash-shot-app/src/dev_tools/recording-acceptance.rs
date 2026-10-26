@@ -128,6 +128,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         RecordingRequest {
             target,
             audio: None,
+            audio_gain_db: 0,
             frame_rate: 15,
             output: output.clone(),
         },

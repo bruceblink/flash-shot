@@ -540,6 +540,8 @@ impl FlashShotApp {
         let audio = self.recording_audio.clone();
         let display = self.recording_display.clone();
         let recording_directory = self.settings.recording_directory.clone();
+        let recording_microphone_gain_db = self.settings.recording_microphone_gain_db;
+        let recording_system_audio_gain_db = self.settings.recording_system_audio_gain_db;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -566,6 +568,8 @@ impl FlashShotApp {
                             audio,
                             display,
                             recording_directory,
+                            recording_microphone_gain_db,
+                            recording_system_audio_gain_db,
                         )
                     })
                     .await;
@@ -588,6 +592,8 @@ impl FlashShotApp {
     ) {
         let generation = self.operation_generation;
         let recording_directory = self.settings.recording_directory.clone();
+        let recording_microphone_gain_db = self.settings.recording_microphone_gain_db;
+        let recording_system_audio_gain_db = self.settings.recording_system_audio_gain_db;
         cx.notify();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
@@ -600,6 +606,8 @@ impl FlashShotApp {
                             audio,
                             display,
                             recording_directory,
+                            recording_microphone_gain_db,
+                            recording_system_audio_gain_db,
                         )
                     })
                     .await;
@@ -769,6 +777,85 @@ impl FlashShotApp {
         cx.notify();
     }
 
+    /// Adjusts the selected recording source gain and persists it for that source type.
+    pub(in crate::app) fn adjust_recording_audio_gain(
+        &mut self,
+        adjustment_db: i8,
+        cx: &mut Context<Self>,
+    ) {
+        if self.recording_control.is_some()
+            || self.recording_acceptance_active
+            || self.recording_start_in_flight
+            || self.recording_stopping
+            || self.recording_audio_discovery_in_flight
+            || self.recording_display_discovery_in_flight
+            || self.recording_support_check_in_flight
+            || self.recording_directory_check_in_flight
+            || adjustment_db == 0
+        {
+            return;
+        }
+        let Some(source) = selected_recording_audio_source(&self.recording_audio) else {
+            return;
+        };
+        let locale = self.settings.locale;
+        let (previous_gain, source_label) = match &source {
+            AudioSource::Microphone { .. } => (
+                self.settings.recording_microphone_gain_db,
+                locale.text(UiText::RecordingAudioMicrophoneGain).to_owned(),
+            ),
+            AudioSource::SystemAudio { .. } => (
+                self.settings.recording_system_audio_gain_db,
+                locale.text(UiText::RecordingAudioSystemGain).to_owned(),
+            ),
+        };
+        let next_gain =
+            crate::recording::normalize_audio_gain_db(previous_gain.saturating_add(adjustment_db));
+        if next_gain == previous_gain {
+            return;
+        }
+        match &source {
+            AudioSource::Microphone { .. } => {
+                self.settings.recording_microphone_gain_db = next_gain;
+            }
+            AudioSource::SystemAudio { .. } => {
+                self.settings.recording_system_audio_gain_db = next_gain;
+            }
+        }
+        self.status = match self.settings.save(&self.settings_path) {
+            Ok(()) => locale.format_template(
+                UiText::RecordingAudioGainChanged,
+                &[
+                    ("source", &source_label),
+                    ("gain", &format_recording_audio_gain(next_gain)),
+                ],
+            ),
+            Err(error) => {
+                match &source {
+                    AudioSource::Microphone { .. } => {
+                        self.settings.recording_microphone_gain_db = previous_gain;
+                    }
+                    AudioSource::SystemAudio { .. } => {
+                        self.settings.recording_system_audio_gain_db = previous_gain;
+                    }
+                }
+                locale.format_template(
+                    UiText::RecordingAudioGainSaveFailed,
+                    &[("error", &error.to_string())],
+                )
+            }
+        };
+        cx.notify();
+    }
+
+    pub(in crate::app) fn reset_recording_audio_gain(&mut self, cx: &mut Context<Self>) {
+        if let Some((_, gain_db)) =
+            recording_audio_gain_view(self.settings.locale, &self.recording_audio, &self.settings)
+        {
+            self.adjust_recording_audio_gain(-gain_db, cx);
+        }
+    }
+
     pub(in crate::app) fn toggle_recording_pause(&mut self, cx: &mut Context<Self>) {
         let locale = self.settings.locale;
         if self.recording_stopping {
@@ -922,6 +1009,8 @@ pub(super) fn start_recording_target(
     audio_selection: RecordingAudioSelection,
     display_selection: RecordingDisplaySelection,
     recording_directory: Option<PathBuf>,
+    recording_microphone_gain_db: i8,
+    recording_system_audio_gain_db: i8,
 ) -> std::io::Result<crate::recording::RecordingControl> {
     let capabilities = discover()?;
     let audio = match audio_selection {
@@ -936,11 +1025,16 @@ pub(super) fn start_recording_target(
         None => recording_display_target(&display_selection)?,
     };
     let output = recording_output_path(recording_directory.as_deref())?;
+    let audio_gain_db = audio.as_ref().map_or(0, |source| match source {
+        AudioSource::Microphone { .. } => recording_microphone_gain_db,
+        AudioSource::SystemAudio { .. } => recording_system_audio_gain_db,
+    });
     start_recording(
         capabilities,
         RecordingRequest {
             target,
             audio,
+            audio_gain_db,
             frame_rate: 30,
             output,
         },
@@ -1155,6 +1249,43 @@ pub(in crate::app) fn recording_audio_selection_label(
         RecordingAudioSelection::Source(AudioSource::SystemAudio { .. }) => {
             locale.text(UiText::RecordingAudioSystem).to_owned()
         }
+    }
+}
+
+/// Resolves a selected input's independent gain without probing or opening audio devices.
+pub(in crate::app) fn recording_audio_gain_view(
+    locale: Locale,
+    selection: &RecordingAudioSelection,
+    settings: &crate::settings::UserSettings,
+) -> Option<(String, i8)> {
+    match selected_recording_audio_source(selection)? {
+        AudioSource::Microphone { .. } => Some((
+            locale.text(UiText::RecordingAudioMicrophoneGain).to_owned(),
+            settings.recording_microphone_gain_db,
+        )),
+        AudioSource::SystemAudio { .. } => Some((
+            locale.text(UiText::RecordingAudioSystemGain).to_owned(),
+            settings.recording_system_audio_gain_db,
+        )),
+    }
+}
+
+fn selected_recording_audio_source(selection: &RecordingAudioSelection) -> Option<AudioSource> {
+    match selection {
+        RecordingAudioSelection::Automatic => RecordingAudioConfig::from_environment()
+            .ok()?
+            .source()
+            .cloned(),
+        RecordingAudioSelection::Disabled => None,
+        RecordingAudioSelection::Source(source) => Some(source.clone()),
+    }
+}
+
+pub(in crate::app) fn format_recording_audio_gain(gain_db: i8) -> String {
+    if gain_db > 0 {
+        format!("+{gain_db} dB")
+    } else {
+        format!("{gain_db} dB")
     }
 }
 

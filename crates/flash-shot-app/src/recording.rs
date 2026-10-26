@@ -148,6 +148,14 @@ pub enum AudioSource {
     SystemAudio { device: String },
 }
 
+pub const MIN_RECORDING_AUDIO_GAIN_DB: i8 = -24;
+pub const MAX_RECORDING_AUDIO_GAIN_DB: i8 = 24;
+
+/// Clamps persisted or user-provided audio gain to the supported recording range.
+pub fn normalize_audio_gain_db(gain_db: i8) -> i8 {
+    gain_db.clamp(MIN_RECORDING_AUDIO_GAIN_DB, MAX_RECORDING_AUDIO_GAIN_DB)
+}
+
 /// Lists local audio inputs that can be selected without opening a recording session.
 ///
 /// FFmpeg reports DirectShow devices on stderr and exits unsuccessfully after listing them,
@@ -197,6 +205,8 @@ impl RecordingAudioConfig {
 pub struct RecordingRequest {
     pub target: RecordingTarget,
     pub audio: Option<AudioSource>,
+    /// Gain applied to the selected audio track; -24..=24 dB, or zero without an audio source.
+    pub audio_gain_db: i8,
     pub frame_rate: u16,
     pub output: PathBuf,
 }
@@ -1150,6 +1160,12 @@ pub fn build_recording_command(
     } else {
         false
     };
+    if has_audio && request.audio_gain_db != 0 {
+        arguments.extend([
+            OsString::from("-af"),
+            OsString::from(format!("volume={}dB", request.audio_gain_db)),
+        ]);
+    }
     if h264_padding_required(bounds) {
         arguments.extend([
             OsString::from("-vf"),
@@ -1277,6 +1293,19 @@ fn validate_request(request: &RecordingRequest) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "recording output must use an .mp4 extension",
+        ));
+    }
+    if !(MIN_RECORDING_AUDIO_GAIN_DB..=MAX_RECORDING_AUDIO_GAIN_DB).contains(&request.audio_gain_db)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording audio gain must be between -24 and +24 dB",
+        ));
+    }
+    if request.audio.is_none() && request.audio_gain_db != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recording audio gain requires an audio source",
         ));
     }
     match &request.target {
@@ -1733,6 +1762,7 @@ mod tests {
                     },
                 },
                 audio: None,
+                audio_gain_db: 0,
                 frame_rate: 60,
                 output: PathBuf::from("recording.mp4"),
             },
@@ -1795,6 +1825,7 @@ mod tests {
                     },
                 },
                 audio: None,
+                audio_gain_db: 0,
                 frame_rate: 30,
                 output: PathBuf::from("window.mp4"),
             },
@@ -1840,6 +1871,7 @@ mod tests {
                     },
                 },
                 audio: None,
+                audio_gain_db: 0,
                 frame_rate: 30,
                 output: PathBuf::from("odd-region.mp4"),
             },
@@ -1866,6 +1898,7 @@ mod tests {
         let invalid = |target, frame_rate, output| RecordingRequest {
             target,
             audio: None,
+            audio_gain_db: 0,
             frame_rate,
             output: PathBuf::from(output),
         };
@@ -1977,6 +2010,60 @@ mod tests {
                 .windows(2)
                 .any(|pair| { pair == [OsString::from("-f"), OsString::from("wasapi")] })
         );
+    }
+
+    #[test]
+    fn recording_audio_gain_is_applied_to_the_selected_audio_track() {
+        let microphone = RecordingRequest {
+            audio: Some(AudioSource::Microphone {
+                device: "Microphone (USB)".to_owned(),
+            }),
+            audio_gain_db: 6,
+            ..region_request()
+        };
+        let microphone = build_recording_command(&capabilities(), &microphone).unwrap();
+        assert!(
+            microphone
+                .arguments()
+                .windows(2)
+                .any(|pair| { pair == [OsString::from("-af"), OsString::from("volume=6dB")] })
+        );
+
+        let system = RecordingRequest {
+            audio: Some(AudioSource::SystemAudio {
+                device: "default".to_owned(),
+            }),
+            audio_gain_db: -12,
+            ..region_request()
+        };
+        let system = build_recording_command(&wasapi_capabilities(), &system).unwrap();
+        assert!(
+            system
+                .arguments()
+                .windows(2)
+                .any(|pair| { pair == [OsString::from("-af"), OsString::from("volume=-12dB")] })
+        );
+
+        let silent = build_recording_command(&capabilities(), &region_request()).unwrap();
+        assert!(!silent.arguments().iter().any(|argument| argument == "-af"));
+    }
+
+    #[test]
+    fn recording_audio_gain_requires_an_audio_source_and_supported_range() {
+        let missing_source = RecordingRequest {
+            audio_gain_db: 1,
+            ..region_request()
+        };
+        assert!(build_recording_command(&capabilities(), &missing_source).is_err());
+
+        let outside_range = RecordingRequest {
+            audio: Some(AudioSource::SystemAudio {
+                device: "default".to_owned(),
+            }),
+            audio_gain_db: 25,
+            ..region_request()
+        };
+        assert!(build_recording_command(&wasapi_capabilities(), &outside_range).is_err());
     }
 
     #[test]
@@ -2428,6 +2515,7 @@ mod tests {
                 },
             },
             audio: None,
+            audio_gain_db: 0,
             frame_rate: 30,
             output: PathBuf::from("region.mp4"),
         }

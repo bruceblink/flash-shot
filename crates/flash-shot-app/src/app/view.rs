@@ -51,6 +51,13 @@ struct RecordingDirectoryViewState<'a> {
     check_in_flight: bool,
 }
 
+#[derive(Clone, Copy)]
+struct RecordingSourceViewState<'a> {
+    display: &'a str,
+    audio: &'a str,
+    gain: Option<(&'a str, i8)>,
+}
+
 impl gpui::Render for FlashShotApp {
     /// Renders the tray service's settings workspace with a readable content column.
     /// Keeping the column bounded prevents wide windows from separating a preference label from its control.
@@ -77,6 +84,11 @@ impl gpui::Render for FlashShotApp {
         );
         let recording_audio =
             super::workflow::recording_audio_selection_label(locale, &self.recording_audio);
+        let recording_audio_gain = super::workflow::recording_audio_gain_view(
+            locale,
+            &self.recording_audio,
+            &self.settings,
+        );
         let recording_display =
             super::workflow::recording_display_selection_label(locale, &self.recording_display);
         let recording_directory = super::workflow::recording_directory_for_display(
@@ -229,8 +241,13 @@ impl gpui::Render for FlashShotApp {
                                                 locale,
                                                 colors,
                                                 recording_state,
-                                                &recording_display,
-                                                &recording_audio,
+                                                RecordingSourceViewState {
+                                                    display: &recording_display,
+                                                    audio: &recording_audio,
+                                                    gain: recording_audio_gain.as_ref().map(
+                                                        |(label, gain)| (label.as_str(), *gain),
+                                                    ),
+                                                },
                                                 RecordingDirectoryViewState {
                                                     path: &recording_directory,
                                                     custom: self
@@ -977,13 +994,132 @@ fn history_retention_label(locale: Locale, current_limit: u16, target: Option<u1
     )
 }
 
+/// Keeps source gain beside its audio selector, with keyboard steps and explicit reset.
+fn recording_audio_gain_control(
+    locale: Locale,
+    colors: crate::theme::ThemeColors,
+    (label, gain_db): (&str, i8),
+    enabled: bool,
+    app: gpui::Entity<FlashShotApp>,
+) -> gpui::Div {
+    let metrics = ThemeMetrics::default();
+    let keyboard_app = app.clone();
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(metrics.space_2))
+        .child(
+            div()
+                .text_xs()
+                .text_color(colors.muted)
+                .child(label.to_owned()),
+        )
+        .child(
+            div()
+                .id("settings-recording-gain-controls")
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(metrics.space_2))
+                .on_key_down(move |event: &KeyDownEvent, _, cx| {
+                    if enabled
+                        && let Some(adjustment) =
+                            recording_audio_gain_key_adjustment(&event.keystroke)
+                    {
+                        keyboard_app.update(cx, |this, cx| {
+                            this.adjust_recording_audio_gain(adjustment, cx)
+                        });
+                        cx.stop_propagation();
+                    }
+                })
+                .child(settings_button(
+                    "settings-recording-gain-decrease",
+                    "−1 dB",
+                    colors,
+                    enabled && gain_db > crate::recording::MIN_RECORDING_AUDIO_GAIN_DB,
+                    {
+                        let app = app.clone();
+                        move |event, _, cx| {
+                            app.update(cx, |this, cx| {
+                                this.adjust_recording_audio_gain(
+                                    if event.modifiers().shift { -6 } else { -1 },
+                                    cx,
+                                )
+                            })
+                        }
+                    },
+                ))
+                .child(
+                    div()
+                        .min_w(px(60.0))
+                        .text_center()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(if enabled {
+                            colors.text
+                        } else {
+                            colors.text_disabled
+                        })
+                        .child(super::workflow::format_recording_audio_gain(gain_db)),
+                )
+                .child(settings_button(
+                    "settings-recording-gain-increase",
+                    "+1 dB",
+                    colors,
+                    enabled && gain_db < crate::recording::MAX_RECORDING_AUDIO_GAIN_DB,
+                    {
+                        let app = app.clone();
+                        move |event, _, cx| {
+                            app.update(cx, |this, cx| {
+                                this.adjust_recording_audio_gain(
+                                    if event.modifiers().shift { 6 } else { 1 },
+                                    cx,
+                                )
+                            })
+                        }
+                    },
+                ))
+                .child(settings_button(
+                    "settings-recording-gain-reset",
+                    locale.text(UiText::RecordingAudioGainReset),
+                    colors,
+                    enabled && gain_db != 0,
+                    move |_, _, cx| app.update(cx, |this, cx| this.reset_recording_audio_gain(cx)),
+                )),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(colors.muted)
+                .child(locale.text(UiText::RecordingAudioGainHint)),
+        )
+}
+
+/// Leaves application/system chords intact while the focused gain controls handle fine/coarse steps.
+fn recording_audio_gain_key_adjustment(keystroke: &gpui::Keystroke) -> Option<i8> {
+    let modifiers = keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+        return None;
+    }
+    let step = if modifiers.shift { 6 } else { 1 };
+    match keystroke.key.as_str() {
+        "left" | "down" => Some(-step),
+        "right" | "up" => Some(step),
+        "pageup" => Some(6),
+        "pagedown" => Some(-6),
+        "home" => Some(-48),
+        "end" => Some(48),
+        _ => None,
+    }
+}
+
 /// Renders recording choices and commands, wrapping the command row before a narrow window clips it.
 fn recording_settings(
     locale: Locale,
     colors: crate::theme::ThemeColors,
     state: RecordingViewState,
-    display: &str,
-    audio: &str,
+    sources: RecordingSourceViewState<'_>,
     directory: RecordingDirectoryViewState<'_>,
     app: gpui::Entity<FlashShotApp>,
 ) -> gpui::Div {
@@ -1003,7 +1139,7 @@ fn recording_settings(
                     if state.display_discovery_in_flight {
                         locale.text(UiText::RecordingDiscoveringAction)
                     } else {
-                        display
+                        sources.display
                     },
                     colors,
                     settings_idle,
@@ -1016,20 +1152,37 @@ fn recording_settings(
         )
         .child(
             settings_row(locale.text(UiText::RecordingSettingsAudio), colors).child(
-                settings_button(
-                    "settings-recording-audio",
-                    if state.audio_discovery_in_flight {
-                        locale.text(UiText::RecordingDiscoveringAction)
-                    } else {
-                        audio
-                    },
-                    colors,
-                    settings_idle,
-                    {
-                        let app = app.clone();
-                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_audio(cx))
-                    },
-                ),
+                div()
+                    .flex_1()
+                    .min_w(px(metrics.settings_control_column_min_width))
+                    .flex()
+                    .flex_col()
+                    .gap(px(metrics.space_2))
+                    .child(settings_button(
+                        "settings-recording-audio",
+                        if state.audio_discovery_in_flight {
+                            locale.text(UiText::RecordingDiscoveringAction)
+                        } else {
+                            sources.audio
+                        },
+                        colors,
+                        settings_idle,
+                        {
+                            let app = app.clone();
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| this.cycle_recording_audio(cx))
+                            }
+                        },
+                    ))
+                    .when_some(sources.gain, |controls, gain| {
+                        controls.child(recording_audio_gain_control(
+                            locale,
+                            colors,
+                            gain,
+                            settings_idle,
+                            app.clone(),
+                        ))
+                    }),
             ),
         )
         .child(
@@ -2976,10 +3129,10 @@ mod tests {
         capture_shortcut_summary, history_clear_confirmation_label, history_entry_label,
         history_entry_matches, history_result_summary, history_retention_label,
         history_thumbnail_status, history_visibility_label, ocr_support_check_label,
-        quick_save_prefix_label, recording_progress_label, recording_source_discovery_busy,
-        recording_status_visible, recording_support_check_label, recording_toggle_enabled,
-        recording_toggle_label, relative_timestamp_label, settings_actions_available,
-        settings_navigation_activation, settings_navigation_direction,
+        quick_save_prefix_label, recording_audio_gain_key_adjustment, recording_progress_label,
+        recording_source_discovery_busy, recording_status_visible, recording_support_check_label,
+        recording_toggle_enabled, recording_toggle_label, relative_timestamp_label,
+        settings_actions_available, settings_navigation_activation, settings_navigation_direction,
         settings_navigation_items_for_locale, settings_page_copy_for_locale, settings_page_intro,
         settings_path_label, single_history_clear_path, status_indicator_color,
         translation_service_test_label, update_check_label_for_locale,
@@ -3000,6 +3153,27 @@ mod tests {
             capture_command_label(Locale::English, Some(3)),
             "Cancel delay"
         );
+    }
+
+    #[test]
+    fn recording_gain_keyboard_steps_preserve_system_chords() {
+        for (key, expected) in [
+            ("left", Some(-1)),
+            ("shift-right", Some(6)),
+            ("pageup", Some(6)),
+            ("pagedown", Some(-6)),
+            ("home", Some(-48)),
+            ("end", Some(48)),
+            ("ctrl-right", None),
+            ("alt-left", None),
+            ("cmd-up", None),
+        ] {
+            assert_eq!(
+                recording_audio_gain_key_adjustment(&gpui::Keystroke::parse(key).unwrap()),
+                expected,
+                "{key}"
+            );
+        }
     }
 
     #[test]

@@ -42,6 +42,10 @@ pub struct UserSettings {
     pub quick_save_prefix: String,
     /// Optional user-selected folder for completed MP4 recordings.
     pub recording_directory: Option<PathBuf>,
+    /// Microphone input gain in dB; bounded to the Snow Shot range.
+    pub recording_microphone_gain_db: i8,
+    /// System-audio input gain in dB; bounded to the Snow Shot range.
+    pub recording_system_audio_gain_db: i8,
     /// A standard Tesseract language selected in Settings; `None` preserves the environment fallback.
     pub ocr_language: Option<String>,
     pub theme_mode: ThemeMode,
@@ -65,6 +69,8 @@ impl Default for UserSettings {
             quick_save_directory: None,
             quick_save_prefix: DEFAULT_SAVE_PREFIX.to_owned(),
             recording_directory: None,
+            recording_microphone_gain_db: 0,
+            recording_system_audio_gain_db: 0,
             ocr_language: None,
             theme_mode: ThemeMode::Dark,
             // Only a new or legacy configuration without a saved locale follows Windows. Once
@@ -111,6 +117,12 @@ impl UserSettings {
                     Self::normalize_save_prefix(&settings.quick_save_prefix);
                 settings.recording_directory =
                     Self::normalize_recording_directory(settings.recording_directory);
+                settings.recording_microphone_gain_db = crate::recording::normalize_audio_gain_db(
+                    settings.recording_microphone_gain_db,
+                );
+                settings.recording_system_audio_gain_db = crate::recording::normalize_audio_gain_db(
+                    settings.recording_system_audio_gain_db,
+                );
                 settings.ocr_language = Self::normalize_ocr_language(settings.ocr_language);
                 Ok((settings, path))
             }
@@ -296,6 +308,8 @@ mod tests {
         assert_eq!(settings.quick_save_directory, None);
         assert_eq!(settings.quick_save_prefix, DEFAULT_SAVE_PREFIX);
         assert_eq!(settings.recording_directory, None);
+        assert_eq!(settings.recording_microphone_gain_db, 0);
+        assert_eq!(settings.recording_system_audio_gain_db, 0);
         assert_eq!(settings.ocr_language, None);
         assert_eq!(settings.theme_mode, ThemeMode::Dark);
         assert_eq!(settings.locale, Locale::system_default());
@@ -317,6 +331,8 @@ mod tests {
         settings.quick_save_directory = Some(directory.join("captures"));
         settings.quick_save_prefix = "Release_Notes".to_owned();
         settings.recording_directory = Some(directory.join("recordings"));
+        settings.recording_microphone_gain_db = -12;
+        settings.recording_system_audio_gain_db = 6;
         settings.ocr_language = Some("eng+chi_sim".to_owned());
         settings.theme_mode = ThemeMode::Light;
         settings.locale = Locale::SimplifiedChinese;
@@ -346,6 +362,8 @@ mod tests {
             reopened.recording_directory,
             Some(directory.join("recordings"))
         );
+        assert_eq!(reopened.recording_microphone_gain_db, -12);
+        assert_eq!(reopened.recording_system_audio_gain_db, 6);
         assert_eq!(reopened.ocr_language.as_deref(), Some("eng+chi_sim"));
         assert_eq!(reopened.theme_mode, ThemeMode::Light);
         assert_eq!(reopened.locale, Locale::SimplifiedChinese);
@@ -476,6 +494,23 @@ mod tests {
             UserSettings::normalize_recording_directory(Some(std::path::PathBuf::new())),
             None
         );
+    }
+
+    #[test]
+    fn recording_audio_gains_are_clamped_to_the_supported_range() {
+        let directory = directory("recording-audio-gain-range");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("settings.json"),
+            r#"{"version":1,"recording_microphone_gain_db":-40,"recording_system_audio_gain_db":40}"#,
+        )
+        .unwrap();
+
+        let (settings, _) = UserSettings::load(&directory).unwrap();
+
+        assert_eq!(settings.recording_microphone_gain_db, -24);
+        assert_eq!(settings.recording_system_audio_gain_db, 24);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
