@@ -121,6 +121,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | U2 | App/Library/Record 入口和恢复动作收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | App/Library/Record 的入口、主要动作、忙/失败/恢复状态与中英文真实键鼠验收通过；详细报告见 U2.1-U2.15 |
 | U3 | 视觉 token、滚动和其他页面布局收尾 | 已完成（单屏 100%、DPI 96；2026-10-07） | 当前设备可用矩阵与滚动 Capture→Finish→Copy/Save/Cancel 通过；其他 DPI/多屏由 D1 单独暂缓 |
 | U4 | Pin 中英文实时输入与窗口生命周期 | 已完成（单屏 100%、DPI 96；2026-10-07） | 锁定/解锁入口和状态清晰；锁定期间拖动与缩放被阻止；真实输入、焦点、关闭、再次 Capture 和语言/主题矩阵通过；锁定仅在当前 Pin 窗口期间有效 |
+| U6 | 全应用 UI 与页面布局美化 | 已完成（单屏 100%、DPI 96；2026-10-26） | 四页页头、导航、分组、留白和按钮层级统一；窄窗复杂控件改为纵向排布，四页 420/520/980 三尺寸截图通过；980 宽键鼠导航通过 |
 | S1 | Capture 入口、智能选区与快捷动作对齐 | 已完成（S1.1-S1.2，2026-10-26） | Capture 延时、全屏和焦点窗口三项全局动作及整组注册/恢复边界已冻结；保留现有物理像素、快捷键冲突处理和资源清理规则 |
 | S2 | Record 音频产物与失败恢复 | 进行中（S2.1，2026-10-26） | 先完成音源增益控件、独立持久化和编码参数；后续对显示器、窗口和区域录制分别验证无音频、麦克风、系统声音的实际音轨、暂停/恢复/停止、输入失败和清理 |
 | S3 | 滚动截图交互收口 | 待开发 | 在核心手动垂直拼接稳定后，评估水平模式、连续流、自动滚动、实时缩略图和裁剪预览；每项单独验收，不以静态拼接结果代替交互证据 |
@@ -130,7 +131,7 @@ UI 与 workflow 都可以按已记录的功能差异演进；每项变更保留�
 | D1 | 真实 150%/200% DPI 与多屏 | 暂缓 | 具备对应 Windows 硬件后逐项提供物理像素、窗口和清理证据 |
 | P3 | 插件平台（`0.3.0+`） | 暂缓 | `0.2.0` 不开发；另行冻结插件清单、权限、资源上限和发布策略 |
 
-主线执行顺序为：**R1.2 取消边界 → S1.1 窗口/控件目标切换 → S1.2 全局快捷动作矩阵 → S2 Record 音频产物 → S3 滚动截图交互 → S4 Pin/Library/识别结果扩展 → D1 高 DPI/多屏硬件矩阵**。R1.2 与 S1 已完成；接下来从 S2 开始，优先处理用户可观察差距，暂不继续扩大公共 capture-core API。C1 原生打印和 P3 插件平台继续暂缓。
+主线执行顺序为：**R1.2 取消边界 → S1.1 窗口/控件目标切换 → S1.2 全局快捷动作矩阵 → U6 全应用 UI 与布局美化 → S2 Record 音频产物 → S3 滚动截图交互 → S4 Pin/Library/识别结果扩展 → D1 高 DPI/多屏硬件矩阵**。R1.2、S1 和 U6 已完成；接下来继续 S2，先补齐 S2.1 真实音轨、输入失败和产物清理验收。暂不继续扩大公共 capture-core API。C1 原生打印和 P3 插件平台继续暂缓。
 
 ## 4. 开发切片与交付记录
 
@@ -507,6 +508,16 @@ M1 退出条件已满足：runner 场景、overlay 绘制/布局/选择/控制/�
 本切片只冻结上述三项现有动作，不增加 Snow Apps 的全局动作数量，也不改变全屏 Capture 后的 Copy/Save/Pin 流程；录屏、历史和设置仍从各自页面或托盘入口进入。Windows 原生冲突测试占用第二个快捷键，再尝试注册两项动作，确认首项部分注册被释放；解除占用后两项均可重新注册。双语模板测试覆盖变更失败和恢复失败的详情。
 
 当前源码 Windows Release runner 报告 `target/s1-shortcut-actions-native-final/session-1792972267425-26548/report.json` 为 schema 34、`status=passed`，并记录普通 Capture 无选区启动、全屏边界 `2560x1440`、焦点窗口夹具及其 `640x360` 选区；Escape 后 `session_state=idle`、`overlay_count=0`、`pinned_count=0`、`visible_process_windows=0`、输入已释放、夹具已退出、`capture_preflight_ready=true`。Computer Use 启动当前源码 Release 后没有返回可操作窗口；刷新应用和窗口列表后仍未发现 Flash Shot 窗口。因此本项交互证据来自 Windows Release runner，不标记为 Computer Use 证据。S1 完成，下一步进入 S2 Record 音频产物与失败恢复。
+
+### U6：全应用 UI 与页面布局美化
+
+范围：统一 Capture、Library、Record、App 的页头、导航、内容分组、行间距和按钮层级。紧凑窗口让复杂设置控件使用完整内容宽度；简单开关保留同一行。图库的快速保存和文件操作使用并列分组，录屏的配置和开始/停止操作有清晰间隔。
+
+验收条件：English/简体中文、深色/浅色、420×420/520×640/980×760 四页截图无水平截断或重叠；长页面可滚动；导航键盘方向和主要动作保持可用。验证命令为 `cargo fmt --all -- --check`、`cargo check --workspace --all-targets --all-features --locked`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo test --workspace --all-features --locked`，并用当前源码 Release 检查 UI。优先使用 Computer Use；若窗口恢复失败，则记录限制，并使用项目现有原生输入 runner 补充证据。回滚边界为独立 UI 提交，范围不涉及设置字段、截图工作区、录制编码或 Snow Apps 基准。
+
+**U6 当前结果（2026-10-26）**：统一 Flash Shot 页头的图标、标题和副标题；Capture、Library、Record、App 四页使用一致的导航状态、卡片分组、间距和圆角控件。窄窗设置行上下排列，开关仍和标签同行；420 像素窗口隐藏冗余导航图标以保证 English 标签单行。Library 的快速保存与历史操作分开；Record 的开始、支持检查和暂停动作排在设置上方，音源和目录设置排在其后；App 更新动作保持在 General 分组并限制宽窗按钮宽度。
+
+当前源码 Windows Release `settings-ui-acceptance` 矩阵保存在 `target/ui-acceptance/u6-matrix/`：四页覆盖 420×420、520×640、980×760，组合包含 English/简体中文和深色/浅色；12 份 JSON 均记录 DPI 96、scale 1.0 且 `scale_match=true`，PNG 已逐页目视检查。Release `settings-interaction-acceptance` 的 `wide-zh-light/session-27856/report.json`、`app-update-en-dark/session-29084/report.json`、`record-start-cancel-zh-light-r2/session-26188/report.json`、`record-start-cancel-zh-light-compact/session-*/report.json` 和 `record-start-cancel-zh-dark-minimum/session-*/report.json` 均为 `status=passed`。证据覆盖 980×760、520×640、420×420 下的鼠标/键盘导航、App 更新检查取消、Record 启动取消和输入/窗口清理。Computer Use 截取了新 Release 窗口；导航点击期间应用句柄失效，刷新清单后窗口已退出，因此交互结果来自项目 Windows Release runner。工作区格式、全目标 check、严格 Clippy 和全 workspace/all-features 测试均通过（729 项）。
 
 ### S2：Record 音频产物与失败恢复
 

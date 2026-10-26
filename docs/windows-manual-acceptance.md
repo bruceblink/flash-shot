@@ -455,3 +455,9 @@ MP4 解码一帧，以 16x16 RGB 网格和桌面参考图做有损容差校验�
 `target\\release-capture-performance-20260802.json`。这些文件可用于复核本表中的数值，
 滚动 Copy/Save/Cancel 三出口已由上面的独立 Release 会话关闭；OCR 已通过单屏验收并作为可选能力保留，翻译服务、双屏与混合 DPI
 按当前范围暂缓。
+
+## 2026-10-26 UI 与布局验收补充
+
+当前源码 Release `settings-ui-acceptance` 在单屏 100%、DPI 96 下生成 `target/ui-acceptance/u6-matrix/` 的 12 组四页面截图，覆盖 420×420、520×640、980×760；English/简体中文和深色/浅色组合均有覆盖，12 份 JSON 全部记录 `scale_match=true`。已目视检查导航单行、页面分组、主按钮和内容滚动。
+
+当前源码 Release `settings-interaction-acceptance` 的 `wide-zh-light/session-27856/report.json`、`app-update-en-dark/session-29084/report.json`、`record-start-cancel-zh-light-r2/session-26188/report.json`、`record-start-cancel-zh-light-compact/session-*/report.json` 和 `record-start-cancel-zh-dark-minimum/session-*/report.json` 均为 `status=passed`。报告覆盖 980×760、520×640、420×420 的鼠标导航与键盘导航；App 更新检查取消；Record 启动取消；输入释放、光标恢复和窗口降层。Computer Use 能截取新 Release 应用窗口，但导航点击后窗口句柄失效；交互结果来自项目 Windows 原生输入 runner，不标记为 Computer Use 结果。此矩阵不替代高 DPI、多显示器和录屏真实设备音轨验收。

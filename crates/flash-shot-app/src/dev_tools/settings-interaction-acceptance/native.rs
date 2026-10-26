@@ -198,7 +198,8 @@ pub(super) fn click_navigation_item(
 /// layouts. Keeping the two targets explicit makes the probe fail loudly if the page geometry
 /// moves instead of silently clicking another preference.
 pub(super) fn click_update_action(window: NativeWindow, compact: bool) -> io::Result<()> {
-    let (logical_x, logical_y) = if compact { (300, 486) } else { (453, 432) };
+    // The compact action is tested in a tall window so it remains inside the scroll viewport.
+    let (logical_x, logical_y) = if compact { (260, 630) } else { (529, 483) };
     guard_foreground(window)?;
     move_and_click(
         window,
@@ -210,7 +211,7 @@ pub(super) fn click_update_action(window: NativeWindow, compact: bool) -> io::Re
 #[cfg(windows)]
 /// Clicks the App page's appearance button before the live Pin language/theme assertion.
 pub(super) fn click_system_theme(window: NativeWindow, compact: bool) -> io::Result<()> {
-    let (logical_x, logical_y) = if compact { (300, 322) } else { (453, 269) };
+    let (logical_x, logical_y) = if compact { (70, 379) } else { (439, 303) };
     guard_foreground(window)?;
     move_and_click(
         window,
@@ -222,7 +223,7 @@ pub(super) fn click_system_theme(window: NativeWindow, compact: bool) -> io::Res
 #[cfg(windows)]
 /// Clicks the App page's language button after the theme update has reached every Pin.
 pub(super) fn click_system_language(window: NativeWindow, compact: bool) -> io::Result<()> {
-    let (logical_x, logical_y) = if compact { (300, 378) } else { (453, 325) };
+    let (logical_x, logical_y) = if compact { (78, 478) } else { (447, 367) };
     guard_foreground(window)?;
     move_and_click(
         window,
@@ -234,7 +235,7 @@ pub(super) fn click_system_language(window: NativeWindow, compact: bool) -> io::
 #[cfg(windows)]
 /// Clicks the Record page's support-check action in the compact or wide settings layout.
 pub(super) fn click_record_support(window: NativeWindow, compact: bool) -> io::Result<()> {
-    let (logical_x, logical_y) = if compact { (82, 531) } else { (229, 441) };
+    let (logical_x, logical_y) = if compact { (90, 333) } else { (269, 299) };
     guard_foreground(window)?;
     move_and_click(
         window,
@@ -246,7 +247,7 @@ pub(super) fn click_record_support(window: NativeWindow, compact: bool) -> io::R
 #[cfg(windows)]
 /// Clicks the Record primary toggle in the deterministic short-directory acceptance layout.
 pub(super) fn click_record_toggle(window: NativeWindow, compact: bool) -> io::Result<()> {
-    let (logical_x, logical_y) = if compact { (225, 530) } else { (326, 441) };
+    let (logical_x, logical_y) = if compact { (190, 333) } else { (348, 299) };
     guard_foreground(window)?;
     move_and_click(
         window,
@@ -258,7 +259,7 @@ pub(super) fn click_record_toggle(window: NativeWindow, compact: bool) -> io::Re
 #[cfg(windows)]
 /// Clicks the idle Record primary action, whose row moves down before a status row exists.
 pub(super) fn click_record_idle_toggle(window: NativeWindow, compact: bool) -> io::Result<()> {
-    let (logical_x, logical_y) = if compact { (225, 550) } else { (326, 498) };
+    let (logical_x, logical_y) = if compact { (190, 333) } else { (348, 299) };
     guard_foreground(window)?;
     move_and_click(
         window,
@@ -271,7 +272,7 @@ pub(super) fn click_record_idle_toggle(window: NativeWindow, compact: bool) -> i
 /// Clicks the Library export-format action after the acceptance runner fixes the history root to
 /// a short path, keeping the content rows at stable coordinates in both layout modes.
 pub(super) fn click_library_format(window: NativeWindow, compact: bool) -> io::Result<()> {
-    let (logical_x, logical_y) = if compact { (435, 525) } else { (520, 472) };
+    let (logical_x, logical_y) = if compact { (440, 728) } else { (545, 606) };
     guard_foreground(window)?;
     move_and_click(
         window,

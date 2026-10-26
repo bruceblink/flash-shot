@@ -22,6 +22,27 @@ const HISTORY_PREVIEW_LIMIT: usize = 5;
 const SETTINGS_CONTENT_MAX_WIDTH: f32 = 960.0;
 const COMPACT_SETTINGS_NAVIGATION_BREAKPOINT: f32 = 640.0;
 
+/// Layout choices belong to the settings window; capture and Pin geometry stay independent.
+#[derive(Clone, Copy)]
+struct SettingsLayout {
+    compact: bool,
+}
+
+impl SettingsLayout {
+    fn row(self, label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
+        settings_row(label, colors, self.compact)
+    }
+
+    fn described_row(
+        self,
+        label: &str,
+        description: impl Into<String>,
+        colors: crate::theme::ThemeColors,
+    ) -> gpui::Div {
+        settings_row_with_description(label, description, colors, self.compact)
+    }
+}
+
 type HistoryEntryView = (
     crate::history::HistoryEntry,
     Option<std::sync::Arc<gpui::RenderImage>>,
@@ -67,6 +88,10 @@ impl gpui::Render for FlashShotApp {
         let locale = self.settings.locale;
         let compact_navigation =
             uses_compact_settings_navigation(f32::from(window.bounds().size.width));
+        let hide_compact_navigation_icons = f32::from(window.bounds().size.width) <= 480.0;
+        let layout = SettingsLayout {
+            compact: compact_navigation,
+        };
         let show_status = !self.single_history_clear_pending();
         let recording_state = RecordingViewState {
             active: self.recording_control.is_some() || self.recording_acceptance_active,
@@ -184,6 +209,7 @@ impl gpui::Render for FlashShotApp {
                         colors,
                         app.clone(),
                         compact_navigation,
+                        hide_compact_navigation_icons,
                         &self.settings_navigation_focus,
                         locale,
                     ))
@@ -194,7 +220,7 @@ impl gpui::Render for FlashShotApp {
                             .min_w(px(0.0))
                             .min_h(px(0.0))
                             .overflow_y_scroll()
-                            .p(px(metrics.space_4))
+                            .p(px(if layout.compact { 16.0 } else { 28.0 }))
                             .child(
                                 div()
                                     .id("settings-content-column")
@@ -219,6 +245,7 @@ impl gpui::Render for FlashShotApp {
                                                 is_idle,
                                                 app.clone(),
                                                 locale,
+                                                layout,
                                             ))
                                         },
                                     )
@@ -231,6 +258,7 @@ impl gpui::Render for FlashShotApp {
                                                 is_idle,
                                                 app.clone(),
                                                 locale,
+                                                layout,
                                             ))
                                         },
                                     )
@@ -258,6 +286,7 @@ impl gpui::Render for FlashShotApp {
                                                         .recording_directory_check_in_flight,
                                                 },
                                                 app.clone(),
+                                                layout,
                                             ))
                                         },
                                     )
@@ -268,6 +297,7 @@ impl gpui::Render for FlashShotApp {
                                                 self,
                                                 colors,
                                                 app.clone(),
+                                                layout,
                                             ))
                                         },
                                     )
@@ -457,11 +487,9 @@ fn settings_header(
         .flex()
         .items_center()
         .justify_between()
-        .border_t_1()
         .border_b_1()
         .border_color(colors.border)
         .bg(colors.surface)
-        .shadow_sm()
         .child(
             div()
                 .flex()
@@ -473,13 +501,10 @@ fn settings_header(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(colors.accent)
+                        .rounded_md()
                         .bg(colors.accent)
                         .text_color(colors.canvas)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("F"),
+                        .child(settings_icon_element(SettingsIcon::Capture, colors.canvas)),
                 )
                 .child(
                     div()
@@ -495,7 +520,7 @@ fn settings_header(
                         )
                         .child(
                             div()
-                                .text_sm()
+                                .text_xs()
                                 .text_color(colors.text_muted)
                                 .child(locale.text(UiText::WorkspaceSubtitle)),
                         ),
@@ -509,7 +534,7 @@ fn settings_header(
                     .px_4()
                     .flex()
                     .items_center()
-                    .rounded_sm()
+                    .rounded_md()
                     .border_1()
                     .border_color(if is_idle {
                         colors.accent
@@ -584,6 +609,7 @@ fn capture_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
     locale: Locale,
+    layout: SettingsLayout,
 ) -> gpui::Div {
     // History readers and managed saves own files that capture actions may otherwise replace.
     // Clipboard encoding owns only a frozen image snapshot, so it must not block a new capture.
@@ -603,6 +629,7 @@ fn capture_settings(
                 colors,
                 capture_actions_enabled,
                 true,
+                layout.compact,
                 {
                     let app = app.clone();
                     move |_, _, cx| app.update(cx, |this, cx| this.start_capture(cx))
@@ -614,6 +641,7 @@ fn capture_settings(
                 colors,
                 capture_actions_enabled,
                 false,
+                layout.compact,
                 {
                     let app = app.clone();
                     move |_, _, cx| app.update(cx, |this, cx| this.start_full_screen_capture(cx))
@@ -625,6 +653,7 @@ fn capture_settings(
                 colors,
                 capture_actions_enabled,
                 false,
+                layout.compact,
                 {
                     let app = app.clone();
                     move |_, _, cx| app.update(cx, |this, cx| this.start_focused_window_capture(cx))
@@ -644,6 +673,7 @@ fn capture_settings(
                 locale.text(UiText::GlobalShortcut),
                 shortcut_summary,
                 colors,
+                false,
             )
             .child(settings_toggle(
                 "settings-shortcut-enabled",
@@ -657,7 +687,7 @@ fn capture_settings(
             )),
         )
         .child(
-            settings_row(locale.text(UiText::IncludeCursor), colors).child(settings_toggle(
+            settings_row(locale.text(UiText::IncludeCursor), colors, false).child(settings_toggle(
                 "settings-cursor",
                 app_state.include_cursor,
                 colors,
@@ -668,56 +698,64 @@ fn capture_settings(
                 },
             )),
         )
-        .child(settings_row(locale.text(UiText::Shortcut), colors).child(
-            div().flex().flex_wrap().justify_end().gap_2().children(
-                CaptureShortcut::PRESETS.into_iter().map(|preset| {
-                    let app = app.clone();
-                    settings_segment_button(
-                        format!("settings-shortcut-{preset}"),
-                        preset,
-                        app_state.capture_shortcut == preset,
-                        colors,
-                        move |_, _, cx| {
-                            app.update(cx, |this, cx| this.select_capture_shortcut(preset, cx))
-                        },
-                    )
-                }),
+        .child(
+            layout.row(locale.text(UiText::Shortcut), colors).child(
+                div().flex().flex_wrap().gap_2().children(
+                    CaptureShortcut::PRESETS.into_iter().map(|preset| {
+                        let app = app.clone();
+                        settings_segment_button(
+                            format!("settings-shortcut-{preset}"),
+                            preset,
+                            app_state.capture_shortcut == preset,
+                            colors,
+                            move |_, _, cx| {
+                                app.update(cx, |this, cx| this.select_capture_shortcut(preset, cx))
+                            },
+                        )
+                    }),
+                ),
             ),
-        ))
-        .child(
-            settings_row(locale.text(UiText::FullScreenKey), colors).child(settings_button(
-                "settings-full-screen-shortcut",
-                super::workflow::shortcut_option_label(
-                    locale,
-                    app_state.settings.full_screen_shortcut.as_deref(),
-                ),
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_full_screen_shortcut(cx))
-                },
-            )),
         )
         .child(
-            settings_row(locale.text(UiText::FocusedWindowKey), colors).child(settings_button(
-                "settings-focused-window-shortcut",
-                super::workflow::shortcut_option_label(
-                    locale,
-                    app_state.settings.focused_window_shortcut.as_deref(),
-                ),
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| {
-                        app.update(cx, |this, cx| this.cycle_focused_window_shortcut(cx))
-                    }
-                },
-            )),
+            layout
+                .row(locale.text(UiText::FullScreenKey), colors)
+                .child(settings_button(
+                    "settings-full-screen-shortcut",
+                    super::workflow::shortcut_option_label(
+                        locale,
+                        app_state.settings.full_screen_shortcut.as_deref(),
+                    ),
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.cycle_full_screen_shortcut(cx))
+                        }
+                    },
+                )),
         )
         .child(
-            settings_row(locale.text(UiText::CaptureDelay), colors).child(
+            layout
+                .row(locale.text(UiText::FocusedWindowKey), colors)
+                .child(settings_button(
+                    "settings-focused-window-shortcut",
+                    super::workflow::shortcut_option_label(
+                        locale,
+                        app_state.settings.focused_window_shortcut.as_deref(),
+                    ),
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.cycle_focused_window_shortcut(cx))
+                        }
+                    },
+                )),
+        )
+        .child(
+            layout.row(locale.text(UiText::CaptureDelay), colors).child(
                 div()
                     .flex()
                     .gap_1()
@@ -738,79 +776,86 @@ fn capture_settings(
             ),
         )
         .child(
-            settings_row(locale.text(UiText::ColorCopyFormat), colors).child(settings_button(
-                "settings-color-format",
-                app_state.color_format_label(),
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_color_format(cx))
-                },
-            )),
+            layout
+                .row(locale.text(UiText::ColorCopyFormat), colors)
+                .child(settings_button(
+                    "settings-color-format",
+                    app_state.color_format_label(),
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_color_format(cx))
+                    },
+                )),
         )
         .child(
-            settings_row(
-                app_state.settings.locale.text(UiText::SettingsLocalOcr),
-                colors,
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .justify_end()
-                    .gap_2()
-                    .child(settings_button(
-                        "settings-ocr-language",
-                        super::workflow::ocr_language_label(
-                            app_state.settings.locale,
-                            app_state.settings.ocr_language.as_deref(),
-                        ),
-                        colors,
-                        !app_state.ocr_support_check_in_flight,
-                        {
-                            let app = app.clone();
-                            move |_, _, cx| app.update(cx, |this, cx| this.cycle_ocr_language(cx))
-                        },
-                    ))
-                    .child(settings_button(
-                        "settings-check-ocr-support",
-                        ocr_support_check_label(
-                            app_state.settings.locale,
-                            app_state.ocr_support_check_in_flight,
-                        ),
-                        colors,
-                        !app_state.ocr_support_check_in_flight,
-                        {
-                            let app = app.clone();
-                            move |_, _, cx| app.update(cx, |this, cx| this.check_ocr_support(cx))
-                        },
-                    )),
-            ),
-        )
-        .child(
-            settings_row(
-                app_state.settings.locale.text(UiText::SettingsTranslation),
-                colors,
-            )
-            .child(settings_button(
-                "settings-test-translation-service",
-                translation_service_test_label(
-                    app_state.settings.locale,
-                    app_state.translation_service_test_in_flight,
+            layout
+                .row(
+                    app_state.settings.locale.text(UiText::SettingsLocalOcr),
+                    colors,
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(settings_button(
+                            "settings-ocr-language",
+                            super::workflow::ocr_language_label(
+                                app_state.settings.locale,
+                                app_state.settings.ocr_language.as_deref(),
+                            ),
+                            colors,
+                            !app_state.ocr_support_check_in_flight,
+                            {
+                                let app = app.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| this.cycle_ocr_language(cx))
+                                }
+                            },
+                        ))
+                        .child(settings_button(
+                            "settings-check-ocr-support",
+                            ocr_support_check_label(
+                                app_state.settings.locale,
+                                app_state.ocr_support_check_in_flight,
+                            ),
+                            colors,
+                            !app_state.ocr_support_check_in_flight,
+                            {
+                                let app = app.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| this.check_ocr_support(cx))
+                                }
+                            },
+                        )),
                 ),
-                colors,
-                true,
-                move |_, _, cx| {
-                    app.update(cx, |this, cx| {
-                        if this.translation_service_test_in_flight {
-                            this.cancel_translation_service_test(cx);
-                        } else {
-                            this.test_translation_service(cx);
-                        }
-                    })
-                },
-            )),
+        )
+        .child(
+            layout
+                .row(
+                    app_state.settings.locale.text(UiText::SettingsTranslation),
+                    colors,
+                )
+                .child(settings_button(
+                    "settings-test-translation-service",
+                    translation_service_test_label(
+                        app_state.settings.locale,
+                        app_state.translation_service_test_in_flight,
+                    ),
+                    colors,
+                    true,
+                    move |_, _, cx| {
+                        app.update(cx, |this, cx| {
+                            if this.translation_service_test_in_flight {
+                                this.cancel_translation_service_test(cx);
+                            } else {
+                                this.test_translation_service(cx);
+                            }
+                        })
+                    },
+                )),
         );
 
     let pin_recovery =
@@ -839,133 +884,139 @@ fn file_settings(
     is_idle: bool,
     app: gpui::Entity<FlashShotApp>,
     locale: Locale,
+    layout: SettingsLayout,
 ) -> gpui::Div {
-    settings_section(locale.text(UiText::LibraryQuickSave), colors)
+    let quick_save = settings_section(locale.text(UiText::LibraryQuickSave), colors)
         .child(
-            settings_row(locale.text(UiText::LibraryFolderAccess), colors).child(settings_button(
-                "settings-check-quick-save-folder",
-                if app_state.quick_save_directory_check_in_flight {
-                    locale.text(UiText::LibraryChecking)
-                } else {
-                    locale.text(UiText::LibraryCheckFolder)
-                },
-                colors,
-                is_idle
-                    && !app_state.quick_save_directory_check_in_flight
-                    && !app_state.history_root_change_in_flight
-                    && app_state.history_write_generation.is_none(),
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.check_quick_save_directory(cx))
-                },
-            )),
+            layout
+                .row(locale.text(UiText::LibraryFolderAccess), colors)
+                .child(settings_button(
+                    "settings-check-quick-save-folder",
+                    if app_state.quick_save_directory_check_in_flight {
+                        locale.text(UiText::LibraryChecking)
+                    } else {
+                        locale.text(UiText::LibraryCheckFolder)
+                    },
+                    colors,
+                    is_idle
+                        && !app_state.quick_save_directory_check_in_flight
+                        && !app_state.history_root_change_in_flight
+                        && app_state.history_write_generation.is_none(),
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.check_quick_save_directory(cx))
+                        }
+                    },
+                )),
         )
         .child(
-            settings_row_with_description(
-                locale.text(UiText::LibrarySaveFolder),
-                settings_path_label(app_state.history.root()),
-                colors,
-            )
-            .child(settings_button(
-                "settings-quick-save-folder",
-                locale.text(UiText::LibraryChooseFolder),
-                colors,
-                is_idle
-                    && !app_state.history_root_change_in_flight
-                    && app_state.history_write_generation.is_none()
-                    && !app_state.history_file_read_in_flight()
-                    && !app_state.history_mutation_pending(),
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.choose_quick_save_directory(cx))
-                },
-            )),
+            layout
+                .described_row(
+                    locale.text(UiText::LibrarySaveFolder),
+                    settings_path_label(app_state.history.root()),
+                    colors,
+                )
+                .child(settings_button(
+                    "settings-quick-save-folder",
+                    locale.text(UiText::LibraryChooseFolder),
+                    colors,
+                    is_idle
+                        && !app_state.history_root_change_in_flight
+                        && app_state.history_write_generation.is_none()
+                        && !app_state.history_file_read_in_flight()
+                        && !app_state.history_mutation_pending(),
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| {
+                            app.update(cx, |this, cx| this.choose_quick_save_directory(cx))
+                        }
+                    },
+                )),
         )
         .child(
-            settings_row(locale.text(UiText::LibraryFileName), colors).child(settings_button(
-                "settings-quick-save-prefix",
-                &quick_save_prefix_label(locale, &app_state.settings.quick_save_prefix),
-                colors,
-                is_idle,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_quick_save_prefix(cx))
-                },
-            )),
-        )
-        .child(
-            settings_section(locale.text(UiText::LibraryOpenAndHistory), colors).child(
-                // Own the available width so narrow windows wrap actions instead of clipping them.
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(settings_button(
-                        "settings-open-image",
-                        locale.text(UiText::LibraryOpenPng),
-                        colors,
-                        is_idle,
-                        {
-                            let app = app.clone();
-                            move |_, _, cx| app.update(cx, |this, cx| this.open_image(cx))
-                        },
-                    ))
-                    .child(settings_button(
-                        "settings-open-project",
-                        locale.text(UiText::LibraryOpenProject),
-                        colors,
-                        is_idle,
-                        {
-                            let app = app.clone();
-                            move |_, _, cx| {
-                                app.update(cx, |this, cx| this.open_editable_project(cx))
-                            }
-                        },
-                    ))
-                    .child(settings_button(
-                        "settings-open-screenshot-folder",
-                        locale.text(UiText::LibraryOpenFolder),
-                        colors,
-                        is_idle,
-                        {
-                            let app = app.clone();
-                            move |_, _, cx| {
-                                app.update(cx, |this, cx| this.open_history_directory(cx))
-                            }
-                        },
-                    ))
-                    .child(settings_button(
-                        "settings-export-format",
-                        &locale.format_template(
-                            UiText::LibrarySaveAs,
-                            &[("format", app_state.export_format_label())],
-                        ),
-                        colors,
-                        is_idle,
-                        {
-                            let app = app.clone();
-                            move |_, _, cx| app.update(cx, |this, cx| this.cycle_export_format(cx))
-                        },
-                    ))
-                    .child(settings_button(
-                        "settings-history-retention",
-                        &history_retention_label(
-                            locale,
-                            app_state.settings.history_limit,
-                            app_state.history_retention_target,
-                        ),
-                        colors,
-                        is_idle
-                            && app_state.history_mutation_can_start()
-                            && !app_state.history_clear_in_flight
-                            && !app_state.history_clear_confirmation
-                            && app_state.history_deletions_in_flight.is_empty()
-                            && app_state.history_retention_target.is_none(),
-                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_history_limit(cx)),
-                    )),
-            ),
-        )
+            layout
+                .row(locale.text(UiText::LibraryFileName), colors)
+                .child(settings_button(
+                    "settings-quick-save-prefix",
+                    &quick_save_prefix_label(locale, &app_state.settings.quick_save_prefix),
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_quick_save_prefix(cx))
+                    },
+                )),
+        );
+    div().flex().flex_col().gap_4().child(quick_save).child(
+        settings_section(locale.text(UiText::LibraryOpenAndHistory), colors).child(
+            // Own the available width so narrow windows wrap actions instead of clipping them.
+            div()
+                .w_full()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .child(settings_button(
+                    "settings-open-image",
+                    locale.text(UiText::LibraryOpenPng),
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.open_image(cx))
+                    },
+                ))
+                .child(settings_button(
+                    "settings-open-project",
+                    locale.text(UiText::LibraryOpenProject),
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.open_editable_project(cx))
+                    },
+                ))
+                .child(settings_button(
+                    "settings-open-screenshot-folder",
+                    locale.text(UiText::LibraryOpenFolder),
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.open_history_directory(cx))
+                    },
+                ))
+                .child(settings_button(
+                    "settings-export-format",
+                    &locale.format_template(
+                        UiText::LibrarySaveAs,
+                        &[("format", app_state.export_format_label())],
+                    ),
+                    colors,
+                    is_idle,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_export_format(cx))
+                    },
+                ))
+                .child(settings_button(
+                    "settings-history-retention",
+                    &history_retention_label(
+                        locale,
+                        app_state.settings.history_limit,
+                        app_state.history_retention_target,
+                    ),
+                    colors,
+                    is_idle
+                        && app_state.history_mutation_can_start()
+                        && !app_state.history_clear_in_flight
+                        && !app_state.history_clear_confirmation
+                        && app_state.history_deletions_in_flight.is_empty()
+                        && app_state.history_retention_target.is_none(),
+                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_history_limit(cx)),
+                )),
+        ),
+    )
 }
 
 /// Formats a local folder without exposing Windows' internal extended-path prefix in the UI.
@@ -1114,7 +1165,7 @@ fn recording_audio_gain_key_adjustment(keystroke: &gpui::Keystroke) -> Option<i8
     }
 }
 
-/// Renders recording choices and commands, wrapping the command row before a narrow window clips it.
+/// Renders the recording actions first so they stay visible above source and folder setup.
 fn recording_settings(
     locale: Locale,
     colors: crate::theme::ThemeColors,
@@ -1122,6 +1173,7 @@ fn recording_settings(
     sources: RecordingSourceViewState<'_>,
     directory: RecordingDirectoryViewState<'_>,
     app: gpui::Entity<FlashShotApp>,
+    layout: SettingsLayout,
 ) -> gpui::Div {
     let metrics = ThemeMetrics::default();
     let directory_check_in_flight = directory.check_in_flight;
@@ -1131,10 +1183,11 @@ fn recording_settings(
         !lifecycle_busy && !source_discovery_busy && !directory_check_in_flight;
     let settings_idle = support_check_available && !state.support_check_in_flight;
     let recording_toggle_enabled = recording_toggle_enabled(state, directory_check_in_flight);
-    settings_section(locale.text(UiText::Record), colors)
+    let configuration = settings_section(locale.text(UiText::RecordingSetup), colors)
         .child(
-            settings_row(locale.text(UiText::RecordingSettingsDisplay), colors).child(
-                settings_button(
+            layout
+                .row(locale.text(UiText::RecordingSettingsDisplay), colors)
+                .child(settings_button(
                     "settings-recording-display",
                     if state.display_discovery_in_flight {
                         locale.text(UiText::RecordingDiscoveringAction)
@@ -1147,124 +1200,129 @@ fn recording_settings(
                         let app = app.clone();
                         move |_, _, cx| app.update(cx, |this, cx| this.cycle_recording_display(cx))
                     },
-                ),
-            ),
+                )),
         )
         .child(
-            settings_row(locale.text(UiText::RecordingSettingsAudio), colors).child(
-                div()
-                    .flex_1()
-                    .min_w(px(metrics.settings_control_column_min_width))
-                    .flex()
-                    .flex_col()
-                    .gap(px(metrics.space_2))
-                    .child(settings_button(
-                        "settings-recording-audio",
-                        if state.audio_discovery_in_flight {
-                            locale.text(UiText::RecordingDiscoveringAction)
-                        } else {
-                            sources.audio
-                        },
-                        colors,
-                        settings_idle,
-                        {
-                            let app = app.clone();
-                            move |_, _, cx| {
-                                app.update(cx, |this, cx| this.cycle_recording_audio(cx))
-                            }
-                        },
-                    ))
-                    .when_some(sources.gain, |controls, gain| {
-                        controls.child(recording_audio_gain_control(
-                            locale,
+            layout
+                .row(locale.text(UiText::RecordingSettingsAudio), colors)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(metrics.settings_control_column_min_width))
+                        .flex()
+                        .flex_col()
+                        .gap(px(metrics.space_2))
+                        .child(settings_button(
+                            "settings-recording-audio",
+                            if state.audio_discovery_in_flight {
+                                locale.text(UiText::RecordingDiscoveringAction)
+                            } else {
+                                sources.audio
+                            },
                             colors,
-                            gain,
                             settings_idle,
-                            app.clone(),
+                            {
+                                let app = app.clone();
+                                move |_, _, cx| {
+                                    app.update(cx, |this, cx| this.cycle_recording_audio(cx))
+                                }
+                            },
                         ))
-                    }),
-            ),
+                        .when_some(sources.gain, |controls, gain| {
+                            controls.child(recording_audio_gain_control(
+                                locale,
+                                colors,
+                                gain,
+                                settings_idle,
+                                app.clone(),
+                            ))
+                        }),
+                ),
         )
         .child(
-            settings_row_with_description(
-                locale.text(UiText::RecordingSettingsVideoFolder),
-                directory.path.to_owned(),
-                colors,
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(metrics.settings_control_column_min_width))
-                    .flex()
-                    .flex_col()
-                    .gap(px(metrics.space_2))
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_wrap()
-                            .gap(px(metrics.space_2))
-                            .child(settings_button(
-                                "settings-recording-folder-choose",
-                                locale.text(UiText::RecordingChooseFolderAction),
-                                colors,
-                                settings_idle,
-                                {
-                                    let app = app.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| {
-                                            this.choose_recording_directory(cx)
-                                        })
-                                    }
-                                },
-                            ))
-                            .child(settings_button(
-                                "settings-recording-folder-check",
-                                if directory_check_in_flight {
-                                    locale.text(UiText::RecordingCheckingFolderAction)
-                                } else {
-                                    locale.text(UiText::RecordingCheckFolderAction)
-                                },
-                                colors,
-                                settings_idle,
-                                {
-                                    let app = app.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| {
-                                            this.check_recording_directory(cx)
-                                        })
-                                    }
-                                },
-                            ))
-                            .child(settings_button(
-                                "settings-recording-folder-open",
-                                locale.text(UiText::RecordingOpenFolderAction),
-                                colors,
-                                settings_idle,
-                                {
-                                    let app = app.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| this.open_recording_directory(cx))
-                                    }
-                                },
-                            ))
-                            .child(settings_button(
-                                "settings-recording-folder-default",
-                                locale.text(UiText::RecordingUseDefaultFolderAction),
-                                colors,
-                                settings_idle && directory.custom,
-                                {
-                                    let app = app.clone();
-                                    move |_, _, cx| {
-                                        app.update(cx, |this, cx| {
-                                            this.use_default_recording_directory(cx)
-                                        })
-                                    }
-                                },
-                            )),
-                    ),
-            ),
-        )
+            layout
+                .described_row(
+                    locale.text(UiText::RecordingSettingsVideoFolder),
+                    directory.path.to_owned(),
+                    colors,
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(metrics.settings_control_column_min_width))
+                        .flex()
+                        .flex_col()
+                        .gap(px(metrics.space_2))
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(metrics.space_2))
+                                .child(settings_button(
+                                    "settings-recording-folder-choose",
+                                    locale.text(UiText::RecordingChooseFolderAction),
+                                    colors,
+                                    settings_idle,
+                                    {
+                                        let app = app.clone();
+                                        move |_, _, cx| {
+                                            app.update(cx, |this, cx| {
+                                                this.choose_recording_directory(cx)
+                                            })
+                                        }
+                                    },
+                                ))
+                                .child(settings_button(
+                                    "settings-recording-folder-check",
+                                    if directory_check_in_flight {
+                                        locale.text(UiText::RecordingCheckingFolderAction)
+                                    } else {
+                                        locale.text(UiText::RecordingCheckFolderAction)
+                                    },
+                                    colors,
+                                    settings_idle,
+                                    {
+                                        let app = app.clone();
+                                        move |_, _, cx| {
+                                            app.update(cx, |this, cx| {
+                                                this.check_recording_directory(cx)
+                                            })
+                                        }
+                                    },
+                                ))
+                                .child(settings_button(
+                                    "settings-recording-folder-open",
+                                    locale.text(UiText::RecordingOpenFolderAction),
+                                    colors,
+                                    settings_idle,
+                                    {
+                                        let app = app.clone();
+                                        move |_, _, cx| {
+                                            app.update(cx, |this, cx| {
+                                                this.open_recording_directory(cx)
+                                            })
+                                        }
+                                    },
+                                ))
+                                .child(settings_button(
+                                    "settings-recording-folder-default",
+                                    locale.text(UiText::RecordingUseDefaultFolderAction),
+                                    colors,
+                                    settings_idle && directory.custom,
+                                    {
+                                        let app = app.clone();
+                                        move |_, _, cx| {
+                                            app.update(cx, |this, cx| {
+                                                this.use_default_recording_directory(cx)
+                                            })
+                                        }
+                                    },
+                                )),
+                        ),
+                ),
+        );
+    let controls = settings_section(locale.text(UiText::RecordingControls), colors)
         .child(
             div()
                 .w_full()
@@ -1315,23 +1373,31 @@ fn recording_settings(
         )
         .when(recording_status_visible(state), |section| {
             section.child(
-                settings_row(locale.text(UiText::RecordingStatusLabel), colors).child(
-                    div()
-                        .flex_1()
-                        .min_w(px(metrics.settings_control_column_min_width))
-                        .text_sm()
-                        .text_color(colors.text)
-                        .child(recording_progress_label(
-                            locale,
-                            state.active,
-                            state.starting,
-                            state.stopping,
-                            state.paused,
-                            state.progress,
-                        )),
-                ),
+                layout
+                    .row(locale.text(UiText::RecordingStatusLabel), colors)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(metrics.settings_control_column_min_width))
+                            .text_sm()
+                            .text_color(colors.text)
+                            .child(recording_progress_label(
+                                locale,
+                                state.active,
+                                state.starting,
+                                state.stopping,
+                                state.paused,
+                                state.progress,
+                            )),
+                    ),
             )
-        })
+        });
+    div()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .child(controls)
+        .child(configuration)
 }
 
 /// Keeps the recording status row visible for every non-idle lifecycle phase, including stop.
@@ -1424,67 +1490,77 @@ fn system_settings(
     app_state: &FlashShotApp,
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
+    layout: SettingsLayout,
 ) -> gpui::Div {
     let locale = app_state.settings.locale;
     let theme_label = match app_state.settings.theme_mode {
         crate::theme::ThemeMode::Dark => locale.text(UiText::Dark),
         crate::theme::ThemeMode::Light => locale.text(UiText::Light),
     };
-    settings_section(locale.text(UiText::App), colors)
+    settings_section(locale.text(UiText::AppPreferences), colors)
         .child(
-            settings_row(locale.text(UiText::Appearance), colors).child(settings_button(
-                "settings-theme-mode",
-                theme_label,
-                colors,
-                true,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.toggle_theme_mode(cx))
-                },
-            )),
+            layout
+                .row(locale.text(UiText::Appearance), colors)
+                .child(settings_button(
+                    "settings-theme-mode",
+                    theme_label,
+                    colors,
+                    true,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.toggle_theme_mode(cx))
+                    },
+                )),
         )
         .child(
-            settings_row(locale.text(UiText::Language), colors).child(settings_button(
-                "settings-locale",
-                locale.label(),
-                colors,
-                true,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.cycle_locale(cx))
-                },
-            )),
+            layout
+                .row(locale.text(UiText::Language), colors)
+                .child(settings_button(
+                    "settings-locale",
+                    locale.label(),
+                    colors,
+                    true,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.cycle_locale(cx))
+                    },
+                )),
         )
         .child(
-            settings_row(locale.text(UiText::StartWithWindows), colors).child(settings_toggle(
-                "settings-auto-start",
-                app_state.auto_start_enabled,
-                colors,
-                true,
-                {
-                    let app = app.clone();
-                    move |_, _, cx| app.update(cx, |this, cx| this.toggle_auto_start(cx))
-                },
-            )),
+            settings_row(locale.text(UiText::StartWithWindows), colors, false).child(
+                settings_toggle(
+                    "settings-auto-start",
+                    app_state.auto_start_enabled,
+                    colors,
+                    true,
+                    {
+                        let app = app.clone();
+                        move |_, _, cx| app.update(cx, |this, cx| this.toggle_auto_start(cx))
+                    },
+                ),
+            ),
         )
         .child(
-            // Update checking is the App page's single workflow action; appearance, language,
-            // and startup controls remain preference-level secondary controls.
-            settings_row(locale.text(UiText::Updates), colors).child(settings_primary_button(
-                "settings-check-updates",
-                update_check_label_for_locale(locale, app_state.update_check_in_flight),
-                colors,
-                true,
-                move |_, _, cx| {
-                    app.update(cx, |this, cx| {
-                        if this.update_check_in_flight {
-                            this.cancel_update_check(cx);
-                        } else {
-                            this.check_for_updates(cx);
-                        }
-                    })
-                },
-            )),
+            // Update checking is the App page's only workflow action; the other rows edit preferences.
+            layout.row(locale.text(UiText::Updates), colors).child(
+                settings_primary_button(
+                    "settings-check-updates",
+                    update_check_label_for_locale(locale, app_state.update_check_in_flight),
+                    colors,
+                    true,
+                    move |_, _, cx| {
+                        app.update(cx, |this, cx| {
+                            if this.update_check_in_flight {
+                                this.cancel_update_check(cx);
+                            } else {
+                                this.check_for_updates(cx);
+                            }
+                        })
+                    },
+                )
+                .when(layout.compact, |button| button.w_full())
+                .when(!layout.compact, |button| button.w(px(240.0))),
+            ),
         )
 }
 
@@ -2442,6 +2518,7 @@ fn settings_navigation(
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
     compact: bool,
+    hide_compact_icons: bool,
     focus_handles: &[FocusHandle; 4],
     locale: Locale,
 ) -> gpui::Stateful<gpui::Div> {
@@ -2490,6 +2567,7 @@ fn settings_navigation(
                         colors,
                         app.clone(),
                         compact,
+                        hide_compact_icons,
                         (*focus_handles).clone(),
                     )
                 }),
@@ -2541,12 +2619,19 @@ fn settings_navigation_item(
     colors: crate::theme::ThemeColors,
     app: gpui::Entity<FlashShotApp>,
     compact: bool,
+    hide_compact_icon: bool,
     focus_handles: [FocusHandle; 4],
 ) -> gpui::Stateful<gpui::Div> {
     let metrics = ThemeMetrics::default();
     let active = selected == item.section;
     let keyboard_app = app.clone();
     let item_focus = focus_handles[settings_section_index(item.section)].clone();
+    let icon = item.icon;
+    let icon_color = if active {
+        colors.accent
+    } else {
+        colors.text_muted
+    };
     div()
         .id(item.id)
         .flex()
@@ -2567,11 +2652,15 @@ fn settings_navigation_item(
                 .items_center()
                 .gap(px(metrics.space_2))
         })
-        .rounded_sm()
+        .rounded_md()
         .border_1()
         // Keep the rail quiet at rest; the active state is carried by the left accent bar
         // and a restrained surface lift instead of a card-like outline.
-        .border_color(colors.surface)
+        .border_color(if active && compact {
+            colors.accent
+        } else {
+            colors.surface
+        })
         .text_sm()
         .cursor_pointer()
         .bg(if active {
@@ -2579,7 +2668,11 @@ fn settings_navigation_item(
         } else {
             colors.surface
         })
-        .text_color(if active { colors.accent } else { colors.text })
+        .text_color(if active {
+            colors.accent
+        } else {
+            colors.text_muted
+        })
         .focusable()
         .track_focus(&item_focus)
         .focus_visible(|style| style.border_color(colors.focus))
@@ -2615,30 +2708,33 @@ fn settings_navigation_item(
                 this.select_settings_section(item.section, cx)
             })
         })
-        .child(
-            div()
-                .w(px(metrics.settings_marker_width))
-                .h(px(metrics.settings_navigation_marker_height))
-                .when(compact, |bar| bar.w(px(0.0)))
-                .rounded_full()
-                .bg(if active {
-                    colors.accent
-                } else {
-                    colors.surface
-                }),
-        )
-        .child(settings_icon_element(
-            item.icon,
-            if active {
-                colors.accent
-            } else {
-                colors.text_muted
-            },
-        ))
+        .when(!compact, |item| {
+            item.child(
+                div()
+                    .w(px(metrics.settings_marker_width))
+                    .h(px(metrics.settings_navigation_marker_height))
+                    .rounded_full()
+                    .bg(if active {
+                        colors.accent
+                    } else {
+                        colors.surface
+                    }),
+            )
+        })
+        .when(!(compact && hide_compact_icon), |navigation_item| {
+            navigation_item.child(settings_icon_element(icon, icon_color))
+        })
         .child(
             div()
                 .min_w(px(0.0))
-                .when(compact, |label| label.text_xs().text_ellipsis().flex_1())
+                .when(compact, |label| {
+                    label
+                        .min_w(px(0.0))
+                        .flex_1()
+                        .text_xs()
+                        .text_ellipsis()
+                        .overflow_hidden()
+                })
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(item.label),
         )
@@ -2650,34 +2746,17 @@ fn settings_page_intro(
     colors: crate::theme::ThemeColors,
     locale: Locale,
 ) -> gpui::Div {
-    let metrics = ThemeMetrics::default();
     let (title, description) = settings_page_copy_for_locale(section, locale);
     div()
-        .pb_4()
-        .border_b_1()
-        .border_color(colors.border)
         .flex()
         .flex_col()
-        .gap_1()
+        .gap_2()
         .child(
             div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(metrics.settings_marker_width))
-                        .h(px(metrics.settings_marker_height))
-                        .rounded_full()
-                        .bg(colors.accent),
-                )
-                .child(
-                    div()
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(colors.text)
-                        .child(title),
-                ),
+                .text_2xl()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(colors.text)
+                .child(title),
         )
         .child(
             div()
@@ -2715,39 +2794,40 @@ fn settings_page_copy_for_locale(
 fn settings_section(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
     let metrics = ThemeMetrics::default();
     div()
-        .pb_5()
-        .border_b_1()
+        .p_4()
+        .border_1()
         .border_color(colors.border)
+        .rounded_lg()
+        .bg(colors.surface)
         .flex()
         .flex_col()
         .gap(px(metrics.settings_section_gap))
         .child(
             div()
-                .text_xs()
+                .text_sm()
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(colors.muted)
+                .text_color(colors.text)
                 .child(label.to_owned()),
         )
 }
 
 /// Keeps labels in a stable column so controls stay nearby on wide windows and wrap below on narrow ones.
-fn settings_row(label: &str, colors: crate::theme::ThemeColors) -> gpui::Div {
+fn settings_row(label: &str, colors: crate::theme::ThemeColors, stacked: bool) -> gpui::Div {
     let metrics = ThemeMetrics::default();
     div()
         .w_full()
         .flex()
         .flex_wrap()
-        .items_center()
+        .when(!stacked, |row| row.items_center())
         .gap(px(metrics.settings_row_gap))
         .min_h(px(metrics.row_min_height))
-        .py_1()
+        .py_2()
         .child(
             div()
-                .flex_1()
-                .min_w(px(metrics.settings_label_min_width))
-                .max_w(px(metrics.settings_label_max_width))
+                .when(stacked, |label| label.w_full())
+                .when(!stacked, |label| label.w(px(180.0)).flex_none())
                 .text_sm()
-                .text_color(colors.muted)
+                .text_color(colors.text_muted)
                 .child(label.to_owned()),
         )
 }
@@ -2759,6 +2839,7 @@ fn settings_row_with_description(
     label: &str,
     description: impl Into<String>,
     colors: crate::theme::ThemeColors,
+    stacked: bool,
 ) -> gpui::Div {
     let metrics = ThemeMetrics::default();
     let description = description.into();
@@ -2766,15 +2847,14 @@ fn settings_row_with_description(
         .w_full()
         .flex()
         .flex_wrap()
-        .items_center()
+        .when(!stacked, |row| row.items_center())
         .gap(px(metrics.settings_row_gap))
         .min_h(px(metrics.row_min_height))
-        .py_1()
+        .py_2()
         .child(
             div()
-                .flex_1()
-                .min_w(px(metrics.settings_label_min_width))
-                .max_w(px(metrics.settings_label_max_width))
+                .when(stacked, |label| label.w_full())
+                .when(!stacked, |label| label.w(px(180.0)).flex_none())
                 .flex()
                 .flex_col()
                 .gap(px(metrics.settings_description_gap))
@@ -2803,12 +2883,12 @@ fn settings_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
         .border_color(colors.border)
         .bg(colors.surface_elevated)
         .text_sm()
-        .font_weight(FontWeight::SEMIBOLD)
+        .font_weight(FontWeight::MEDIUM)
         .text_color(if enabled {
             colors.text
         } else {
@@ -2895,14 +2975,15 @@ fn quick_action_button(
     colors: crate::theme::ThemeColors,
     enabled: bool,
     primary: bool,
+    compact: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
     let metrics = ThemeMetrics::default();
     div()
         .id(id)
         .h(px(metrics.toolbar_height))
-        .when(primary, |button| button.w_full())
-        .when(!primary, |button| {
+        .when(primary && compact, |button| button.w_full())
+        .when(!primary || !compact, |button| {
             button
                 .flex_1()
                 .min_w(px(metrics.settings_quick_action_min_width))
@@ -2911,7 +2992,7 @@ fn quick_action_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded_md()
         .border_1()
         .border_color(if primary && enabled {
             colors.accent
@@ -3465,8 +3546,8 @@ mod tests {
     #[test]
     fn settings_rows_render_for_compact_and_wide_labels() {
         let colors = crate::theme::ThemeColors::default();
-        let _ = super::settings_row("Audio", colors);
-        let _ = super::settings_row("Start with Windows", colors);
+        let _ = super::settings_row("Audio", colors, true);
+        let _ = super::settings_row("Start with Windows", colors, false);
     }
 
     #[test]
