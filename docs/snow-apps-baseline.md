@@ -9,7 +9,7 @@
 - 固定时的提交标题：`feat(pinned): add lock mode for pinned screenshots (#1698)`
 - 本地源码：`F:/project/snow-apps`，2026-10-05 快进同步到该提交，工作树干净。
 
-Flash Shot 的 Snow Apps 对齐工作固定使用上述完整提交号。后续上游 `main`、`origin/main`、新标签或新提交不会自动改变此基准；只有用户明确选定新的提交后，才更新本文件和 [`docs/plan.md`](plan.md)。开始每个开发切片时无需追逐上游版本，只需确认对照源码仍可由固定提交号检出。
+Flash Shot 的 Snow Apps 对齐工作固定使用上述完整提交号。后续上游 `main`、`origin/main`、新标签或新提交不会自动改变此基准；只有用户明确选定新的提交后，才更新本文件和 [主线开发计划](01-development-plan.md)。开始每个开发切片时无需追逐上游版本，只需确认对照源码仍可由固定提交号检出。
 
 ## 对齐范围
 

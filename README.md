@@ -14,7 +14,7 @@ Flash Shot 是一款使用 Rust 和 [GPUI](https://www.gpui.rs/) 构建的高性
 
 当前主线已完成 Windows 原生截图、标注、滚动截图和基于 FFmpeg 的录屏工作流。工程骨架参考了 `synchub-desktop` 与 `hiposter` 中经过验证的精简入口、模块组织、Tokio 后台运行时和原生资源打包方式。界面直接使用原生 GPUI，不依赖 `gpui-component`。
 
-当前基线将 `gpui` 和官方 `gpui_platform` 启动模块锁定到同一个经过验证的 Zed 提交，不使用 crates.io 上较旧的 GPUI 版本，也不引入第三方组件库。
+当前 `gpui` 使用发布版 `gpui-kit 0.6.6`，`gpui_platform` 使用 `gpui-pre-platform 0.3.6`，版本配置见根目录 `Cargo.toml`。
 
 当前已包含：
 
@@ -100,8 +100,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-features --locked
 ```
 
-当前 HEAD 的全特性严格 Clippy 已通过；历史验收 helper 的参数上下文收口见
-[主线开发计划](docs/plan.md)。
+当前待办、暂缓项和验收条件统一记录在
+[主线开发计划](docs/01-development-plan.md)，历史运行结果见 [Windows 手工验收记录](docs/windows-manual-acceptance.md)。
 
 连续截图资源与延迟门禁会真实捕获并编码虚拟桌面 100 次，输出机器可读 JSON；性能基线应使用 release 构建：
 
@@ -213,7 +213,7 @@ FFmpeg 能力快照：
 
 - [产品需求](docs/requirements.md)
 - [开发设计思路](docs/architecture.md)
-- [主线开发计划](docs/plan.md)
+- [主线开发计划](docs/01-development-plan.md)
 - [开发工具说明](crates/flash-shot-app/src/dev_tools/README.md)
 - [Windows 手工验收记录](docs/windows-manual-acceptance.md)
 - [Windows 分发](docs/windows-distribution.md)

@@ -84,7 +84,7 @@ Snow Shot 是经过实际使用验证的需求来源和边界案例参考，不�
 | 连续截图 100 次 | 句柄、线程、纹理和内存无无界增长 |
 
 以上预算必须通过自动化或可重复基准验证。当前数据、样本边界和仍缺少的真实硬件矩阵以
-[主线开发计划](plan.md) 与 [Windows 手工验收记录](windows-manual-acceptance.md) 为准；不能用单次
+[主线开发计划](01-development-plan.md) 与 [Windows 手工验收记录](windows-manual-acceptance.md) 为准；不能用单次
 冒烟结果替代 p95 或跨 DPI 证据。
 
 ### 4.2 稳定性
@@ -107,7 +107,7 @@ Snow Shot 是经过实际使用验证的需求来源和边界案例参考，不�
 Windows 是首个生产平台。通过平台接口封装当前的 GDI 捕获路径、Windows UI Automation、原生剪贴板和
 窗口 API；更换捕获后端必须单独完成像素、性能和真实桌面验收。
 
-macOS 后续使用 ScreenCaptureKit 和 Accessibility API。Linux 在 Windows 主链路稳定后再单独评估，因为 Wayland portal 与不同合成器行为需要独立的产品计划。
+macOS 的候选系统接口为 ScreenCaptureKit 和 Accessibility API。Linux 需要分别验证 Wayland portal 与不同合成器行为。平台范围、恢复条件和执行顺序统一记录在 [主线开发计划](01-development-plan.md)。
 
 ## 6. 首版明确不做
 
@@ -121,5 +121,5 @@ macOS 后续使用 ScreenCaptureKit 和 Accessibility API。Linux 在 Windows �
 
 首个可用版本必须允许 Windows 用户通过快捷键启动截图，在目标显示器环境中正确选择区域，使用核心工具
 标注，执行撤销/重做，并将像素正确的 PNG 复制或保存。在高级功能被标记为完成前，主链路必须通过延迟和
-连续使用资源测试。当前 `v0.1.x` 只对已执行的单显示器 100% 环境作发布承诺；150%/200% 与双屏矩阵仍按
-验收计划单独关闭。
+连续使用资源测试。已有验收结果仅适用于记录中的版本和显示环境；150%/200% 与双屏矩阵的状态以
+[主线开发计划](01-development-plan.md) 和实际验收记录为准。

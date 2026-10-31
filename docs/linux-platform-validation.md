@@ -31,11 +31,12 @@ X11 会话需要可访问的 `DISPLAY` 和 `xdpyinfo`。Wayland 会话需要 `WA
 | 全局快捷键 | 在常见桌面环境注册、冲突和退出回收 | 通过 xdg-desktop-portal `GlobalShortcuts` 完成注册与用户授权 | 不将 X11 抢键盘方式移植到 Wayland |
 | 托盘和窗口检查 | 至少验证一个支持 StatusNotifier 的桌面环境 | 验证目标桌面是否提供托盘；窗口/控件检查不得承诺 Windows UI Automation 对等 | 不支持时功能必须降级且可见 |
 
-## 设计决策
+## 平台接口边界
 
-Linux 后端按两个独立阶段处理：
+Linux 的两类桌面会话需要分别实现和验证：
 
-1. 先完成原生 X11 的显示器、截图、剪贴板、快捷键和基本选择流程，并通过矩阵。
-2. 单独实现 Wayland portal/ PipeWire 流程；`ScreenCast`、`GlobalShortcuts` 与用户授权生命周期是产品边界，不能以 X11 API 兼容层替代。
+- X11 需要原生显示器、截图、剪贴板、快捷键和基本选择流程，并通过对应矩阵。
+- Wayland 使用 portal/PipeWire 流程；`ScreenCast`、`GlobalShortcuts` 与用户授权生命周期是产品边界，不能以 X11 API 兼容层替代。
 
-每个阶段都需要真实桌面环境的截图、复制、取消、重连和多显示器手工验收，以及对应的平台接口约定测试。完成这些证据前，发行资产和产品文档继续只承诺 Windows。
+每类会话都需要真实桌面环境的截图、复制、取消、重连和多显示器手工验收，以及对应的平台接口约定测试。完成这些证据前，发行资产和产品文档继续只承诺 Windows。
+本文件只保存技术前提和验收矩阵；平台范围、恢复条件和执行顺序统一见 [主线开发计划](01-development-plan.md)。

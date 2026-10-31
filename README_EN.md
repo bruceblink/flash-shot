@@ -14,7 +14,7 @@ The project is Windows-first. Startup time, capture latency, mixed-DPI correctne
 
 The current mainline implements native Windows capture, annotation, scrolling capture, and an FFmpeg-based recording workflow. The engineering shell borrows the thin entry point, module layout, Tokio background runtime, and native resource packaging patterns proven in `synchub-desktop` and `hiposter`. The UI uses GPUI directly without `gpui-component`.
 
-The baseline pins `gpui` and the official `gpui_platform` launcher to the same reviewed Zed commit. It uses neither the older crates.io GPUI release nor a third-party component suite.
+The current `gpui` dependency uses the published `gpui-kit 0.6.6` package, and `gpui_platform` uses `gpui-pre-platform 0.3.6`. See the root `Cargo.toml` for the version configuration.
 
 The repository currently includes:
 
@@ -149,8 +149,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-features --locked
 ```
 
-Strict all-feature Clippy passes on the current HEAD. The historical `dev-tools` acceptance helpers now share a
-bounded parameter context; see the [mainline development plan](docs/plan.md).
+Current work, deferred items, and acceptance conditions are maintained in the
+[mainline development plan](docs/01-development-plan.md). Historical results are kept in the
+[Windows acceptance record](docs/windows-manual-acceptance.md).
 
 The repeat-capture resource and latency gate captures and encodes the virtual desktop 100 times and emits machine-readable JSON. Use a release build for performance baselines:
 
@@ -248,8 +249,9 @@ monotonic timing, format artifacts, pixel fingerprints, consumer observation sta
 cleanup state. The default command still uses an in-process observer and does not modify the user
 clipboard. Both toolbar Copy and one real `Enter` shortcut input have single-display Release
 reports. `copy-performance` covers only the compositing regression baseline (report schema 2,
-`real_ui=false`); p50/p95 and failure counts for at least 30 real UI samples remain governed by the
-follow-up acceptance items in the [delivery plan](docs/plan.md).
+`real_ui=false`). Historical single-display toolbar and Enter batches each passed 30 real UI samples;
+changes to the Copy path require fresh p50/p95 and failure counts under the
+[mainline development plan](docs/01-development-plan.md).
 
 To validate the keyboard export in the same standard scenario, switch the trigger to `Enter`:
 
@@ -356,7 +358,7 @@ It still injects no global input and does not write the system clipboard:
 
 - [Product requirements (Chinese)](docs/requirements.md)
 - [Development design (Chinese)](docs/architecture.md)
-- [Mainline development plan (Chinese)](docs/plan.md)
+- [Mainline development plan (Chinese)](docs/01-development-plan.md)
 - [Linux platform feasibility validation (Chinese)](docs/linux-platform-validation.md)
 
 ## License
