@@ -214,6 +214,7 @@ FFmpeg 能力快照：
 - [产品需求](docs/requirements.md)
 - [开发设计思路](docs/architecture.md)
 - [主线开发计划](docs/01-development-plan.md)
+- [2026-11-07 代码审查报告](docs/02-code-review-2026-11-07.md)
 - [开发工具说明](crates/flash-shot-app/src/dev_tools/README.md)
 - [Windows 手工验收记录](docs/windows-manual-acceptance.md)
 - [Windows 分发](docs/windows-distribution.md)
