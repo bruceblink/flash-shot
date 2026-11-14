@@ -71,6 +71,11 @@ Chinese regional tags use the Simplified Chinese catalog and all other languages
 English. A language selected later in Settings is persisted as the user's preference and is not
 replaced by a subsequent system-language change.
 
+If an existing `settings.json` cannot be read, is invalid, or requires a newer app version,
+startup stops at a Retry/Cancel dialog before opening screenshot history or saving preferences.
+Use a compatible app version, restore valid settings, or restore read access, then retry.
+Cancel exits without changing the settings or history. A missing first-run settings file still uses defaults.
+
 Recording uses a local or bundled FFmpeg. Videos go to `Videos\Flash Shot` by default and fall back to Flash Shot's application-data directory when that folder is unavailable. Set `FLASH_SHOT_FFMPEG` and optionally `FLASH_SHOT_RECORDING_DIRECTORY` to override the executable and output directory. The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
 
 The Record page's `Video folder` control shows the active MP4 destination and lets users choose, reset, verify, or open it. A chosen folder is persisted; `FLASH_SHOT_RECORDING_DIRECTORY` remains the authoritative override for managed or portable environments. When timestamped names collide, Flash Shot appends a suffix and FFmpeg refuses to overwrite an existing MP4.

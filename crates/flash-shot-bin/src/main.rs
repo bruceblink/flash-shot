@@ -7,6 +7,8 @@
 
 use std::{io, path::PathBuf};
 
+mod startup;
+
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -41,37 +43,43 @@ fn main() {
         log::error!(target: "flash_shot::performance", "performance_recorder_init_failed error={error}");
         std::process::exit(1);
     });
-    let (mut settings, settings_path) = flash_shot::settings::UserSettings::load(
-        &diagnostics.paths.config_dir,
-    )
-    .unwrap_or_else(|error| {
-        log::warn!(target: "flash_shot::settings", "settings_load_failed error={error}");
-        (
-            flash_shot::settings::UserSettings::default(),
-            diagnostics.paths.config_dir.join("settings.json"),
-        )
-    });
-    let (history, preferred_history_rejected) = open_history_with_fallback(
-        settings.quick_save_directory.clone(),
-        flash_shot::history::managed_history_directory(),
-        diagnostics.paths.data_dir.join("history"),
-        usize::from(settings.history_limit),
-    )
-    .unwrap_or_else(|error| {
-        log::error!(target: "flash_shot::history", "history_init_failed error={error}");
-        std::process::exit(1);
-    });
-    if preferred_history_rejected {
-        settings.quick_save_directory = None;
-        if let Err(error) = settings.save(&settings_path) {
-            log::warn!(
-                target: "flash_shot::history",
-                "history_fallback_preference_clear_failed error={error}"
-            );
+    let profile = loop {
+        match startup::initialize_profile(
+            &diagnostics.paths.config_dir,
+            flash_shot::history::managed_history_directory,
+            diagnostics.paths.data_dir.join("history"),
+        ) {
+            Ok(profile) => break profile,
+            Err(startup::StartupError::Settings(error)) => {
+                log::warn!(
+                    target: "flash_shot::settings",
+                    "settings_load_rejected kind={:?} os_error={:?}; history initialization skipped",
+                    error.kind(),
+                    error.raw_os_error()
+                );
+                if !startup::retry_settings_load(
+                    &diagnostics.paths.config_dir.join("settings.json"),
+                    error.kind(),
+                ) {
+                    log::info!(target: "flash_shot::settings", "settings_startup_cancelled");
+                    return;
+                }
+                log::info!(target: "flash_shot::settings", "settings_reload_requested");
+            }
+            Err(startup::StartupError::History(error)) => {
+                log::error!(target: "flash_shot::history", "history_init_failed error={error}");
+                std::process::exit(1);
+            }
         }
-    }
+    };
     log::info!(target: "flash_shot::lifecycle", "application_start");
-    if let Err(error) = flash_shot::run(started_at, performance, history, settings, settings_path) {
+    if let Err(error) = flash_shot::run(
+        started_at,
+        performance,
+        profile.history,
+        profile.settings,
+        profile.settings_path,
+    ) {
         log::error!(target: "flash_shot::lifecycle", "application_run_failed error={error}");
         std::process::exit(1);
     }

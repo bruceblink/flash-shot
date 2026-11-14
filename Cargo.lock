@@ -1832,6 +1832,7 @@ dependencies = [
  "flash-shot-app",
  "log",
  "mimalloc",
+ "windows-sys 0.61.2",
  "winres",
 ]
 
