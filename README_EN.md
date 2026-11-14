@@ -369,7 +369,7 @@ It still injects no global input and does not write the system clipboard:
 - [Product requirements (Chinese)](docs/requirements.md)
 - [Development design (Chinese)](docs/architecture.md)
 - [Mainline development plan (Chinese)](docs/01-development-plan.md)
-- [Code review dated 2026-11-07 (Chinese)](docs/02-code-review-2026-11-07.md)
+- [Code review dated 2026-11-14 (Chinese)](docs/03-code-review-2026-11-14.md)
 - [Linux platform feasibility validation (Chinese)](docs/linux-platform-validation.md)
 
 ## License
