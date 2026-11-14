@@ -76,6 +76,11 @@ startup stops at a Retry/Cancel dialog before opening screenshot history or savi
 Use a compatible app version, restore valid settings, or restore read access, then retry.
 Cancel exits without changing the settings or history. A missing first-run settings file still uses defaults.
 
+Once a history root is open, index read/write or retention failures also show Retry/Cancel instead of
+silently switching directories. A failed initial index commit deletes no screenshots. Failed deletions
+stay indexed for retry after file access is restored; other excess screenshots may already have been
+removed by the retention policy, as the dialog explains.
+
 Recording uses a local or bundled FFmpeg. Videos go to `Videos\Flash Shot` by default and fall back to Flash Shot's application-data directory when that folder is unavailable. Set `FLASH_SHOT_FFMPEG` and optionally `FLASH_SHOT_RECORDING_DIRECTORY` to override the executable and output directory. The `Audio` control discovers supported local FFmpeg inputs on demand and cycles between automatic configuration, off, DirectShow microphones, and available WASAPI system audio. `auto` preserves the environment-variable behavior documented above.
 
 The Record page's `Video folder` control shows the active MP4 destination and lets users choose, reset, verify, or open it. A chosen folder is persisted; `FLASH_SHOT_RECORDING_DIRECTORY` remains the authoritative override for managed or portable environments. When timestamped names collide, Flash Shot appends a suffix and FFmpeg refuses to overwrite an existing MP4.

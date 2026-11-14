@@ -67,8 +67,19 @@ fn main() {
                 log::info!(target: "flash_shot::settings", "settings_reload_requested");
             }
             Err(startup::StartupError::History(error)) => {
-                log::error!(target: "flash_shot::history", "history_init_failed error={error}");
-                std::process::exit(1);
+                log::error!(
+                    target: "flash_shot::history",
+                    "history_init_failed stage={:?} failed_deletions={} root={} error={}",
+                    error.stage,
+                    error.failed_deletions,
+                    error.root.display(),
+                    error.source,
+                );
+                if !startup::retry_history_load(&error) {
+                    log::info!(target: "flash_shot::history", "history_startup_cancelled");
+                    return;
+                }
+                log::info!(target: "flash_shot::history", "history_reload_requested");
             }
         }
     };
@@ -89,38 +100,42 @@ fn main() {
 
 /// Opens the preferred, managed, or emergency history root in that order.
 ///
-/// The returned flag tells startup whether a configured preferred root was rejected, so the
-/// caller can clear stale settings while keeping the application usable.
+/// Only a rejected root permits fallback. Once a root is established, index and retention
+/// failures must stay attached to that history so startup can offer a meaningful retry.
 fn open_history_with_fallback(
     preferred_directory: Option<PathBuf>,
-    fallback_directory: io::Result<PathBuf>,
+    fallback_directory: impl FnOnce() -> io::Result<PathBuf>,
     emergency_directory: PathBuf,
     limit: usize,
-) -> io::Result<(flash_shot::history::ScreenshotHistory, bool)> {
+) -> Result<(flash_shot::history::ScreenshotHistory, bool), flash_shot::history::HistoryOpenError> {
+    use flash_shot::history::{HistoryOpenStage, ScreenshotHistory};
+
     let preferred_configured = preferred_directory.is_some();
     if let Some(preferred_directory) = preferred_directory {
-        match flash_shot::history::ScreenshotHistory::open_with_limit(preferred_directory, limit) {
+        match ScreenshotHistory::open_for_startup(preferred_directory, limit) {
             Ok(history) => return Ok((history, false)),
-            Err(error) => {
+            Err(error) if error.stage == HistoryOpenStage::Root => {
                 log::warn!(
                     target: "flash_shot::history",
                     "preferred_history_init_failed error={error}"
                 );
             }
+            Err(error) => return Err(error),
         }
     }
 
-    if let Ok(fallback_directory) = fallback_directory {
-        match flash_shot::history::ScreenshotHistory::open_with_limit(fallback_directory, limit) {
+    if let Ok(fallback_directory) = fallback_directory() {
+        match ScreenshotHistory::open_for_startup(fallback_directory, limit) {
             Ok(history) => return Ok((history, preferred_configured)),
-            Err(error) => log::warn!(
+            Err(error) if error.stage == HistoryOpenStage::Root => log::warn!(
                 target: "flash_shot::history",
                 "managed_history_fallback_failed error={error}"
             ),
+            Err(error) => return Err(error),
         }
     }
 
-    flash_shot::history::ScreenshotHistory::open_with_limit(emergency_directory, limit)
+    ScreenshotHistory::open_for_startup(emergency_directory, limit)
         .map(|history| (history, preferred_configured))
 }
 
@@ -140,7 +155,7 @@ mod tests {
 
         let history = open_history_with_fallback(
             Some(invalid_preferred),
-            Ok(fallback.clone()),
+            || Ok(fallback.clone()),
             root.join("emergency"),
             30,
         )
@@ -162,7 +177,7 @@ mod tests {
 
         let history = open_history_with_fallback(
             Some(preferred.clone()),
-            Ok(fallback.clone()),
+            || Ok(fallback.clone()),
             root.join("emergency"),
             30,
         )
@@ -184,7 +199,7 @@ mod tests {
 
         let history = open_history_with_fallback(
             None,
-            Err(std::io::Error::other("managed history unavailable")),
+            || Err(std::io::Error::other("managed history unavailable")),
             emergency.clone(),
             30,
         )

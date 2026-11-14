@@ -126,6 +126,56 @@ pub struct HistoryEntry {
     pub source: HistorySource,
 }
 
+/// Identifies the startup step that prevented a history store from opening.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HistoryOpenStage {
+    Root,
+    IndexRead,
+    IndexWrite,
+    Retention,
+    RetentionIndexWrite,
+}
+
+impl std::fmt::Display for HistoryOpenStage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stage = match self {
+            Self::Root => "root",
+            Self::IndexRead => "index read",
+            Self::IndexWrite => "index write",
+            Self::Retention => "retention deletion",
+            Self::RetentionIndexWrite => "retention index write",
+        };
+        formatter.write_str(stage)
+    }
+}
+
+/// Keeps startup recovery context while preserving the underlying filesystem error.
+#[derive(Debug)]
+pub struct HistoryOpenError {
+    pub root: PathBuf,
+    pub stage: HistoryOpenStage,
+    pub source: io::Error,
+    pub failed_deletions: usize,
+}
+
+impl std::fmt::Display for HistoryOpenError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "failed to open screenshot history at {} during {}: {}",
+            self.root.display(),
+            self.stage,
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for HistoryOpenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ScreenshotHistory {
     root: PathBuf,
@@ -144,15 +194,38 @@ impl ScreenshotHistory {
     }
 
     pub fn open_with_limit(root: impl Into<PathBuf>, limit: usize) -> io::Result<Self> {
-        if limit == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "screenshot history limit must be greater than zero",
-            ));
-        }
+        Self::open_for_startup(root, limit).map_err(|error| error.source)
+    }
+
+    /// Opens history with classified failures for startup fallback and recovery decisions.
+    pub fn open_for_startup(
+        root: impl Into<PathBuf>,
+        limit: usize,
+    ) -> Result<Self, HistoryOpenError> {
         let root = root.into();
-        fs::create_dir_all(&root)?;
-        let root = root.canonicalize()?;
+        if limit == 0 {
+            return Err(HistoryOpenError {
+                root,
+                stage: HistoryOpenStage::Root,
+                source: io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "screenshot history limit must be greater than zero",
+                ),
+                failed_deletions: 0,
+            });
+        }
+        fs::create_dir_all(&root).map_err(|source| HistoryOpenError {
+            root: root.clone(),
+            stage: HistoryOpenStage::Root,
+            source,
+            failed_deletions: 0,
+        })?;
+        let root = root.canonicalize().map_err(|source| HistoryOpenError {
+            root: root.clone(),
+            stage: HistoryOpenStage::Root,
+            source,
+            failed_deletions: 0,
+        })?;
         let mut history = Self {
             root,
             limit,
@@ -367,15 +440,18 @@ impl ScreenshotHistory {
         Ok(removed_file)
     }
 
-    fn load(&mut self) -> io::Result<()> {
+    fn load(&mut self) -> Result<(), HistoryOpenError> {
         let path = self.root.join(INDEX_FILE);
         let contents = match fs::read_to_string(path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error),
+            Err(source) => {
+                return Err(self.open_error(HistoryOpenStage::IndexRead, source, 0));
+            }
         };
-        let values: Vec<serde_json::Value> =
-            serde_json::from_str(&contents).map_err(io::Error::other)?;
+        let values: Vec<serde_json::Value> = serde_json::from_str(&contents)
+            .map_err(io::Error::other)
+            .map_err(|source| self.open_error(HistoryOpenStage::IndexRead, source, 0))?;
         self.entries = values
             .into_iter()
             .filter_map(|value| {
@@ -397,8 +473,11 @@ impl ScreenshotHistory {
                     })
             })
             .collect();
-        self.prune()?;
+        // Persist the normalized index before deleting excess captures. If this
+        // write fails, every existing image remains available for a retry.
         self.write_index()
+            .map_err(|source| self.open_error(HistoryOpenStage::IndexWrite, source, 0))?;
+        self.prune()
     }
 
     /// Resolves an index entry before trusting it so `..` segments and links
@@ -408,19 +487,46 @@ impl ScreenshotHistory {
         (path.starts_with(&self.root) && path.is_file()).then_some(path)
     }
 
-    fn prune(&mut self) -> io::Result<()> {
-        while self.entries.len() > self.limit {
-            if let Some(entry) = self.entries.pop_back()
-                && entry.path.starts_with(&self.root)
-            {
-                match fs::remove_file(entry.path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                }
-            }
+    fn prune(&mut self) -> Result<(), HistoryOpenError> {
+        let candidates = self.retention_candidates(self.limit);
+        let deletion = self.delete_managed_paths(candidates);
+        if !deletion.deleted.is_empty() {
+            self.forget_deleted(&deletion.deleted).map_err(|source| {
+                self.open_error(
+                    HistoryOpenStage::RetentionIndexWrite,
+                    source,
+                    deletion.failures.len(),
+                )
+            })?;
+        }
+        if !deletion.failures.is_empty() {
+            let (path, error) = &deletion.failures[0];
+            let source = io::Error::other(format!(
+                "failed to delete {} excess history file(s); {}: {error}",
+                deletion.failures.len(),
+                path.display(),
+            ));
+            return Err(self.open_error(
+                HistoryOpenStage::Retention,
+                source,
+                deletion.failures.len(),
+            ));
         }
         Ok(())
+    }
+
+    fn open_error(
+        &self,
+        stage: HistoryOpenStage,
+        source: io::Error,
+        failed_deletions: usize,
+    ) -> HistoryOpenError {
+        HistoryOpenError {
+            root: self.root.clone(),
+            stage,
+            source,
+            failed_deletions,
+        }
     }
 
     fn write_index(&self) -> io::Result<()> {
@@ -474,7 +580,7 @@ fn unix_timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{HistorySource, ScreenshotHistory, verify_writable_directory};
+    use super::{HistoryOpenStage, HistorySource, ScreenshotHistory, verify_writable_directory};
     use std::{fs, io};
 
     fn directory(name: &str) -> std::path::PathBuf {
@@ -520,6 +626,54 @@ mod tests {
     }
 
     #[test]
+    fn startup_open_classifies_root_index_read_and_index_write_errors() {
+        let root = directory("startup-error-stages");
+        fs::create_dir_all(&root).unwrap();
+        let root_file = root.join("not-a-directory");
+        fs::write(&root_file, b"file").unwrap();
+        let root_error = ScreenshotHistory::open_for_startup(&root_file, 1).unwrap_err();
+        assert_eq!(root_error.stage, HistoryOpenStage::Root);
+        assert_eq!(root_error.root, root_file);
+        assert_eq!(root_error.failed_deletions, 0);
+        assert!(root_error.to_string().contains("root"));
+        assert!(
+            root_error
+                .to_string()
+                .contains(&root_error.source.to_string())
+        );
+
+        let index_read_root = root.join("index-read");
+        fs::create_dir_all(&index_read_root).unwrap();
+        fs::write(index_read_root.join("history.json"), b"{").unwrap();
+        let index_read_error =
+            ScreenshotHistory::open_for_startup(&index_read_root, 1).unwrap_err();
+        assert_eq!(index_read_error.stage, HistoryOpenStage::IndexRead);
+        assert_eq!(index_read_error.failed_deletions, 0);
+
+        let index_write_root = root.join("index-write");
+        fs::create_dir_all(&index_write_root).unwrap();
+        let image = index_write_root.join("one.png");
+        fs::write(&image, b"png").unwrap();
+        let history = ScreenshotHistory::open(&index_write_root).unwrap();
+        drop(history);
+        fs::write(
+            index_write_root.join("history.json"),
+            serde_json::json!([{
+                "path": image,
+                "created_at_ms": 1,
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        fs::create_dir(index_write_root.join("history.json.tmp")).unwrap();
+        let index_write_error =
+            ScreenshotHistory::open_for_startup(&index_write_root, 1).unwrap_err();
+        assert_eq!(index_write_error.stage, HistoryOpenStage::IndexWrite);
+        assert_eq!(index_write_error.failed_deletions, 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn records_existing_managed_files_and_restores_them_on_restart() {
         let root = directory("reload");
         fs::create_dir_all(&root).unwrap();
@@ -559,6 +713,210 @@ mod tests {
         assert_eq!(history.entries()[0].path, first.canonicalize().unwrap());
         assert!(second.exists());
         assert!(!root.join("history.json.tmp").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_index_failure_keeps_all_captures_and_original_index_for_retry() {
+        let root = directory("load-index-failure");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.png");
+        let second = root.join("two.png");
+        fs::write(&first, b"one").unwrap();
+        fs::write(&second, b"two").unwrap();
+        let mut history = ScreenshotHistory::open_with_limit(&root, 2).unwrap();
+        history.record(first.clone()).unwrap();
+        history.record(second.clone()).unwrap();
+        let original_index = fs::read(root.join("history.json")).unwrap();
+
+        // A directory at the temporary index path makes the first atomic
+        // replacement fail without altering the current index.
+        fs::create_dir(root.join("history.json.tmp")).unwrap();
+        assert!(ScreenshotHistory::open_with_limit(&root, 1).is_err());
+
+        assert_eq!(fs::read(root.join("history.json")).unwrap(), original_index);
+        assert!(first.exists());
+        assert!(second.exists());
+
+        fs::remove_dir(root.join("history.json.tmp")).unwrap();
+        let retried = ScreenshotHistory::open_with_limit(&root, 1).unwrap();
+        assert_eq!(retried.entries().len(), 1);
+        assert_eq!(retried.entries()[0].path, second.canonicalize().unwrap());
+        assert!(!first.exists());
+        assert!(second.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retention_index_failure_keeps_original_index_and_retries_after_missing_file_filter() {
+        let root = directory("retention-index-write-failure");
+        fs::create_dir_all(&root).unwrap();
+        let oldest = root.join("oldest.png");
+        let newest = root.join("newest.png");
+        fs::write(&oldest, b"oldest").unwrap();
+        fs::write(&newest, b"newest").unwrap();
+        let mut history = ScreenshotHistory::open_with_limit(&root, 2).unwrap();
+        history.record(oldest.clone()).unwrap();
+        history.record(newest.clone()).unwrap();
+        let index_path = root.join("history.json");
+        let original_index = fs::read(&index_path).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Vec<serde_json::Value>>(&original_index)
+                .unwrap()
+                .len(),
+            2
+        );
+
+        history.limit = 1;
+        fs::create_dir(root.join("history.json.tmp")).unwrap();
+        let error = history.prune().unwrap_err();
+
+        assert_eq!(error.stage, HistoryOpenStage::RetentionIndexWrite);
+        assert_eq!(error.failed_deletions, 0);
+        assert!(!oldest.exists());
+        assert!(newest.exists());
+        let persisted_index = fs::read(&index_path).unwrap();
+        assert_eq!(persisted_index, original_index);
+        assert_eq!(
+            serde_json::from_slice::<Vec<serde_json::Value>>(&persisted_index)
+                .unwrap()
+                .len(),
+            2
+        );
+
+        fs::remove_dir(root.join("history.json.tmp")).unwrap();
+        let retried = ScreenshotHistory::open_for_startup(&root, 1).unwrap();
+        assert_eq!(retried.entries().len(), 1);
+        assert_eq!(retried.entries()[0].path, newest.canonicalize().unwrap());
+        assert!(newest.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn loading_existing_history_above_limit_prunes_oldest_capture() {
+        let root = directory("load-over-limit");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.png");
+        let second = root.join("two.png");
+        let third = root.join("three.png");
+        for image in [&first, &second, &third] {
+            fs::write(image, b"image").unwrap();
+        }
+        let mut history = ScreenshotHistory::open_with_limit(&root, 3).unwrap();
+        history.record(first.clone()).unwrap();
+        history.record(second.clone()).unwrap();
+        history.record(third.clone()).unwrap();
+
+        let loaded = ScreenshotHistory::open_with_limit(&root, 1).unwrap();
+
+        assert_eq!(loaded.entries().len(), 1);
+        assert_eq!(loaded.entries()[0].path, third.canonicalize().unwrap());
+        assert!(!first.exists());
+        assert!(!second.exists());
+        assert!(third.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn load_delete_failure_keeps_the_entry_for_retry() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+        let root = directory("load-delete-failure");
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.png");
+        let second = root.join("two.png");
+        fs::write(&first, b"one").unwrap();
+        fs::write(&second, b"two").unwrap();
+        let mut history = ScreenshotHistory::open_with_limit(&root, 2).unwrap();
+        history.record(first.clone()).unwrap();
+        history.record(second.clone()).unwrap();
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&first)
+            .unwrap();
+        let expected_delete_error = fs::remove_file(&first).unwrap_err().to_string();
+
+        let error = ScreenshotHistory::open_with_limit(&root, 1).unwrap_err();
+
+        assert!(error.to_string().contains("1 excess history file"));
+        assert!(error.to_string().contains(&expected_delete_error));
+        assert!(first.exists());
+        assert!(second.exists());
+        assert_eq!(
+            serde_json::from_slice::<Vec<serde_json::Value>>(
+                &fs::read(root.join("history.json")).unwrap()
+            )
+            .unwrap()
+            .len(),
+            2
+        );
+
+        drop(locked);
+        let retried = ScreenshotHistory::open_with_limit(&root, 1).unwrap();
+        assert_eq!(retried.entries().len(), 1);
+        assert_eq!(retried.entries()[0].path, second.canonicalize().unwrap());
+        assert!(!first.exists());
+        assert!(second.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn partial_load_delete_failure_forgets_only_successfully_deleted_entries() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+        let root = directory("load-partial-delete-failure");
+        fs::create_dir_all(&root).unwrap();
+        let oldest = root.join("oldest.png");
+        let middle = root.join("middle.png");
+        let newest = root.join("newest.png");
+        fs::write(&oldest, b"oldest").unwrap();
+        fs::write(&middle, b"middle").unwrap();
+        fs::write(&newest, b"newest").unwrap();
+        let mut history = ScreenshotHistory::open_with_limit(&root, 3).unwrap();
+        history.record(oldest.clone()).unwrap();
+        history.record(middle.clone()).unwrap();
+        history.record(newest.clone()).unwrap();
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&oldest)
+            .unwrap();
+        let expected_delete_error = fs::remove_file(&oldest).unwrap_err().to_string();
+
+        let error = ScreenshotHistory::open_for_startup(&root, 1).unwrap_err();
+
+        assert_eq!(error.stage, HistoryOpenStage::Retention);
+        assert_eq!(error.failed_deletions, 1);
+        assert!(error.to_string().contains(&expected_delete_error));
+        assert!(oldest.exists());
+        assert!(!middle.exists());
+        assert!(newest.exists());
+        let indexed: Vec<serde_json::Value> =
+            serde_json::from_slice(&fs::read(root.join("history.json")).unwrap()).unwrap();
+        assert_eq!(indexed.len(), 2);
+        assert_eq!(
+            indexed[0]["path"].as_str().unwrap(),
+            newest.canonicalize().unwrap().to_string_lossy()
+        );
+        assert_eq!(
+            indexed[1]["path"].as_str().unwrap(),
+            oldest.canonicalize().unwrap().to_string_lossy()
+        );
+
+        drop(locked);
+        let retried = ScreenshotHistory::open_for_startup(&root, 1).unwrap();
+        assert_eq!(retried.entries().len(), 1);
+        assert_eq!(retried.entries()[0].path, newest.canonicalize().unwrap());
+        assert!(!oldest.exists());
+        assert!(!middle.exists());
+        assert!(newest.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
